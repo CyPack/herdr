@@ -50,6 +50,29 @@ pub(crate) struct ViewerPicture {
 /// Rows the viewer reserves under the picture for its status line.
 const STATUS_ROWS: u16 = 1;
 
+/// What the status line says when the cell size had to be assumed.
+///
+/// Deliberately names the setting: a host that reports no pixel size is
+/// usually a herdr pane with `experimental.kitty_graphics` off, and the reader
+/// cannot act on "it did not work" alone.
+pub(crate) const NO_PIXEL_SIZE_NOTE: &str = "no pixel size — see experimental.kitty_graphics";
+
+/// Where the cell size came from.
+///
+/// A picture is laid out either way — some hosts draw one without ever
+/// answering a pixel-size query, and refusing to try would take the feature
+/// away from them. But a host that stayed silent usually cannot show a picture
+/// at all, and then the reader is left looking at a blank rectangle with
+/// nothing to act on. That silence is the defect this carries: it lets the
+/// status line say *why* instead of showing black.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CellSizeSource {
+    /// The terminal answered a pixel-size query.
+    Reported,
+    /// Nothing answered; the frame is laid out on an assumed cell.
+    Assumed,
+}
+
 /// Compute the frame for `path` at `page`, drawn into a `cols`×`rows` grid.
 ///
 /// `None` when there is no room to draw anything at all. Every other outcome —
@@ -61,6 +84,7 @@ pub(crate) fn compute_frame(
     cols: u16,
     rows: u16,
     cell_size: HostCellSize,
+    cell_source: CellSizeSource,
 ) -> Option<ViewerFrame> {
     let content_rows = rows.checked_sub(STATUS_ROWS)?;
     if cols == 0 || content_rows == 0 || !cell_size.is_known() {
@@ -76,16 +100,28 @@ pub(crate) fn compute_frame(
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.to_string_lossy().into_owned());
 
+    // Carried only into the lines that describe a picture. A file that could
+    // not be read has its own reason, and stacking a second one there sends
+    // the reader after the wrong problem (TP-FVIEW-TAB-18).
+    let note = match cell_source {
+        CellSizeSource::Assumed => Some(NO_PIXEL_SIZE_NOTE),
+        CellSizeSource::Reported => None,
+    };
+
     if crate::fm::pdf_preview::is_pdf_path(path) {
         return Some(
             match read_pdf_page_preview(path, page, target, PdfPreviewLimits::default()) {
                 Ok(rendered) => ViewerFrame {
                     source_path: path.to_path_buf(),
                     picture: place(&rendered.image, cols, content_rows, cell_size),
-                    status: format!(
-                        "{name}  ·  page {} of {}  ·  PageUp/PageDown  ·  q to close",
-                        rendered.page.saturating_add(1),
-                        rendered.total_pages
+                    status: status_line(
+                        &name,
+                        note,
+                        &format!(
+                            "page {} of {}  ·  PageUp/PageDown  ·  q to close",
+                            rendered.page.saturating_add(1),
+                            rendered.total_pages
+                        ),
                     ),
                     total_pages: Some(rendered.total_pages),
                 },
@@ -99,12 +135,24 @@ pub(crate) fn compute_frame(
             Ok(prepared) => ViewerFrame {
                 source_path: path.to_path_buf(),
                 picture: place(&prepared, cols, content_rows, cell_size),
-                status: format!("{name}  ·  q to close"),
+                status: status_line(&name, note, "q to close"),
                 total_pages: None,
             },
             Err(error) => unreadable(path, &name, format!("{error}")),
         },
     )
+}
+
+/// Compose the status line: the file, then any notice, then the controls.
+///
+/// One place, so a notice can never land after "q to close" on one path and
+/// before it on another — the line is read left to right and the reader should
+/// meet what happened before what to press.
+fn status_line(name: &str, note: Option<&str>, tail: &str) -> String {
+    match note {
+        Some(note) => format!("{name}  ·  {note}  ·  {tail}"),
+        None => format!("{name}  ·  {tail}"),
+    }
 }
 
 /// A frame with no picture, carrying the reason in its status line.
@@ -237,7 +285,8 @@ mod tests {
         let td = TempDir::new("image-frame");
         let path = td.write("photo.png", &png(32, 32));
 
-        let frame = compute_frame(&path, 0, 80, 24, cells()).expect("frame for an image");
+        let frame = compute_frame(&path, 0, 80, 24, cells(), CellSizeSource::Reported)
+            .expect("frame for an image");
         let picture = frame.picture.expect("an image has pixels");
         assert!(picture.cols > 0 && picture.rows > 0);
         assert!(frame.status.contains("photo.png"));
@@ -252,7 +301,8 @@ mod tests {
         let td = TempDir::new("bad-image");
         let path = td.write("broken.png", b"this is not a png");
 
-        let frame = compute_frame(&path, 0, 80, 24, cells()).expect("frame for a bad file");
+        let frame = compute_frame(&path, 0, 80, 24, cells(), CellSizeSource::Reported)
+            .expect("frame for a bad file");
         assert!(frame.picture.is_none());
         assert!(frame.status.contains("broken.png"));
         assert!(
@@ -269,7 +319,8 @@ mod tests {
         let td = TempDir::new("missing");
         let path = td.root.join("absent.png");
 
-        let frame = compute_frame(&path, 0, 80, 24, cells()).expect("frame for a missing file");
+        let frame = compute_frame(&path, 0, 80, 24, cells(), CellSizeSource::Reported)
+            .expect("frame for a missing file");
         assert!(frame.picture.is_none());
         assert!(frame.status.contains("absent.png"));
     }
@@ -285,11 +336,11 @@ mod tests {
 
         for (cols, rows) in [(0u16, 24u16), (80, 0), (80, 1), (0, 0)] {
             assert!(
-                compute_frame(&path, 0, cols, rows, cells()).is_none(),
+                compute_frame(&path, 0, cols, rows, cells(), CellSizeSource::Reported).is_none(),
                 "{cols}x{rows} must not produce a frame"
             );
         }
-        assert!(compute_frame(&path, 0, 80, 2, cells()).is_some());
+        assert!(compute_frame(&path, 0, 80, 2, cells(), CellSizeSource::Reported).is_some());
     }
 
     // TP-FVIEW-TAB-05: an unknown cell size yields nothing. Guessing one would
@@ -304,7 +355,7 @@ mod tests {
             width_px: 0,
             height_px: 0,
         };
-        assert!(compute_frame(&path, 0, 80, 24, unknown).is_none());
+        assert!(compute_frame(&path, 0, 80, 24, unknown, CellSizeSource::Reported).is_none());
     }
 
     // TP-FVIEW-TAB-06: the picture is centred and never overhangs its grid.
@@ -316,7 +367,8 @@ mod tests {
         let path = td.write("photo.png", &png(64, 64));
 
         let (cols, rows) = (80u16, 24u16);
-        let frame = compute_frame(&path, 0, cols, rows, cells()).expect("frame");
+        let frame =
+            compute_frame(&path, 0, cols, rows, cells(), CellSizeSource::Reported).expect("frame");
         let picture = frame.picture.expect("pixels");
 
         assert!(
@@ -342,8 +394,8 @@ mod tests {
         let td = TempDir::new("pure");
         let path = td.write("photo.png", &png(24, 24));
 
-        let first = compute_frame(&path, 0, 80, 24, cells());
-        let second = compute_frame(&path, 0, 80, 24, cells());
+        let first = compute_frame(&path, 0, 80, 24, cells(), CellSizeSource::Reported);
+        let second = compute_frame(&path, 0, 80, 24, cells(), CellSizeSource::Reported);
         assert_eq!(first, second);
     }
 
@@ -369,6 +421,74 @@ mod tests {
             turn_page(3, None, false),
             2,
             "the lower bound is always known"
+        );
+    }
+
+    // TP-FVIEW-TAB-16: a host that never reported a pixel size says so on the
+    // status line. Measured 2026-08-14: with `experimental.kitty_graphics` off
+    // the pane's PTY carries ws_xpixel=0, the frame is laid out on the assumed
+    // cell, the picture is placed, the escape is written — and the server drops
+    // it. The reader sees black with nothing to act on. This line is the whole
+    // difference between "broken" and "off".
+    #[test]
+    fn an_assumed_cell_size_says_so_on_the_status_line() {
+        let td = TempDir::new("assumed-cell");
+        let path = td.write("photo.png", &png(32, 32));
+
+        let frame = compute_frame(&path, 0, 80, 24, cells(), CellSizeSource::Assumed)
+            .expect("frame for an image");
+
+        assert!(
+            frame.status.contains(NO_PIXEL_SIZE_NOTE),
+            "the status line must say why nothing may appear: {}",
+            frame.status
+        );
+        assert!(
+            frame.status.contains("photo.png"),
+            "the file is still named: {}",
+            frame.status
+        );
+        assert!(
+            frame.picture.is_some(),
+            "the picture is still laid out — some hosts draw one anyway"
+        );
+    }
+
+    // TP-FVIEW-TAB-17: a host that did report keeps the status line it always
+    // had. A notice shown when the feature works teaches the reader to ignore
+    // notices, which costs the one in TP-FVIEW-TAB-16 its whole value.
+    #[test]
+    fn a_reported_cell_size_leaves_the_status_line_alone() {
+        let td = TempDir::new("reported-cell");
+        let path = td.write("photo.png", &png(32, 32));
+
+        let frame = compute_frame(&path, 0, 80, 24, cells(), CellSizeSource::Reported)
+            .expect("frame for an image");
+
+        assert!(
+            !frame.status.contains(NO_PIXEL_SIZE_NOTE),
+            "a working host is told nothing: {}",
+            frame.status
+        );
+    }
+
+    // TP-FVIEW-TAB-18: when the file itself could not be read, that reason
+    // stands alone. Two explanations on one line make the reader chase the
+    // wrong one — and the terminal's pixel size is irrelevant to a file that
+    // was never decoded.
+    #[test]
+    fn an_unreadable_file_keeps_its_own_reason_even_on_an_assumed_cell() {
+        let td = TempDir::new("assumed-unreadable");
+        let path = td.write("broken.png", b"not a png at all");
+
+        let frame = compute_frame(&path, 0, 80, 24, cells(), CellSizeSource::Assumed)
+            .expect("frame for a bad file");
+
+        assert!(frame.picture.is_none(), "nothing decoded, nothing to place");
+        assert!(
+            !frame.status.contains(NO_PIXEL_SIZE_NOTE),
+            "the file's own reason stands alone: {}",
+            frame.status
         );
     }
 }

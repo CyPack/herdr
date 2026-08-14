@@ -19,7 +19,7 @@ use crossterm::{execute, queue};
 use ratatui::layout::Rect;
 
 use crate::kitty_graphics::HostCellSize;
-use frame::{compute_frame, turn_page, ViewerFrame};
+use frame::{compute_frame, turn_page, CellSizeSource, ViewerFrame};
 
 /// Restores the terminal when it goes out of scope.
 ///
@@ -73,9 +73,19 @@ pub(crate) fn run(path: &Path, start_page: usize) -> io::Result<i32> {
     loop {
         let (cols, rows) = crossterm::terminal::size()?;
         let area = Rect::new(0, 0, cols, rows);
-        let cell_size = HostCellSize::try_from_terminal(area)
-            .unwrap_or_else(|| HostCellSize::fallback_for_area(area));
-        let next = compute_frame(path, page, cols, rows, cell_size);
+        // A host that never answered the pixel-size query keeps the assumed
+        // cell — the picture is still laid out, because some hosts draw one
+        // anyway — but the frame carries where the size came from, so the
+        // status line can say why nothing appeared instead of leaving a blank
+        // rectangle the reader cannot act on.
+        let (cell_size, cell_source) = match HostCellSize::try_from_terminal(area) {
+            Some(size) => (size, CellSizeSource::Reported),
+            None => (
+                HostCellSize::fallback_for_area(area),
+                CellSizeSource::Assumed,
+            ),
+        };
+        let next = compute_frame(path, page, cols, rows, cell_size, cell_source);
 
         if !painted || next != drawn {
             draw(&mut io::stdout(), next.as_ref(), cols, rows)?;

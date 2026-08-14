@@ -253,6 +253,9 @@ Two rules shape the whole layer:
 | TP-FVIEW-TAB-13 | A bare path opens the first page. | The common invocation stops working. | `a_bare_path_opens_the_first_page` |
 | TP-FVIEW-TAB-14 | `--page` is one-based in and zero-based out. | The viewer prints "page 3"; asking the reader to type 2 for it is a trap. | `the_page_option_is_one_based_for_the_reader` |
 | TP-FVIEW-TAB-15 | Malformed arguments produce a message, never a panic. | A panic inside a pane prints a backtrace nobody asked for and the tab closes on it. | `malformed_arguments_are_refused_with_a_message` |
+| TP-FVIEW-TAB-16 | A host that reported no pixel size still gets a laid-out picture, and the status line says the picture may not appear and names `experimental.kitty_graphics`. | The reader is left with black and nothing to act on. Measured 2026-08-14: with the flag off the pane's PTY carries `ws_xpixel=0`, the picture is placed, the escape is written, and the server drops it — the failure looks identical to a broken feature, which is what it was reported as. | `an_assumed_cell_size_says_so_on_the_status_line` |
+| TP-FVIEW-TAB-17 | A host that did report keeps the status line it always had. | A notice shown while the feature works teaches the reader to ignore notices, which costs TP-FVIEW-TAB-16 its whole value. | `a_reported_cell_size_leaves_the_status_line_alone` |
+| TP-FVIEW-TAB-18 | A file that could not be read carries only its own reason, even on an assumed cell. | Two explanations on one line send the reader after the wrong one, and the terminal's pixel size is irrelevant to a file that was never decoded. | `an_unreadable_file_keeps_its_own_reason_even_on_an_assumed_cell` |
 
 ## Sending a file over Tailscale
 
