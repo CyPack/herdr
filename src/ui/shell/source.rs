@@ -25,7 +25,7 @@ use crate::popup_size::PopupSize;
 use super::layout::allocate_section_lengths;
 use super::model::{
     RegionId, RegionSize, ShellChild, ShellDirection, ShellLayout, ShellNode, ShellValidationError,
-    TrackPolicy, ValidatedShellLayout, MAX_SPLIT_CHILDREN,
+    TrackPolicy, ValidatedShellLayout,
 };
 use super::template::ShellTemplateId;
 
@@ -64,12 +64,24 @@ pub(crate) struct DerivedShellLayout {
     pub template: Option<ShellTemplateId>,
 }
 
-/// The most parts one bar may be divided into.
+/// The most parts one bar may ever be divided into, whatever a config asks for.
 ///
-/// The same number the shell tree allows a split, because it is the same
-/// question with the same answer: an unbounded number of sections is CLA7's
-/// unbounded visible chain wearing an edge bar for a hat.
-pub(crate) const MAX_BAR_SECTIONS: usize = MAX_SPLIT_CHILDREN;
+/// This used to be `MAX_SPLIT_CHILDREN`, on the reasoning that a bar's division
+/// and a pane split are "the same question with the same answer". They are not,
+/// and the assumption cost the toolbar its eleventh icon: a screen cut into
+/// twelve panes is unusable, while a strip carrying twelve icons is ordinary.
+/// One number was answering two questions.
+///
+/// Still a bound rather than a `Vec`, and still finite. CLA7's objection is to
+/// an *unbounded* visible chain, not to a larger finite one — and the array is
+/// what keeps `BarSections` `Copy` and comparable by value, which is what makes
+/// CL3's rule ("the key contains every input that decided the geometry") true by
+/// construction. Measured cost of the raise: `BarSections` and `BarSectionRects`
+/// go from 66 to 130 bytes each, so all four bars together grow by 512 bytes.
+///
+/// The number a person meets is `shell.bars.<edge>.max_sections`, which defaults
+/// to 8 and may not exceed this.
+pub(crate) const MAX_BAR_SECTIONS: usize = 16;
 
 /// How one bar is divided along its long axis.
 ///
@@ -330,7 +342,7 @@ impl BarTrack {
         } else {
             Self::of(config.size)
         };
-        track.with_sections(sections_from_config(&config.sections, edge))
+        track.with_sections(sections_from_config(config, edge))
     }
 
     const fn enabled(self) -> bool {
@@ -406,6 +418,11 @@ pub(crate) enum BarConfigProblem {
     SecondaryWithoutAction {
         edge: &'static str,
         index: usize,
+    },
+    SectionBudgetOutOfRange {
+        edge: &'static str,
+        requested: usize,
+        max: usize,
     },
     UnknownSectionWidgetKind {
         edge: &'static str,
@@ -530,6 +547,15 @@ impl std::fmt::Display for BarConfigProblem {
                 "shell.bars.{edge}.sections[{index}].action names a secondary presentation but \
                  no command to present, so a right press on this section does nothing"
             ),
+            Self::SectionBudgetOutOfRange {
+                edge,
+                requested,
+                max,
+            } => write!(
+                formatter,
+                "shell.bars.{edge}.max_sections is {requested}; this build allows 1 to {max}, \
+                 so this bar is drawn undivided"
+            ),
             Self::UnknownSectionWidgetKind { edge, index, kind } => write!(
                 formatter,
                 "shell.bars.{edge}.sections[{index}].widget.kind is \"{kind}\"; expected \
@@ -608,11 +634,33 @@ fn bar_size_problem(config: &ShellBarConfig, edge: &'static str) -> Option<BarCo
     None
 }
 
-fn section_count_problem(sections: usize, edge: &'static str) -> Option<BarConfigProblem> {
-    (sections > MAX_BAR_SECTIONS).then_some(BarConfigProblem::TooManySections {
+/// The budget this bar was given, or what is wrong with the number it asked for.
+///
+/// Refused rather than clamped: a file saying 40 next to a build doing 16 is a
+/// file the next reader will believe. And zero is refused because a bar allowed
+/// no parts is a bar that cannot divide, which `enabled = false` already says —
+/// two spellings for one state is one too many.
+fn section_budget(config: &ShellBarConfig, edge: &'static str) -> Result<usize, BarConfigProblem> {
+    let requested = usize::from(config.max_sections);
+    if requested == 0 || requested > MAX_BAR_SECTIONS {
+        return Err(BarConfigProblem::SectionBudgetOutOfRange {
+            edge,
+            requested,
+            max: MAX_BAR_SECTIONS,
+        });
+    }
+    Ok(requested)
+}
+
+fn section_count_problem(
+    sections: usize,
+    edge: &'static str,
+    budget: usize,
+) -> Option<BarConfigProblem> {
+    (sections > budget).then_some(BarConfigProblem::TooManySections {
         edge,
         sections,
-        max: MAX_BAR_SECTIONS,
+        max: budget,
     })
 }
 
@@ -641,7 +689,17 @@ pub(crate) fn shell_bar_config_problems(config: &ShellBarsConfig) -> Vec<BarConf
             // fix a table that is not the reason their bar is missing.
             continue;
         }
-        if let Some(problem) = section_count_problem(bar.sections.len(), edge) {
+        // The budget is asked first: a bar whose ceiling this build cannot
+        // honour is undivided for that reason, and reporting the section count
+        // against a number that was itself refused would name the wrong line.
+        let budget = match section_budget(bar, edge) {
+            Ok(budget) => budget,
+            Err(problem) => {
+                problems.push(problem);
+                continue;
+            }
+        };
+        if let Some(problem) = section_count_problem(bar.sections.len(), edge, budget) {
             problems.push(problem);
             continue;
         }
@@ -672,11 +730,21 @@ pub(crate) fn shell_bar_config_problems(config: &ShellBarsConfig) -> Vec<BarConf
 /// would silently renumber every section after it, and the indices are what
 /// everything downstream addresses a section by — a config typo would then move
 /// somebody's content rather than reporting itself.
-fn sections_from_config(configs: &[ShellBarSectionConfig], edge: &'static str) -> BarSections {
-    if configs.is_empty() {
+fn sections_from_config(config: &ShellBarConfig, edge: &'static str) -> BarSections {
+    if config.sections.is_empty() {
         return BarSections::NONE;
     }
-    match section_policies(configs, edge) {
+    // The budget is read before the sections are, because a budget this build
+    // cannot honour is a reason the division as a whole does not stand — the
+    // same all-or-nothing rule the section policies already follow.
+    let budget = match section_budget(config, edge) {
+        Ok(budget) => budget,
+        Err(problem) => {
+            tracing::warn!(%problem, "the bar is drawn undivided");
+            return BarSections::NONE;
+        }
+    };
+    match section_policies(&config.sections, edge, budget) {
         Ok(policies) => BarSections::from_policies(&policies, edge),
         Err(problem) => {
             tracing::warn!(%problem, "the bar is drawn undivided");
@@ -695,8 +763,9 @@ fn sections_from_config(configs: &[ShellBarSectionConfig], edge: &'static str) -
 fn section_policies(
     configs: &[ShellBarSectionConfig],
     edge: &'static str,
+    budget: usize,
 ) -> Result<Vec<TrackPolicy>, BarConfigProblem> {
-    if let Some(problem) = section_count_problem(configs.len(), edge) {
+    if let Some(problem) = section_count_problem(configs.len(), edge, budget) {
         return Err(problem);
     }
     configs
@@ -1015,7 +1084,10 @@ fn bar_section_chrome(config: &ShellBarConfig, edge: &'static str) -> BarSection
     if bar_size_problem(config, edge).is_some() {
         return BarSectionChrome::EMPTY;
     }
-    if section_policies(&config.sections, edge).is_err() {
+    let Ok(budget) = section_budget(config, edge) else {
+        return BarSectionChrome::EMPTY;
+    };
+    if section_policies(&config.sections, edge, budget).is_err() {
         return BarSectionChrome::EMPTY;
     }
     let entries = config
@@ -1771,6 +1843,7 @@ mod tests {
             color: String::new(),
             gradient: Vec::new(),
             sections: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -1798,6 +1871,7 @@ mod tests {
             color: String::new(),
             gradient: Vec::new(),
             sections,
+            ..Default::default()
         }
     }
 
@@ -2214,6 +2288,161 @@ mod tests {
         section
     }
 
+    /// How many sections of this bar can actually be addressed by index.
+    ///
+    /// Counted through the public accessor rather than a length field, because
+    /// "addressable" is the property everything downstream depends on: a
+    /// section that exists in a vector but answers `None` at its own index is
+    /// a section nothing can click.
+    fn addressable_sections(config: &ShellBarsConfig, region: RegionId) -> usize {
+        let chrome = ShellBarChrome::from_config(config);
+        (0..u8::MAX)
+            .take_while(|index| chrome.for_section(region, *index).is_some())
+            .count()
+    }
+
+    fn bar_with_budget(budget: u16, count: usize) -> ShellBarConfig {
+        let mut bar = bar_with_sections((0..count).map(|_| plain_section("fill")).collect());
+        bar.max_sections = budget;
+        bar
+    }
+
+    // TC-69-1 · the ceiling a file meets when it never mentions one is still 8.
+    // This is the regression gate for every config written before the key
+    // existed: those files must keep refusing exactly the section they refused
+    // yesterday, with the same message.
+    // TP-CHROME-70: a bar that names no budget is bounded at eight, as it
+    // always was.
+    #[test]
+    fn a_bar_that_names_no_budget_is_still_bounded_at_eight() {
+        let eight = ShellBarsConfig {
+            top: bar_with_sections((0..8).map(|_| plain_section("fill")).collect()),
+            ..Default::default()
+        };
+        assert!(
+            shell_bar_config_problems(&eight).is_empty(),
+            "eight was always allowed"
+        );
+        assert_eq!(addressable_sections(&eight, RegionId::TopBar), 8);
+
+        let nine = ShellBarsConfig {
+            top: bar_with_sections((0..9).map(|_| plain_section("fill")).collect()),
+            ..Default::default()
+        };
+        let reported = shell_bar_config_problems(&nine)
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert_eq!(reported.len(), 1, "one cause: {reported:?}");
+        assert!(
+            reported[0].contains("9") && reported[0].contains("8"),
+            "the message must name what was written and what is allowed: {reported:?}"
+        );
+    }
+
+    // TC-69-2/TC-69-3 · the budget the person chose is the number enforced —
+    // not the capacity above it, and not the default below it. Both halves
+    // matter: accepting twelve proves the raise reaches the geometry, and
+    // refusing the thirteenth proves the chosen number is what bounds it.
+    // TP-CHROME-71: a raised budget is honoured up to itself and refused past
+    // itself.
+    #[test]
+    fn a_raised_budget_is_honoured_up_to_itself_and_no_further() {
+        let twelve = ShellBarsConfig {
+            top: bar_with_budget(12, 12),
+            ..Default::default()
+        };
+        assert!(
+            shell_bar_config_problems(&twelve).is_empty(),
+            "twelve sections under a budget of twelve is not a problem"
+        );
+        assert_eq!(
+            addressable_sections(&twelve, RegionId::TopBar),
+            12,
+            "the sections must reach the derived chrome, not merely pass the checker"
+        );
+
+        let thirteen = ShellBarsConfig {
+            top: bar_with_budget(12, 13),
+            ..Default::default()
+        };
+        let reported = shell_bar_config_problems(&thirteen)
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert_eq!(reported.len(), 1, "one cause: {reported:?}");
+        assert!(
+            reported[0].contains("13") && reported[0].contains("12"),
+            "the refusal must name the budget the person chose: {reported:?}"
+        );
+    }
+
+    // TC-69-4/TC-69-5 · a budget this build cannot honour is refused by name,
+    // never clamped. A file saying forty beside a build doing sixteen is a file
+    // its next reader will believe. Zero is refused for a different reason: a
+    // bar allowed no parts is what `enabled = false` already means.
+    // TP-CHROME-72: a budget outside the build's range is refused with its own
+    // message rather than quietly clamped.
+    #[test]
+    fn a_budget_this_build_cannot_honour_is_refused_rather_than_clamped() {
+        for requested in [0_u16, 17, 40] {
+            let config = ShellBarsConfig {
+                top: bar_with_budget(requested, 2),
+                ..Default::default()
+            };
+
+            let reported = shell_bar_config_problems(&config)
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>();
+
+            assert_eq!(reported.len(), 1, "one cause for {requested}: {reported:?}");
+            assert!(
+                reported[0].contains("max_sections")
+                    && reported[0].contains(&requested.to_string())
+                    && reported[0].contains("16"),
+                "the message must name the field, the value and the bound: {reported:?}"
+            );
+            assert_eq!(
+                addressable_sections(&config, RegionId::TopBar),
+                0,
+                "a refused budget leaves the bar undivided rather than silently clamped"
+            );
+        }
+    }
+
+    // TC-69-7 · one edge's budget is that edge's. A shared number would make
+    // raising the toolbar's ceiling silently raise the status strip's too.
+    // TP-CHROME-73: the section budget is per edge.
+    #[test]
+    fn each_edge_carries_its_own_budget() {
+        let config = ShellBarsConfig {
+            top: bar_with_budget(12, 12),
+            bottom: bar_with_sections((0..9).map(|_| plain_section("fill")).collect()),
+            ..Default::default()
+        };
+
+        let reported = shell_bar_config_problems(&config)
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            reported.len(),
+            1,
+            "only the bottom bar is over its own budget: {reported:?}"
+        );
+        assert!(
+            reported[0].contains("bottom"),
+            "the raised top budget must not leak downward: {reported:?}"
+        );
+        assert_eq!(
+            addressable_sections(&config, RegionId::TopBar),
+            12,
+            "the top bar keeps all twelve"
+        );
+    }
+
     // TC-67-1/TC-67-4 · the presentation the person wrote survives the
     // derivation, and its absence stays absent. The second half is the
     // regression gate for every config file written before this field existed:
@@ -2525,6 +2754,7 @@ mod tests {
             color: String::new(),
             gradient: Vec::new(),
             sections: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -2767,6 +2997,7 @@ mod tests {
             color: String::new(),
             gradient: stops.iter().map(|s| (*s).to_string()).collect(),
             sections: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -3089,10 +3320,19 @@ mod tests {
             section_config("nonsense"),
             fixed_section(6),
         ];
-        assert!(sections_from_config(&configs, "top").is_empty());
+        let bar = |sections: Vec<ShellBarSectionConfig>| ShellBarConfig {
+            enabled: true,
+            size: 1,
+            border: false,
+            color: String::new(),
+            gradient: Vec::new(),
+            sections,
+            ..Default::default()
+        };
+        assert!(sections_from_config(&bar(configs), "top").is_empty());
 
         let good = vec![fixed_section(4), fixed_section(6)];
-        assert_eq!(sections_from_config(&good, "top").len(), 2);
+        assert_eq!(sections_from_config(&bar(good), "top").len(), 2);
     }
 
     // T22d · a section whose numbers cannot describe a size is refused
@@ -3148,6 +3388,7 @@ mod tests {
             color: String::new(),
             gradient: Vec::new(),
             sections: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -3270,6 +3511,7 @@ mod tests {
                 color: String::new(),
                 gradient: Vec::new(),
                 sections: Vec::new(),
+                ..Default::default()
             }))
             .is_empty();
             let drawn = BarTrack::from_config(&bar, "top").enabled();

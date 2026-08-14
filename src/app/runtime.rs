@@ -911,6 +911,7 @@ mod tests {
                 color: String::new(),
                 gradient: Vec::new(),
                 sections: vec![section],
+                ..Default::default()
             },
             ..Default::default()
         }

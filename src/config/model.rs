@@ -800,6 +800,30 @@ pub struct ShellBarConfig {
     /// what a click on it does are answered elsewhere, so that adding either
     /// later does not have to reopen the division itself.
     pub sections: Vec<ShellBarSectionConfig>,
+    /// How many parts anything may put on this bar. Defaults to 8; anything
+    /// outside `1..=16` is refused rather than clamped.
+    ///
+    /// A budget rather than a description. Today it bounds what the person
+    /// typed, which they could bound by typing less — but once something other
+    /// than the person can place a section, this is the number that decides how
+    /// much of their bar a plugin may take. Writing it now means the store
+    /// lands against a limit that already exists.
+    ///
+    /// The default lives on the field, not on the struct: `#[serde(default)]`
+    /// above fills a missing field from its **type's** default, which for a
+    /// number is zero — and a bar allowed zero parts is a bar that silently
+    /// stopped dividing.
+    #[serde(default = "default_max_bar_sections")]
+    pub max_sections: u16,
+}
+
+/// The section budget a bar has when nobody says otherwise.
+///
+/// Eight, because that is what every bar written before this key existed was
+/// bounded by: the value is a promise that those files keep meaning what they
+/// meant, not a preference.
+pub(crate) const fn default_max_bar_sections() -> u16 {
+    8
 }
 
 impl ShellBarConfig {
@@ -811,6 +835,7 @@ impl ShellBarConfig {
             color: String::new(),
             gradient: Vec::new(),
             sections: Vec::new(),
+            max_sections: default_max_bar_sections(),
         }
     }
 
@@ -822,6 +847,7 @@ impl ShellBarConfig {
             color: String::new(),
             gradient: Vec::new(),
             sections: Vec::new(),
+            max_sections: default_max_bar_sections(),
         }
     }
 }

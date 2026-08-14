@@ -1319,6 +1319,12 @@
           "description": "Two or more colour stops to fade the bottom bar's border between, along its long axis. Stops accept the same palette tokens and literals as `color`. Both ends must carry channel values, so a named terminal colour falls back to `color`."
         },
         {
+          "key": "shell.bars.bottom.max_sections",
+          "type": "integer",
+          "default": "8",
+          "description": "How many parts anything may put on this bar. Accepted from 1 to 16; anything outside that range is refused rather than clamped, so the file never disagrees with the build."
+        },
+        {
           "key": "shell.bars.bottom.size",
           "type": "integer",
           "default": "3",
@@ -1347,6 +1353,12 @@
           "type": "array",
           "default": "[]",
           "description": "Two or more colour stops to fade the left bar's border between, along its long axis. Stops accept the same palette tokens and literals as `color`. Both ends must carry channel values, so a named terminal colour falls back to `color`."
+        },
+        {
+          "key": "shell.bars.left.max_sections",
+          "type": "integer",
+          "default": "8",
+          "description": "How many parts anything may put on this bar. Accepted from 1 to 16; anything outside that range is refused rather than clamped, so the file never disagrees with the build."
         },
         {
           "key": "shell.bars.left.size",
@@ -1379,6 +1391,12 @@
           "description": "Two or more colour stops to fade the right bar's border between, along its long axis. Stops accept the same palette tokens and literals as `color`. Both ends must carry channel values, so a named terminal colour falls back to `color`."
         },
         {
+          "key": "shell.bars.right.max_sections",
+          "type": "integer",
+          "default": "8",
+          "description": "How many parts anything may put on this bar. Accepted from 1 to 16; anything outside that range is refused rather than clamped, so the file never disagrees with the build."
+        },
+        {
           "key": "shell.bars.right.size",
           "type": "integer",
           "default": "12",
@@ -1407,6 +1425,12 @@
           "type": "array",
           "default": "[]",
           "description": "Two or more colour stops to fade the top bar's border between, along its long axis. Stops accept the same palette tokens and literals as `color`. Both ends must carry channel values, so a named terminal colour falls back to `color`."
+        },
+        {
+          "key": "shell.bars.top.max_sections",
+          "type": "integer",
+          "default": "8",
+          "description": "How many parts anything may put on this bar. Accepted from 1 to 16; anything outside that range is refused rather than clamped, so the file never disagrees with the build."
         },
         {
           "key": "shell.bars.top.size",

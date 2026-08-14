@@ -1374,6 +1374,7 @@ mod tests {
                 color: String::new(),
                 gradient: Vec::new(),
                 sections: vec![first, second],
+                ..Default::default()
             },
             ..Default::default()
         };
@@ -1464,6 +1465,7 @@ mod tests {
                 color: "mauve".to_string(),
                 gradient: Vec::new(),
                 sections: vec![section],
+                ..Default::default()
             },
             ..Default::default()
         };
@@ -1544,6 +1546,7 @@ mod tests {
                 color: String::new(),
                 gradient: Vec::new(),
                 sections: vec![section],
+                ..Default::default()
             },
             ..Default::default()
         };
@@ -1615,6 +1618,7 @@ mod tests {
                 color: String::new(),
                 gradient: Vec::new(),
                 sections: vec![section],
+                ..Default::default()
             },
             ..Default::default()
         }
@@ -1777,6 +1781,7 @@ mod tests {
                 color: String::new(),
                 gradient: Vec::new(),
                 sections: vec![section],
+                ..Default::default()
             },
             ..Default::default()
         };
@@ -1927,6 +1932,7 @@ mod tests {
                 color: String::new(),
                 gradient: Vec::new(),
                 sections: Vec::new(),
+                ..Default::default()
             },
             top: crate::config::ShellBarConfig {
                 enabled: true,
@@ -1935,6 +1941,7 @@ mod tests {
                 color: String::new(),
                 gradient: Vec::new(),
                 sections: Vec::new(),
+                ..Default::default()
             },
             ..Default::default()
         });
@@ -1999,6 +2006,7 @@ mod tests {
                 color: "orange".to_string(),
                 gradient: Vec::new(),
                 sections: Vec::new(),
+                ..Default::default()
             },
             ..Default::default()
         };
