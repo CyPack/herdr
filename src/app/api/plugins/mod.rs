@@ -2441,9 +2441,13 @@ command = ["sh", "-c", "printf %s ${{HERDR_PANE_ID-unset}} > '{}'; sleep 1"]
     }
 
     /// An app with one workspace and a popup-capable plugin linked, ready to
-    /// open `example.popup`'s `board` entrypoint. The pane command outlives the
-    /// assertions on purpose: a process that exits first would let the popup be
-    /// reaped and the test would then measure an empty state instead of a label.
+    /// open `example.popup`'s `board` entrypoint.
+    ///
+    /// The pane command sleeps rather than exiting at once, but only briefly:
+    /// the label is set at spawn and a dead child only clears the popup once
+    /// `PaneDied` is pumped, which these tests never do. A longer sleep would
+    /// buy no safety and would leave live children inside a suite whose
+    /// server-spawning tests already sit close to their timeout.
     #[cfg(unix)]
     fn popup_test_app(slug: &str) -> (App, std::path::PathBuf) {
         let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -2476,7 +2480,7 @@ title = "Plugin Popup"
 placement = "popup"
 width = "80%"
 height = "40%"
-command = ["sh", "-c", "sleep 30"]
+command = ["sh", "-c", "sleep 1"]
 "#,
         );
         link_manifest(&mut app, &root);
