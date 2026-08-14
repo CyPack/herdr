@@ -63,8 +63,34 @@ fn cleanup_spawned_herdr(spawned: SpawnedHerdr, base: PathBuf) {
     cleanup_test_base(&base);
 }
 
+/// How much longer than it says every wait in this file is actually given.
+///
+/// The same reasoning as `tests/api_ping.rs`, and the same measurement behind
+/// it: these waits detect a failure, they do not assert a speed. A server that
+/// takes twelve seconds to put its socket down on a busy machine has done
+/// nothing wrong, and a budget that cannot say so turns "the machine is loaded"
+/// into "the code is broken" — which then refuses landings for everybody.
+///
+/// This file was the second one to prove it. Once `api_ping`'s waits could
+/// stretch, the very next landing gate failed here instead, on
+/// `auto_detect_writes_client_and_server_logs_to_separate_files`, at the same
+/// kind of fixed ceiling.
+///
+/// Slack costs a passing run nothing; it is only ever spent on the way to a
+/// failure that was going to happen anyway.
+const TIMEOUT_SLACK: u32 = 12;
+
+/// One wait's stated budget, as the budget it is actually enforced with.
+///
+/// Applied exactly once per wait. The three helpers below each own their whole
+/// deadline and none of them calls another, so there is no nesting to
+/// double-count.
+fn slack(timeout: Duration) -> Duration {
+    timeout * TIMEOUT_SLACK
+}
+
 fn wait_for_socket(path: &Path, timeout: Duration) {
-    let deadline = Instant::now() + timeout;
+    let deadline = Instant::now() + slack(timeout);
     while Instant::now() < deadline {
         if path.exists() && UnixStream::connect(path).is_ok() {
             return;
@@ -223,7 +249,7 @@ fn ping_socket(socket_path: &Path) -> String {
 }
 
 fn wait_for_log_contains(path: &Path, needle: &str, timeout: Duration) {
-    let deadline = Instant::now() + timeout;
+    let deadline = Instant::now() + slack(timeout);
     while Instant::now() < deadline {
         if let Ok(content) = fs::read_to_string(path) {
             if content.contains(needle) {
@@ -265,7 +291,7 @@ fn read_json_line(stream: UnixStream) -> Value {
 }
 
 fn wait_for_pid_exit(pid: u32, timeout: Duration) -> bool {
-    let deadline = Instant::now() + timeout;
+    let deadline = Instant::now() + slack(timeout);
     while Instant::now() < deadline {
         if !process_exists(pid) {
             return true;
