@@ -419,6 +419,29 @@ pub(crate) enum BarConfigProblem {
         edge: &'static str,
         index: usize,
     },
+    PluginActionWithoutId {
+        edge: &'static str,
+        index: usize,
+    },
+    PluginActionWithPopupField {
+        edge: &'static str,
+        index: usize,
+        /// Which popup-only field was left behind, so the complaint sends
+        /// somebody to the line that is actually wrong.
+        field: &'static str,
+    },
+    PluginActionWithSecondary {
+        edge: &'static str,
+        index: usize,
+    },
+    PopupActionWithPluginCommand {
+        edge: &'static str,
+        index: usize,
+    },
+    PluginCommandWithoutAction {
+        edge: &'static str,
+        index: usize,
+    },
     SectionBudgetOutOfRange {
         edge: &'static str,
         requested: usize,
@@ -518,10 +541,14 @@ impl std::fmt::Display for BarConfigProblem {
             // own section: the bar still divides, and the part it names simply
             // stops answering clicks. Saying which part keeps that from reading
             // as "clicks are broken".
+            // The accepted list is the discoverable half of a closed enum. Left
+            // out, somebody reads "expected popup" and concludes this build has
+            // no plugin support at all — a wrong conclusion drawn from a
+            // correct message.
             Self::UnknownSectionActionKind { edge, index, kind } => write!(
                 formatter,
                 "shell.bars.{edge}.sections[{index}].action.kind is \"{kind}\"; expected \
-                 \"popup\", so this section does nothing when clicked"
+                 \"popup\" or \"plugin\", so this section does nothing when clicked"
             ),
             Self::PopupActionWithoutCommand { edge, index } => write!(
                 formatter,
@@ -546,6 +573,33 @@ impl std::fmt::Display for BarConfigProblem {
                 formatter,
                 "shell.bars.{edge}.sections[{index}].action names a secondary presentation but \
                  no command to present, so a right press on this section does nothing"
+            ),
+            Self::PluginActionWithoutId { edge, index } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}].action invokes a plugin but names no \
+                 action.command to invoke, so this section does nothing when clicked"
+            ),
+            Self::PluginActionWithPopupField { edge, index, field } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}].action.{field} belongs to a popup, but \
+                 this action invokes a plugin and a plugin's own manifest decides what it \
+                 runs and where, so the setting is never used"
+            ),
+            Self::PluginActionWithSecondary { edge, index } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}].action.secondary asks to re-present a \
+                 plugin action, but a plugin's own manifest decides where it opens, so a \
+                 right press on this section cannot honour it"
+            ),
+            Self::PopupActionWithPluginCommand { edge, index } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}].action.command names a plugin action but \
+                 this action opens a popup, so the plugin action is never invoked"
+            ),
+            Self::PluginCommandWithoutAction { edge, index } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}].action.command names a plugin action but \
+                 the section opens nothing, so the plugin action is never invoked"
             ),
             Self::SectionBudgetOutOfRange {
                 edge,
@@ -888,6 +942,27 @@ pub(crate) enum SectionAction {
         /// presentations, is also what makes the gesture rule true rather than
         /// decorative: the right press chooses how, never what.
         secondary: Option<SecondaryPresentation>,
+    },
+    /// Invoke an action an installed plugin declared, by the id its manifest
+    /// gives it.
+    ///
+    /// Carries an id rather than a command line, and that is the whole security
+    /// argument for this arm: what runs is chosen by a manifest herdr has
+    /// already read and validated, not by a string in a bar's config. A section
+    /// that could name an argv here would turn "place this app's icon on the
+    /// bar" into "run this command line", which is a different thing to accept
+    /// from a plugin registry.
+    ///
+    /// Nothing is checked about the id here. This layer reads config and has
+    /// never seen the installed-plugin list (CLA4), and it should not: a plugin
+    /// can be installed after the config naming it was written, and refusing
+    /// the line now would forbid the icon of an app that has not been
+    /// downloaded yet — the exact opposite of what putting one there is for.
+    InvokePlugin {
+        /// Verbatim, as written. The resolver on the other end matches this
+        /// against every installed manifest and trims for itself; reshaping it
+        /// here could land on a different plugin's action than the file names.
+        action: String,
     },
 }
 
@@ -1257,8 +1332,21 @@ fn section_action(
         "" if !config.action.secondary.is_empty() => {
             Err(BarConfigProblem::SecondaryWithoutAction { edge, index })
         }
+        // The third shape of the same half-finished edit: the plugin action was
+        // removed and the id it named stayed behind. Silence here would leave a
+        // file that reads as though this section still launches something.
+        "" if !config.action.command.trim().is_empty() => {
+            Err(BarConfigProblem::PluginCommandWithoutAction { edge, index })
+        }
         "" => Ok(SectionAction::None),
         "popup" => {
+            // The mirror of the arm below. Without both directions, one of the
+            // two ways to leave a plugin id somewhere it can never be read
+            // stays silent — and a silent leftover is precisely the kind the
+            // next reader trusts.
+            if !config.action.command.trim().is_empty() {
+                return Err(BarConfigProblem::PopupActionWithPluginCommand { edge, index });
+            }
             // An empty argv, or one made only of blanks, would ask the runtime
             // to execute nothing. Disk is untrusted input (CL1): refuse it here
             // rather than discovering it at the moment somebody clicks.
@@ -1277,12 +1365,59 @@ fn section_action(
                 secondary: secondary_presentation(&config.action.secondary, edge, index)?,
             })
         }
+        "plugin" => {
+            // The leftover popup fields are asked about first. When both a
+            // leftover and a missing id are present the leftover is the better
+            // complaint: it names a line that exists and is wrong, while the
+            // missing id names a line that is not there to look at.
+            if let Some(field) = plugin_action_popup_field(config) {
+                return Err(BarConfigProblem::PluginActionWithPopupField { edge, index, field });
+            }
+            if !config.action.secondary.is_empty() {
+                return Err(BarConfigProblem::PluginActionWithSecondary { edge, index });
+            }
+            // Trimmed only to decide whether anything was named. The stored id
+            // stays verbatim: the resolver trims for itself, and reshaping a
+            // value here to make a check convenient is how a config comes to
+            // mean something other than what it says.
+            if config.action.command.trim().is_empty() {
+                return Err(BarConfigProblem::PluginActionWithoutId { edge, index });
+            }
+            Ok(SectionAction::InvokePlugin {
+                action: config.action.command.clone(),
+            })
+        }
         other => Err(BarConfigProblem::UnknownSectionActionKind {
             edge,
             index,
             kind: other.to_string(),
         }),
     }
+}
+
+/// The first popup-only field a plugin action left behind, if it left one.
+///
+/// A plugin action's command line and its geometry both come from the plugin's
+/// manifest, so every one of these is a setting nothing will ever read. Named
+/// rather than counted: a complaint that says "something does not belong" sends
+/// somebody to read the whole table, which is the cost this function exists to
+/// avoid.
+fn plugin_action_popup_field(config: &ShellBarSectionConfig) -> Option<&'static str> {
+    if !config
+        .action
+        .argv
+        .iter()
+        .all(|argument| argument.trim().is_empty())
+    {
+        return Some("argv");
+    }
+    if config.action.width.is_some() {
+        return Some("width");
+    }
+    if config.action.height.is_some() {
+        return Some("height");
+    }
+    None
 }
 
 /// One section's `action.secondary` as a presentation, or what is wrong with it.
@@ -2288,6 +2423,20 @@ mod tests {
         section
     }
 
+    fn plugin_section(command: &str) -> ShellBarSectionConfig {
+        let mut section = plain_section("fill");
+        section.action.kind = "plugin".to_string();
+        section.action.command = command.to_string();
+        section
+    }
+
+    fn plugin_action(actions: &ShellBarChrome, region: RegionId, index: u8) -> Option<String> {
+        match actions.action_for(region, index) {
+            Some(SectionAction::InvokePlugin { action }) => Some(action.clone()),
+            _ => None,
+        }
+    }
+
     /// How many sections of this bar can actually be addressed by index.
     ///
     /// Counted through the public accessor rather than a length field, because
@@ -2474,6 +2623,281 @@ mod tests {
         assert!(
             shell_bar_config_problems(&config).is_empty(),
             "neither spelling is a problem worth reporting"
+        );
+    }
+
+    // TC-66-1 · the id arrives exactly as it was written. Neither trimmed nor
+    // case-folded: `find_plugin_action` resolves this string against every
+    // installed manifest, so quietly reshaping it here could land on a
+    // different plugin's action than the one the file names. Verbatim is a
+    // behaviour, not an accident of the current implementation.
+    // TP-CHROME-75: a bar section can name a plugin action, and the id it was
+    // written with is the id that arrives.
+    #[test]
+    fn a_section_carries_the_plugin_action_id_it_was_written_with() {
+        let config = ShellBarsConfig {
+            top: bar_with_sections(vec![
+                plugin_section("jt.command-palette.open"),
+                plugin_section("toggle"),
+                section_with_action("fill", "popup", &["btop"]),
+            ]),
+            ..Default::default()
+        };
+
+        let actions = ShellBarChrome::from_config(&config);
+
+        assert_eq!(
+            plugin_action(&actions, RegionId::TopBar, 0).as_deref(),
+            Some("jt.command-palette.open"),
+            "the qualified spelling must survive derivation untouched"
+        );
+        assert_eq!(
+            plugin_action(&actions, RegionId::TopBar, 1).as_deref(),
+            Some("toggle"),
+            "the short spelling resolves downstream, where ambiguity is reported \
+             by name, so this layer has no business forbidding it"
+        );
+        assert_eq!(
+            popup_argv(&actions, RegionId::TopBar, 2).as_deref(),
+            Some(["btop".to_string()].as_slice()),
+            "a popup section beside a plugin section keeps its own answer"
+        );
+        assert!(
+            shell_bar_config_problems(&config).is_empty(),
+            "neither spelling is a problem worth reporting"
+        );
+    }
+
+    // TC-66-2 / TC-66-3 · an action that names nothing to invoke can never do
+    // anything, and an icon that dies silently under the finger is the worst
+    // outcome this surface has. Whitespace counts as nothing for the same
+    // reason the popup arm already refuses an all-blank argv: disk is untrusted
+    // input (CL1) and the cheapest place to say so is while reading the file.
+    // TP-CHROME-76: a plugin action that names no action id is refused by name.
+    #[test]
+    fn a_plugin_action_without_an_id_is_refused() {
+        for spelling in ["", "   ", "\t"] {
+            let config = ShellBarsConfig {
+                top: bar_with_sections(vec![
+                    plugin_section(spelling),
+                    section_with_action("fill", "popup", &["htop"]),
+                ]),
+                ..Default::default()
+            };
+
+            let reported = shell_bar_config_problems(&config)
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>();
+
+            assert_eq!(
+                reported.len(),
+                1,
+                "exactly one complaint, naming the field that is wrong: {reported:?}"
+            );
+            assert!(
+                reported[0].contains("action.command") && reported[0].contains("sections[0]"),
+                "the message must name the field and the index: {reported:?}"
+            );
+
+            let actions = ShellBarChrome::from_config(&config);
+            assert_eq!(
+                actions.action_for(RegionId::TopBar, 0),
+                Some(&SectionAction::None),
+                "the refused section stops answering rather than answering wrongly"
+            );
+            assert_eq!(
+                popup_argv(&actions, RegionId::TopBar, 1).as_deref(),
+                Some(["htop".to_string()].as_slice()),
+                "its neighbour keeps both its index and its command"
+            );
+        }
+    }
+
+    // TC-66-4 / TC-66-5 · a field that can never be read is a lie the next
+    // person believes. This is the same shape `PopupSizeWithoutPopup` already
+    // names, one action kind along: a popup command or a popup size left behind
+    // by a half-finished edit. The message carries WHICH field, because a
+    // complaint that names the wrong line sends somebody to fix the wrong line.
+    // TP-CHROME-77: a plugin action carrying popup-only fields is refused, and
+    // the refusal names the field that does not belong.
+    #[test]
+    fn a_plugin_action_carrying_popup_only_fields_is_refused_by_field() {
+        // One leftover popup field, written onto a section that is about to be
+        // refused for carrying it. Named rather than spelled inline because
+        // clippy counts the tuple-of-function-pointer as a complex type, and it
+        // is right that the reader should meet a name instead.
+        type LeaveBehind = fn(&mut ShellBarSectionConfig);
+
+        let cases: [(&str, LeaveBehind); 3] = [
+            ("action.argv", |section| {
+                section.action.argv = vec!["btop".to_string()];
+            }),
+            ("action.width", |section| {
+                section.action.width =
+                    Some(crate::popup_size::PopupSize::parse_cli("80%").expect("width fixture"));
+            }),
+            ("action.height", |section| {
+                section.action.height =
+                    Some(crate::popup_size::PopupSize::parse_cli("60%").expect("height fixture"));
+            }),
+        ];
+
+        for (field, apply) in cases {
+            let mut section = plugin_section("jt.command-palette.open");
+            apply(&mut section);
+            let config = ShellBarsConfig {
+                top: bar_with_sections(vec![section]),
+                ..Default::default()
+            };
+
+            let reported = shell_bar_config_problems(&config)
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>();
+
+            assert_eq!(
+                reported.len(),
+                1,
+                "one field is wrong, so one complaint: {reported:?}"
+            );
+            assert!(
+                reported[0].contains(field) && reported[0].contains("sections[0]"),
+                "the message must name {field} specifically: {reported:?}"
+            );
+        }
+    }
+
+    // TC-66-6 · the bar does not open what a plugin action opens — the
+    // manifest's own pane placement does. Offering to re-present it in a tab is
+    // a promise this surface cannot keep, and a promise nobody can keep is
+    // worse than a missing feature: the person presses, nothing happens, and
+    // the gesture looks broken rather than unimplemented.
+    // TP-CHROME-78: a plugin action asking for a second presentation is refused.
+    #[test]
+    fn a_plugin_action_that_asks_for_a_second_presentation_is_refused() {
+        let mut section = plugin_section("jt.command-palette.open");
+        section.action.secondary = "tab".to_string();
+        let config = ShellBarsConfig {
+            top: bar_with_sections(vec![section]),
+            ..Default::default()
+        };
+
+        let reported = shell_bar_config_problems(&config)
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert_eq!(reported.len(), 1, "one complaint: {reported:?}");
+        assert!(
+            reported[0].contains("action.secondary") && reported[0].contains("sections[0]"),
+            "the message must name the field that cannot be honoured: {reported:?}"
+        );
+    }
+
+    // TC-66-7 / TC-66-8 · the two mirrors of the same half-finished edit: a
+    // plugin command left on a popup action, and a plugin command left with no
+    // action at all. Without both directions one of them stays silent, and a
+    // silent leftover is exactly what the reader trusts.
+    // TP-CHROME-79: a plugin command on an action that is not a plugin action
+    // is refused, in both directions.
+    #[test]
+    fn a_plugin_command_on_the_wrong_action_is_refused_in_both_directions() {
+        let mut on_popup = section_with_action("fill", "popup", &["btop"]);
+        on_popup.action.command = "jt.command-palette.open".to_string();
+
+        let mut on_nothing = plain_section("fill");
+        on_nothing.action.command = "jt.command-palette.open".to_string();
+
+        for (label, section) in [("popup", on_popup), ("no action", on_nothing)] {
+            let config = ShellBarsConfig {
+                top: bar_with_sections(vec![section]),
+                ..Default::default()
+            };
+
+            let reported = shell_bar_config_problems(&config)
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>();
+
+            assert_eq!(
+                reported.len(),
+                1,
+                "{label}: one leftover field, one complaint: {reported:?}"
+            );
+            assert!(
+                reported[0].contains("action.command") && reported[0].contains("sections[0]"),
+                "{label}: the message must name the leftover field: {reported:?}"
+            );
+        }
+    }
+
+    // TC-66-9 · the blast radius of a refused ACTION is one section, while a
+    // refused SIZING costs the whole division — measured at `sections_from_config`
+    // (all-or-nothing, so a dropped section cannot renumber its neighbours) and
+    // at `bar_section_chrome` (a refused action becomes `None`). This is not
+    // free: one `?` moved a line up and the whole bar dies quietly, with every
+    // other test still green.
+    // TP-CHROME-80: a refused plugin action leaves the division and its
+    // neighbours intact.
+    #[test]
+    fn a_refused_plugin_action_costs_only_its_own_section() {
+        let config = ShellBarsConfig {
+            top: bar_with_sections(vec![
+                plugin_section("jt.command-palette.open"),
+                plugin_section(""),
+                section_with_action("fill", "popup", &["htop"]),
+            ]),
+            ..Default::default()
+        };
+
+        let actions = ShellBarChrome::from_config(&config);
+
+        assert_eq!(
+            addressable_sections(&config, RegionId::TopBar),
+            3,
+            "the bar still divides — a refused action is not a refused division"
+        );
+        assert_eq!(
+            plugin_action(&actions, RegionId::TopBar, 0).as_deref(),
+            Some("jt.command-palette.open"),
+            "the section before the bad one keeps its command"
+        );
+        assert_eq!(
+            actions.action_for(RegionId::TopBar, 1),
+            Some(&SectionAction::None),
+            "only the refused section goes inert"
+        );
+        assert_eq!(
+            popup_argv(&actions, RegionId::TopBar, 2).as_deref(),
+            Some(["htop".to_string()].as_slice()),
+            "the section after it keeps its index, which is what everything \
+             downstream addresses it by"
+        );
+    }
+
+    // TC-66-10 · an unreadable action kind must say what this build accepts.
+    // The list is the discoverable half of a closed enum: without it the person
+    // reads "expected popup" and concludes plugins are not supported at all.
+    // TP-CHROME-81: the unknown-action-kind refusal names every kind this build
+    // accepts.
+    #[test]
+    fn an_unknown_action_kind_names_the_kinds_this_build_accepts() {
+        let config = ShellBarsConfig {
+            top: bar_with_sections(vec![section_with_action("fill", "plug-in", &["btop"])]),
+            ..Default::default()
+        };
+
+        let reported = shell_bar_config_problems(&config)
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert_eq!(reported.len(), 1, "one complaint: {reported:?}");
+        assert!(
+            reported[0].contains("\"popup\"") && reported[0].contains("\"plugin\""),
+            "the refusal must list both kinds, or the reader concludes the one \
+             it omits does not exist: {reported:?}"
         );
     }
 

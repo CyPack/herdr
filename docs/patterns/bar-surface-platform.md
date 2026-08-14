@@ -29,7 +29,7 @@ ownership. What is missing is the **bridge** from a plugin to a bar section.
 | bar section opens a popup on left click | **exists** | `SectionAction::OpenPopup` (`5771dfc6`, `f8df7485`) |
 | bar section answers a right press | **exists** | `SectionGesture::Secondary`, `action.secondary = "tab"` (`b4d37959`) |
 | open a command in a new tab of the current workspace | **exists** | `App::open_argv_in_new_tab` |
-| **bar section runs a plugin action** | **MISSING** | no `SectionAction::Plugin` |
+| bar section runs a plugin action | **exists** | `SectionAction::InvokePlugin`, `action = { kind = "plugin", command = "…" }` |
 | **icon by name rather than raw codepoint** | **MISSING** | config takes a literal grapheme |
 | more than 8 sections in one bar | **exists** | `shell.bars.<edge>.max_sections`, default 8, up to 16 (`267c8496`) |
 
@@ -105,7 +105,36 @@ that claim is false, in exactly the way a fabricated `0%` would be.
 | *(absent)* | inert — consumes the press so it cannot leak to the surface behind | left |
 | `popup` | spawns `argv` in a floating pane, at `width`/`height` | left |
 | `secondary = "tab"` | opens **the same `argv`** in a new tab of the current workspace, full size | right |
-| `plugin` | **not built** — invoke a plugin action by id | left |
+| `plugin` | invokes `command = "<plugin-id>.<action-id>"` in-process, through the same resolver a keybind uses | left |
+
+A `plugin` action answers **one** gesture. It carries no `argv`, no `width`, no `height` and no
+`secondary`, and each of those is refused by name rather than ignored: a plugin's command line and
+where it appears both come from its own manifest, so every one of those fields would be a setting
+nothing ever reads. The right press stays inert — the bar cannot re-present something it does not
+open.
+
+The spelling is not new. It is the one a keybind already uses, deliberately reused whole:
+
+```toml
+# a key, which already worked
+[[keys.command]]
+key = "prefix+p"
+type = "plugin_action"
+command = "jt.command-palette.open"
+
+# a bar section, which now works the same way
+[[shell.bars.top.sections]]
+kind   = "fixed"
+cells  = 3
+widget = { kind = "icon", glyph = "" }
+action = { kind = "plugin", command = "jt.command-palette.open" }
+```
+
+Nothing checks that the plugin exists while the config is read, and that is deliberate: a plugin
+can be installed after the config naming it was written, and refusing the line at read time would
+forbid the icon of an app somebody has not downloaded yet. An id that resolves to nothing reports
+itself as a toast when pressed, with the resolver's own reason — "not found" and "disabled" stay
+different messages, because they need different answers from the person reading them.
 | `menu` | **not built** — a context menu of the section's own actions | right, once there is more than one |
 
 **The gesture rule that must hold:** left is *the* action, right is *choice about* the action.

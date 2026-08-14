@@ -103,6 +103,20 @@ pub(crate) enum BarSectionClick {
     /// already there — dropping somebody's open work on a stray bar click is
     /// not undoable.
     PopupAlreadyOpen,
+    /// Invoke an action an installed plugin declared.
+    ///
+    /// No `PopupAlreadyOpen` sibling, and that omission is a decision rather
+    /// than an oversight. The popup slot holds exactly one pane, so a second
+    /// request has to be refused or somebody's open work is dropped. A plugin
+    /// action is not that slot: what it opens — an overlay, a split, a
+    /// notification, nothing at all — is the plugin manifest's choice, and
+    /// guarding it here would refuse something harmless.
+    InvokePlugin {
+        /// The action id, still exactly as the config spelled it. Resolution
+        /// against the installed manifests happens where the plugin registry
+        /// lives; this layer only decides that it was asked for.
+        action: String,
+    },
 }
 
 /// Which of a section's two answers a press is asking for.
@@ -170,6 +184,16 @@ impl AppState {
                     }
                     None => BarSectionClick::Inert,
                 },
+            },
+            Some(crate::ui::shell::SectionAction::InvokePlugin { action }) => match gesture {
+                SectionGesture::Primary => BarSectionClick::InvokePlugin {
+                    action: action.clone(),
+                },
+                // The bar does not open what a plugin action opens, so it has
+                // no second presentation to offer. Consumed all the same, for
+                // the same reason as the arm above: chrome that let an event
+                // through would act on the surface behind it.
+                SectionGesture::Secondary => BarSectionClick::Inert,
             },
         }
     }
@@ -1016,6 +1040,13 @@ mod tests {
         section
     }
 
+    fn plugin_section(cells: u16, command: &str) -> crate::config::ShellBarSectionConfig {
+        let mut section = inert_section(cells);
+        section.action.kind = "plugin".to_string();
+        section.action.command = command.to_string();
+        section
+    }
+
     // TC-B1, end to end: the size travels config -> derivation -> hit -> intent
     // without any layer in between quietly dropping it. Each of those hops was
     // a place it could have been lost, and losing it looks exactly like the
@@ -1255,6 +1286,112 @@ mod tests {
                 argv: vec!["btop".to_string()],
             },
             "a tab costs a tab; refusing one would refuse something harmless"
+        );
+    }
+
+    // TC-66-11/TC-66-12 · a plugin section answers the first gesture and
+    // consumes the second. Consumed rather than passed through, for the same
+    // reason every other bar press is: an event falling through chrome acts on
+    // the surface underneath, which is demonstrably not the one being pointed
+    // at (CL12). And Inert rather than a tab, because the bar does not open
+    // what a plugin action opens — the manifest's own pane placement does, so
+    // offering to re-present it would be a promise this layer cannot keep.
+    // TP-CHROME-82: a primary press on a plugin section asks to invoke it, and
+    // a secondary press is consumed without inventing a second presentation.
+    #[test]
+    fn a_plugin_section_answers_the_first_gesture_and_consumes_the_second() {
+        let (state, _) =
+            state_with_divided_top_bar(vec![plugin_section(10, "jt.command-palette.open")]);
+        let inside = Position::new(4, 0);
+
+        assert_eq!(
+            state.bar_section_click_at(inside, SectionGesture::Primary),
+            BarSectionClick::InvokePlugin {
+                action: "jt.command-palette.open".to_string(),
+            },
+            "the id must survive the hop from chrome to intent, whole"
+        );
+        assert_eq!(
+            state.bar_section_click_at(inside, SectionGesture::Secondary),
+            BarSectionClick::Inert,
+            "inert, not Elsewhere: the bar still owns the event it will not act on"
+        );
+    }
+
+    // TC-66-13 · the popup guard must NOT be copied here by symmetry with the
+    // arm above it. The popup slot holds exactly one pane and a second press
+    // would drop somebody's open work; a plugin action is not that slot — it
+    // opens its own pane, or a split, or nothing at all. Refusing something
+    // harmless builds a wall the person cannot see the reason for.
+    // TP-CHROME-83: an open popup does not block invoking a plugin action.
+    #[test]
+    fn an_open_popup_does_not_block_invoking_a_plugin() {
+        let (mut state, _) = state_with_divided_top_bar(vec![
+            plugin_section(10, "jt.command-palette.open"),
+            popup_section(10, &["btop"]),
+        ]);
+        state.popup_pane = Some(crate::app::state::PopupPaneState {
+            pane_id: crate::layout::PaneId::alloc(),
+            terminal_id: crate::terminal::TerminalId::alloc(),
+            width: None,
+            height: None,
+        });
+
+        assert_eq!(
+            state.bar_section_click_at(Position::new(14, 0), SectionGesture::Primary),
+            BarSectionClick::PopupAlreadyOpen,
+            "control: the popup slot really is occupied, so the next assertion \
+             is about the plugin arm rather than about an empty slot"
+        );
+        assert_eq!(
+            state.bar_section_click_at(Position::new(4, 0), SectionGesture::Primary),
+            BarSectionClick::InvokePlugin {
+                action: "jt.command-palette.open".to_string(),
+            },
+            "a plugin action is not the popup slot, so the slot cannot refuse it"
+        );
+    }
+
+    // TC-66-14 · two action kinds share one index-addressed table. If the
+    // chrome list and the section list ever drift apart, a press lands on the
+    // right rectangle and runs the wrong neighbour's command — which looks like
+    // a working button doing the wrong thing, the hardest kind of bug to
+    // believe. Asserting both directions is what makes the alignment a
+    // behaviour rather than a coincidence of ordering.
+    // TP-CHROME-84: a plugin section and a popup section on one bar each keep
+    // their own answer at their own index.
+    #[test]
+    fn a_plugin_section_and_a_popup_section_keep_their_own_answers() {
+        let (state, _) = state_with_divided_top_bar(vec![
+            popup_section(10, &["htop"]),
+            plugin_section(10, "persiyanov.reviewr.toggle"),
+            popup_section(10, &["btop"]),
+        ]);
+
+        assert_eq!(
+            state.bar_section_click_at(Position::new(4, 0), SectionGesture::Primary),
+            BarSectionClick::OpenPopup {
+                argv: vec!["htop".to_string()],
+                width: None,
+                height: None,
+            },
+            "index 0 keeps its own command"
+        );
+        assert_eq!(
+            state.bar_section_click_at(Position::new(14, 0), SectionGesture::Primary),
+            BarSectionClick::InvokePlugin {
+                action: "persiyanov.reviewr.toggle".to_string(),
+            },
+            "index 1 answers with the plugin action written at index 1"
+        );
+        assert_eq!(
+            state.bar_section_click_at(Position::new(24, 0), SectionGesture::Primary),
+            BarSectionClick::OpenPopup {
+                argv: vec!["btop".to_string()],
+                width: None,
+                height: None,
+            },
+            "index 2 is not shifted by the plugin section before it"
         );
     }
 
