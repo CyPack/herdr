@@ -71,7 +71,7 @@ use self::{
     },
     mouse::MouseAction,
     settings::SettingsAction,
-    shell::{BarSectionClick, ShellInputOwner},
+    shell::{BarSectionClick, SectionGesture, ShellInputOwner},
 };
 use super::state::{AppState, Mode};
 use super::App;
@@ -629,13 +629,26 @@ impl App {
             return false;
         }
 
-        let click = self
-            .state
-            .bar_section_click_at(ratatui::layout::Position::new(mouse.column, mouse.row));
+        // Left asks for the action; right asks which presentation it opens in.
+        // Anything else over a bar is consumed without being acted on, so the
+        // gesture is an Option rather than an early return: the bar still has
+        // to answer "is this over me at all" for events it will not run.
+        let gesture = match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => Some(SectionGesture::Primary),
+            MouseEventKind::Down(MouseButton::Right) => Some(SectionGesture::Secondary),
+            _ => None,
+        };
+        // Whether a position is over a section at all is positional, and the
+        // same for both gestures — so probing with either answers it. Pinned by
+        // a control test rather than left as a reading of this comment.
+        let click = self.state.bar_section_click_at(
+            ratatui::layout::Position::new(mouse.column, mouse.row),
+            gesture.unwrap_or(SectionGesture::Primary),
+        );
         if matches!(click, BarSectionClick::Elsewhere) {
             return false;
         }
-        if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+        if gesture.is_none() {
             return true;
         }
         // A modified press is how the person reaches the terminal underneath
@@ -647,6 +660,14 @@ impl App {
 
         match click {
             BarSectionClick::Elsewhere | BarSectionClick::Inert => {}
+            BarSectionClick::OpenTab { argv } => {
+                if let Err(err) = self.open_argv_in_new_tab(&argv) {
+                    self.warn_about_bar_section_action(
+                        "bar section action failed",
+                        err.to_string(),
+                    );
+                }
+            }
             BarSectionClick::PopupAlreadyOpen => {
                 self.warn_about_bar_section_action(
                     "a popup is already open",
@@ -1635,6 +1656,234 @@ mod tests {
         for (_, runtime) in app.terminal_runtimes.drain() {
             runtime.shutdown();
         }
+    }
+
+    /// The same shape as `app_with_a_clickable_top_bar_section`, with a real
+    /// workspace under it and a section that answers both gestures.
+    ///
+    /// Spawns for real, following `a_sized_section_opens_its_popup_at_the_size_it_asked_for`:
+    /// the tab is created inside the handler, so a fake runtime installed
+    /// afterwards would skip the step under test. Every runtime it starts is
+    /// shut down by the caller before the test returns (C76's rule, in unit form).
+    #[cfg(unix)]
+    fn app_with_a_two_gesture_section(argv: &[&str]) -> App {
+        let mut section = crate::config::ShellBarSectionConfig {
+            kind: "fixed".to_string(),
+            cells: 10,
+            ..Default::default()
+        };
+        section.action.kind = "popup".to_string();
+        section.action.argv = argv.iter().map(|argument| argument.to_string()).collect();
+        section.action.secondary = "tab".to_string();
+
+        let bars = crate::config::ShellBarsConfig {
+            top: crate::config::ShellBarConfig {
+                enabled: true,
+                size: 1,
+                border: false,
+                color: String::new(),
+                gradient: Vec::new(),
+                sections: vec![section],
+            },
+            ..Default::default()
+        };
+
+        let mut app = test_app();
+        app.state.default_shell = "/bin/sh".into();
+        let (workspace, terminal, runtime) = crate::workspace::Workspace::new(
+            std::env::current_dir().unwrap_or_else(|_| "/".into()),
+            24,
+            80,
+            app.state.pane_scrollback_limit_bytes,
+            app.state.host_terminal_theme,
+            crate::pane::PaneShellConfig::new(&app.state.default_shell, app.state.shell_mode),
+            app.event_tx.clone(),
+            app.render_notify.clone(),
+            app.render_dirty.clone(),
+        )
+        .expect("test workspace spawns");
+        app.terminal_runtimes.insert(terminal.id.clone(), runtime);
+        app.state.terminals.insert(terminal.id.clone(), terminal);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+
+        app.state.shell_presentation = crate::ui::shell::ShellPresentationState::from_restored(
+            26,
+            false,
+            None,
+            crate::ui::shell::ShellBars::from_config(&bars),
+        );
+        app.state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&bars);
+        crate::ui::compute_view(&mut app.state, ratatui::layout::Rect::new(0, 0, 106, 40));
+        app
+    }
+
+    // TC-67-12/TC-67-13/TC-67-15 · THE WHOLE CHAIN, in the product's own terms.
+    // A right press over the section creates a tab, registers its pane so every
+    // surface that draws tabs can find it, and goes there.
+    //
+    // This is the only test that would have caught the single line the layer
+    // started as: `handle_bar_section_mouse` accepted nothing but a left press,
+    // so the pure decision below it could have been perfect and the gesture
+    // would still have done nothing.
+    //
+    // `/bin/true` exits at once; the runtimes are shut down before returning.
+    // TP-CHROME-67: a right press over a two-gesture section opens its command
+    // in a new focused tab of the active workspace.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_right_press_over_a_section_opens_its_command_in_a_new_tab() {
+        let mut app = app_with_a_two_gesture_section(&["/bin/true"]);
+        let tabs_before = app.state.workspaces[0].tabs.len();
+        let terminals_before = app.state.terminals.len();
+
+        let consumed = app.handle_bar_section_mouse(bar_mouse(
+            MouseEventKind::Down(MouseButton::Right),
+            4,
+            0,
+            KeyModifiers::NONE,
+        ));
+
+        assert!(consumed, "the press belongs to the bar");
+        assert_eq!(
+            app.state.workspaces[0].tabs.len(),
+            tabs_before + 1,
+            "the secondary gesture must have created exactly one tab"
+        );
+        assert_eq!(
+            app.state.terminals.len(),
+            terminals_before + 1,
+            "an unregistered pane is one no surface can draw"
+        );
+        let new_tab = app.state.workspaces[0].tabs.len() - 1;
+        assert_eq!(
+            app.state.workspaces[0].active_tab_index(),
+            new_tab,
+            "the person asked to see this bigger; leaving them where they were \
+             would read as the gesture having done nothing"
+        );
+        assert_eq!(
+            app.state.mode,
+            Mode::Terminal,
+            "focus without the mode to use it is focus in name only"
+        );
+        assert!(
+            app.state.popup_pane.is_none(),
+            "the secondary gesture must not also have opened the primary one"
+        );
+
+        for (_, runtime) in app.terminal_runtimes.drain() {
+            runtime.shutdown();
+        }
+    }
+
+    // TC-67-16/TC-67-17 · the gesture is a plain press and nothing else. A
+    // modified press is how the person reaches what is under the chrome, and a
+    // release must not fire the action a second time.
+    //
+    // Both are consumed, and both must leave the workspace exactly as it was —
+    // asserted on the tab count rather than on a flag, because the failure this
+    // guards against is a tab that really did get created.
+    // TP-CHROME-68: only a plain right press opens the secondary presentation.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn only_a_plain_right_press_opens_the_second_presentation() {
+        let mut app = app_with_a_two_gesture_section(&["/bin/true"]);
+        let tabs_before = app.state.workspaces[0].tabs.len();
+
+        for (name, kind, modifiers) in [
+            (
+                "modified right press",
+                MouseEventKind::Down(MouseButton::Right),
+                KeyModifiers::SHIFT,
+            ),
+            (
+                "right release",
+                MouseEventKind::Up(MouseButton::Right),
+                KeyModifiers::NONE,
+            ),
+            (
+                "right drag",
+                MouseEventKind::Drag(MouseButton::Right),
+                KeyModifiers::NONE,
+            ),
+            ("wheel", MouseEventKind::ScrollDown, KeyModifiers::NONE),
+        ] {
+            let consumed = app.handle_bar_section_mouse(bar_mouse(kind, 4, 0, modifiers));
+            // A drag is the one gesture a bar deliberately does not claim: it
+            // began somewhere else and already has an owner.
+            if !matches!(kind, MouseEventKind::Drag(_)) {
+                assert!(
+                    consumed,
+                    "{name} over a section must be consumed by the bar"
+                );
+            }
+            assert_eq!(
+                app.state.workspaces[0].tabs.len(),
+                tabs_before,
+                "{name} must not be mistaken for the secondary gesture"
+            );
+        }
+
+        for (_, runtime) in app.terminal_runtimes.drain() {
+            runtime.shutdown();
+        }
+    }
+
+    // TC-67-14 · the failure is a message, never a crash and never a silence.
+    // Reached through the real refusal path: with no active workspace there is
+    // nothing for a tab to belong to, and this is reachable from a mouse click
+    // on a bar that is drawn before any workspace exists.
+    // TP-CHROME-69: a secondary gesture that cannot run says so and opens
+    // nothing.
+    #[test]
+    fn a_secondary_gesture_that_cannot_run_says_so_and_opens_nothing() {
+        let mut app = app_with_a_clickable_top_bar_section();
+        app.state.shell_bar_chrome = {
+            let mut section = crate::config::ShellBarSectionConfig {
+                kind: "fixed".to_string(),
+                cells: 10,
+                ..Default::default()
+            };
+            section.action.kind = "popup".to_string();
+            section.action.argv = vec!["btop".to_string()];
+            section.action.secondary = "tab".to_string();
+            crate::ui::shell::ShellBarChrome::from_config(&crate::config::ShellBarsConfig {
+                top: crate::config::ShellBarConfig {
+                    enabled: true,
+                    size: 1,
+                    border: false,
+                    color: String::new(),
+                    gradient: Vec::new(),
+                    sections: vec![section],
+                },
+                ..Default::default()
+            })
+        };
+        assert!(
+            app.state.active.is_none(),
+            "control: this fixture has no workspace for a tab to belong to"
+        );
+
+        let consumed = app.handle_bar_section_mouse(bar_mouse(
+            MouseEventKind::Down(MouseButton::Right),
+            4,
+            0,
+            KeyModifiers::NONE,
+        ));
+
+        assert!(consumed, "the press still belongs to the bar");
+        let toast = app
+            .state
+            .toast
+            .as_ref()
+            .expect("a refusal the person cannot see is a silent failure");
+        assert_eq!(toast.title, "bar section action failed");
+        assert!(
+            app.state.workspaces.is_empty(),
+            "nothing may have been created on the way to failing"
+        );
     }
 
     /// An app holding an open popup whose runtime writes into `rx`, with the

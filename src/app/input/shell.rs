@@ -86,12 +86,37 @@ pub(crate) enum BarSectionClick {
         width: Option<crate::popup_size::PopupSize>,
         height: Option<crate::popup_size::PopupSize>,
     },
+    /// Open the same command in a new tab of the current workspace.
+    ///
+    /// No size travels with it, unlike `OpenPopup`: a tab's root pane already
+    /// occupies the whole tab, so "full size" is a property of the shape rather
+    /// than a number somebody has to choose. A field that is always ignored is
+    /// the dead component CLA9 names.
+    ///
+    /// No "already open" sibling either. A popup has exactly one slot and
+    /// replacing it would drop somebody's open work; tabs are not scarce, and
+    /// refusing a second one would refuse something harmless.
+    OpenTab { argv: Vec<String> },
     /// Over a popup action while a popup is already open. Named rather than
     /// folded into `Inert` because the two deserve different answers: this one
     /// is worth saying out loud, and neither may close the popup that is
     /// already there — dropping somebody's open work on a stray bar click is
     /// not undoable.
     PopupAlreadyOpen,
+}
+
+/// Which of a section's two answers a press is asking for.
+///
+/// Named for what the gestures mean rather than for which physical button was
+/// pressed, and deliberately not `crossterm::MouseButton`: pure state has no
+/// business learning an input-transport type, and "left" is already a lie on a
+/// machine whose owner swapped the buttons.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SectionGesture {
+    /// The action itself.
+    Primary,
+    /// A choice *about* the action — today, which presentation it opens in.
+    Secondary,
 }
 
 impl AppState {
@@ -102,7 +127,13 @@ impl AppState {
     /// whatever section happens to sit there now (CL5).
     // TP-CHROME-41/42: only the live generation is authority, and a popup
     // already on screen is neither replaced nor closed.
-    pub(crate) fn bar_section_click_at(&self, position: Position) -> BarSectionClick {
+    // TP-CHROME-60: the two gestures resolve against the same hit, so a section
+    // can never answer one of them at a place it does not answer the other.
+    pub(crate) fn bar_section_click_at(
+        &self,
+        position: Position,
+        gesture: SectionGesture,
+    ) -> BarSectionClick {
         let Some((region, index)) = self
             .view
             .shell
@@ -116,17 +147,30 @@ impl AppState {
                 argv,
                 width,
                 height,
-            }) => {
-                if self.popup_pane.is_some() {
-                    BarSectionClick::PopupAlreadyOpen
-                } else {
-                    BarSectionClick::OpenPopup {
-                        argv: argv.clone(),
-                        width: *width,
-                        height: *height,
+                secondary,
+            }) => match gesture {
+                SectionGesture::Primary => {
+                    if self.popup_pane.is_some() {
+                        BarSectionClick::PopupAlreadyOpen
+                    } else {
+                        BarSectionClick::OpenPopup {
+                            argv: argv.clone(),
+                            width: *width,
+                            height: *height,
+                        }
                     }
                 }
-            }
+                // A section that was never given a second answer stays inert
+                // rather than falling through: the bar is still chrome, and an
+                // event that reached the surface behind would act on something
+                // the person was not pointing at (CL12).
+                SectionGesture::Secondary => match secondary {
+                    Some(crate::ui::shell::SecondaryPresentation::Tab) => {
+                        BarSectionClick::OpenTab { argv: argv.clone() }
+                    }
+                    None => BarSectionClick::Inert,
+                },
+            },
         }
     }
 
@@ -983,7 +1027,7 @@ mod tests {
         let (state, _) = state_with_divided_top_bar(vec![sized]);
 
         assert_eq!(
-            state.bar_section_click_at(Position::new(4, 0)),
+            state.bar_section_click_at(Position::new(4, 0), SectionGesture::Primary),
             BarSectionClick::OpenPopup {
                 argv: vec!["btop".to_string()],
                 width: Some(crate::popup_size::PopupSize::Percent(80)),
@@ -1001,6 +1045,152 @@ mod tests {
         }
     }
 
+    fn two_gesture_section(cells: u16, argv: &[&str]) -> crate::config::ShellBarSectionConfig {
+        let mut section = popup_section(cells, argv);
+        section.action.secondary = "tab".to_string();
+        section
+    }
+
+    // TC-67-6/TC-67-7 · one section, two answers, and neither steals the other.
+    // The argv is asserted on BOTH arms rather than only on the new one: a
+    // secondary press that opened an empty command would look like a tab that
+    // simply exited, which is indistinguishable from a program that finished.
+    // TP-CHROME-62: a section answers its primary and secondary gestures
+    // differently, from the same command.
+    #[test]
+    fn the_two_gestures_on_one_section_ask_for_different_presentations() {
+        let (state, _) = state_with_divided_top_bar(vec![two_gesture_section(10, &["btop", "-t"])]);
+        let inside = Position::new(4, 0);
+
+        assert_eq!(
+            state.bar_section_click_at(inside, SectionGesture::Primary),
+            BarSectionClick::OpenPopup {
+                argv: vec!["btop".to_string(), "-t".to_string()],
+                width: None,
+                height: None,
+            },
+            "the second answer must not take the first one's place"
+        );
+        assert_eq!(
+            state.bar_section_click_at(inside, SectionGesture::Secondary),
+            BarSectionClick::OpenTab {
+                argv: vec!["btop".to_string(), "-t".to_string()],
+            },
+            "the command must survive the hop to the second presentation, whole"
+        );
+    }
+
+    // TC-67-8 · a section that was never given a second answer consumes the
+    // press anyway. Falling through would run whatever is under the bar, which
+    // is the surface the person was demonstrably not pointing at.
+    // TP-CHROME-63: a secondary press on a one-answer section is consumed, not
+    // passed through.
+    #[test]
+    fn a_secondary_press_on_a_section_with_one_answer_is_consumed() {
+        let (state, _) = state_with_divided_top_bar(vec![popup_section(10, &["btop"])]);
+
+        assert_eq!(
+            state.bar_section_click_at(Position::new(4, 0), SectionGesture::Secondary),
+            BarSectionClick::Inert,
+            "inert, not Elsewhere: the bar still owns the event"
+        );
+    }
+
+    // TC-67-9/TC-67-10 · the guarantees the primary gesture already had must
+    // hold for the second one. Both were separately capable of regressing: a
+    // second code path is a second place to forget the generation gate, and a
+    // secondary press that ignored it would open a tab for whatever section
+    // happens to sit at those coordinates now.
+    // TP-CHROME-64: the secondary gesture resolves against the live generation
+    // only, and claims nothing outside a section.
+    #[test]
+    fn a_secondary_press_obeys_the_same_geometry_rules_as_the_first() {
+        let (mut state, _) = state_with_divided_top_bar(vec![two_gesture_section(10, &["btop"])]);
+        let inside = Position::new(4, 0);
+
+        assert_eq!(
+            state.bar_section_click_at(Position::new(60, 0), SectionGesture::Secondary),
+            BarSectionClick::Elsewhere,
+            "inside the bar but outside every section is not the section's"
+        );
+        assert_eq!(
+            state.bar_section_click_at(Position::new(60, 20), SectionGesture::Secondary),
+            BarSectionClick::Elsewhere,
+            "nowhere near the bar must not reach a bar action"
+        );
+
+        assert!(
+            matches!(
+                state.bar_section_click_at(inside, SectionGesture::Secondary),
+                BarSectionClick::OpenTab { .. }
+            ),
+            "control: the press must resolve against the live geometry"
+        );
+        state.view.shell.generation = state.view.shell.generation.wrapping_add(1);
+        assert_eq!(
+            state.bar_section_click_at(inside, SectionGesture::Secondary),
+            BarSectionClick::Elsewhere,
+            "coordinates from a layout that no longer exists must open nothing"
+        );
+    }
+
+    // TC-67-19 · the control the routing layer's comment leans on: whether a
+    // position is over a section at all is positional, so it cannot depend on
+    // which gesture asked. `handle_bar_section_mouse` probes with one gesture
+    // to answer that question for events it will not run, and this is what
+    // makes that sound rather than merely plausible.
+    // TP-CHROME-65: whether a press is over a section does not depend on the
+    // gesture.
+    #[test]
+    fn whether_a_press_is_over_a_section_does_not_depend_on_the_gesture() {
+        let (state, _) =
+            state_with_divided_top_bar(vec![two_gesture_section(10, &["btop"]), inert_section(10)]);
+
+        for position in [
+            Position::new(4, 0),
+            Position::new(14, 0),
+            Position::new(60, 0),
+            Position::new(60, 20),
+        ] {
+            let primary = state.bar_section_click_at(position, SectionGesture::Primary);
+            let secondary = state.bar_section_click_at(position, SectionGesture::Secondary);
+            assert_eq!(
+                matches!(primary, BarSectionClick::Elsewhere),
+                matches!(secondary, BarSectionClick::Elsewhere),
+                "the two gestures disagreed about whether {position:?} is a section \
+                 at all: {primary:?} vs {secondary:?}"
+            );
+        }
+    }
+
+    // TC-67-11 · a tab is not scarce the way the single popup slot is, so an
+    // open popup must not refuse one. Pinned so the guard is not added later by
+    // symmetry with the arm above it.
+    // TP-CHROME-66: an open popup does not block the secondary presentation.
+    #[test]
+    fn an_open_popup_does_not_block_opening_a_tab() {
+        let (mut state, _) = state_with_divided_top_bar(vec![two_gesture_section(10, &["btop"])]);
+        state.popup_pane = Some(crate::app::state::PopupPaneState {
+            pane_id: crate::layout::PaneId::alloc(),
+            terminal_id: crate::terminal::TerminalId::alloc(),
+            width: None,
+            height: None,
+        });
+
+        assert_eq!(
+            state.bar_section_click_at(Position::new(4, 0), SectionGesture::Primary),
+            BarSectionClick::PopupAlreadyOpen,
+            "control: the popup slot is still occupied"
+        );
+        assert_eq!(
+            state.bar_section_click_at(Position::new(4, 0), SectionGesture::Secondary),
+            BarSectionClick::OpenTab {
+                argv: vec!["btop".to_string()],
+            },
+            "a tab costs a tab; refusing one would refuse something harmless"
+        );
+    }
+
     // TA-1/TA-2/TA-5 · a press resolves to the action of the section it landed
     // in; a press that landed in no section resolves to nothing at all, so the
     // bar's own owner still gets it.
@@ -1012,7 +1202,7 @@ mod tests {
             state_with_divided_top_bar(vec![popup_section(10, &["btop"]), inert_section(10)]);
 
         assert_eq!(
-            state.bar_section_click_at(Position::new(4, 0)),
+            state.bar_section_click_at(Position::new(4, 0), SectionGesture::Primary),
             BarSectionClick::OpenPopup {
                 argv: vec!["btop".to_string()],
                 width: None,
@@ -1021,18 +1211,18 @@ mod tests {
             "a press in the first section must ask for that section's command"
         );
         assert_eq!(
-            state.bar_section_click_at(Position::new(14, 0)),
+            state.bar_section_click_at(Position::new(14, 0), SectionGesture::Primary),
             BarSectionClick::Inert,
             "a section with no action is consumed, never fallen through"
         );
         assert_eq!(
-            state.bar_section_click_at(Position::new(60, 0)),
+            state.bar_section_click_at(Position::new(60, 0), SectionGesture::Primary),
             BarSectionClick::Elsewhere,
             "inside the bar but outside every section belongs to the bar, not \
              to a section that is not there"
         );
         assert_eq!(
-            state.bar_section_click_at(Position::new(60, 20)),
+            state.bar_section_click_at(Position::new(60, 20), SectionGesture::Primary),
             BarSectionClick::Elsewhere,
             "a press nowhere near the bar must not reach a bar action"
         );
@@ -1048,7 +1238,7 @@ mod tests {
 
         assert!(
             matches!(
-                state.bar_section_click_at(inside),
+                state.bar_section_click_at(inside, SectionGesture::Primary),
                 BarSectionClick::OpenPopup { .. }
             ),
             "control: the press must resolve against the live geometry"
@@ -1057,7 +1247,7 @@ mod tests {
         state.view.shell.generation = state.view.shell.generation.wrapping_add(1);
 
         assert_eq!(
-            state.bar_section_click_at(inside),
+            state.bar_section_click_at(inside, SectionGesture::Primary),
             BarSectionClick::Elsewhere,
             "hit areas from an older generation must resolve to nothing"
         );
@@ -1077,7 +1267,7 @@ mod tests {
         state.popup_pane = Some(popup.clone());
 
         assert_eq!(
-            state.bar_section_click_at(Position::new(4, 0)),
+            state.bar_section_click_at(Position::new(4, 0), SectionGesture::Primary),
             BarSectionClick::PopupAlreadyOpen
         );
         assert_eq!(
@@ -1097,7 +1287,7 @@ mod tests {
         let (state, _) = state_with_divided_top_bar(vec![refused]);
 
         assert_eq!(
-            state.bar_section_click_at(Position::new(4, 0)),
+            state.bar_section_click_at(Position::new(4, 0), SectionGesture::Primary),
             BarSectionClick::Inert
         );
     }

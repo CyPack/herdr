@@ -398,6 +398,15 @@ pub(crate) enum BarConfigProblem {
         edge: &'static str,
         index: usize,
     },
+    UnknownSecondaryPresentation {
+        edge: &'static str,
+        index: usize,
+        presentation: String,
+    },
+    SecondaryWithoutAction {
+        edge: &'static str,
+        index: usize,
+    },
     UnknownSectionWidgetKind {
         edge: &'static str,
         index: usize,
@@ -506,6 +515,20 @@ impl std::fmt::Display for BarConfigProblem {
                 formatter,
                 "shell.bars.{edge}.sections[{index}].action sets a popup size but opens no \
                  popup, so the size is never used"
+            ),
+            Self::UnknownSecondaryPresentation {
+                edge,
+                index,
+                presentation,
+            } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}].action.secondary is \"{presentation}\"; \
+                 expected \"tab\", so a right press on this section does nothing"
+            ),
+            Self::SecondaryWithoutAction { edge, index } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}].action names a secondary presentation but \
+                 no command to present, so a right press on this section does nothing"
             ),
             Self::UnknownSectionWidgetKind { edge, index, kind } => write!(
                 formatter,
@@ -786,7 +809,32 @@ pub(crate) enum SectionAction {
         /// geometry, in a derivation).
         width: Option<PopupSize>,
         height: Option<PopupSize>,
+        /// How a secondary press shows the same command, or `None` when the
+        /// section answers only one gesture.
+        ///
+        /// Deliberately a presentation of the command above rather than a
+        /// command of its own. Two commands in one section could drift into
+        /// running different programs from the same picture, and the person
+        /// pressing has no way to know which one they got. One command, two
+        /// presentations, is also what makes the gesture rule true rather than
+        /// decorative: the right press chooses how, never what.
+        secondary: Option<SecondaryPresentation>,
     },
+}
+
+/// How a secondary press presents a section's command.
+///
+/// One variant today, and closed like its neighbours. A "split the current
+/// pane" presentation was considered and left out: it needs a target pane, and
+/// a bar has no idea which pane the person meant. The enum being closed is what
+/// makes adding one later a cost the compiler counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SecondaryPresentation {
+    /// A new tab of the current workspace, running the command at full size.
+    ///
+    /// Full size needs no zoom: a tab's root pane already occupies the whole
+    /// tab, so asking for one is asking for the other.
+    Tab,
 }
 
 /// What one section of a bar shows.
@@ -1130,6 +1178,13 @@ fn section_action(
         "" if config.action.width.is_some() || config.action.height.is_some() => {
             Err(BarConfigProblem::PopupSizeWithoutPopup { edge, index })
         }
+        // A presentation with nothing to present is the same half-finished
+        // shape, one gesture along: the command was removed and the second
+        // answer stayed behind. Refused here, where the line that is wrong can
+        // still be found, rather than discovered by somebody pressing.
+        "" if !config.action.secondary.is_empty() => {
+            Err(BarConfigProblem::SecondaryWithoutAction { edge, index })
+        }
         "" => Ok(SectionAction::None),
         "popup" => {
             // An empty argv, or one made only of blanks, would ask the runtime
@@ -1147,12 +1202,35 @@ fn section_action(
                 argv: config.action.argv.clone(),
                 width: config.action.width,
                 height: config.action.height,
+                secondary: secondary_presentation(&config.action.secondary, edge, index)?,
             })
         }
         other => Err(BarConfigProblem::UnknownSectionActionKind {
             edge,
             index,
             kind: other.to_string(),
+        }),
+    }
+}
+
+/// One section's `action.secondary` as a presentation, or what is wrong with it.
+///
+/// Matched exactly, with no trimming and no case folding. A near-miss like
+/// `"TAB"` is far more likely to be a typo than a considered spelling, and
+/// accepting it would mean the file no longer says what the build does — the
+/// same reason every other kind in this module is matched exactly.
+fn secondary_presentation(
+    raw: &str,
+    edge: &'static str,
+    index: usize,
+) -> Result<Option<SecondaryPresentation>, BarConfigProblem> {
+    match raw {
+        "" => Ok(None),
+        "tab" => Ok(Some(SecondaryPresentation::Tab)),
+        other => Err(BarConfigProblem::UnknownSecondaryPresentation {
+            edge,
+            index,
+            presentation: other.to_string(),
         }),
     }
 }
@@ -2113,6 +2191,138 @@ mod tests {
             ShellBarChrome::from_config(&small),
             ShellBarChrome::from_config(&large),
             "control: the actions themselves must notice, or the test above proves nothing"
+        );
+    }
+
+    fn popup_secondary(
+        actions: &ShellBarChrome,
+        region: RegionId,
+        index: u8,
+    ) -> Option<Option<SecondaryPresentation>> {
+        match actions.action_for(region, index) {
+            Some(SectionAction::OpenPopup { secondary, .. }) => Some(*secondary),
+            _ => None,
+        }
+    }
+
+    fn secondary_section(action_kind: &str, secondary: &str) -> ShellBarSectionConfig {
+        let mut section = section_with_action("fill", action_kind, &["btop"]);
+        if action_kind.is_empty() {
+            section.action.argv.clear();
+        }
+        section.action.secondary = secondary.to_string();
+        section
+    }
+
+    // TC-67-1/TC-67-4 · the presentation the person wrote survives the
+    // derivation, and its absence stays absent. The second half is the
+    // regression gate for every config file written before this field existed:
+    // those sections must keep meaning exactly what they meant.
+    // TP-CHROME-57: a section carries the secondary presentation it was written
+    // with, and carries none when none was written.
+    #[test]
+    fn a_section_carries_the_secondary_presentation_it_was_written_with() {
+        let config = ShellBarsConfig {
+            top: bar_with_sections(vec![
+                secondary_section("popup", "tab"),
+                section_with_action("fill", "popup", &["btop"]),
+            ]),
+            ..Default::default()
+        };
+
+        let actions = ShellBarChrome::from_config(&config);
+
+        assert_eq!(
+            popup_secondary(&actions, RegionId::TopBar, 0),
+            Some(Some(SecondaryPresentation::Tab)),
+            "the presentation must arrive as itself, not be re-derived downstream"
+        );
+        assert_eq!(
+            popup_secondary(&actions, RegionId::TopBar, 1),
+            Some(None),
+            "a section written before this field existed must still mean what it meant"
+        );
+        assert!(
+            shell_bar_config_problems(&config).is_empty(),
+            "neither spelling is a problem worth reporting"
+        );
+    }
+
+    // TC-67-2 · a near-miss is refused rather than quietly ignored. Disk is
+    // untrusted input (CL1), and a section that silently stopped answering the
+    // right press would look like the gesture is broken rather than like the
+    // file has a typo. Case sensitivity is a decision, so it is pinned here.
+    // TP-CHROME-58: a secondary presentation this build does not know is
+    // refused by name, and costs only its own section.
+    #[test]
+    fn a_secondary_presentation_this_build_does_not_know_is_refused() {
+        for spelling in ["TAB", " tab ", "window", "split"] {
+            let config = ShellBarsConfig {
+                top: bar_with_sections(vec![
+                    secondary_section("popup", spelling),
+                    section_with_action("fill", "popup", &["htop"]),
+                ]),
+                ..Default::default()
+            };
+
+            let reported = shell_bar_config_problems(&config)
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>();
+
+            assert_eq!(
+                reported.len(),
+                1,
+                "exactly one complaint, naming the field that is wrong: {reported:?}"
+            );
+            assert!(
+                reported[0].contains("action.secondary")
+                    && reported[0].contains(spelling)
+                    && reported[0].contains("sections[0]"),
+                "the message must name the field, the value and the index: {reported:?}"
+            );
+
+            // TC-67-5 · a refused action costs only its own section. Measured at
+            // source.rs `bar_section_chrome`: sizing and policy problems leave a
+            // bar undivided, a refused action does not.
+            let actions = ShellBarChrome::from_config(&config);
+            assert_eq!(
+                actions.action_for(RegionId::TopBar, 0),
+                Some(&SectionAction::None),
+                "the refused section stops answering, rather than answering wrongly"
+            );
+            assert_eq!(
+                popup_argv(&actions, RegionId::TopBar, 1).as_deref(),
+                Some(["htop".to_string()].as_slice()),
+                "its neighbour keeps both its index and its command"
+            );
+        }
+    }
+
+    // TC-67-3 · a presentation with nothing to present is the shape a
+    // half-finished edit leaves behind — the command was removed and the
+    // gesture stayed. The same reasoning, and the same treatment, as a popup
+    // size with no popup.
+    // TP-CHROME-59: a secondary presentation on a section with no command is
+    // refused where it can be fixed, not discovered at the moment of a press.
+    #[test]
+    fn a_secondary_presentation_without_a_command_is_refused() {
+        let config = ShellBarsConfig {
+            top: bar_with_sections(vec![secondary_section("", "tab")]),
+            ..Default::default()
+        };
+
+        let reported = shell_bar_config_problems(&config)
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert_eq!(reported.len(), 1, "one cause, one complaint: {reported:?}");
+        assert!(
+            reported[0].contains("secondary presentation")
+                && reported[0].contains("no command")
+                && reported[0].contains("sections[0]"),
+            "the message must say what is missing, not merely that something is: {reported:?}"
         );
     }
 

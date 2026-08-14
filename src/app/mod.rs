@@ -38,6 +38,7 @@ mod runtime_mutations;
 mod session;
 pub mod state;
 pub(crate) mod tab_branches;
+mod tabs;
 mod terminal_targets;
 mod terminal_titles;
 mod theme_sync;
