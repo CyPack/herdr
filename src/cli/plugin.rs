@@ -505,6 +505,7 @@ fn plugin_pane_open(args: &[String]) -> std::io::Result<i32> {
     let mut target_pane_id = None;
     let mut direction = None;
     let mut cwd = None;
+    let mut title = None;
     let mut focus = true;
     let mut env = HashMap::new();
 
@@ -577,6 +578,12 @@ fn plugin_pane_open(args: &[String]) -> std::io::Result<i32> {
                 };
                 cwd = Some(value);
             }
+            "--title" => {
+                let Some(value) = required_value(args, &mut index, "--title") else {
+                    return Ok(2);
+                };
+                title = Some(value);
+            }
             "--env" => {
                 let Some(value) = required_value(args, &mut index, "--env") else {
                     return Ok(2);
@@ -624,6 +631,7 @@ fn plugin_pane_open(args: &[String]) -> std::io::Result<i32> {
         target_pane_id,
         direction,
         cwd,
+        title,
         focus,
         env,
     }))

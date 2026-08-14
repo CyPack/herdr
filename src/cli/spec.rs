@@ -895,6 +895,7 @@ fn plugin_command() -> Command {
                         .arg(option("target-pane", "PANE"))
                         .arg(split_direction_option())
                         .arg(path_option("cwd", "PATH"))
+                        .arg(option("title", "TEXT"))
                         .arg(env_option())
                         .arg(flag("focus"))
                         .arg(flag("no-focus")),

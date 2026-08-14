@@ -1303,6 +1303,7 @@ fn plugin_pane_open_request_round_trips() {
             target_pane_id: None,
             direction: None,
             cwd: Some("/tmp".into()),
+            title: None,
             focus: true,
             env: [("HERDR_ROLE".to_string(), "board".to_string())].into(),
         }),
