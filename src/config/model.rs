@@ -897,6 +897,15 @@ pub struct ShellBarSectionWidgetConfig {
 pub struct ShellBarSectionActionConfig {
     pub kind: String,
     pub argv: Vec<String>,
+    /// How a secondary press presents the same command: `tab` opens it in a new
+    /// tab of the current workspace, at full size. Absent means a secondary
+    /// press is consumed and does nothing.
+    ///
+    /// A presentation rather than a second command, and deliberately so. The
+    /// argv above is written once, so the two gestures can never drift into
+    /// running different programs — and the right press stays what its name
+    /// says it is, a choice *about* the action rather than another action.
+    pub secondary: String,
     /// Outer popup width, in cells or as a percentage string like `"80%"`.
     ///
     /// Same spelling as the popup size on a custom command keybind, and read by
