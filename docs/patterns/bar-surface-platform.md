@@ -31,10 +31,10 @@ ownership. What is missing is the **bridge** from a plugin to a bar section.
 | open a command in a new tab of the current workspace | **exists** | `App::open_argv_in_new_tab` |
 | **bar section runs a plugin action** | **MISSING** | no `SectionAction::Plugin` |
 | **icon by name rather than raw codepoint** | **MISSING** | config takes a literal grapheme |
-| **more than 8 sections in one bar** | **CEILING** | `MAX_BAR_SECTIONS = 8` |
+| more than 8 sections in one bar | **exists** | `shell.bars.<edge>.max_sections`, default 8, up to 16 (`267c8496`) |
 
-Read that table before proposing anything. Two rows are missing and one is a ceiling; the rest
-is plumbing that already works and must be reused rather than reinvented.
+Read that table before proposing anything. Two rows are missing; the rest is plumbing that
+already works and must be reused rather than reinvented.
 
 > ⚠ One correction worth carrying: an earlier draft of this document said the right press was
 > "just wiring" because `Method::TabCreate` already existed. Measured 2026-08-14 — it does not
@@ -165,9 +165,13 @@ Sizing rules worth knowing before you write:
   not fit. That refusal is a gift: it happens where you can fix it.
 - `fill` takes what is left and is **never refused** — its width is not known until the
   terminal has a size. It clips instead.
-- **At most 8 sections per bar.** A macOS-style toolbar has 10–11 icons; if every icon must
-  be separately clickable, this ceiling is a real design constraint and needs a decision,
-  not a workaround.
+- **`max_sections` is the bar's budget**, default 8, accepted from 1 to 16. It used to be a
+  hard 8 borrowed from the pane splitter — on the reasoning that dividing a bar and splitting a
+  screen are the same question. They are not, and a macOS-style toolbar of 10–11 icons was the
+  proof. Raising it is measured, not free: `BarSections` and `BarSectionRects` grow from 66 to
+  130 bytes each, so all four bars cost 512 bytes more inside the geometry cache key.
+- A budget outside `1..=16` is **refused, never clamped** — a file saying forty beside a build
+  doing sixteen is a file its next reader will believe.
 
 ### Assigning behaviour
 
@@ -227,10 +231,10 @@ then just an index of manifests, which can live entirely outside this repository
   onto the plugin's.
 - **Namespacing.** Two apps both want to be called `git`. Section ids and plugin ids need a
   collision rule before a store exists, not after.
-- **The 8-section ceiling.** A store implies many apps; a bar holds eight. Either the ceiling
-  moves, or a section becomes a container of several icons whose clicks are resolved by
-  position within it. These are different architectures and the choice belongs to whoever
-  owns the roadmap.
+- **The section budget.** A store implies many apps, and `max_sections` is now the number that
+  decides how much of somebody's bar they may take. It is the user's, not the store's: a
+  plugin that wants a section asks against a limit that already existed rather than one
+  invented under pressure.
 
 ---
 

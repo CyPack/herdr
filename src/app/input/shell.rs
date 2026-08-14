@@ -991,6 +991,7 @@ mod tests {
                 color: String::new(),
                 gradient: Vec::new(),
                 sections,
+                ..Default::default()
             },
             ..Default::default()
         };
@@ -1043,6 +1044,72 @@ mod tests {
             cells,
             ..Default::default()
         }
+    }
+
+    // TC-69-6 · THE USER'S OWN CONDITION, in their words: "hepsi ayri ayri
+    // tiklanabilir olmali". Raising a ceiling proves nothing about whether the
+    // twelfth icon answers — a hit test that walked a hardcoded eight would
+    // leave sections nine through twelve drawn, addressable in config, and
+    // silently dead under the pointer.
+    //
+    // Each section carries its OWN command, so the assertion is not merely
+    // "something answered" but "this one answered, not its neighbour". That is
+    // the difference between twelve hit areas and one wide one.
+    // TP-CHROME-74: every section of a bar raised past eight answers at its own
+    // index with its own command.
+    #[test]
+    fn every_section_of_a_raised_bar_answers_with_its_own_command() {
+        const COUNT: usize = 12;
+        const CELLS: u16 = 8;
+
+        let sections = (0..COUNT)
+            .map(|index| {
+                let mut section = popup_section(CELLS, &[]);
+                section.action.argv = vec![format!("cmd-{index}")];
+                section
+            })
+            .collect::<Vec<_>>();
+        let config = crate::config::ShellBarsConfig {
+            top: crate::config::ShellBarConfig {
+                enabled: true,
+                size: 1,
+                border: false,
+                color: String::new(),
+                gradient: Vec::new(),
+                sections,
+                max_sections: COUNT as u16,
+            },
+            ..Default::default()
+        };
+
+        let mut state = AppState::test_new();
+        state.shell_presentation = crate::ui::shell::ShellPresentationState::from_restored(
+            26,
+            false,
+            None,
+            crate::ui::shell::ShellBars::from_config(&config),
+        );
+        state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config);
+        crate::ui::compute_view(&mut state, Rect::new(0, 0, 106, 40));
+
+        let mut answered = Vec::new();
+        for index in 0..COUNT {
+            // The middle of each section, so the assertion cannot pass by
+            // landing on a boundary that happens to belong to a neighbour.
+            let column = (index as u16) * CELLS + CELLS / 2;
+            match state.bar_section_click_at(Position::new(column, 0), SectionGesture::Primary) {
+                BarSectionClick::OpenPopup { argv, .. } => answered.push(argv.join(" ")),
+                other => panic!("section {index} at column {column} answered {other:?}"),
+            }
+        }
+
+        let expected = (0..COUNT)
+            .map(|index| format!("cmd-{index}"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            answered, expected,
+            "each section must answer at its own index with its own command"
+        );
     }
 
     fn two_gesture_section(cells: u16, argv: &[&str]) -> crate::config::ShellBarSectionConfig {
