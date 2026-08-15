@@ -24,11 +24,4 @@ nothing, and it would look like there had never been anything there.
 | TP-DAILY-06 | Focus hides the section — unless one of its chats is running, which keeps it visible | Daily chats sit in no tree, so they go quiet with everything else the filter narrows away; but a filter may narrow what you see and never hide where you are | `focus_hides_the_daily_section_unless_one_of_its_chats_is_running` |
 | TP-DAILY-07 | A daily row resumes in the daily directory, switches to the chat's live tab instead of resuming it twice, and answers a stale index with nothing | Substituting the active workspace's path is #46 with the roles reversed; a second tab on one conversation is #45 in another surface; and the list can refresh between the frame a person clicked and the click arriving | `a_daily_chat_resumes_in_the_daily_directory`, `a_daily_chat_already_running_is_switched_to_rather_than_resumed`, `a_click_on_a_daily_row_that_no_longer_exists_does_nothing` |
 
-## Not yet landed
-
-TP-DAILY-08 (the phone drawer's parity) is specified in
-`.local/prd/daily-chats-section.md` §6.5 and lands with the mobile pass. The
-desktop emission deliberately skips the phone drawer until then: a header the
-phone cannot open would be a promise it does not keep. It is listed there
-rather than here on purpose — a registry row whose test does not exist yet is
-a gate that reports coverage it does not have.
+| TP-DAILY-08 | The phone drawer draws the same section in the same order, with a plain section title rather than a fold; the cursor stops on its chats and on nothing else there, and a tap resumes in the daily directory | Two surfaces walking one tree is the point — a phone-only omission means a chat reachable from one screen and not the other; and a cursor resting on a title that does nothing is a press that goes nowhere, the rule `SectionTitle` and `ChatNote` already keep | `the_phone_drawer_carries_the_daily_section_at_the_top`, `the_phone_cursor_stops_on_daily_chats_but_not_on_their_title`, `tapping_a_daily_chat_resumes_it_in_the_daily_directory` |
