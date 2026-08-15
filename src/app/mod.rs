@@ -826,6 +826,8 @@ impl App {
             // with no home simply has no daily section.
             daily_chat_cwd: crate::integration::home_dir().ok(),
             expanded_chat_workspaces: std::collections::HashSet::new(),
+            daily_section_collapsed: false,
+            daily_section_expanded: false,
             suppressed_chat_drawers: std::collections::HashSet::new(),
             tab_branch_cache: std::collections::HashMap::new(),
             sessions_parse_cache: Default::default(),
@@ -868,6 +870,9 @@ impl App {
                 workspace_card_areas: Vec::new(),
                 workspace_chat_row_areas: Vec::new(),
                 workspace_more_chats_areas: Vec::new(),
+                daily_header_area: None,
+                daily_chat_row_areas: Vec::new(),
+                daily_more_area: None,
                 workspace_group_header_areas: Vec::new(),
                 workspace_project_header_areas: Vec::new(),
                 workspace_empty_module_areas: Vec::new(),

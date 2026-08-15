@@ -374,6 +374,65 @@ impl AppState {
         });
     }
 
+    /// Open a chat from the daily section — the sibling of
+    /// [`AppState::open_workspace_chat`], and deliberately the same contract:
+    /// a session already running in a tab is switched to rather than resumed
+    /// a second time, and only a session with nowhere to land is queued.
+    ///
+    /// TP-DAILY-07: the queued request is rooted at the daily directory, not
+    /// at whatever workspace happens to be active — that substitution is
+    /// exactly how #46 opened an agent in `$HOME` instead of the checkout,
+    /// with the roles reversed.
+    pub(crate) fn open_daily_chat(&mut self, chat_idx: usize) {
+        let Some(project_path) = self.daily_chat_cwd.clone() else {
+            return;
+        };
+        let key = crate::persist::workspace_chats::ledger_key(&project_path);
+        // A stale index is a race, not a bug: the list can refresh between the
+        // frame a person clicked and the click arriving. It answers with
+        // nothing rather than with the wrong chat.
+        let Some(session_id) = self
+            .workspace_chat_rows
+            .get(&key)
+            .and_then(|rows| rows.get(chat_idx))
+            .map(|row| row.session_id.clone())
+        else {
+            return;
+        };
+
+        if let Some((live_ws, live_tab)) = self.find_resumed_chat_tab(&session_id) {
+            self.switch_workspace_tab(live_ws, live_tab);
+            self.mode = crate::app::Mode::Terminal;
+            return;
+        }
+        self.request_project_chat_tab = Some(crate::app::state::ProjectChatTabRequest {
+            project_path,
+            session_id: Some(session_id),
+        });
+    }
+
+    /// Fold or unfold the daily section on this display (TP-DAILY-03).
+    pub(crate) fn toggle_daily_section(&mut self) {
+        self.daily_section_collapsed = !self.daily_section_collapsed;
+    }
+
+    /// Ask the daily section for every chat it holds, or fold it back to the
+    /// glance surface's five (TP-DAILY-04 — the row is both ways).
+    pub(crate) fn toggle_full_daily_drawer(&mut self) {
+        self.daily_section_expanded = !self.daily_section_expanded;
+        if let Some(daily) = self.daily_chat_cwd.clone() {
+            let key = crate::persist::workspace_chats::ledger_key(&daily);
+            // The read budget follows the switch: an opened section that is
+            // still parsed at the glance limit would promise older chats it
+            // can never list (TP-DRAW-10's reason, in this section).
+            if self.daily_section_expanded {
+                self.fully_open_chat_drawers.insert(key);
+            } else {
+                self.fully_open_chat_drawers.remove(&key);
+            }
+        }
+    }
+
     /// Start a fresh chat rooted at a workspace's directory.
     pub(crate) fn request_workspace_chat(&mut self, ws_idx: usize) {
         let Some(workspace) = self.workspaces.get(ws_idx) else {
@@ -3822,6 +3881,105 @@ mod tests {
             .collapsed_project_paths
             .contains(std::path::Path::new("/home/x/proj")));
         assert_eq!(app.state.request_project_chat_tab, None);
+    }
+
+    /// A state whose daily directory holds three chats and whose workspace
+    /// lives somewhere else — the shape the section exists for.
+    fn state_with_daily_chats() -> (crate::app::state::AppState, std::path::PathBuf) {
+        let mut state = crate::app::state::AppState::test_new();
+        let daily = std::path::PathBuf::from("/home/tester");
+        let mut ws = Workspace::test_new("elsewhere");
+        ws.identity_cwd = std::path::PathBuf::from("/repo/checkout");
+        state.workspaces = vec![ws];
+        state.active = Some(0);
+        state.daily_chat_cwd = Some(daily.clone());
+        let key = crate::persist::workspace_chats::ledger_key(&daily);
+        state.workspace_chat_rows.insert(
+            key,
+            (0..3)
+                .map(|idx| crate::app::state::WorkspaceChatRow {
+                    session_id: format!("daily-{idx}"),
+                    agent: "claude".to_string(),
+                    title: Some(format!("daily chat {idx}")),
+                    last_seen_ms: 10 + idx as u64,
+                    last_modified: None,
+                })
+                .collect(),
+        );
+        (state, daily)
+    }
+
+    // TP-DAILY-07: the request a daily row queues is rooted at the daily
+    // directory. Substituting the active workspace's path is #46 with the
+    // roles reversed — the chat would resume somewhere it never ran.
+    #[test]
+    fn a_daily_chat_resumes_in_the_daily_directory() {
+        let (mut state, daily) = state_with_daily_chats();
+        state.open_daily_chat(1);
+        let request = state
+            .request_project_chat_tab
+            .as_ref()
+            .expect("a dormant chat is queued");
+        assert_eq!(request.project_path, daily);
+        assert_eq!(request.session_id.as_deref(), Some("daily-1"));
+    }
+
+    // TP-DAILY-07: the same contract `open_workspace_chat` keeps — a session
+    // already running in a tab is switched to, not resumed a second time.
+    // Two tabs on one conversation is #45's complaint in another surface.
+    #[test]
+    fn a_daily_chat_already_running_is_switched_to_rather_than_resumed() {
+        let (mut state, _) = state_with_daily_chats();
+        let second = state.workspaces[0].test_add_tab(Some("live"));
+        state.workspaces[0].tabs[second].resumed_session_id = Some("daily-2".into());
+        state.workspaces[0].set_active_tab(0);
+
+        state.open_daily_chat(2);
+
+        assert_eq!(
+            state.request_project_chat_tab, None,
+            "nothing is queued when the chat already has a tab"
+        );
+        assert_eq!(state.workspaces[0].active_tab_index(), second);
+        assert_eq!(state.mode, crate::app::Mode::Terminal);
+    }
+
+    // TP-DAILY-07: a stale index is a race — the list can refresh between the
+    // frame a person clicked and the click arriving. It answers with nothing
+    // rather than with the wrong chat, and never panics.
+    #[test]
+    fn a_click_on_a_daily_row_that_no_longer_exists_does_nothing() {
+        let (mut state, _) = state_with_daily_chats();
+        state.open_daily_chat(99);
+        assert_eq!(state.request_project_chat_tab, None);
+
+        let mut homeless = crate::app::state::AppState::test_new();
+        homeless.open_daily_chat(0);
+        assert_eq!(homeless.request_project_chat_tab, None);
+    }
+
+    // TP-DAILY-03/04: both switches are per-display registers, and the "open
+    // the rest" one also moves the read budget — an opened section still
+    // parsed at the glance limit promises older chats it can never list.
+    #[test]
+    fn the_daily_switches_toggle_both_ways_and_carry_the_read_budget() {
+        let (mut state, daily) = state_with_daily_chats();
+        let key = crate::persist::workspace_chats::ledger_key(&daily);
+
+        state.toggle_daily_section();
+        assert!(state.daily_section_collapsed);
+        state.toggle_daily_section();
+        assert!(!state.daily_section_collapsed, "a fold folds back");
+
+        state.toggle_full_daily_drawer();
+        assert!(state.daily_section_expanded);
+        assert!(
+            state.fully_open_chat_drawers.contains(&key),
+            "the read budget follows the switch"
+        );
+        state.toggle_full_daily_drawer();
+        assert!(!state.daily_section_expanded);
+        assert!(!state.fully_open_chat_drawers.contains(&key));
     }
 
     // TP-WSID-02: the chat a "+" starts lives where the row says it will —

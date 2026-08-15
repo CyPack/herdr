@@ -1334,6 +1334,14 @@ fn app_for_mouse_test() -> App {
     // about whatever width the product happens to ship. Pinning the width here
     // keeps their coordinates meaningful when the default moves (it moved to
     // 30 for the Spaces tree, TP-TREE-13).
+    // The daily section reads the machine's own home directory, so a fixture
+    // built through the production constructor lays out however many chats
+    // this developer happens to have started outside a checkout — and every
+    // row below shifts by that count. These tests ask about presses on the
+    // tree, not about the section, so they answer with an empty one: a test
+    // whose result depends on the transcripts in someone's home directory is
+    // measuring the machine, not the code.
+    app.state.daily_chat_cwd = None;
     app.state.sidebar_width = 26;
     app.state.default_sidebar_width = 26;
     app.state.view.sidebar_rect = ratatui::layout::Rect::new(0, 0, 26, 20);

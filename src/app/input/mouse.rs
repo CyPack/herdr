@@ -770,6 +770,45 @@ impl AppState {
                     } else {
                         self.view.workspace_card_areas.clone()
                     };
+                    // TP-DAILY-03/07: the daily section answers three separate
+                    // gestures from three separate vectors — fold, open the
+                    // rest, resume a chat — and none of them carries a
+                    // `ws_idx`. Matched first because the section sits above
+                    // the tree, and matched apart because a press on a header
+                    // that resolved through a workspace index would fold
+                    // whichever checkout happened to share the row.
+                    if let Some(rect) = self.view.daily_header_area {
+                        if mouse.row == rect.y
+                            && mouse.column >= rect.x
+                            && mouse.column < rect.x + rect.width
+                        {
+                            self.toggle_daily_section();
+                            return None;
+                        }
+                    }
+                    if let Some(rect) = self.view.daily_more_area {
+                        if mouse.row == rect.y
+                            && mouse.column >= rect.x
+                            && mouse.column < rect.x + rect.width
+                        {
+                            self.toggle_full_daily_drawer();
+                            return None;
+                        }
+                    }
+                    if let Some(hit) = self
+                        .view
+                        .daily_chat_row_areas
+                        .iter()
+                        .find(|row| {
+                            mouse.row == row.rect.y
+                                && mouse.column >= row.rect.x
+                                && mouse.column < row.rect.x + row.rect.width
+                        })
+                        .cloned()
+                    {
+                        self.open_daily_chat(hit.chat_idx);
+                        return None;
+                    }
                     // TP-DRAW-11: the "older chats" row opens the rest of
                     // this drawer and closes it again. Matched from its own
                     // vector, before the chat rows, for the same reason the
