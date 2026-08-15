@@ -3826,9 +3826,20 @@ impl HeadlessServer {
         let negotiated_tab_sizes = self.negotiated_tab_sizes();
 
         if render_targets.is_empty() {
+            // Geometry is established once so the API and the first attach
+            // see real pane sizes; after that a tick with no client attached
+            // has nobody to draw for, and PTY output alone must not buy a
+            // full compute-and-discard frame — measured live at up to 62
+            // thrown-away frames a second on detached servers. Size changes
+            // while detached re-enter through the size-change event path,
+            // which recomputes the view itself.
+            let resize_panes = self.app.state.view.pane_infos.is_empty();
+            if !resize_panes {
+                self.app.full_redraw_pending = false;
+                return;
+            }
             let (cols, rows) = self.effective_size;
             let area = Rect::new(0, 0, cols, rows);
-            let resize_panes = self.app.state.view.pane_infos.is_empty();
             #[cfg(test)]
             {
                 self.watcherless_virtual_frames += 1;
