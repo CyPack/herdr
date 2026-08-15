@@ -1188,44 +1188,7 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
     // whose checkouts are all filtered out loses its header the same way an
     // empty module never gets one.
     let focused = focus_visible_workspaces(app);
-    // TP-DAILY-13: a workspace standing in the daily directory is not drawn as
-    // a checkout of its own — the area above IS that directory's face.
-    //
-    // Measured on the live machine 2026-08-15: seven workspaces had been born
-    // in `$HOME`, so `effective_cwd` returned the same path for all of them,
-    // and the tree drew seven rows that were indistinguishable — every one
-    // listing the same twelve chats, and all seven folding together, because
-    // openness keys through that very path (TP-WSID-03). They read as branches
-    // of a repository that is really a home directory.
-    //
-    // Filtered here, at the source, rather than in the renderer: group
-    // membership, the two-member threshold and the header rows are all
-    // derived from this set, so they follow without a second rule. Nothing is
-    // closed and nothing is deleted — the panes, tabs and transcripts are
-    // untouched, and the chats stay reachable from the area above.
-    //
-    // Conditional on the area actually being drawn: with no area there is no
-    // face for that directory, and hiding the rows would leave it unreachable.
-    let daily_key = daily_section_visible(app)
-        .then(|| {
-            app.daily_chat_cwd
-                .as_deref()
-                .map(crate::persist::workspace_chats::ledger_key)
-        })
-        .flatten();
-    let shows = |ws_idx: usize| {
-        if focused.as_ref().is_some_and(|set| !set.contains(&ws_idx)) {
-            return false;
-        }
-        if let Some(key) = daily_key.as_deref() {
-            if app.workspaces.get(ws_idx).is_some_and(|ws| {
-                crate::persist::workspace_chats::ledger_key(ws.effective_cwd()) == key
-            }) {
-                return false;
-            }
-        }
-        true
-    };
+    let shows = |ws_idx: usize| focused.as_ref().is_none_or(|set| set.contains(&ws_idx));
     let mut members_by_key = std::collections::HashMap::<String, Vec<usize>>::new();
     for ws_idx in 0..app.workspaces.len() {
         if !shows(ws_idx) {
@@ -6907,65 +6870,15 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
     fn a_workspace_sitting_in_the_daily_directory_keeps_the_section() {
         let (mut app, daily) = app_with_daily_chats(3);
         app.workspaces[0].identity_cwd = daily;
-        // The area draws — that is this behaviour. The workspace itself no
-        // longer draws a row of its own: TP-DAILY-13 took it out of the tree,
-        // because the area IS that directory's face and two faces for one
-        // directory is the duplication both rules exist to end.
         assert_eq!(
             entry_kinds(&app),
-            vec!["daily-header", "daily-chat", "daily-chat", "daily-chat"]
-        );
-    }
-
-    // TP-DAILY-13: a workspace standing in the daily directory leaves the
-    // tree — the area above is that directory's face. On the machine this was
-    // written for, seven such workspaces drew seven indistinguishable rows,
-    // each listing the same chats and all folding together (openness keys
-    // through the same path, TP-WSID-03), reading as branches of a repository
-    // that is really a home directory. Nothing is closed or deleted here: the
-    // workspace, its tabs and its panes all live on.
-    #[test]
-    fn a_workspace_standing_in_the_daily_directory_leaves_the_tree() {
-        let (mut app, daily) = app_with_daily_chats(3);
-        // Two workspaces in the daily directory — the duplication that was
-        // measured — plus one that lives somewhere else entirely.
-        let mut home_a = Workspace::test_new("ayaz");
-        home_a.identity_cwd = daily.clone();
-        let mut home_b = Workspace::test_new("ayaz");
-        home_b.identity_cwd = daily.clone();
-        let elsewhere = std::mem::take(&mut app.workspaces);
-        app.workspaces = vec![home_a, home_b];
-        app.workspaces.extend(elsewhere);
-        app.active = Some(2);
-        app.selected = 2;
-
-        let kinds = entry_kinds(&app);
-        assert_eq!(
-            kinds.iter().filter(|kind| **kind == "workspace").count(),
-            1,
-            "only the checkout that is not the daily directory keeps a row: {kinds:?}"
-        );
-        assert_eq!(kinds.first().copied(), Some("daily-header"));
-
-        // The workspaces themselves are untouched — this is a drawing rule,
-        // not a close.
-        assert_eq!(app.workspaces.len(), 3, "no workspace was removed");
-
-        // TP-DAILY-13: with no area drawn there is no face for that
-        // directory, so the rows stay where they were rather than vanishing.
-        let mut homeless = crate::app::state::AppState::test_new();
-        let mut only_home = Workspace::test_new("ayaz");
-        only_home.identity_cwd = daily.clone();
-        homeless.workspaces = vec![only_home];
-        homeless.active = Some(0);
-        homeless.selected = 0;
-        homeless.mobile_width_threshold = 0;
-        homeless.daily_chat_cwd = Some(daily);
-        // No chat rows for that key → no area → nothing to hide behind.
-        assert_eq!(
-            entry_kinds(&homeless),
-            vec!["workspace"],
-            "an undrawn area hides nothing"
+            vec![
+                "daily-header",
+                "daily-chat",
+                "daily-chat",
+                "daily-chat",
+                "workspace"
+            ]
         );
     }
 
