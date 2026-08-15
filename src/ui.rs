@@ -163,6 +163,19 @@ pub(super) fn spinner_frame(tick: u32) -> &'static str {
     SPINNERS[(tick as usize / 8) % SPINNERS.len()]
 }
 
+/// Whether a view computation also reconciles the size of background tabs —
+/// tabs no display is looking at. That sweep belongs to size-change events
+/// (client connect, disconnect, resize) and to the single-client monolithic
+/// loop. A per-client render pass must skip it: with two displays of
+/// different shapes attached, each frame would rewrite every unwatched tab
+/// to whichever display happens to be drawing, and every one of those
+/// rewrites reflows that pane's whole scrollback. TP-MCF-SIZE-03
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BackgroundTabSweep {
+    Reconcile,
+    Skip,
+}
+
 /// Compute view geometry and reconcile pane sizes.
 /// Called before render to separate mutation from drawing.
 #[cfg_attr(not(test), allow(dead_code))]
@@ -181,6 +194,7 @@ pub fn compute_view_with_runtime_registry(
         terminal_runtimes,
         area,
         true,
+        BackgroundTabSweep::Reconcile,
         crate::kitty_graphics::HostCellSize::default(),
     );
 }
@@ -191,7 +205,33 @@ pub fn compute_view_with_cell_size(
     area: Rect,
     cell_size: crate::kitty_graphics::HostCellSize,
 ) {
-    compute_view_internal(app, terminal_runtimes, area, true, cell_size);
+    compute_view_internal(
+        app,
+        terminal_runtimes,
+        area,
+        true,
+        BackgroundTabSweep::Reconcile,
+        cell_size,
+    );
+}
+
+/// Compute view geometry for one client's render pass, resizing the panes
+/// that pass draws while leaving background tabs to the size-change event
+/// path. See [`BackgroundTabSweep`].
+pub(crate) fn compute_view_for_client_render(
+    app: &mut AppState,
+    terminal_runtimes: &TerminalRuntimeRegistry,
+    area: Rect,
+    cell_size: crate::kitty_graphics::HostCellSize,
+) {
+    compute_view_internal(
+        app,
+        terminal_runtimes,
+        area,
+        true,
+        BackgroundTabSweep::Skip,
+        cell_size,
+    );
 }
 
 /// Compute view geometry for a client-sized render without resizing pane runtimes.
@@ -209,6 +249,7 @@ pub(crate) fn compute_view_without_resizing_panes(
         terminal_runtimes,
         area,
         false,
+        BackgroundTabSweep::Skip,
         crate::kitty_graphics::HostCellSize::default(),
     );
 }
@@ -305,6 +346,7 @@ fn compute_view_internal(
     terminal_runtimes: &TerminalRuntimeRegistry,
     area: Rect,
     resize_panes: bool,
+    sweep: BackgroundTabSweep,
     cell_size: crate::kitty_graphics::HostCellSize,
 ) {
     let _profile = crate::render_prof::duration_guard("shell.compute_view");
@@ -320,7 +362,7 @@ fn compute_view_internal(
     }
 
     if size_class::SizeClass::of(area, app.mobile_width_threshold).is_mobile_shell() {
-        compute_mobile_view(app, terminal_runtimes, area, resize_panes, cell_size);
+        compute_mobile_view(app, terminal_runtimes, area, resize_panes, sweep, cell_size);
         return;
     }
 
@@ -537,7 +579,9 @@ fn compute_view_internal(
     let agent_worktree_action_area = panes::compute_agent_worktree_action_area(app, &pane_infos);
     let agent_attachment_picker_row_areas = sync_agent_attachment_picker_view(app, terminal_area);
     if resize_panes {
-        resize_background_tab_panes_for_desktop(app, terminal_runtimes, main_area, cell_size);
+        if sweep == BackgroundTabSweep::Reconcile {
+            resize_background_tab_panes_for_desktop(app, terminal_runtimes, main_area, cell_size);
+        }
         resize_popup_pane(app, terminal_runtimes, terminal_area, cell_size);
     }
 
@@ -616,6 +660,7 @@ fn compute_mobile_view(
     terminal_runtimes: &TerminalRuntimeRegistry,
     area: Rect,
     resize_panes: bool,
+    sweep: BackgroundTabSweep,
     cell_size: crate::kitty_graphics::HostCellSize,
 ) {
     // Four rows make the header's buttons a 44pt touch square on a phone
@@ -711,7 +756,9 @@ fn compute_mobile_view(
     };
     let agent_attachment_picker_row_areas = sync_agent_attachment_picker_view(app, terminal_area);
     if resize_panes {
-        resize_background_tab_panes_to_area(app, terminal_runtimes, terminal_area, cell_size);
+        if sweep == BackgroundTabSweep::Reconcile {
+            resize_background_tab_panes_to_area(app, terminal_runtimes, terminal_area, cell_size);
+        }
         resize_popup_pane(app, terminal_runtimes, terminal_area, cell_size);
     }
     let header_hits = compute_mobile_header_hit_areas(app, header_rect);

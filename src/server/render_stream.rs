@@ -312,7 +312,11 @@ pub(crate) fn render_virtual_with_runtime_registry(
     let pre_compute_suppresses_focused_terminal_cursor =
         !popup_visible && focused_terminal_suppresses_host_cursor(app_state, terminal_runtimes);
     if resize_panes {
-        crate::ui::compute_view_with_cell_size(app_state, terminal_runtimes, area, cell_size);
+        // A render pass resizes the panes it draws but leaves background tabs
+        // to the size-change event path — sweeping them here would rewrite
+        // every unwatched tab to this client's geometry on every frame.
+        // TP-MCF-SIZE-03
+        crate::ui::compute_view_for_client_render(app_state, terminal_runtimes, area, cell_size);
     } else {
         crate::ui::compute_view_without_resizing_panes(app_state, terminal_runtimes, area);
     }

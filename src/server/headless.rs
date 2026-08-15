@@ -3849,7 +3849,7 @@ impl HeadlessServer {
                     let resize_while_rendering = negotiated == Some((cols, rows));
                     if let Some((resize_cols, resize_rows)) = negotiated {
                         if !resize_while_rendering {
-                            crate::ui::compute_view_with_cell_size(
+                            crate::ui::compute_view_for_client_render(
                                 &mut self.app.state,
                                 &self.app.terminal_runtimes,
                                 Rect::new(0, 0, resize_cols, resize_rows),
@@ -9031,8 +9031,9 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
             "a tab both displays watch must fit the smaller one, got {active_rows}x{active_cols}"
         );
 
-        // Nobody is watching the background tab, so it keeps following the
-        // sweep rather than being pinned by an absent viewer.
+        // Nobody is watching the background tab, so render passes leave it
+        // alone; it keeps the size the size-change event path last gave it
+        // (here, its spawn size). TP-MCF-SIZE-03
         let (background_rows, background_cols) =
             server.app.state.workspaces[0].tabs[background_tab].runtimes[&background_pane]
                 .current_size();
@@ -9464,8 +9465,7 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
 
         // Everything has settled: no input, no output, no size change. From here
         // a frame must cost nothing on a tab nobody is watching.
-        let before = server.app.state.workspaces[0].tabs[background_tab].runtimes
-            [&background_pane]
+        let before = server.app.state.workspaces[0].tabs[background_tab].runtimes[&background_pane]
             .applied_resizes_for_test();
         server.render_and_stream();
         server.render_and_stream();
@@ -9473,7 +9473,8 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
             .applied_resizes_for_test();
 
         assert_eq!(
-            after, before,
+            after,
+            before,
             "a background tab must not be resized by a steady frame; each display was \
              rewriting it to its own geometry, and every one of those reflows the whole \
              scrollback (applied {} resizes over two idle frames)",
