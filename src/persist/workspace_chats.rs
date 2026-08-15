@@ -101,6 +101,32 @@ pub fn ledger_key(identity_cwd: &Path) -> String {
         .into_owned()
 }
 
+/// The prefix that separates container identities from directory keys.
+pub const MODULE_KEY_PREFIX: &str = "module:";
+
+/// Ledger identity of a declared container.
+///
+/// TP-CHAT-MOVE-05: a container is a label first and a directory maybe never —
+/// it can be declared before any checkout joins it, and the person who declared
+/// it may never give it one. So it cannot be keyed by a path, and this is the
+/// one place that decides what it is keyed by instead.
+///
+/// The ledger's key space now holds two kinds of string, and they must not be
+/// confused: `/home/ayaz/projects/herdr` is somewhere on disk, `module:docs`
+/// is not. Every reader builds its own key rather than parsing someone else's
+/// — [`ledger_key`] for directories, this for containers — so nothing
+/// downstream has to tell them apart by shape. A function that takes this
+/// string for a path produces the silent class of defect #88 was: no error, no
+/// crash, just a lookup that never matches.
+///
+/// A predicate that asks "is this key a container?" deliberately does not
+/// exist yet. Nothing in the product needs to ask — every reader knows which
+/// kind it built — and an unused one would be scaffolding the lint rejects.
+/// It arrives with the first caller that genuinely holds an unknown key.
+pub fn module_ledger_key(node_key: &str) -> String {
+    format!("{MODULE_KEY_PREFIX}{node_key}")
+}
+
 pub fn default_ledger_path() -> PathBuf {
     crate::config::config_dir().join("workspace-chats.json")
 }

@@ -1995,11 +1995,21 @@ impl AppState {
             .collect()
     }
 
-    /// The open drawers a chat could move to, as `(ledger key, display
-    /// name)` — every workspace except the one the chat is shown in, keyed
-    /// the way the ledger keys them (TP-CHAT-MOVE-04).
+    /// The places a chat could move to, as `(ledger key, display name)` —
+    /// every workspace except the one the chat is shown in, keyed the way the
+    /// ledger keys them (TP-CHAT-MOVE-04), followed by every declared
+    /// container (TP-CHAT-MOVE-05).
+    ///
+    /// The two groups are keyed from different spaces on purpose: a workspace
+    /// by its directory, a container by its identity, because a container may
+    /// have no directory at all and may never get one. Nothing downstream has
+    /// to tell them apart — `apply_chat_moves` treats the key as an opaque
+    /// map key — but a reader that does can ask
+    /// [`crate::persist::workspace_chats::is_module_key`] rather than guess
+    /// from the shape of the string.
     pub(crate) fn chat_move_target_entries(&self, exclude_ws_idx: usize) -> Vec<(String, String)> {
-        self.workspaces
+        let mut entries: Vec<(String, String)> = self
+            .workspaces
             .iter()
             .enumerate()
             .filter(|(idx, _)| *idx != exclude_ws_idx)
@@ -2017,7 +2027,28 @@ impl AppState {
                 });
                 Some((key, label))
             })
-            .collect()
+            .collect();
+
+        // TP-CHAT-MOVE-05: a declared container is a destination. It is listed
+        // whether or not anything has joined it and whether or not it has a
+        // directory — that is what makes "put this chat under Docs" possible
+        // before Docs is a place on disk.
+        entries.extend(self.space_nodes.iter().filter_map(|node| {
+            if node.key.is_empty() {
+                return None;
+            }
+            let label = if node.name.trim().is_empty() {
+                node.key.clone()
+            } else {
+                node.name.clone()
+            };
+            Some((
+                crate::persist::workspace_chats::module_ledger_key(&node.key),
+                label,
+            ))
+        }));
+
+        entries
     }
 
     /// Finish a "move under a new group": the collected name becomes a
@@ -4545,6 +4576,86 @@ mod tests {
     use crate::detect::{Agent, AgentState};
     use crate::workspace::Workspace;
     use ratatui::layout::Direction;
+
+    /// An app with two workspaces and one declared container that has no
+    /// directory at all — the shape the decision was made for.
+    fn app_with_a_directoryless_module() -> AppState {
+        let mut state = app_with_workspaces(&["one", "two"]);
+        state.space_nodes = vec![crate::spaces::SpaceNode {
+            key: "docs".to_string(),
+            name: "Docs".to_string(),
+            icon: None,
+            parent: None,
+        }];
+        state
+    }
+
+    // TP-CHAT-MOVE-05 (M1): a container is a destination. Without this the
+    // feature does not exist from where the person is standing — the menu is
+    // the only way to say where a chat should go.
+    #[test]
+    fn a_module_is_offered_as_a_move_destination() {
+        let app = app_with_a_directoryless_module();
+        let targets = app.chat_move_target_entries(0);
+        assert!(
+            targets
+                .iter()
+                .any(|(key, label)| key == "module:docs" && label == "Docs"),
+            "the declared container is offered by identity and by its own name; got {targets:?}"
+        );
+    }
+
+    // TP-CHAT-MOVE-05 (M2): the container has no directory and is offered
+    // anyway. This is the whole of the decision: a module is a label first,
+    // and a directory maybe never.
+    #[test]
+    fn a_module_with_no_directory_is_still_a_destination() {
+        let app = app_with_a_directoryless_module();
+        assert!(
+            app.space_nodes
+                .iter()
+                .all(|node| node.key == "docs" && node.parent.is_none()),
+            "precondition: the fixture's container is declared, not derived from a checkout"
+        );
+        assert!(
+            app.chat_move_target_entries(0)
+                .iter()
+                .any(|(key, _)| key == "module:docs"),
+            "a container with nowhere on disk is still somewhere to put a chat"
+        );
+    }
+
+    // TP-CHAT-MOVE-05 (M4): the two key spaces stay apart. If a container
+    // identity could be taken for a directory, it would end up looked up as
+    // one — no error, no crash, just a lookup that never matches. That is the
+    // #88 class of defect, and this test is the line that keeps the spaces
+    // from touching.
+    #[test]
+    fn a_module_key_is_never_mistaken_for_a_directory() {
+        use crate::persist::workspace_chats::{ledger_key, module_ledger_key, MODULE_KEY_PREFIX};
+        let module = module_ledger_key("docs");
+        let directory = ledger_key(std::path::Path::new("/tmp/herdr-somewhere"));
+
+        assert!(
+            module.starts_with(MODULE_KEY_PREFIX),
+            "a container identity carries the prefix that marks its space"
+        );
+        assert!(
+            !directory.starts_with(MODULE_KEY_PREFIX),
+            "a directory key must never carry it"
+        );
+        assert_ne!(module, directory, "the two spaces do not overlap");
+        assert!(
+            !module.starts_with('/'),
+            "a container identity is not a path and must not look like one"
+        );
+        // An absolute path can never collide with the prefix, so the spaces
+        // cannot meet by accident on any platform that roots paths.
+        assert!(
+            directory.starts_with('/'),
+            "precondition: directory keys are absolute paths here"
+        );
+    }
 
     fn app_with_workspaces(names: &[&str]) -> AppState {
         let mut state = AppState::test_new();
