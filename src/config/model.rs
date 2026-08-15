@@ -923,6 +923,21 @@ pub struct ShellBarSectionWidgetConfig {
 pub struct ShellBarSectionActionConfig {
     pub kind: String,
     pub argv: Vec<String>,
+    /// The plugin action a `plugin` action invokes: `"<plugin-id>.<action-id>"`,
+    /// or a bare action id when only one installed plugin declares it.
+    ///
+    /// A field of its own rather than a reuse of `argv` above. `argv` means a
+    /// program and the arguments handed to it; an action id is neither, and
+    /// bending the field would leave whoever reads this file next believing
+    /// `argv[1]` is an argument that gets passed somewhere.
+    ///
+    /// The spelling is copied, deliberately and exactly, from the keybind that
+    /// already does this — `[[keys.command]]` with `type = "plugin_action"` and
+    /// `command = "jt.command-palette.open"`. A second syntax for the same idea
+    /// is a second thing to learn and a second thing to get wrong, and the
+    /// resolver on the other end already accepts both the qualified and the
+    /// bare form.
+    pub command: String,
     /// How a secondary press presents the same command: `tab` opens it in a new
     /// tab of the current workspace, at full size. Absent means a secondary
     /// press is consumed and does nothing.

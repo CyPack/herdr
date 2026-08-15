@@ -668,6 +668,11 @@ impl App {
                     );
                 }
             }
+            BarSectionClick::InvokePlugin { action } => {
+                if let Err(err) = self.invoke_plugin_action_from_bar_section(action) {
+                    self.warn_about_bar_section_action("bar section action failed", err);
+                }
+            }
             BarSectionClick::PopupAlreadyOpen => {
                 self.warn_about_bar_section_action(
                     "a popup is already open",
@@ -1329,6 +1334,14 @@ fn app_for_mouse_test() -> App {
     // about whatever width the product happens to ship. Pinning the width here
     // keeps their coordinates meaningful when the default moves (it moved to
     // 30 for the Spaces tree, TP-TREE-13).
+    // The daily section reads the machine's own home directory, so a fixture
+    // built through the production constructor lays out however many chats
+    // this developer happens to have started outside a checkout — and every
+    // row below shifts by that count. These tests ask about presses on the
+    // tree, not about the section, so they answer with an empty one: a test
+    // whose result depends on the transcripts in someone's home directory is
+    // measuring the machine, not the code.
+    app.state.daily_chat_cwd = None;
     app.state.sidebar_width = 26;
     app.state.default_sidebar_width = 26;
     app.state.view.sidebar_rect = ratatui::layout::Rect::new(0, 0, 26, 20);
@@ -1555,6 +1568,95 @@ mod tests {
         app.state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&bars);
         crate::ui::compute_view(&mut app.state, ratatui::layout::Rect::new(0, 0, 106, 40));
         app
+    }
+
+    fn plugin_section_chrome(command: &str) -> crate::ui::shell::ShellBarChrome {
+        let mut section = crate::config::ShellBarSectionConfig {
+            kind: "fixed".to_string(),
+            cells: 10,
+            ..Default::default()
+        };
+        section.action.kind = "plugin".to_string();
+        section.action.command = command.to_string();
+        crate::ui::shell::ShellBarChrome::from_config(&crate::config::ShellBarsConfig {
+            top: crate::config::ShellBarConfig {
+                enabled: true,
+                size: 1,
+                border: false,
+                color: String::new(),
+                gradient: Vec::new(),
+                sections: vec![section],
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+    }
+
+    // TC-66-15 · an icon that dies silently under the finger is the worst thing
+    // this surface can do: the person presses, nothing happens, and there is no
+    // way to learn why. Reached through the real resolver with an id no
+    // installed plugin declares — which is exactly what a config written before
+    // the plugin was installed, or after it was removed, looks like.
+    // TP-CHROME-85: a plugin action that cannot be resolved says so and opens
+    // nothing.
+    #[test]
+    fn a_plugin_section_that_names_an_unknown_action_says_so_and_opens_nothing() {
+        let mut app = app_with_a_clickable_top_bar_section();
+        app.state.shell_bar_chrome = plugin_section_chrome("nobody.installed.this");
+
+        let consumed = app.handle_bar_section_mouse(bar_mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            4,
+            0,
+            KeyModifiers::NONE,
+        ));
+
+        assert!(
+            consumed,
+            "the bar owns the press whether or not the action behind it ran"
+        );
+        assert!(
+            app.state.popup_pane.is_none(),
+            "a failed plugin invocation must not leave a popup behind"
+        );
+        let toast = app
+            .state
+            .toast
+            .as_ref()
+            .expect("a failure the person caused by clicking must be said out loud");
+        assert_eq!(toast.kind, crate::app::state::ToastKind::NeedsAttention);
+        assert!(
+            toast.context.contains("not found"),
+            "the message must carry the resolver's own reason rather than a \
+             generic one: {:?}",
+            toast.context
+        );
+    }
+
+    // TC-66-17 · the second gesture reaches the same handler and must stop
+    // there. Asserted by absence — no toast — because a right press that
+    // silently invoked the plugin would look identical to a working left press,
+    // and the two would only diverge in the plugin's own logs.
+    // TP-CHROME-86: a secondary press on a plugin section is consumed without
+    // invoking anything.
+    #[test]
+    fn a_secondary_press_on_a_plugin_section_invokes_nothing() {
+        let mut app = app_with_a_clickable_top_bar_section();
+        app.state.shell_bar_chrome = plugin_section_chrome("nobody.installed.this");
+
+        let consumed = app.handle_bar_section_mouse(bar_mouse(
+            MouseEventKind::Down(MouseButton::Right),
+            4,
+            0,
+            KeyModifiers::NONE,
+        ));
+
+        assert!(consumed, "the bar still owns an event it will not act on");
+        assert!(
+            app.state.toast.is_none(),
+            "nothing was attempted, so there is nothing to report: a complaint \
+             here would mean the invocation was tried and failed"
+        );
     }
 
     fn bar_mouse(

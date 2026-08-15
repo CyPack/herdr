@@ -61,8 +61,46 @@ fn test_lock() -> MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// How much longer than it says every wait in this file is actually given.
+///
+/// The numbers written at the call sites mean "this should be prompt", and they
+/// still do. What they were never meant to be is a performance assertion: no
+/// test here cares whether the server answers in fifty milliseconds or in five
+/// seconds, only that it answers. A budget that cannot stretch turns "the
+/// machine is busy" into "the code is broken", which is the most expensive kind
+/// of wrong answer a test suite can give.
+///
+/// Measured 2026-08-14 on one unchanged commit: `binary(api_ping)` failed eight
+/// of twenty-three, then passed twice in a row, with nothing different but what
+/// else the machine was doing. The same 5-second read refused three landing
+/// gates in a row while the branch under it was green on its own.
+///
+/// Slack costs a passing run **nothing** — it is only ever spent when something
+/// is genuinely stuck, and then it is spent once, on the way to a real failure.
+/// The asymmetry is what sets the number: a budget that is too small turns a
+/// busy machine into a red gate and blocks everybody, while a budget that is
+/// too large only means a genuine hang is reported a minute later.
+///
+/// Chosen from measurement rather than taste. On this machine under deliberate
+/// load, `tab_create_with_no_focus_preserves_active_tab` — the test that
+/// refused three landings — took **17.6s** against its 5s budget, and the
+/// slowest of its twenty-three neighbours took **30.3s**. At a load average of
+/// 108 two tests were still going at **43.9s**. Twelve puts the 5s reads at a
+/// minute, which covers everything that has actually been observed to finish.
+const TIMEOUT_SLACK: u32 = 12;
+
+/// One wait's stated budget, as the budget it is actually enforced with.
+///
+/// Applied exactly once per wait. The helpers that own a deadline and then read
+/// inside it call [`JsonLineReader::try_read_json_line`] directly rather than
+/// [`JsonLineReader::read_json_line`], because scaling both the loop and the
+/// read inside it would let a single read outlive the loop that bounds it.
+fn slack(timeout: Duration) -> Duration {
+    timeout * TIMEOUT_SLACK
+}
+
 fn wait_for_socket(path: &Path, timeout: Duration) {
-    let deadline = Instant::now() + timeout;
+    let deadline = Instant::now() + slack(timeout);
     while Instant::now() < deadline {
         if path.exists() && UnixStream::connect(path).is_ok() {
             return;
@@ -74,7 +112,7 @@ fn wait_for_socket(path: &Path, timeout: Duration) {
 
 #[cfg(target_os = "linux")]
 fn wait_for_path(path: &Path, timeout: Duration) {
-    let deadline = Instant::now() + timeout;
+    let deadline = Instant::now() + slack(timeout);
     while Instant::now() < deadline {
         if path.exists() {
             return;
@@ -178,8 +216,13 @@ impl JsonLineReader {
         self.stream.flush().unwrap();
     }
 
+    /// Read one line, giving the stated budget its [`slack`].
+    ///
+    /// Callers that already own a deadline use `try_read_json_line` instead:
+    /// their loop was scaled once already, and scaling the read inside it too
+    /// would let one read run past the loop that is supposed to bound it.
     fn read_json_line(&mut self, timeout: Duration) -> serde_json::Value {
-        self.try_read_json_line(timeout)
+        self.try_read_json_line(slack(timeout))
             .unwrap_or_else(|| panic!("timed out waiting for json line"))
     }
 
@@ -243,10 +286,12 @@ fn wait_for_event_matching<F>(
 where
     F: FnMut(&serde_json::Value) -> bool,
 {
-    let deadline = Instant::now() + timeout;
+    let deadline = Instant::now() + slack(timeout);
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
-        let value = reader.read_json_line(remaining.max(Duration::from_millis(1)));
+        let value = reader
+            .try_read_json_line(remaining.max(Duration::from_millis(1)))
+            .unwrap_or_else(|| panic!("timed out waiting for event {expected}"));
         if value["event"] == expected && matches(&value) {
             return value;
         }
@@ -259,12 +304,14 @@ fn wait_for_events(
     expected: &[&str],
     timeout: Duration,
 ) -> Vec<serde_json::Value> {
-    let deadline = Instant::now() + timeout;
+    let deadline = Instant::now() + slack(timeout);
     let mut remaining = expected.to_vec();
     let mut events = Vec::new();
     while !remaining.is_empty() {
         let remaining_timeout = deadline.saturating_duration_since(Instant::now());
-        let value = reader.read_json_line(remaining_timeout.max(Duration::from_millis(1)));
+        let value = reader
+            .try_read_json_line(remaining_timeout.max(Duration::from_millis(1)))
+            .unwrap_or_else(|| panic!("timed out waiting for events {remaining:?}"));
         let Some(event) = value["event"].as_str() else {
             continue;
         };

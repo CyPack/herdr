@@ -299,6 +299,36 @@ impl App {
         &mut self,
         action_id: String,
     ) -> Result<(), String> {
+        self.invoke_plugin_action_from_surface(action_id, "keybinding")
+    }
+
+    /// Invoke a declared plugin action because a shell bar section was pressed.
+    ///
+    /// In-process, through the same resolver every other surface uses, and that
+    /// is the point rather than a convenience: what runs comes from a manifest
+    /// herdr has already read, so accepting a plugin into a bar stays "accept
+    /// this plugin" instead of becoming "run this command line". Shelling out
+    /// to the CLI here would move that boundary without anyone deciding to.
+    pub(crate) fn invoke_plugin_action_from_bar_section(
+        &mut self,
+        action_id: String,
+    ) -> Result<(), String> {
+        self.invoke_plugin_action_from_surface(action_id, "bar_section")
+    }
+
+    /// Resolve and start one declared plugin action on behalf of `source`.
+    ///
+    /// `source` is not decoration. It reaches the plugin's own process inside
+    /// `HERDR_PLUGIN_CONTEXT_JSON`, and plugins are entitled to behave
+    /// differently depending on what asked — the six surfaces that already name
+    /// themselves here are the evidence that the field carries weight. A
+    /// surface borrowing another one's name would make the plugin's own log
+    /// wrong about its own history.
+    fn invoke_plugin_action_from_surface(
+        &mut self,
+        action_id: String,
+        source: &'static str,
+    ) -> Result<(), String> {
         self.refresh_installed_plugins()
             .map_err(|err| format!("failed to load plugin registry: {err}"))?;
         let (plugin, action) = self
@@ -312,8 +342,8 @@ impl App {
             &action.qualified_id(),
         )
         .map_err(|(_, message)| message)?;
-        let mut context = self.current_plugin_context("keybinding");
-        context.invocation_source = Some("keybinding".to_string());
+        let mut context = self.current_plugin_context(source);
+        context.invocation_source = Some(source.to_string());
         self.start_plugin_command(
             &plugin,
             Some(action.action_id),
@@ -939,6 +969,130 @@ action = "bootstrap"
         let manifest = root.join("herdr-plugin.toml");
         std::fs::write(&manifest, content).unwrap();
         manifest
+    }
+
+    // TC-66-18/TC-66-19 · the invocation source has to cross a process
+    // boundary to matter, so this is the only place the claim can be checked.
+    // A unit test could assert the string is set and still be looking at a
+    // value the plugin never receives.
+    //
+    // Both surfaces are driven in one test on purpose: the claim is not "the
+    // bar sets a source" but "the bar names ITSELF and does not borrow the
+    // keybind's name", and only the contrast says that. It is also what makes
+    // the keybind path a guarded regression rather than an assumption — the
+    // generalisation underneath these two wrappers could have changed it.
+    // TP-CHROME-87: a bar section names itself as the invocation source, and
+    // the keybind path keeps naming itself.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn each_surface_names_itself_when_it_invokes_a_plugin_action() {
+        let mut app = test_app();
+        app.state.workspaces = vec![crate::workspace::Workspace::test_new("plugin-source")];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = crate::app::Mode::Terminal;
+
+        let root = unique_temp_path("plugin-invocation-source");
+        let from_bar = root.join("from-bar.json");
+        let from_keys = root.join("from-keys.json");
+        write_manifest_content(
+            &root,
+            &format!(
+                r#"
+id = "example.invocation-source"
+name = "Invocation Source"
+version = "0.1.0"
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos"]
+
+[[actions]]
+id = "from-bar"
+title = "from bar"
+command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_CONTEXT_JSON\" > {}"]
+
+[[actions]]
+id = "from-keys"
+title = "from keys"
+command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_CONTEXT_JSON\" > {}"]
+"#,
+                from_bar.display(),
+                from_keys.display()
+            ),
+        );
+        link_manifest(&mut app, &root);
+
+        app.invoke_plugin_action_from_bar_section("example.invocation-source.from-bar".to_string())
+            .expect("the bar's invocation resolves against the linked manifest");
+        app.invoke_plugin_action_from_keybind("example.invocation-source.from-keys".to_string())
+            .expect("the keybind's invocation still resolves");
+
+        for (label, capture, expected) in [
+            ("bar section", &from_bar, "bar_section"),
+            ("keybinding", &from_keys, "keybinding"),
+        ] {
+            let text = read_capture_when_ready(capture, || {});
+            let context: serde_json::Value =
+                serde_json::from_str(&text).expect("the injected context is json");
+            assert_eq!(
+                context
+                    .get("invocation_source")
+                    .and_then(serde_json::Value::as_str),
+                Some(expected),
+                "{label}: the plugin reads this field and is entitled to act on \
+                 it, so a surface wearing another one's name makes the plugin's \
+                 own record of its own history wrong"
+            );
+        }
+    }
+
+    // TC-66-16 · a disabled plugin is a different failure from a missing one,
+    // and folding the two into one message would cost the person the one piece
+    // of information that tells them what to do next: this is installed, and
+    // turning it back on is a setting rather than an install.
+    // TP-CHROME-88: pressing a bar section whose plugin is disabled says so.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_bar_section_whose_plugin_is_disabled_says_so() {
+        let mut app = test_app();
+        app.state.workspaces = vec![crate::workspace::Workspace::test_new("plugin-disabled")];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = crate::app::Mode::Terminal;
+
+        let root = unique_temp_path("plugin-disabled-bar");
+        write_manifest_content(
+            &root,
+            r#"
+id = "example.disabled"
+name = "Disabled"
+version = "0.1.0"
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos"]
+
+[[actions]]
+id = "ping"
+title = "ping"
+command = ["sh", "-c", "true"]
+"#,
+        );
+        link_manifest(&mut app, &root);
+        app.state
+            .installed_plugins
+            .get_mut("example.disabled")
+            .expect("control: the manifest linked, so the registry knows it")
+            .enabled = false;
+
+        let refusal = app
+            .invoke_plugin_action_from_bar_section("example.disabled.ping".to_string())
+            .expect_err("a disabled plugin must refuse rather than run");
+
+        assert!(
+            refusal.contains("disabled") && refusal.contains("example.disabled"),
+            "the refusal must name both the state and the plugin, or the person \
+             cannot tell it from a missing one: {refusal}"
+        );
     }
 
     fn link_manifest(app: &mut App, root: &std::path::Path) {
