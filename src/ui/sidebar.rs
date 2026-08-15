@@ -2120,15 +2120,37 @@ fn agent_panel_visible_count_from(app: &AppState, area: Rect, scroll: usize) -> 
     visible
 }
 
+/// Rows the last screen keeps for the graveyard: one separator, one ghost.
+///
+/// TP-AGPANEL-29: a separator with nothing under it is the rendering bug the
+/// graveyard contract already forbids, so the reserve is never one row.
+const GRAVEYARD_MIN_ROWS: u16 = 2;
+
 fn agent_panel_bottom_start(app: &AppState, area: Rect) -> usize {
     let body = agent_panel_body_rect(area, false);
     let entries = agent_panel_entries(app);
+    // TP-AGPANEL-29: when there are ghosts, the last screen keeps room for the
+    // separator and at least one of them.
+    //
+    // Without this the ceiling packs the last screen with living rows, the
+    // graveyard is drawn only into space they leave over, and the two rules
+    // meet badly: on a panel that is always full there is never any leftover
+    // space and no scroll position reaches the ghosts at all. A section that
+    // cannot be reached is a section that is not there. Reserved only when a
+    // graveyard exists — growing the ceiling for an empty one would open a
+    // gap under the panel that says "more below" and means nothing.
+    let ghost_reserve = if app.closed_agents.entries().next().is_some() {
+        GRAVEYARD_MIN_ROWS.min(body.height)
+    } else {
+        0
+    };
+    let usable = body.height.saturating_sub(ghost_reserve);
     let mut used_rows = 0u16;
     let mut start = entries.len();
     for (index, entry) in entries.iter().enumerate().rev() {
         let gap = agent_entry_gap(app, index, entries.len());
         let needed = agent_entry_height_in_body(app, entry, body.height).saturating_add(gap);
-        if used_rows.saturating_add(needed) > body.height {
+        if used_rows.saturating_add(needed) > usable {
             break;
         }
         used_rows = used_rows.saturating_add(needed);
@@ -4672,6 +4694,106 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             closed_at,
             revival: crate::app::closed_agents::RevivalState::Dormant,
         }
+    }
+
+    /// An app whose agents panel is filled several times over by living rows,
+    /// with `ghosts` closed agents remembered behind them.
+    fn app_with_a_full_panel_and_ghosts(living: usize, ghosts: usize) -> AppState {
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = (0..living)
+            .map(|idx| Workspace::test_new(&format!("ws{idx}")))
+            .collect();
+        app.active = Some(0);
+        app.selected = 0;
+        app.mobile_width_threshold = 0;
+        app.ensure_test_terminals();
+        // The panel lists a pane only when its terminal has a detected agent
+        // (`pane_details` drops the rest), so the fixture has to give each one
+        // an agent or the panel is empty and the test measures nothing.
+        for ws in &app.workspaces {
+            for tab in &ws.tabs {
+                for pane in tab.panes.values() {
+                    if let Some(terminal) = app.terminals.get_mut(&pane.attached_terminal_id) {
+                        terminal.detected_agent = Some(Agent::Pi);
+                    }
+                }
+            }
+        }
+        app.sidebar_agents.rows = vec![vec![crate::config::AgentSidebarToken::Agent]];
+        for idx in 0..ghosts {
+            app.closed_agents.record_closed(test_ghost(
+                &format!("ghost-{idx}"),
+                "Claude",
+                idx as u64,
+            ));
+        }
+        app
+    }
+
+    // TP-AGPANEL-29 (R1): a panel the living rows fill can still be scrolled
+    // down to its graveyard.
+    //
+    // The scroll ceiling used to be computed from the living rows alone, and
+    // the graveyard was drawn only into whatever space they left over. On a
+    // machine with fifty-nine panes those two rules meet badly: the panel is
+    // always full, the leftover space never appears, and no scroll position
+    // reaches the ghosts. A section that cannot be reached is a section that
+    // is not there — which is exactly how it was reported.
+    #[test]
+    fn a_full_panel_can_still_be_scrolled_down_to_its_graveyard() {
+        let mut app = app_with_a_full_panel_and_ghosts(24, 3);
+        let area = Rect::new(0, 0, 30, 24);
+
+        // Precondition: the living rows really do overflow the panel.
+        assert!(
+            agent_panel_bottom_start(&app, area) > 0,
+            "precondition: the panel scrolls at all; entries={} body={:?} ceiling={}",
+            agent_panel_entries(&app).len(),
+            agent_panel_body_rect(area, false),
+            agent_panel_bottom_start(&app, area)
+        );
+
+        app.agent_panel_scroll = agent_panel_bottom_start(&app, area);
+        let slots = closed_agent_row_slots(&app, area);
+        assert!(
+            slots.is_some(),
+            "scrolled to the bottom, the graveyard must have somewhere to paint"
+        );
+        let (_separator_y, rows) = slots.expect("slots");
+        assert!(
+            !rows.is_empty(),
+            "a separator with no ghost row under it is the rendering bug the contract forbids"
+        );
+    }
+
+    // TP-AGPANEL-29 (R2): with no ghosts the ceiling is untouched. Growing it
+    // for a graveyard that does not exist opens empty space under the panel —
+    // an "there is more below" that is a lie.
+    #[test]
+    fn with_no_ghosts_the_panel_ceiling_is_unchanged() {
+        let area = Rect::new(0, 0, 30, 24);
+        let with_ghosts = app_with_a_full_panel_and_ghosts(24, 0);
+        let ceiling = agent_panel_bottom_start(&with_ghosts, area);
+
+        let mut bare = app_with_a_full_panel_and_ghosts(24, 0);
+        bare.closed_agents = Default::default();
+        assert_eq!(
+            agent_panel_bottom_start(&bare, area),
+            ceiling,
+            "an empty graveyard changes nothing about how far the panel scrolls"
+        );
+    }
+
+    // TP-AGPANEL-29 (R4): a panel the living rows do not fill behaves exactly
+    // as before — the graveyard was already visible there.
+    #[test]
+    fn a_short_panel_still_shows_its_graveyard_without_scrolling() {
+        let app = app_with_a_full_panel_and_ghosts(1, 2);
+        let area = Rect::new(0, 0, 30, 24);
+        assert!(
+            closed_agent_row_slots(&app, area).is_some(),
+            "with room to spare the graveyard paints without any scrolling"
+        );
     }
 
     // TP-AGPANEL-22: after the living rows, a separator and the recently
