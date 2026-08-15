@@ -9436,6 +9436,83 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
         );
     }
 
+    // TP-MCF-SIZE-05
+    #[tokio::test]
+    async fn same_tab_index_in_different_workspaces_sizes_independently() {
+        let mut server = test_headless_server();
+        let mut left = crate::workspace::Workspace::test_new("left");
+        let left_pane = left.tabs[0].root_pane;
+        left.tabs[0].runtimes.insert(
+            left_pane,
+            crate::terminal::TerminalRuntime::test_with_screen_bytes(80, 24, b"left"),
+        );
+        let mut right = crate::workspace::Workspace::test_new("right");
+        let right_pane = right.tabs[0].root_pane;
+        right.tabs[0].runtimes.insert(
+            right_pane,
+            crate::terminal::TerminalRuntime::test_with_screen_bytes(80, 24, b"right"),
+        );
+        server.app.state.workspaces = vec![left, right];
+        server.app.state.active = Some(0);
+        server.app.state.selected = 0;
+        server.app.state.mode = crate::app::Mode::Terminal;
+
+        let (wide_tx, _wide_control_rx, _wide_rx) = test_client_writer();
+        let (narrow_tx, _narrow_control_rx, _narrow_rx) = test_client_writer();
+        server.clients.insert(
+            1,
+            ClientConnection::new(
+                (200, 50),
+                crate::kitty_graphics::HostCellSize::default(),
+                crate::terminal_theme::TerminalTheme::default(),
+                None,
+                1,
+                RenderEncoding::SemanticFrame,
+                Some(wide_tx),
+            ),
+        );
+        server.clients.insert(
+            2,
+            ClientConnection::new(
+                (60, 20),
+                crate::kitty_graphics::HostCellSize::default(),
+                crate::terminal_theme::TerminalTheme::default(),
+                None,
+                2,
+                RenderEncoding::SemanticFrame,
+                Some(narrow_tx),
+            ),
+        );
+        server.foreground_client_id = Some(1);
+
+        // Both displays attach on the session's workspace, then the narrow one
+        // moves to the other. Each workspace has exactly one tab, so both
+        // displays are now watching a tab whose index is 0 -- in different
+        // workspaces.
+        server.render_and_stream();
+        server.app.state.enter_viewer(Some(2));
+        server.app.state.active = Some(1);
+        server.app.state.restore_viewer(None);
+
+        server.render_and_stream();
+
+        let (_, left_cols) =
+            server.app.state.workspaces[0].tabs[0].runtimes[&left_pane].current_size();
+        let (_, right_cols) =
+            server.app.state.workspaces[1].tabs[0].runtimes[&right_pane].current_size();
+
+        assert!(
+            left_cols > 60,
+            "the wide display's workspace keeps the wide width; a tab index is not \
+             an identity across workspaces, so the narrow display's tab 0 must not \
+             drag it down, got {left_cols}"
+        );
+        assert!(
+            right_cols <= 60,
+            "the narrow display's workspace fits the narrow display, got {right_cols}"
+        );
+    }
+
     // TP-MCF-SIZE-04
     #[tokio::test]
     async fn moving_input_between_displays_costs_no_background_resize() {
