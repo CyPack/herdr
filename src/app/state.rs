@@ -3986,9 +3986,10 @@ impl AppState {
         // workspace holds `$HOME`, and the chats started there had become
         // reachable from nowhere in the sidebar.
         //
-        // Skipped when a workspace already claims that same directory: it is
-        // then that workspace's drawer, and reading it twice would say the
-        // same thing twice.
+        // Pushed only when the list does not already carry that key: a
+        // workspace standing in the same directory produces the same key, and
+        // reading one directory twice in one pass buys nothing. It no longer
+        // silences the section — see TP-DAILY-09.
         if let Some(daily) = self.daily_chat_cwd.clone() {
             let key = crate::persist::workspace_chats::ledger_key(&daily);
             if !keys.iter().any(|(existing, _)| existing == &key) {

@@ -1016,22 +1016,19 @@ pub(crate) fn visible_active_chat(app: &AppState) -> Option<(usize, usize)> {
 
 /// The chats of the daily directory — the ones no checkout claims.
 ///
-/// Empty whenever there is no daily directory, nothing has been started
-/// there, or a workspace already holds that directory: in the last case the
-/// chats are that workspace's drawer, and drawing them twice would leave the
-/// reader asking which of the two is live (TP-DAILY-05).
+/// Empty only when there is no daily directory or nothing has been started
+/// there. TP-DAILY-09: a workspace sitting in that same directory does not
+/// silence the section. It used to, and on the machine this was built for the
+/// silence was total — ten workspaces had been born in `$HOME`, seven outside
+/// any checkout, so `effective_cwd` handed back `$HOME` on every render. The
+/// duplication that rule guarded against was already on screen seven times
+/// over, since each of those workspaces reads this very ledger key; all the
+/// rule removed was the one place the chats could be found on purpose.
 pub(crate) fn daily_chat_rows(app: &AppState) -> &[crate::app::state::WorkspaceChatRow] {
     let Some(daily) = app.daily_chat_cwd.as_deref() else {
         return &[];
     };
     let key = crate::persist::workspace_chats::ledger_key(daily);
-    if app
-        .workspaces
-        .iter()
-        .any(|ws| crate::persist::workspace_chats::ledger_key(ws.effective_cwd()) == key)
-    {
-        return &[];
-    }
     app.workspace_chat_rows
         .get(&key)
         .map(Vec::as_slice)
@@ -6804,15 +6801,28 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             .any(|entry| matches!(entry, WorkspaceListEntry::DailyMore { expanded: true })));
     }
 
-    // TP-DAILY-05: the moment a workspace claims that directory the section
-    // goes quiet — those chats are that workspace's drawer now. Drawn in both
-    // places, the reader has no way to tell which of the two is live (#45's
-    // lesson in a different surface).
+    // TP-DAILY-09: a workspace sitting in the daily directory does NOT silence
+    // the section. The silence used to be the contract, and on the machine
+    // this feature was built for it turned the whole surface off: ten of that
+    // session's workspaces had been born in `$HOME`, seven of them outside any
+    // checkout, so `effective_cwd` handed back `$HOME` and the claim test fired
+    // on every render. Worse, the duplication the old rule guarded against was
+    // already there — each of those workspaces reads the same ledger key, so
+    // the list was on screen seven times while its one canonical home was not.
     #[test]
-    fn a_workspace_claiming_the_daily_directory_silences_the_section() {
+    fn a_workspace_sitting_in_the_daily_directory_keeps_the_section() {
         let (mut app, daily) = app_with_daily_chats(3);
         app.workspaces[0].identity_cwd = daily;
-        assert_eq!(entry_kinds(&app), vec!["workspace"]);
+        assert_eq!(
+            entry_kinds(&app),
+            vec![
+                "daily-header",
+                "daily-chat",
+                "daily-chat",
+                "daily-chat",
+                "workspace"
+            ]
+        );
     }
 
     // TP-DAILY-02/03: the section says what it is, whether it is open, and
