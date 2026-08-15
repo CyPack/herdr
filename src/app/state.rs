@@ -2263,6 +2263,11 @@ pub(crate) struct WorkspacePressState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingNewModule {
     pub parent: Option<String>,
+    /// The key being renamed, when this prompt is a rename rather than a
+    /// creation (TP-MOD-32). A rename MUST carry the existing key: deriving a
+    /// new one from the new name would re-key the container and leave its
+    /// children and members pointing at a module that no longer exists.
+    pub rename_key: Option<String>,
 }
 
 #[derive(Clone)]
@@ -2358,6 +2363,16 @@ pub enum ContextMenuKind {
         pane_id: PaneId,
         source_pane_id: Option<PaneId>,
         has_manual_label: bool,
+    },
+    /// The tree's empty space: the one place a container can be made without
+    /// already standing in one (TP-MOD-31). Carries nothing — the blank is
+    /// not a row, so there is no identity here to go stale.
+    SidebarBlank,
+    /// The daily area's own header menu (TP-DAILY-12). Carries only whether
+    /// it is folded, the way `SpaceHeader` does: the area names a directory,
+    /// not a row, so nothing here can go stale under a refresh.
+    DailyHeader {
+        collapsed: bool,
     },
     /// Agent selector for a new chat in the daily directory (TP-DAILY-11).
     ///
@@ -2507,6 +2522,13 @@ impl ContextMenuState {
                     "New parallel module...",
                 ];
                 items.push(if *collapsed { "Expand" } else { "Collapse" });
+                // TP-MOD-32: renaming rewrites the machine's own file, so it
+                // is offered on exactly the modules a delete is — a rename
+                // written into the overlay for a hand-written module loses
+                // to it at first-match and would do nothing at all.
+                if *deletable {
+                    items.push("Rename module...");
+                }
                 // TP-MOD-08/26: last, because it is the only item that takes
                 // something away — and only when there is something the
                 // machine can take back.
@@ -2535,6 +2557,19 @@ impl ContextMenuState {
                 has_workspace: true,
                 ..
             } => crate::app::projects::PROJECT_CHAT_MENU_WITH_WORKTREES.to_vec(),
+            // TP-MOD-31: one verb. "New project" is deliberately absent — a
+            // project is a node that claims a repository, and the blank has
+            // no repository to claim, so the entry could never be honoured.
+            ContextMenuKind::SidebarBlank => vec!["New module..."],
+            // TP-DAILY-12: the area's own verbs. No branch or sub-module
+            // entries: the daily directory is not a repository and holds no
+            // tree beneath it, so those would be offers it cannot keep.
+            ContextMenuKind::DailyHeader { collapsed } => {
+                vec![
+                    "New chat...",
+                    if *collapsed { "Expand" } else { "Collapse" },
+                ]
+            }
             // TP-DAILY-11: agents only. The daily directory is not a checkout,
             // so a worktree verb here would be an offer the tree cannot keep.
             ContextMenuKind::DailyNewChat => crate::app::projects::CHAT_AGENTS.to_vec(),
@@ -4950,9 +4985,12 @@ impl AppState {
                         self.workspaces.len()
                     );
                 }
-                // TP-DAILY-11: nothing index-shaped to validate — the daily
-                // menu names a directory, and a refresh cannot invalidate it.
-                ContextMenuKind::DailyNewChat => {}
+                // TP-DAILY-11/12 / TP-MOD-31: nothing index-shaped to
+                // validate — these name a directory, a fold state, or no row
+                // at all, and a refresh cannot invalidate any of them.
+                ContextMenuKind::DailyNewChat
+                | ContextMenuKind::SidebarBlank
+                | ContextMenuKind::DailyHeader { .. } => {}
                 ContextMenuKind::ProjectNewChat { proj_idx, .. } => {
                     assert!(
                         proj_idx < self.projects_sessions.len(),

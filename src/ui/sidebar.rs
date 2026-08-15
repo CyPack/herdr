@@ -3413,25 +3413,44 @@ fn render_daily_section(app: &AppState, frame: &mut Frame, list_bottom: u16) {
             } else {
                 DISCLOSURE_OPEN
             };
-            let icon = app.space_icons.chat.trim();
-            let icon_span = if icon.is_empty() {
-                String::new()
-            } else {
-                format!("{icon} ")
-            };
-            let label = format!("{arrow} {icon_span}{DAILY_SECTION_TITLE}");
-            frame.render_widget(
-                Paragraph::new(Span::styled(
-                    super::text::truncate_end(&label, rect.width as usize),
-                    Style::default().fg(p.text).add_modifier(Modifier::BOLD),
-                )),
-                rect,
-            );
+            // TP-DAILY-12: the section is drawn in the containers' dialect,
+            // not in a section-title's. It sits at the top of the same tree
+            // the projects sit in, so reading it as a heading rather than as
+            // a place — a coloured arrow, an icon, a bold name and the manage
+            // chrome every container header wears — was the difference
+            // between "a label above the tree" and "the area my day lives in".
+            let mut spans = vec![
+                Span::styled(arrow, Style::default().fg(p.accent)),
+                Span::raw(" "),
+            ];
+            // TP-DAILY-12: its own icon, not the chat glyph. This row names a
+            // place — the one that is always yours — and a speech bubble made
+            // it read as one more conversation rather than as where they live.
+            let icon = app.space_icons.daily.trim();
+            if !icon.is_empty() {
+                spans.push(Span::raw(format!("{icon} ")));
+            }
+            let used = spans
+                .iter()
+                .map(|span| super::text::display_width(span.content.as_ref()))
+                .sum::<usize>();
+            // TP-DOTS-09's measure: the trailing chrome is reserved so a name
+            // truncates short of it instead of bleeding underneath. Here the
+            // count lives in that lane too, so it reserves one column more.
+            let reserved = if app.mouse_capture { 5 } else { 2 };
+            spans.push(Span::styled(
+                super::text::truncate_end(
+                    DAILY_SECTION_TITLE,
+                    (rect.width as usize).saturating_sub(used + reserved),
+                ),
+                Style::default().fg(p.text).add_modifier(Modifier::BOLD),
+            ));
+            frame.render_widget(Paragraph::new(Line::from(spans)), rect);
             // TP-DAILY-10: the "+" is mouse chrome, like every other plus on
             // this sidebar — drawn only while the mouse owns the panel. The
-            // count steps two columns left for exactly that long, so the two
-            // never share a cell: information when the mouse is away, the
-            // action when it is here.
+            // count steps left of it for exactly that long, so the two never
+            // share a cell: information when the mouse is away, the action
+            // when it is here.
             let plus = daily_new_chat_cell(rect);
             let plus_drawn = app.mouse_capture && plus.width > 0;
             if plus_drawn {
@@ -3440,12 +3459,16 @@ fn render_daily_section(app: &AppState, frame: &mut Frame, list_bottom: u16) {
                     plus,
                 );
             }
+            // TP-DAILY-12: the "⋯" every container header wears — the visible
+            // door to the menu a right-click opens. Without it this row is the
+            // only header on the sidebar a person cannot manage.
+            draw_header_menu_dots(app, frame, rect);
             // The count answers "how much is in here" while the section is
             // folded — the one question a closed container cannot otherwise
             // answer, and the reason a fold is safe to leave closed.
             let count = chats.len().to_string();
             let count_room = if plus_drawn {
-                rect.width.saturating_sub(2)
+                rect.width.saturating_sub(4)
             } else {
                 rect.width
             };
@@ -7160,6 +7183,62 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         );
     }
 
+    // TP-DAILY-12: the header is drawn in the containers' dialect — the same
+    // accent-coloured disclosure arrow every project and module header wears,
+    // and the same "⋯" door to its menu. Drawn as a plain heading instead, the
+    // area reads as a label ABOVE the tree rather than as the first place IN
+    // it, which is precisely the complaint that produced this behaviour.
+    #[test]
+    fn the_daily_header_is_drawn_in_the_container_dialect() {
+        let (mut app, _) = app_with_daily_chats(2);
+        let area = Rect::new(0, 0, 30, 20);
+        app.view.sidebar_rect = area;
+        let (cards, chats, groups, projects, more, empty, daily) =
+            compute_workspace_list_areas(&app, area);
+        app.view.workspace_card_areas = cards;
+        app.view.workspace_chat_row_areas = chats;
+        app.view.workspace_group_header_areas = groups;
+        app.view.workspace_project_header_areas = projects;
+        app.view.workspace_more_chats_areas = more;
+        app.view.workspace_empty_module_areas = empty;
+        app.view.daily_header_area = daily.header;
+        app.view.daily_chat_row_areas = daily.chats;
+        app.view.daily_more_area = daily.more;
+        let header_rect = app.view.daily_header_area.expect("the section is drawn");
+
+        let mut terminal = Terminal::new(TestBackend::new(30, 20)).unwrap();
+        terminal
+            .draw(|frame| render_sidebar(&app, &TerminalRuntimeRegistry::new(), frame, area))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+
+        // The arrow carries the accent every container header uses, and is a
+        // span of its own rather than a character inside the label.
+        let arrow_x = find_symbol_x(buffer, header_rect.y, header_rect.width, DISCLOSURE_OPEN);
+        assert_eq!(
+            buffer[(arrow_x, header_rect.y)].style().fg,
+            Some(app.palette.accent),
+            "the disclosure arrow wears the container accent"
+        );
+
+        // The "⋯" door is present while the mouse owns the panel, and it does
+        // not sit on top of the "+".
+        let dots = header_menu_cell(header_rect);
+        let plus = daily_new_chat_cell(header_rect);
+        assert!(dots.width > 0 && plus.width > 0);
+        assert_ne!(dots.x, plus.x, "the two doors keep separate cells");
+        let row = row_text(buffer, header_rect.y, header_rect.width);
+        assert!(
+            row.contains('⋯'),
+            "the header wears the manage chrome: {row:?}"
+        );
+        assert!(row.contains('+'), "and its plus: {row:?}");
+        assert!(
+            row.contains(DAILY_SECTION_TITLE),
+            "without losing its name: {row:?}"
+        );
+    }
+
     // TP-DAILY-10: a header too narrow to hold a "+" reserves no cell at all.
     // A half-drawn plus would look pressable and do nothing — the same reason
     // every other cell on this sidebar refuses below six columns.
@@ -7215,17 +7294,17 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let header = row_text(buffer, header_rect.y, header_rect.width);
         assert!(header.contains(DAILY_SECTION_TITLE), "header: {header:?}");
         assert!(header.contains(DISCLOSURE_OPEN), "open arrow: {header:?}");
-        // TP-DAILY-10: with the mouse on the panel the plus owns the trailing
-        // column and the count steps left of it — both are on the row, and
-        // neither is painted over the other.
+        // TP-DAILY-10/12: with the mouse on the panel the container chrome
+        // owns the trailing columns — the count, then the "⋯", then the "+" —
+        // and none of the three is painted over another.
         assert!(
-            header.trim_end().ends_with("2 +"),
-            "count and plus: {header:?}"
+            header.trim_end().ends_with("2 ⋯ +"),
+            "count, dots and plus: {header:?}"
         );
 
-        // TP-DAILY-10: with the mouse away the plus is gone and the count
-        // takes the trailing column back — no cell is left reserved for
-        // chrome that is not drawn.
+        // TP-DAILY-10/12: with the mouse away the chrome is gone and the
+        // count takes the trailing column back — no cell is left reserved
+        // for chrome that is not drawn.
         app.mouse_capture = false;
         let mut plain = Terminal::new(TestBackend::new(30, 20)).unwrap();
         plain
@@ -7234,6 +7313,10 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let quiet = row_text(plain.backend().buffer(), header_rect.y, header_rect.width);
         assert!(quiet.trim_end().ends_with('2'), "count alone: {quiet:?}");
         assert!(!quiet.contains('+'), "no plus without capture: {quiet:?}");
+        assert!(
+            !quiet.contains('⋯'),
+            "no dots without capture either: {quiet:?}"
+        );
         app.mouse_capture = true;
 
         let first = row_text(
