@@ -500,6 +500,32 @@ pub(crate) enum BarConfigProblem {
     },
 }
 
+/// The accepted names of a closed set, phrased the way the refusals below already
+/// phrase them: quoted, separated by commas, and joined by `or` before the last.
+///
+/// Six refusals carry such a list and each one is written out by hand beside the
+/// match that decides. Writing the phrase once is the first half of holding the two
+/// together; the second half is that the list itself comes from the same place the
+/// match does, which is what the tables are for.
+///
+/// The wording is not a matter of taste here. It is what the guide quotes, what the
+/// tests read and what people have learned to expect, so this reproduces today's
+/// sentence exactly rather than improving on it.
+fn accepted_names(names: &[&str]) -> String {
+    match names {
+        [] => String::new(),
+        [only] => format!("{only:?}"),
+        [rest @ .., last] => {
+            let listed = rest
+                .iter()
+                .map(|name| format!("{name:?}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{listed} or {last:?}")
+        }
+    }
+}
+
 impl std::fmt::Display for BarConfigProblem {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Each message names the edge, and a section's message names its index
@@ -635,7 +661,8 @@ impl std::fmt::Display for BarConfigProblem {
             } => write!(
                 formatter,
                 "shell.bars.{edge}.sections[{index}].widget.metric is \"{metric}\"; expected \
-                 \"cpu\", \"mem\" or \"swap\", so this section shows nothing"
+                 {offered}, so this section shows nothing",
+                offered = accepted_names(crate::resource::ResourceMetric::ACCEPTED)
             ),
             Self::IconWithoutPicture { edge, index } => write!(
                 formatter,
@@ -2321,6 +2348,31 @@ mod tests {
             expected_names("… action.secondary is \"tabs\"; expected \"tab\", so a right press …"),
             vec!["tab"]
         );
+    }
+
+    // TP-CHROME-105: the phrase a generated list has to reproduce, at every length the
+    // six refusals actually use. Pinning one arity would not pin the generator: the single-name
+    // form has no separator to get wrong, and the longer ones differ only in where
+    // the `or` falls. All four are taken from the messages as they read today.
+    #[test]
+    fn a_generated_list_reads_the_way_the_refusals_already_read() {
+        assert_eq!(accepted_names(&["tab"]), r#""tab""#);
+        assert_eq!(
+            accepted_names(&["popup", "plugin"]),
+            r#""popup" or "plugin""#
+        );
+        assert_eq!(
+            accepted_names(&["fixed", "fill", "content"]),
+            r#""fixed", "fill" or "content""#
+        );
+        assert_eq!(
+            accepted_names(&["label", "resource", "icon", "meter"]),
+            r#""label", "resource", "icon" or "meter""#
+        );
+
+        // An empty closed set cannot be written and would read as a missing sentence
+        // rather than a refusal, so it is named here rather than discovered later.
+        assert_eq!(accepted_names(&[]), "");
     }
 
     fn plain_section(kind: &str) -> ShellBarSectionConfig {
