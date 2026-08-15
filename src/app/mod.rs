@@ -1085,8 +1085,16 @@ impl App {
             )
         };
         state.workspace_chat_rows = crate::persist::workspace_chats::project_rows(&ledger);
-        if let Some(dir) = crate::claude_sessions::default_claude_projects_dir() {
-            state.merge_workspace_chat_rows_in(&dir);
+        // TP-DRAW-13: the same promise covers the transcript store. The ledger
+        // honoured `no_session` and this read did not, so a clean start still
+        // loaded the machine's history — and every fixture built on
+        // `App::new(.., true, ..)` read the live `~/.claude/projects`
+        // directory, which orders rows by transcript mtime and therefore moved
+        // under any agent writing its own transcript.
+        if !no_session {
+            if let Some(dir) = crate::claude_sessions::default_claude_projects_dir() {
+                state.merge_workspace_chat_rows_in(&dir);
+            }
         }
 
         Self {
@@ -2990,6 +2998,51 @@ mod tests {
         let app = App::new(&config, true, None, api_rx, crate::api::EventHub::default());
 
         assert!(!app.state.redraw_on_focus_gained);
+    }
+
+    // TP-DRAW-13: `--no-session` is a clean-start promise, and it covers two
+    // stores, not one. The ledger honoured it; the transcript store did not —
+    // `merge_workspace_chat_rows_in` ran unconditionally, and the daily
+    // directory (TP-DAILY-01) is read even when no workspace asks for it, so a
+    // sessionless start still loaded the machine's chat history.
+    //
+    // The cost was paid on two layers. In the product, `herdr --no-session`
+    // promised a clean start and delivered the user's past. In the tests, every
+    // fixture built on `App::new(.., true, ..)` — `test_app` and
+    // `test_headless_server` among them, several hundred tests — read the live
+    // `~/.claude/projects` directory; and because a chat row orders by its
+    // transcript's mtime, the measurement moved whenever the agent running it
+    // wrote to its own transcript. A headless render test failed exactly that
+    // way under load and refused a landing (gate, 2026-08-16 00:52).
+    #[test]
+    fn a_sessionless_start_reads_neither_the_ledger_nor_the_transcript_store() {
+        let home = unique_temp_path("no-session-home");
+        let slug = crate::claude_sessions::encode_project_path(&home.to_string_lossy());
+        let project_dir = home.join(".claude").join("projects").join(slug);
+        std::fs::create_dir_all(&project_dir).expect("fake transcript store");
+        std::fs::write(
+            project_dir.join("11111111-2222-4333-8444-555555555555.jsonl"),
+            "{\"type\":\"ai-title\",\"aiTitle\":\"an older conversation\"}\n",
+        )
+        .expect("fake transcript");
+
+        // nextest runs each test in its own process, so redirecting HOME here
+        // cannot reach a neighbouring test. It is restored immediately anyway,
+        // because the fixture is what the assertion is about.
+        let previous_home = std::env::var_os("HOME");
+        std::env::set_var("HOME", &home);
+        let app = test_app();
+        match previous_home {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&home);
+
+        assert!(
+            app.state.workspace_chat_rows.is_empty(),
+            "a clean start loads no history; it loaded: {:?}",
+            app.state.workspace_chat_rows.keys().collect::<Vec<_>>()
+        );
     }
 
     #[test]
