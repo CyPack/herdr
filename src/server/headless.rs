@@ -9398,6 +9398,89 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
         );
     }
 
+    // TP-MCF-SIZE-03
+    #[tokio::test]
+    async fn a_steady_frame_costs_no_background_resize() {
+        let mut server = test_headless_server();
+        let mut workspace = crate::workspace::Workspace::test_new("test");
+        let first_pane = workspace.tabs[0].root_pane;
+        let second_tab = workspace.test_add_tab(Some("second"));
+        let second_pane = workspace.tabs[second_tab].root_pane;
+        let background_tab = workspace.test_add_tab(Some("background"));
+        let background_pane = workspace.tabs[background_tab].root_pane;
+        for (tab, pane) in [
+            (0, first_pane),
+            (second_tab, second_pane),
+            (background_tab, background_pane),
+        ] {
+            workspace.tabs[tab].runtimes.insert(
+                pane,
+                crate::terminal::TerminalRuntime::test_with_screen_bytes(80, 24, b"x"),
+            );
+        }
+        server.app.state.workspaces = vec![workspace];
+        server.app.state.active = Some(0);
+        server.app.state.selected = 0;
+        server.app.state.mode = crate::app::Mode::Terminal;
+
+        // Two displays of different sizes. The third tab is watched by neither,
+        // so it is swept as a background tab by both render passes.
+        let (wide_tx, _wide_control_rx, _wide_rx) = test_client_writer();
+        let (narrow_tx, _narrow_control_rx, _narrow_rx) = test_client_writer();
+        server.clients.insert(
+            1,
+            ClientConnection::new(
+                (200, 50),
+                crate::kitty_graphics::HostCellSize::default(),
+                crate::terminal_theme::TerminalTheme::default(),
+                None,
+                1,
+                RenderEncoding::SemanticFrame,
+                Some(wide_tx),
+            ),
+        );
+        server.clients.insert(
+            2,
+            ClientConnection::new(
+                (60, 20),
+                crate::kitty_graphics::HostCellSize::default(),
+                crate::terminal_theme::TerminalTheme::default(),
+                None,
+                2,
+                RenderEncoding::SemanticFrame,
+                Some(narrow_tx),
+            ),
+        );
+        server.foreground_client_id = Some(1);
+
+        // Let both displays attach and adopt a tab, then put the narrow one on
+        // its own tab so each display watches a different tab and the third is
+        // background for both.
+        server.render_and_stream();
+        let previous = server.app.state.enter_viewer(Some(2));
+        server.app.state.workspaces[0].set_active_tab(second_tab);
+        server.app.state.restore_viewer(previous);
+        server.render_and_stream();
+
+        // Everything has settled: no input, no output, no size change. From here
+        // a frame must cost nothing on a tab nobody is watching.
+        let before = server.app.state.workspaces[0].tabs[background_tab].runtimes
+            [&background_pane]
+            .applied_resizes_for_test();
+        server.render_and_stream();
+        server.render_and_stream();
+        let after = server.app.state.workspaces[0].tabs[background_tab].runtimes[&background_pane]
+            .applied_resizes_for_test();
+
+        assert_eq!(
+            after, before,
+            "a background tab must not be resized by a steady frame; each display was \
+             rewriting it to its own geometry, and every one of those reflows the whole \
+             scrollback (applied {} resizes over two idle frames)",
+            after - before
+        );
+    }
+
     #[tokio::test]
     async fn resize_shared_runtime_resizes_background_tabs() {
         let mut server = test_headless_server();

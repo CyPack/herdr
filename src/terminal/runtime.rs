@@ -487,6 +487,12 @@ impl TerminalRuntime {
 
 #[cfg(test)]
 impl TerminalRuntime {
+    /// How many resizes actually ran on this terminal — see
+    /// `PaneRuntime::applied_resizes_for_test`.
+    pub(crate) fn applied_resizes_for_test(&self) -> u32 {
+        self.0.applied_resizes_for_test()
+    }
+
     pub(crate) fn test_with_channel(cols: u16, rows: u16) -> (Self, mpsc::Receiver<Bytes>) {
         let (runtime, rx) = crate::pane::PaneRuntime::test_with_channel(cols, rows);
         (Self(runtime), rx)

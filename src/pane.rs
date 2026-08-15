@@ -966,6 +966,11 @@ pub struct PaneRuntime {
     terminal: Arc<PaneTerminal>,
     io: PaneRuntimeIo,
     current_size: Cell<(u16, u16, u32, u32)>,
+    /// Counts resizes that got past the idempotence guard, so a test can assert
+    /// that a steady frame costs nothing. A resize that actually runs reflows the
+    /// whole scrollback, so "how many ran" is the cost, not "what size resulted".
+    #[cfg(test)]
+    applied_resizes: Cell<u32>,
     child_pid: Arc<AtomicU32>,
     reported_cwd: Arc<Mutex<Option<std::path::PathBuf>>>,
     child_wait_completed: Option<Arc<AtomicBool>>,
@@ -1874,6 +1879,8 @@ impl PaneRuntime {
             terminal,
             io,
             current_size: Cell::new((rows, cols, cell_width_px, cell_height_px)),
+            #[cfg(test)]
+            applied_resizes: Cell::new(0),
             child_pid,
             reported_cwd,
             child_wait_completed: None,
@@ -2388,6 +2395,8 @@ impl PaneRuntime {
             terminal,
             io,
             current_size: Cell::new((rows, cols, 0, 0)),
+            #[cfg(test)]
+            applied_resizes: Cell::new(0),
             child_pid,
             reported_cwd,
             child_wait_completed: Some(child_wait_completed),
@@ -2439,6 +2448,13 @@ impl PaneRuntime {
         (rows, cols)
     }
 
+    /// How many resizes actually ran on this pane. Each one reflows the whole
+    /// scrollback, so a frame that changes nothing must not add to this.
+    #[cfg(test)]
+    pub(crate) fn applied_resizes_for_test(&self) -> u32 {
+        self.applied_resizes.get()
+    }
+
     /// Resize if the dimensions actually changed.
     pub fn resize(&self, rows: u16, cols: u16, cell_width_px: u32, cell_height_px: u32) {
         let rows = rows.max(2);
@@ -2448,6 +2464,8 @@ impl PaneRuntime {
             return;
         }
         self.current_size.set(size);
+        #[cfg(test)]
+        self.applied_resizes.set(self.applied_resizes.get() + 1);
         let terminal_responses = self
             .terminal
             .resize(rows, cols, cell_width_px, cell_height_px);
@@ -2868,6 +2886,7 @@ impl PaneRuntime {
                     resize_tx,
                 },
                 current_size: Cell::new((rows, cols, 0, 0)),
+                applied_resizes: Cell::new(0),
                 child_pid: Arc::new(AtomicU32::new(0)),
                 reported_cwd: Arc::new(Mutex::new(None)),
                 child_wait_completed: None,
@@ -3366,6 +3385,7 @@ mod tests {
                 resize_tx,
             },
             current_size: Cell::new((80, 24, 0, 0)),
+            applied_resizes: Cell::new(0),
             child_pid: Arc::new(AtomicU32::new(0)),
             reported_cwd: Arc::new(Mutex::new(None)),
             child_wait_completed: None,
@@ -3397,6 +3417,7 @@ mod tests {
                 resize_tx,
             },
             current_size: Cell::new((80, 24, 0, 0)),
+            applied_resizes: Cell::new(0),
             child_pid: Arc::new(AtomicU32::new(0)),
             reported_cwd: Arc::new(Mutex::new(None)),
             child_wait_completed: None,
