@@ -411,6 +411,37 @@ impl AppState {
         });
     }
 
+    /// Start a fresh chat rooted at the daily directory.
+    ///
+    /// TP-DAILY-11: the sibling of [`AppState::request_workspace_chat`], and
+    /// rooted the same deliberate way [`AppState::open_daily_chat`] is — at
+    /// the daily directory, never at whatever workspace happens to be active.
+    /// A client with no home directory asks for nothing rather than for `/`.
+    pub(crate) fn request_daily_chat(&mut self) {
+        let Some(project_path) = self.daily_chat_cwd.clone() else {
+            return;
+        };
+        self.request_project_chat_tab = Some(crate::app::state::ProjectChatTabRequest {
+            project_path,
+            session_id: None,
+        });
+    }
+
+    /// Open the daily section's "+" menu: the agents, and nothing else.
+    pub(crate) fn open_daily_new_chat_menu(&mut self, x: u16, y: u16) {
+        let highlighted = crate::app::projects::CHAT_AGENTS
+            .iter()
+            .position(|agent| *agent == self.default_chat_agent)
+            .unwrap_or(0);
+        self.context_menu = Some(crate::app::state::ContextMenuState {
+            kind: crate::app::state::ContextMenuKind::DailyNewChat,
+            x,
+            y,
+            list: crate::app::state::MenuListState::new(highlighted),
+        });
+        self.enter_overlay_mode(crate::app::Mode::ContextMenu);
+    }
+
     /// Fold or unfold the daily section on this display (TP-DAILY-03).
     pub(crate) fn toggle_daily_section(&mut self) {
         self.daily_section_collapsed = !self.daily_section_collapsed;
@@ -3907,6 +3938,60 @@ mod tests {
                 .collect(),
         );
         (state, daily)
+    }
+
+    // TP-DAILY-11: a fresh chat from the section starts in the daily
+    // directory with no session to resume. Rooting it at the active workspace
+    // would put the conversation in a checkout the person was not looking at —
+    // the same substitution TP-DAILY-07 forbids for resumes.
+    #[test]
+    fn a_new_daily_chat_starts_in_the_daily_directory() {
+        let (mut state, daily) = state_with_daily_chats();
+        state.request_daily_chat();
+        let request = state
+            .request_project_chat_tab
+            .as_ref()
+            .expect("a fresh chat is queued");
+        assert_eq!(request.project_path, daily);
+        assert_eq!(
+            request.session_id, None,
+            "a new chat resumes nothing; a session id here would reopen an old one"
+        );
+
+        // A client with no home asks for nothing rather than for `/`.
+        let (mut homeless, _) = state_with_daily_chats();
+        homeless.daily_chat_cwd = None;
+        homeless.request_daily_chat();
+        assert!(homeless.request_project_chat_tab.is_none());
+    }
+
+    // TP-DAILY-11: the menu offers the agents and nothing else. The daily
+    // directory is not a checkout, so a worktree verb would be an offer the
+    // tree cannot keep — and the highlighted row is the persisted default, so
+    // the common case is one press away.
+    #[test]
+    fn the_daily_plus_offers_agents_only_and_starts_on_the_default() {
+        let (mut state, _) = state_with_daily_chats();
+        state.default_chat_agent = crate::app::projects::CHAT_AGENTS
+            .last()
+            .expect("agents exist")
+            .to_string();
+        state.open_daily_new_chat_menu(4, 2);
+        let menu = state.context_menu.as_ref().expect("the menu opens");
+        assert!(matches!(
+            menu.kind,
+            crate::app::state::ContextMenuKind::DailyNewChat
+        ));
+        assert_eq!(
+            menu.items(),
+            crate::app::projects::CHAT_AGENTS.to_vec(),
+            "no worktree verbs: the daily directory is not a checkout"
+        );
+        assert_eq!(
+            menu.list.highlighted,
+            crate::app::projects::CHAT_AGENTS.len() - 1,
+            "the menu opens on the persisted default"
+        );
     }
 
     // TP-DAILY-07: the request a daily row queues is rooted at the daily

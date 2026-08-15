@@ -92,6 +92,12 @@ pub(crate) enum MobileSwitcherTarget {
     ToggleProjectGroup {
         project_group_idx: usize,
     },
+    /// Open a chat from the daily section — the one the phone can reach that
+    /// carries no workspace, because nothing claims the directory it came
+    /// from. Indexed into the daily rows and nothing else.
+    DailyChat {
+        chat_idx: usize,
+    },
     /// Open a remembered chat under a checkout.
     Chat {
         ws_idx: usize,
@@ -156,6 +162,11 @@ pub(crate) enum DrawerRowContent {
         ws_idx: usize,
         chat_idx: usize,
         depth: u8,
+    },
+    /// A chat from the daily section: no workspace behind it, so it is drawn
+    /// from the daily rows and indexed into them.
+    DailyChat {
+        chat_idx: usize,
     },
     /// A primary action pinned to the drawer's footer band, styled to read as
     /// the one button the drawer wants pressed — the terminal's answer to the
@@ -540,16 +551,42 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
                 });
                 project_group_idx += 1;
             }
-            // The daily section is a desktop surface for now: its rows carry
-            // no workspace, and the phone drawer's targets are all
-            // workspace-shaped. Skipped deliberately rather than half-drawn —
-            // a header the phone cannot open would be a promise it does not
-            // keep. The parity pass lands with the phone's own targets (its
-            // behaviour id is reserved in `behaviors/daily-chats.md` under
-            // "not yet landed"); until then the rows simply are not there.
-            crate::ui::sidebar::WorkspaceListEntry::DailyHeader
-            | crate::ui::sidebar::WorkspaceListEntry::DailyChat { .. }
-            | crate::ui::sidebar::WorkspaceListEntry::DailyMore { .. } => {}
+            // TP-DAILY-08: the phone draws the same section in the same
+            // order. Its header is a plain section title rather than a fold:
+            // the drawer is already a short list, and the cursor must not
+            // stop on a row that does nothing — the rule `SectionTitle` and
+            // `ChatNote` already keep here. The chats themselves are the one
+            // thing the phone must be able to reach, so they alone carry a
+            // target.
+            crate::ui::sidebar::WorkspaceListEntry::DailyHeader => {
+                rows.push(DrawerRow {
+                    height: 1,
+                    target: None,
+                    content: DrawerRowContent::SectionTitle(
+                        crate::ui::sidebar::DAILY_SECTION_TITLE,
+                    ),
+                });
+            }
+            crate::ui::sidebar::WorkspaceListEntry::DailyChat { chat_idx } => {
+                rows.push(DrawerRow {
+                    height: entry_h,
+                    target: Some(MobileSwitcherTarget::DailyChat { chat_idx }),
+                    content: DrawerRowContent::DailyChat { chat_idx },
+                });
+            }
+            crate::ui::sidebar::WorkspaceListEntry::DailyMore { .. } => {
+                let hidden = crate::ui::sidebar::daily_chat_rows(app)
+                    .len()
+                    .saturating_sub(crate::ui::sidebar::WORKSPACE_CHAT_ROW_LIMIT);
+                rows.push(DrawerRow {
+                    height: 1,
+                    target: None,
+                    content: DrawerRowContent::ChatNote {
+                        depth: 1,
+                        label: format!("… {hidden} older"),
+                    },
+                });
+            }
             crate::ui::sidebar::WorkspaceListEntry::GroupHeader { space_key } => {
                 let collapsed = app.collapsed_space_keys.contains(&space_key);
                 // Inside a project every level steps in one (TP-MOB-98).
@@ -1626,6 +1663,62 @@ fn render_mobile_drawer_content(
                         ),
                         Rect::new(content.x, y, content.width, 1),
                     );
+                }
+            }
+            // TP-DAILY-08: the same row the phone already knows how to read —
+            // glyph, title, age at the right edge — sourced from the daily
+            // rows instead of a checkout's drawer. Written as its own arm
+            // rather than folded into `Chat` with an optional workspace: an
+            // index that means two different lists depending on a `None` is
+            // how a row ends up opening someone else's chat.
+            DrawerRowContent::DailyChat { chat_idx } => {
+                if let Some(y) = visible_y(viewport, scroll, doc_y) {
+                    let entry = crate::ui::sidebar::daily_chat_rows(app)
+                        .get(*chat_idx)
+                        .cloned();
+                    let title = entry
+                        .as_ref()
+                        .map(|row| row.title.clone().unwrap_or_else(|| row.session_id.clone()))
+                        .unwrap_or_default();
+                    let age = entry
+                        .map(|row| {
+                            let now_ms = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_millis() as u64)
+                                .unwrap_or(row.last_seen_ms);
+                            chat_age_label(now_ms, row.last_seen_ms)
+                        })
+                        .unwrap_or_default();
+                    // Depth 1: the section has no checkout above it to hang
+                    // from, so its rows sit one step in from the title alone.
+                    let indent = drawer_indent(1, content.width);
+                    let age_w = age.len() as u16;
+                    let title_w = content.width.saturating_sub(age_w.saturating_add(1)).max(4);
+                    let chat_icon = app.space_icons.chat.trim();
+                    let marker = if chat_icon.is_empty() {
+                        "·"
+                    } else {
+                        chat_icon
+                    };
+                    frame.render_widget(
+                        Paragraph::new(truncate_end(
+                            &format!("{:indent$}{marker} {title}", "", indent = indent),
+                            title_w as usize,
+                        ))
+                        .style(Style::default().fg(p.subtext0).bg(p.panel_bg)),
+                        Rect::new(content.x, y, title_w, 1),
+                    );
+                    if age_w > 0 && content.width > age_w {
+                        frame.render_widget(
+                            Paragraph::new(age).style(
+                                Style::default()
+                                    .fg(p.overlay1)
+                                    .bg(p.panel_bg)
+                                    .add_modifier(Modifier::DIM),
+                            ),
+                            Rect::new(content.x + content.width.saturating_sub(age_w), y, age_w, 1),
+                        );
+                    }
                 }
             }
             DrawerRowContent::Chat {
@@ -3682,6 +3775,137 @@ mod tests {
             "switching segments is not leaving"
         );
         assert_eq!(back.mobile_switcher_scroll, 0);
+    }
+
+    /// A phone app whose daily directory holds `count` chats and whose
+    /// checkouts live elsewhere — the shape the section exists for.
+    fn daily_phone_app(count: usize) -> AppState {
+        let mut app = chat_app(0, 76, 63);
+        let daily = std::path::PathBuf::from("/home/phone-tester");
+        app.daily_chat_cwd = Some(daily.clone());
+        let key = crate::persist::workspace_chats::ledger_key(&daily);
+        app.workspace_chat_rows.insert(
+            key,
+            (0..count)
+                .map(|idx| crate::app::state::WorkspaceChatRow {
+                    session_id: format!("daily-{idx}"),
+                    agent: "claude".into(),
+                    title: Some(format!("daily chat {idx}")),
+                    last_seen_ms: 5_000 + idx as u64,
+                    last_modified: None,
+                })
+                .collect(),
+        );
+        app
+    }
+
+    // TP-DAILY-08: the phone draws the same section in the same order, and
+    // an empty one not at all. Two surfaces walking one tree is the whole
+    // point of the drawer reading the desktop emission — a phone-only
+    // omission would mean a chat reachable from one screen and not the other.
+    #[test]
+    fn the_phone_drawer_carries_the_daily_section_at_the_top() {
+        let app = daily_phone_app(2);
+        let rows = mobile_drawer_rows(&app);
+        let kinds: Vec<&str> = rows
+            .iter()
+            .map(|row| match &row.content {
+                DrawerRowContent::SectionTitle(title) if *title == "daily chats" => "daily-title",
+                DrawerRowContent::DailyChat { .. } => "daily-chat",
+                DrawerRowContent::SectionTitle(_) => "title",
+                DrawerRowContent::Space { .. } => "space",
+                DrawerRowContent::Chat { .. } => "chat",
+                _ => "other",
+            })
+            .collect();
+        let first_daily = kinds.iter().position(|k| *k == "daily-title");
+        assert!(first_daily.is_some(), "the section is drawn: {kinds:?}");
+        let first_space = kinds.iter().position(|k| *k == "space");
+        assert!(
+            first_space.is_none() || first_daily < first_space,
+            "the section precedes the tree: {kinds:?}"
+        );
+        assert_eq!(
+            kinds.iter().filter(|k| **k == "daily-chat").count(),
+            2,
+            "{kinds:?}"
+        );
+
+        let empty = chat_app(0, 76, 63);
+        assert!(
+            !mobile_drawer_rows(&empty)
+                .iter()
+                .any(|row| matches!(&row.content, DrawerRowContent::SectionTitle(t) if *t == "daily chats")),
+            "no daily directory means no section on the phone either"
+        );
+    }
+
+    // TP-DAILY-08: the cursor stops on the chats and on nothing else in the
+    // section. A stop on the title or on the "older" note would be a press
+    // that does nothing — the rule `SectionTitle` and `ChatNote` already keep
+    // here, and the reason the phone's header is a title rather than a fold.
+    #[test]
+    fn the_phone_cursor_stops_on_daily_chats_but_not_on_their_title() {
+        let app = daily_phone_app(7);
+        let rows = mobile_drawer_rows(&app);
+        let stops = mobile_drawer_cursor_stops(&app);
+
+        // The stops are document rows, not row indices — a drawer row can be
+        // two lines tall, so the two axes only coincide by accident.
+        let mut doc_y = 0usize;
+        for row in rows.iter() {
+            match &row.content {
+                DrawerRowContent::DailyChat { .. } => assert!(
+                    stops.contains(&doc_y),
+                    "a daily chat must be reachable by the cursor (doc row {doc_y})"
+                ),
+                DrawerRowContent::SectionTitle(t) if *t == "daily chats" => assert!(
+                    !stops.contains(&doc_y),
+                    "the title does nothing, so the cursor must not rest on it"
+                ),
+                _ => {}
+            }
+            doc_y += row.height;
+        }
+
+        // The glance contract travels too: five rows and an inert note.
+        assert_eq!(
+            rows.iter()
+                .filter(|row| matches!(row.content, DrawerRowContent::DailyChat { .. }))
+                .count(),
+            5
+        );
+        let older = rows.iter().find(|row| {
+            matches!(&row.content, DrawerRowContent::ChatNote { label, .. } if label.contains("2 older"))
+        });
+        assert!(older.is_some(), "the phone states what it is not showing");
+        assert!(
+            older.is_some_and(|row| row.target.is_none()),
+            "that note is a statement, not a button"
+        );
+    }
+
+    // TP-DAILY-08: a tap opens the chat where it ran. The phone rides the
+    // same road the desktop row does, so "resume in the daily directory"
+    // cannot drift between the two surfaces.
+    #[test]
+    fn tapping_a_daily_chat_resumes_it_in_the_daily_directory() {
+        let mut app = daily_phone_app(3);
+        app.mobile_drawer = crate::app::state::MobileDrawer::Spaces;
+        app.apply_mobile_switcher_target(crate::ui::MobileSwitcherTarget::DailyChat {
+            chat_idx: 1,
+        });
+
+        let request = app
+            .request_project_chat_tab
+            .as_ref()
+            .expect("a dormant daily chat is queued");
+        assert_eq!(
+            request.project_path,
+            std::path::PathBuf::from("/home/phone-tester")
+        );
+        assert_eq!(request.session_id.as_deref(), Some("daily-1"));
+        assert!(!app.mobile_drawer.is_open(), "travelling closes the drawer");
     }
 
     // TP-MOB-95: the drawer's text reads in four layers on one font size —

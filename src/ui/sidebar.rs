@@ -948,6 +948,19 @@ pub(crate) fn header_new_branch_cell(head_rect: Rect) -> Rect {
     Rect::new(head_rect.x + head_rect.width - 1, head_rect.y, 1, 1)
 }
 
+/// The daily header's "+": the trailing edge of the section header, opening
+/// the same agent menu a workspace card's "+" opens (TP-DAILY-10).
+///
+/// Geometry deliberately identical to [`header_new_branch_cell`] — one plus
+/// sits at one place on this sidebar, wherever it appears. Mouse chrome, so
+/// the count underneath it keeps the row whenever the mouse is elsewhere.
+pub(crate) fn daily_new_chat_cell(head_rect: Rect) -> Rect {
+    if head_rect.width < 6 {
+        return Rect::default();
+    }
+    Rect::new(head_rect.x + head_rect.width - 1, head_rect.y, 1, 1)
+}
+
 /// The Spaces rows the mobile switcher lays out: workspaces only.
 ///
 /// Its geometry is a strict two rows per workspace and it is a switcher rather
@@ -1016,22 +1029,19 @@ pub(crate) fn visible_active_chat(app: &AppState) -> Option<(usize, usize)> {
 
 /// The chats of the daily directory — the ones no checkout claims.
 ///
-/// Empty whenever there is no daily directory, nothing has been started
-/// there, or a workspace already holds that directory: in the last case the
-/// chats are that workspace's drawer, and drawing them twice would leave the
-/// reader asking which of the two is live (TP-DAILY-05).
+/// Empty only when there is no daily directory or nothing has been started
+/// there. TP-DAILY-09: a workspace sitting in that same directory does not
+/// silence the section. It used to, and on the machine this was built for the
+/// silence was total — ten workspaces had been born in `$HOME`, seven outside
+/// any checkout, so `effective_cwd` handed back `$HOME` on every render. The
+/// duplication that rule guarded against was already on screen seven times
+/// over, since each of those workspaces reads this very ledger key; all the
+/// rule removed was the one place the chats could be found on purpose.
 pub(crate) fn daily_chat_rows(app: &AppState) -> &[crate::app::state::WorkspaceChatRow] {
     let Some(daily) = app.daily_chat_cwd.as_deref() else {
         return &[];
     };
     let key = crate::persist::workspace_chats::ledger_key(daily);
-    if app
-        .workspaces
-        .iter()
-        .any(|ws| crate::persist::workspace_chats::ledger_key(ws.effective_cwd()) == key)
-    {
-        return &[];
-    }
     app.workspace_chat_rows
         .get(&key)
         .map(Vec::as_slice)
@@ -3336,15 +3346,36 @@ fn render_daily_section(app: &AppState, frame: &mut Frame, list_bottom: u16) {
                 )),
                 rect,
             );
+            // TP-DAILY-10: the "+" is mouse chrome, like every other plus on
+            // this sidebar — drawn only while the mouse owns the panel. The
+            // count steps two columns left for exactly that long, so the two
+            // never share a cell: information when the mouse is away, the
+            // action when it is here.
+            let plus = daily_new_chat_cell(rect);
+            let plus_drawn = app.mouse_capture && plus.width > 0;
+            if plus_drawn {
+                frame.render_widget(
+                    Paragraph::new(Span::styled("+", Style::default().fg(p.overlay1))),
+                    plus,
+                );
+            }
             // The count answers "how much is in here" while the section is
             // folded — the one question a closed container cannot otherwise
             // answer, and the reason a fold is safe to leave closed.
             let count = chats.len().to_string();
-            if super::text::display_width(&count) < rect.width as usize {
+            let count_room = if plus_drawn {
+                rect.width.saturating_sub(2)
+            } else {
+                rect.width
+            };
+            if super::text::display_width(&count) < count_room as usize {
                 frame.render_widget(
                     Paragraph::new(Span::styled(count, Style::default().fg(p.overlay0)))
                         .alignment(Alignment::Right),
-                    rect,
+                    Rect {
+                        width: count_room,
+                        ..rect
+                    },
                 );
             }
         }
@@ -6804,15 +6835,46 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             .any(|entry| matches!(entry, WorkspaceListEntry::DailyMore { expanded: true })));
     }
 
-    // TP-DAILY-05: the moment a workspace claims that directory the section
-    // goes quiet — those chats are that workspace's drawer now. Drawn in both
-    // places, the reader has no way to tell which of the two is live (#45's
-    // lesson in a different surface).
+    // TP-DAILY-09: a workspace sitting in the daily directory does NOT silence
+    // the section. The silence used to be the contract, and on the machine
+    // this feature was built for it turned the whole surface off: ten of that
+    // session's workspaces had been born in `$HOME`, seven of them outside any
+    // checkout, so `effective_cwd` handed back `$HOME` and the claim test fired
+    // on every render. Worse, the duplication the old rule guarded against was
+    // already there — each of those workspaces reads the same ledger key, so
+    // the list was on screen seven times while its one canonical home was not.
     #[test]
-    fn a_workspace_claiming_the_daily_directory_silences_the_section() {
+    fn a_workspace_sitting_in_the_daily_directory_keeps_the_section() {
         let (mut app, daily) = app_with_daily_chats(3);
         app.workspaces[0].identity_cwd = daily;
-        assert_eq!(entry_kinds(&app), vec!["workspace"]);
+        assert_eq!(
+            entry_kinds(&app),
+            vec![
+                "daily-header",
+                "daily-chat",
+                "daily-chat",
+                "daily-chat",
+                "workspace"
+            ]
+        );
+    }
+
+    // TP-DAILY-10: a header too narrow to hold a "+" reserves no cell at all.
+    // A half-drawn plus would look pressable and do nothing — the same reason
+    // every other cell on this sidebar refuses below six columns.
+    #[test]
+    fn a_header_too_narrow_reserves_no_daily_plus() {
+        assert_eq!(
+            daily_new_chat_cell(Rect::new(0, 0, 5, 1)),
+            Rect::default(),
+            "five columns is too narrow for a plus"
+        );
+        let cell = daily_new_chat_cell(Rect::new(0, 3, 20, 1));
+        assert_eq!(
+            (cell.x, cell.y, cell.width),
+            (19, 3, 1),
+            "the plus sits on the header's trailing column, like every other plus"
+        );
     }
 
     // TP-DAILY-02/03: the section says what it is, whether it is open, and
@@ -6852,7 +6914,26 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let header = row_text(buffer, header_rect.y, header_rect.width);
         assert!(header.contains(DAILY_SECTION_TITLE), "header: {header:?}");
         assert!(header.contains(DISCLOSURE_OPEN), "open arrow: {header:?}");
-        assert!(header.trim_end().ends_with('2'), "count: {header:?}");
+        // TP-DAILY-10: with the mouse on the panel the plus owns the trailing
+        // column and the count steps left of it — both are on the row, and
+        // neither is painted over the other.
+        assert!(
+            header.trim_end().ends_with("2 +"),
+            "count and plus: {header:?}"
+        );
+
+        // TP-DAILY-10: with the mouse away the plus is gone and the count
+        // takes the trailing column back — no cell is left reserved for
+        // chrome that is not drawn.
+        app.mouse_capture = false;
+        let mut plain = Terminal::new(TestBackend::new(30, 20)).unwrap();
+        plain
+            .draw(|frame| render_sidebar(&app, &TerminalRuntimeRegistry::new(), frame, area))
+            .unwrap();
+        let quiet = row_text(plain.backend().buffer(), header_rect.y, header_rect.width);
+        assert!(quiet.trim_end().ends_with('2'), "count alone: {quiet:?}");
+        assert!(!quiet.contains('+'), "no plus without capture: {quiet:?}");
+        app.mouse_capture = true;
 
         let first = row_text(
             buffer,

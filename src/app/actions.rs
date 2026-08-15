@@ -1730,6 +1730,13 @@ impl AppState {
                 self.close_mobile_drawer();
                 self.open_workspace_chat(ws_idx, chat_idx);
             }
+            // TP-DAILY-08: the daily chats travel the same road their desktop
+            // rows do — the drawer closes and the resume happens rooted at the
+            // daily directory, never at whatever workspace was active.
+            crate::ui::MobileSwitcherTarget::DailyChat { chat_idx } => {
+                self.close_mobile_drawer();
+                self.open_daily_chat(chat_idx);
+            }
             crate::ui::MobileSwitcherTarget::ToggleBranchChats { ws_idx } => {
                 // Looking at a branch's history is not travelling to it, so
                 // the drawer stays open (TP-MOB-84).
