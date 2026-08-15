@@ -85,8 +85,28 @@ pub fn cleanup_test_base(base: &Path) {
     let runtime_dir = base.join("runtime");
     let runtime_dirs = HashSet::from([runtime_dir.clone()]);
 
-    terminate_servers_for_runtime_dirs(&runtime_dirs);
+    let all_stopped = terminate_servers_for_runtime_dirs(&runtime_dirs);
     unregister_runtime_dir(&runtime_dir);
+
+    // Removing the directory takes the socket with it, and a server whose socket
+    // is gone can no longer be addressed by anything: `herdr server stop` answers
+    // "cannot be reached at <path>: No such file or directory" and the process
+    // lives on until somebody finds it by pid. That is how a slow exit became a
+    // permanent orphan — measured 2026-08-15, when a machine under load was
+    // carrying 51 such directories and 21 such processes.
+    //
+    // So the sequence is now conditional: a base whose server is still running
+    // stays on disk, keeping the leak addressable, and says so. A directory left
+    // behind is cheap; a process nothing can name is not.
+    if !all_stopped {
+        eprintln!(
+            "warning: leaving {} in place — a test server there has not exited yet, \
+             and deleting its socket would leave a process nothing can address",
+            base.display()
+        );
+        return;
+    }
+
     let _ = fs::remove_dir_all(base);
 }
 
@@ -381,8 +401,15 @@ pub fn cleanup_registered_herdr_pids() {
         registry.drain().collect()
     };
 
-    for pid in pids {
-        terminate_pid(pid);
+    // Counted rather than ignored. This is the last chance the suite gets, so a
+    // survivor here is exactly the process that shows up hours later on a
+    // loaded machine with nobody able to say where it came from.
+    let survivors = pids
+        .into_iter()
+        .filter(|pid| !terminate_pid(*pid))
+        .collect::<Vec<_>>();
+    if !survivors.is_empty() {
+        eprintln!("warning: test servers still running after teardown: {survivors:?}");
     }
 
     let runtime_dirs: HashSet<PathBuf> = {
@@ -390,7 +417,12 @@ pub fn cleanup_registered_herdr_pids() {
         runtime_dirs.drain().collect()
     };
 
-    terminate_servers_for_runtime_dirs(&runtime_dirs);
+    if !terminate_servers_for_runtime_dirs(&runtime_dirs) {
+        eprintln!(
+            "warning: a test server under {} runtime dir(s) outlived teardown",
+            runtime_dirs.len()
+        );
+    }
     let _ = cleanup_servers_with_missing_runtime_dir();
 }
 
@@ -479,23 +511,39 @@ fn cleanup_servers_with_missing_runtime_dir() -> std::io::Result<()> {
             continue;
         };
 
-        if should_terminate_runtime_dir(&runtime_dir, &registered_runtime_dirs) {
-            terminate_pid(pid);
+        if should_terminate_runtime_dir(&runtime_dir, &registered_runtime_dirs)
+            && !terminate_pid(pid)
+        {
+            // These are the orphans by definition: their runtime dir is already
+            // gone, so `herdr server stop` can no longer reach them and only a
+            // pid can. One that survives even this is worth naming out loud.
+            eprintln!("warning: orphaned test server {pid} did not exit");
         }
     }
 
     Ok(())
 }
 
-fn terminate_servers_for_runtime_dirs(runtime_dirs: &HashSet<PathBuf>) {
+/// Stop every test server belonging to these runtime dirs, reporting whether
+/// they all actually went.
+///
+/// The return value is the whole point. The caller is about to delete the
+/// directory these sockets live in, and it may only do that once nothing is
+/// still listening on them.
+#[must_use]
+fn terminate_servers_for_runtime_dirs(runtime_dirs: &HashSet<PathBuf>) -> bool {
     if runtime_dirs.is_empty() {
-        return;
+        return true;
     }
 
     let Ok(pids) = iter_worktree_server_pids() else {
-        return;
+        // The pid scan failing is not the same as nothing running, and treating
+        // it as "all clear" is what would license deleting a live server's
+        // socket on the strength of a reading that never happened.
+        return false;
     };
 
+    let mut all_stopped = true;
     for pid in pids {
         let Ok(runtime_dir) = process_runtime_dir(pid) else {
             continue;
@@ -506,9 +554,10 @@ fn terminate_servers_for_runtime_dirs(runtime_dirs: &HashSet<PathBuf>) {
         };
 
         if runtime_dirs.contains(&runtime_dir) {
-            terminate_pid(pid);
+            all_stopped &= terminate_pid(pid);
         }
     }
+    all_stopped
 }
 
 fn iter_worktree_server_pids() -> std::io::Result<Vec<u32>> {
@@ -625,7 +674,23 @@ impl Drop for CleanupGuard {
     }
 }
 
-fn terminate_pid(pid: u32) {
+/// How much longer than they say the reap waits below are actually given.
+///
+/// Same reasoning, and the same measured machine, as the slack in
+/// `tests/api_ping.rs`: these are failure detectors, not speed assertions. A
+/// server that needs four seconds to die on a loaded box has done nothing
+/// wrong — but the old 2-second ceiling returned anyway, and the caller then
+/// deleted the socket out from under it. Being slow was quietly converted into
+/// being unkillable.
+const REAP_SLACK: u32 = 12;
+
+/// Ask one test server to exit, and say whether it did.
+///
+/// The boolean is load-bearing: the caller deletes the directory holding this
+/// process's socket, and a `false` here is the only thing standing between a
+/// slow exit and an orphan no command can name afterwards.
+#[must_use]
+fn terminate_pid(pid: u32) -> bool {
     let pid_t = pid as libc::pid_t;
 
     if process_exists(pid_t) {
@@ -634,8 +699,8 @@ fn terminate_pid(pid: u32) {
         }
     }
 
-    if wait_for_pid_exit(pid_t, Duration::from_millis(400)) {
-        return;
+    if wait_for_pid_exit(pid_t, Duration::from_millis(400) * REAP_SLACK) {
+        return true;
     }
 
     if process_exists(pid_t) {
@@ -644,7 +709,10 @@ fn terminate_pid(pid: u32) {
         }
     }
 
-    let _ = wait_for_pid_exit(pid_t, Duration::from_secs(2));
+    // Returned rather than discarded. `let _ =` here was the whole defect: the
+    // code already knew the process might still be alive, and threw that away
+    // one line before the caller deleted its socket.
+    wait_for_pid_exit(pid_t, Duration::from_secs(2) * REAP_SLACK)
 }
 
 fn wait_for_pid_exit(pid: libc::pid_t, timeout: Duration) -> bool {
