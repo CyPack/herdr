@@ -2323,7 +2323,13 @@ pub enum ContextMenuKind {
     /// (TP-CHAT-MOVE-04); `has_move` decides whether "Move back" shows and
     /// `has_live` whether the chat has a running tab to close (TP-AGPANEL-05).
     WorkspaceChat {
-        ws_idx: usize,
+        /// The drawer this row was pressed in, or `None` for a daily row.
+        ///
+        /// TP-CHAT-MOVE-08: the daily section is not a workspace and its chats
+        /// belong to no drawer, so there is nothing to exclude from the move
+        /// picker. Naming an arbitrary workspace here would silently drop a
+        /// legitimate destination from the list.
+        ws_idx: Option<usize>,
         session_id: String,
         has_move: bool,
         has_live: bool,
@@ -4966,9 +4972,16 @@ impl AppState {
                 ContextMenuKind::Workspace { ws_idx }
                 | ContextMenuKind::GitWorkspace { ws_idx, .. }
                 | ContextMenuKind::MoveWorkspace { ws_idx, .. }
-                | ContextMenuKind::MoveTarget { ws_idx, .. }
-                | ContextMenuKind::WorkspaceChat { ws_idx, .. } => {
+                | ContextMenuKind::MoveTarget { ws_idx, .. } => {
                     assert_workspace_index(ws_idx, "context menu workspace")
+                }
+                // TP-CHAT-MOVE-08: a chat row names a drawer only when it was
+                // pressed in one; a daily row was not, and there is no index
+                // to check.
+                ContextMenuKind::WorkspaceChat { ws_idx, .. } => {
+                    if let Some(ws_idx) = ws_idx {
+                        assert_workspace_index(ws_idx, "context menu chat workspace");
+                    }
                 }
                 ContextMenuKind::ChatMoveTarget { .. } => {
                     // Carries a session id and pre-resolved ledger keys; no
@@ -6186,7 +6199,7 @@ mod tests {
     fn the_chat_menu_offers_move_and_conditionally_back() {
         let plain = ContextMenuState {
             kind: ContextMenuKind::WorkspaceChat {
-                ws_idx: 0,
+                ws_idx: Some(0),
                 session_id: "s1".into(),
                 has_move: false,
                 has_live: false,
@@ -6199,7 +6212,7 @@ mod tests {
 
         let moved = ContextMenuState {
             kind: ContextMenuKind::WorkspaceChat {
-                ws_idx: 0,
+                ws_idx: Some(0),
                 session_id: "s1".into(),
                 has_move: true,
                 has_live: false,

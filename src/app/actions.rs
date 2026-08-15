@@ -2007,12 +2007,19 @@ impl AppState {
     /// map key — but a reader that does can ask
     /// [`crate::persist::workspace_chats::is_module_key`] rather than guess
     /// from the shape of the string.
-    pub(crate) fn chat_move_target_entries(&self, exclude_ws_idx: usize) -> Vec<(String, String)> {
+    /// `exclude_ws_idx` is the drawer the chat is shown in, when it is shown in
+    /// one at all. A daily chat belongs to no workspace (TP-CHAT-MOVE-08), so
+    /// it passes `None` and every workspace stays on offer — excluding an
+    /// arbitrary one there would quietly remove a legitimate destination.
+    pub(crate) fn chat_move_target_entries(
+        &self,
+        exclude_ws_idx: Option<usize>,
+    ) -> Vec<(String, String)> {
         let mut entries: Vec<(String, String)> = self
             .workspaces
             .iter()
             .enumerate()
-            .filter(|(idx, _)| *idx != exclude_ws_idx)
+            .filter(|(idx, _)| Some(*idx) != exclude_ws_idx)
             .filter_map(|(_, workspace)| {
                 let key = crate::persist::workspace_chats::ledger_key(workspace.effective_cwd());
                 if key.is_empty() {
@@ -4596,7 +4603,7 @@ mod tests {
     #[test]
     fn a_module_is_offered_as_a_move_destination() {
         let app = app_with_a_directoryless_module();
-        let targets = app.chat_move_target_entries(0);
+        let targets = app.chat_move_target_entries(Some(0));
         assert!(
             targets
                 .iter()
@@ -4618,7 +4625,7 @@ mod tests {
             "precondition: the fixture's container is declared, not derived from a checkout"
         );
         assert!(
-            app.chat_move_target_entries(0)
+            app.chat_move_target_entries(Some(0))
                 .iter()
                 .any(|(key, _)| key == "module:docs"),
             "a container with nowhere on disk is still somewhere to put a chat"

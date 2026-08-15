@@ -1111,7 +1111,7 @@ pub(super) fn apply_context_menu_action(
             },
             Some("Move to..."),
         ) => {
-            let targets = state.chat_move_target_entries(ws_idx);
+            let targets = state.chat_move_target_entries(Some(ws_idx));
             state.context_menu = Some(crate::app::state::ContextMenuState {
                 kind: ContextMenuKind::ChatMoveTarget {
                     session_id,
@@ -1845,7 +1845,7 @@ impl App {
                 },
                 Some("Move to..."),
             ) => {
-                let targets = self.state.chat_move_target_entries(ws_idx);
+                let targets = self.state.chat_move_target_entries(Some(ws_idx));
                 self.state.context_menu = Some(crate::app::state::ContextMenuState {
                     kind: ContextMenuKind::ChatMoveTarget {
                         session_id,
@@ -3245,7 +3245,7 @@ mod tests {
         app.state.mode = Mode::ContextMenu;
         let menu = ContextMenuState {
             kind: ContextMenuKind::WorkspaceChat {
-                ws_idx: 0,
+                ws_idx: Some(0),
                 session_id: "s1".into(),
                 has_move: false,
                 has_live: false,
@@ -3293,7 +3293,7 @@ mod tests {
         app.state.mode = Mode::ContextMenu;
         let menu = ContextMenuState {
             kind: ContextMenuKind::WorkspaceChat {
-                ws_idx: 0,
+                ws_idx: Some(0),
                 session_id: "s1".into(),
                 has_move: true,
                 has_live: false,
@@ -3827,6 +3827,55 @@ mod tests {
         assert_eq!(menu.items(), vec!["Close agent"]);
     }
 
+    // TP-CHAT-MOVE-08 (P4): filing a daily chat offers EVERY workspace. The
+    // picker excludes the drawer a chat is shown in, and a daily chat is shown
+    // in none — excluding an arbitrary one would quietly drop a legitimate
+    // destination. Asserted on the production body, the road the press takes.
+    #[test]
+    fn filing_a_daily_chat_offers_every_workspace_on_the_production_road() {
+        let mut app = app_with_test_workspaces(&["main", "other"]);
+        let all = app.state.chat_move_target_entries(None).len();
+        let from_a_drawer = app.state.chat_move_target_entries(Some(0)).len();
+        assert!(
+            all > from_a_drawer,
+            "a chat with no drawer excludes nothing; got {all} vs {from_a_drawer}"
+        );
+
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::WorkspaceChat {
+                ws_idx: None,
+                session_id: "daily-a".to_string(),
+                has_move: false,
+                has_live: false,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        let idx = menu
+            .items()
+            .iter()
+            .position(|item| *item == "Move to branch...")
+            .expect("the move verb is on a daily chat's menu");
+
+        app.apply_context_menu_action_via_api(menu, idx);
+
+        match app.state.context_menu.as_ref().map(|m| &m.kind) {
+            Some(ContextMenuKind::ChatMoveTarget {
+                session_id,
+                targets,
+            }) => {
+                assert_eq!(session_id, "daily-a");
+                assert_eq!(
+                    targets.len(),
+                    all,
+                    "the picker offers every destination, none excluded"
+                );
+            }
+            other => panic!("the production road opens the picker; got {other:?}"),
+        }
+    }
+
     // TP-AGPANEL-28 (N1): a row whose chat the ledger knows can send it
     // somewhere. This is the user's own sentence — "I should be able to send
     // the agent I want to the module area I want" — answered on the surface
@@ -3942,7 +3991,7 @@ mod tests {
     fn a_chat_row_offers_close_only_while_something_is_running() {
         let live = ContextMenuState {
             kind: ContextMenuKind::WorkspaceChat {
-                ws_idx: 0,
+                ws_idx: Some(0),
                 session_id: "s1".into(),
                 has_move: false,
                 has_live: true,
@@ -3955,7 +4004,7 @@ mod tests {
 
         let finished = ContextMenuState {
             kind: ContextMenuKind::WorkspaceChat {
-                ws_idx: 0,
+                ws_idx: Some(0),
                 session_id: "s1".into(),
                 has_move: true,
                 has_live: false,
@@ -3986,7 +4035,7 @@ mod tests {
 
         let menu = |session: &str| ContextMenuState {
             kind: ContextMenuKind::WorkspaceChat {
-                ws_idx: 0,
+                ws_idx: Some(0),
                 session_id: session.into(),
                 has_move: false,
                 has_live: true,

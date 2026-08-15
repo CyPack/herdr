@@ -1526,6 +1526,44 @@ impl AppState {
                         return None;
                     }
                 }
+                // TP-CHAT-MOVE-08: a daily row owns a menu too, matched from
+                // its own vector and before the drawer rows — the same
+                // one-vector-owns-the-row rule the left press already keeps.
+                // Without this the daily section is the one place a chat can
+                // be seen and not filed, which is backwards: those are exactly
+                // the chats that belong to no checkout yet.
+                if let Some(hit) = self
+                    .view
+                    .daily_chat_row_areas
+                    .iter()
+                    .find(|row| {
+                        mouse.row == row.rect.y
+                            && mouse.column >= row.rect.x
+                            && mouse.column < row.rect.x + row.rect.width
+                    })
+                    .cloned()
+                {
+                    if let Some(session_id) = crate::ui::daily_chat_rows(self)
+                        .get(hit.chat_idx)
+                        .map(|row| row.session_id.clone())
+                    {
+                        let has_move = self.chat_move_overrides.contains_key(&session_id);
+                        let has_live = self.find_resumed_chat_tab(&session_id).is_some();
+                        self.context_menu = Some(ContextMenuState {
+                            kind: ContextMenuKind::WorkspaceChat {
+                                ws_idx: None,
+                                session_id,
+                                has_move,
+                                has_live,
+                            },
+                            x: mouse.column,
+                            y: mouse.row,
+                            list: MenuListState::new(0),
+                        });
+                        self.enter_overlay_mode(Mode::ContextMenu);
+                    }
+                    return None;
+                }
                 // TP-CHAT-MOVE-04: a chat row owns its own menu — checked
                 // before the workspace cards for the same reason the click
                 // road is: only one vector may own the row.
@@ -1550,7 +1588,7 @@ impl AppState {
                         let has_live = self.find_resumed_chat_tab(&session_id).is_some();
                         self.context_menu = Some(ContextMenuState {
                             kind: ContextMenuKind::WorkspaceChat {
-                                ws_idx: hit.ws_idx,
+                                ws_idx: Some(hit.ws_idx),
                                 session_id,
                                 has_move,
                                 has_live,
@@ -3399,6 +3437,66 @@ mod tests {
     // nothing, because there is no agent there to act on. Before this road
     // existed the press fell through to the workspace list's resolver, which
     // reads by row and answers for a different section entirely.
+    // TP-CHAT-MOVE-08 (P1+P2): a daily row owns a menu, and that menu carries
+    // THAT row's chat. The daily section was the one place a chat could be
+    // seen and not filed — backwards, because those are exactly the chats that
+    // belong to no checkout yet and most need somewhere to go.
+    #[test]
+    fn right_click_on_a_daily_row_opens_a_menu_carrying_that_chat() {
+        let mut app = app_for_mouse_test();
+        let workspace = crate::workspace::Workspace::test_new("one");
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mobile_width_threshold = 0;
+
+        let daily = std::env::temp_dir().join("herdr-daily-menu-fixture");
+        app.state.daily_chat_cwd = Some(daily.clone());
+        let key = crate::persist::workspace_chats::ledger_key(&daily);
+        app.state.workspace_chat_rows.insert(
+            key,
+            vec![
+                crate::app::state::WorkspaceChatRow {
+                    session_id: "daily-a".to_string(),
+                    agent: "claude".to_string(),
+                    title: Some("first".to_string()),
+                    last_seen_ms: 2_000,
+                    last_modified: None,
+                },
+                crate::app::state::WorkspaceChatRow {
+                    session_id: "daily-b".to_string(),
+                    agent: "claude".to_string(),
+                    title: Some("second".to_string()),
+                    last_seen_ms: 1_000,
+                    last_modified: None,
+                },
+            ],
+        );
+        // The row the press will land on — laid out the way render lays it out.
+        app.state.view.daily_chat_row_areas = vec![crate::app::state::DailyChatRowArea {
+            rect: ratatui::layout::Rect::new(0, 7, 20, 1),
+            chat_idx: 1,
+        }];
+
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 3, 7));
+
+        match app.state.context_menu.as_ref().map(|menu| &menu.kind) {
+            Some(crate::app::state::ContextMenuKind::WorkspaceChat {
+                ws_idx, session_id, ..
+            }) => {
+                assert_eq!(
+                    session_id, "daily-b",
+                    "the menu carries the row that was pressed, not the first in the list"
+                );
+                assert_eq!(
+                    *ws_idx, None,
+                    "a daily chat belongs to no drawer, so it names none"
+                );
+            }
+            other => panic!("a daily row opens its own menu; got {other:?}"),
+        }
+    }
+
     #[test]
     fn right_click_on_an_agent_row_opens_its_menu_and_the_panel_gap_stays_inert() {
         let mut app = app_for_mouse_test();

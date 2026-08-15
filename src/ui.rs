@@ -122,7 +122,7 @@ pub(crate) use self::{
         agent_panel_scroll_for_target, agent_panel_scroll_metrics, agent_panel_scrollbar_rect,
         agent_panel_toggle_rect, all_agent_panel_entries, closed_agent_row_slots,
         collapsed_sidebar_sections, collapsed_sidebar_toggle_rect, compute_workspace_card_areas,
-        daily_new_chat_cell, effective_space, expanded_sidebar_sections,
+        daily_chat_rows, daily_new_chat_cell, effective_space, expanded_sidebar_sections,
         expanded_sidebar_toggle_rect, header_menu_cell, header_new_branch_cell,
         normalized_workspace_scroll, projects_scroll_metrics, projects_scrollbar_rect,
         sidebar_section_divider_rect, space_owner_for_key, workspace_chat_rows_for,
