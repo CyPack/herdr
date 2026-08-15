@@ -454,6 +454,7 @@ fn compute_view_internal(
         workspace_more_chats_areas,
         workspace_empty_module_areas,
         daily_areas,
+        module_chat_row_areas,
     ) = if app.sidebar_collapsed || !show_spaces_content {
         (
             Vec::new(),
@@ -463,6 +464,7 @@ fn compute_view_internal(
             Vec::new(),
             Vec::new(),
             sidebar::DailySectionAreas::default(),
+            Vec::new(),
         )
     } else {
         sidebar::compute_workspace_list_areas(app, sidebar_area)
@@ -576,6 +578,7 @@ fn compute_view_internal(
         workspace_empty_module_areas,
         daily_header_area: daily_areas.header,
         daily_chat_row_areas: daily_areas.chats,
+        module_chat_row_areas,
         daily_more_area: daily_areas.more,
         sidebar_tab_hit_areas,
         project_row_areas,
@@ -744,6 +747,7 @@ fn compute_mobile_view(
         workspace_more_chats_areas: Vec::new(),
         daily_header_area: None,
         daily_chat_row_areas: Vec::new(),
+        module_chat_row_areas: Vec::new(),
         daily_more_area: None,
         workspace_group_header_areas: Vec::new(),
         workspace_project_header_areas: Vec::new(),

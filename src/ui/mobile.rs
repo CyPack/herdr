@@ -558,6 +558,13 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
             // `ChatNote` already keep here. The chats themselves are the one
             // thing the phone must be able to reach, so they alone carry a
             // target.
+            // TP-CHAT-MOVE-06: chats moved into a declared container are a
+            // desktop surface only for now. The phone drawer walks this same
+            // list, so the row would have to earn a drawer target and a tap
+            // path of its own before it appears here — and a row a phone can
+            // see but not reach is worse than one it does not draw.
+            // Parity is tracked as its own piece of work (#92, 92a-3b).
+            crate::ui::sidebar::WorkspaceListEntry::ModuleChat { .. } => {}
             crate::ui::sidebar::WorkspaceListEntry::DailyHeader => {
                 rows.push(DrawerRow {
                     height: 1,

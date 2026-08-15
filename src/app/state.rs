@@ -709,6 +709,19 @@ pub struct DailyChatRowArea {
     pub chat_idx: usize,
 }
 
+/// One laid-out chat row under a declared container.
+///
+/// TP-CHAT-MOVE-06: it names its container and its position in that
+/// container's list, and carries no `ws_idx` for the same reason the daily row
+/// carries none — a container is not a workspace and may have no directory at
+/// all, so a workspace index here would be invented.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModuleChatRowArea {
+    pub rect: Rect,
+    pub node_key: String,
+    pub chat_idx: usize,
+}
+
 /// The laid-out "… N older" / "… fewer" row of one drawer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceMoreChatsArea {
@@ -1651,6 +1664,8 @@ pub struct ViewState {
     /// switch answer three different gestures and so keep three vectors.
     pub daily_header_area: Option<Rect>,
     pub daily_chat_row_areas: Vec<DailyChatRowArea>,
+    /// TP-CHAT-MOVE-06: the laid-out chat rows of declared containers.
+    pub module_chat_row_areas: Vec<ModuleChatRowArea>,
     pub daily_more_area: Option<Rect>,
     /// Worktree-group header rows, kept apart for the same reason: a header is
     /// not a workspace, so it must never be resolvable through a ws_idx.
@@ -4487,6 +4502,7 @@ impl AppState {
                 workspace_more_chats_areas: Vec::new(),
                 daily_header_area: None,
                 daily_chat_row_areas: Vec::new(),
+                module_chat_row_areas: Vec::new(),
                 daily_more_area: None,
                 workspace_group_header_areas: Vec::new(),
                 workspace_project_header_areas: Vec::new(),

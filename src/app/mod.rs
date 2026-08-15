@@ -872,6 +872,7 @@ impl App {
                 workspace_more_chats_areas: Vec::new(),
                 daily_header_area: None,
                 daily_chat_row_areas: Vec::new(),
+                module_chat_row_areas: Vec::new(),
                 daily_more_area: None,
                 workspace_group_header_areas: Vec::new(),
                 workspace_project_header_areas: Vec::new(),

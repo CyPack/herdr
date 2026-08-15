@@ -773,6 +773,18 @@ pub(crate) enum WorkspaceListEntry {
         ws_idx: usize,
         chat_idx: usize,
     },
+    /// A chat that was moved into a declared container, drawn under that
+    /// container's header.
+    ///
+    /// TP-CHAT-MOVE-06: this carries a `node_key` and deliberately no
+    /// `ws_idx`. A container is not a workspace — it may have no directory at
+    /// all — so folding it into the workspace-indexed area vectors would make
+    /// every press on one of these rows resolve as some other checkout's chat,
+    /// the same trap `TP-DAILY-03` keeps the daily rows out of.
+    ModuleChat {
+        node_key: String,
+        chat_idx: usize,
+    },
     /// Placeholder under an expanded workspace that has no remembered chats.
     /// Shown rather than nothing, because an empty gap reads as a broken
     /// drawer — and an empty drawer is the honest answer for a branch whose
@@ -1042,6 +1054,24 @@ pub(crate) fn daily_chat_rows(app: &AppState) -> &[crate::app::state::WorkspaceC
         return &[];
     };
     let key = crate::persist::workspace_chats::ledger_key(daily);
+    app.workspace_chat_rows
+        .get(&key)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+}
+
+/// The chats that were moved into a declared container.
+///
+/// TP-CHAT-MOVE-06: the container builds its own key rather than being handed
+/// one, exactly as [`daily_chat_rows`] does for a directory. That is the whole
+/// discipline that keeps the ledger's two key spaces from touching — nobody
+/// parses a key to find out what it is, because everybody who reads one made
+/// it.
+pub(crate) fn module_chat_rows<'a>(
+    app: &'a AppState,
+    node_key: &str,
+) -> &'a [crate::app::state::WorkspaceChatRow] {
+    let key = crate::persist::workspace_chats::module_ledger_key(node_key);
     app.workspace_chat_rows
         .get(&key)
         .map(Vec::as_slice)
@@ -1630,10 +1660,29 @@ fn walk_tree(
                     continue;
                 }
 
+                // TP-CHAT-MOVE-06: the chats someone moved into this
+                // container, drawn under its own header.
+                //
+                // This sits after the fold's `continue` on purpose: a folded
+                // container shows none of them, which is the same contract
+                // every other container on this sidebar keeps.
+                let module_chats = module_chat_rows(app, &node_key);
+                let shown = module_chats.len().min(WORKSPACE_CHAT_ROW_LIMIT);
+                for chat_idx in 0..shown {
+                    entries.push(WorkspaceListEntry::ModuleChat {
+                        node_key: node_key.clone(),
+                        chat_idx,
+                    });
+                }
+
                 // TP-MOD-03/24: an open container with nothing under it says
                 // so, right below its own header. Folded ones stay quiet —
                 // describing the inside of a closed box undoes closing it.
-                if !subtree_draws_rows(&node_key, maps) {
+                //
+                // TP-CHAT-MOVE-06: a container holding moved chats is not
+                // empty. Saying "nothing here" directly above a list of chats
+                // is the opposite of the readability TP-MOD-03 exists for.
+                if !subtree_draws_rows(&node_key, maps) && module_chats.is_empty() {
                     entries.push(WorkspaceListEntry::EmptyModule {
                         node_key: node_key.clone(),
                     });
@@ -1932,7 +1981,11 @@ fn entry_row_metrics(
         // usual gap so the tree below starts as its own block rather than
         // running on from the daily chats.
         WorkspaceListEntry::DailyHeader => Some((1, 0)),
-        WorkspaceListEntry::DailyChat { .. } | WorkspaceListEntry::DailyMore { .. } => {
+        WorkspaceListEntry::DailyChat { .. }
+        | WorkspaceListEntry::DailyMore { .. }
+        // TP-CHAT-MOVE-06: a container's chat measures like every other
+        // chat row; it is the same kind of thing in a different home.
+        | WorkspaceListEntry::ModuleChat { .. } => {
             Some((1, workspace_entry_gap(app, entries, entry_idx)))
         }
         WorkspaceListEntry::Workspace { ws_idx, indented } => {
@@ -2191,6 +2244,11 @@ pub(crate) type WorkspaceListAreas = (
     // The daily section's rows, gathered rather than spread across three more
     // tuple slots: they belong to one surface and are read together.
     DailySectionAreas,
+    // TP-CHAT-MOVE-06: chat rows under declared containers. These must be
+    // laid out, not merely emitted: the sidebar draws chat rows from the
+    // laid-out areas, so a row with no area here is a row nobody ever sees
+    // however green the emission tests are.
+    Vec<crate::app::state::ModuleChatRowArea>,
 );
 
 /// The daily section's laid-out rows.
@@ -2216,6 +2274,7 @@ pub(crate) fn compute_workspace_list_areas(app: &AppState, area: Rect) -> Worksp
             Vec::new(),
             Vec::new(),
             DailySectionAreas::default(),
+            Vec::new(),
         );
     }
 
@@ -2231,6 +2290,7 @@ pub(crate) fn compute_workspace_list_areas(app: &AppState, area: Rect) -> Worksp
             Vec::new(),
             Vec::new(),
             DailySectionAreas::default(),
+            Vec::new(),
         );
     }
 
@@ -2239,6 +2299,7 @@ pub(crate) fn compute_workspace_list_areas(app: &AppState, area: Rect) -> Worksp
     let body_bottom = body.y + body.height;
     let mut cards = Vec::new();
     let mut chat_rows = Vec::new();
+    let mut module_chats = Vec::new();
     let mut group_headers = Vec::new();
     let mut project_headers = Vec::new();
     let mut more_chats = Vec::new();
@@ -2315,6 +2376,17 @@ pub(crate) fn compute_workspace_list_areas(app: &AppState, area: Rect) -> Worksp
                     node_key: node_key.clone(),
                 });
             }
+            // TP-CHAT-MOVE-06: a container's chat row is laid out like any
+            // other chat row. This is not optional bookkeeping — the sidebar
+            // paints chat rows from these areas, so skipping the arm would
+            // leave the row emitted, measured, tested green, and invisible.
+            WorkspaceListEntry::ModuleChat { node_key, chat_idx } => {
+                module_chats.push(crate::app::state::ModuleChatRowArea {
+                    rect,
+                    node_key: node_key.clone(),
+                    chat_idx: *chat_idx,
+                });
+            }
             // The empty-drawer placeholder occupies a row but stays inert:
             // there is nothing behind it to open.
             WorkspaceListEntry::NoChats { .. } => {}
@@ -2333,6 +2405,7 @@ pub(crate) fn compute_workspace_list_areas(app: &AppState, area: Rect) -> Worksp
         more_chats,
         empty_modules,
         daily,
+        module_chats,
     )
 }
 
@@ -3072,6 +3145,9 @@ fn render_workspace_list(
 
     render_workspace_chat_rows(app, frame, list_bottom);
     render_daily_section(app, frame, list_bottom);
+    // TP-CHAT-MOVE-06: container chat rows draw from their own laid-out
+    // areas, alongside the daily section's.
+    render_module_chat_rows(app, frame, list_bottom);
     render_workspace_empty_module_rows(app, frame, list_bottom);
     render_workspace_more_chats_rows(app, frame, list_bottom);
 
@@ -3320,6 +3396,105 @@ fn render_workspace_more_chats_rows(app: &AppState, frame: &mut Frame, list_bott
 /// a reader learns one dialect rather than two; the switch says how many are
 /// hidden and how to get back. Drawn from the section's own area vectors, so
 /// a row here can never be painted over a workspace's.
+/// Draw one chat row: the live marker, the icon, the title, and the age.
+///
+/// TP-CHAT-MOVE-06: the daily section and declared containers both draw chat
+/// rows, and they have to look identical — a conversation that changes
+/// appearance because of where it was filed reads as a different kind of
+/// thing. `indent` is the only difference either surface may have.
+fn render_chat_row(
+    app: &AppState,
+    frame: &mut Frame,
+    rect: Rect,
+    chat: &crate::app::state::WorkspaceChatRow,
+    now: std::time::SystemTime,
+    indent: u16,
+) {
+    let p = &app.palette;
+    let wired = app.find_resumed_chat_tab(&chat.session_id);
+    let focused = wired.is_some_and(|(ws_idx, tab_idx)| {
+        app.active == Some(ws_idx)
+            && app
+                .workspaces
+                .get(ws_idx)
+                .is_some_and(|ws| ws.active_tab_index() == tab_idx)
+    });
+    let marker = if wired.is_some() { "\u{25cf} " } else { "  " };
+    let (title_style, marker_style) = if focused {
+        (
+            Style::default()
+                .fg(panel_contrast_fg(p))
+                .bg(p.accent)
+                .add_modifier(Modifier::BOLD),
+            Style::default().fg(panel_contrast_fg(p)).bg(p.accent),
+        )
+    } else if wired.is_some() {
+        (Style::default().fg(p.text), Style::default().fg(p.accent))
+    } else {
+        (Style::default().fg(p.overlay1), Style::default())
+    };
+    let icon = app.space_icons.chat.trim();
+    let icon_span = if icon.is_empty() {
+        String::new()
+    } else {
+        format!("{icon} ")
+    };
+    let age = chat
+        .last_modified
+        .map(|seen| format_relative_time(seen, now))
+        .unwrap_or_else(|| {
+            std::time::UNIX_EPOCH
+                .checked_add(std::time::Duration::from_millis(chat.last_seen_ms))
+                .map(|seen| format_relative_time(seen, now))
+                .unwrap_or_default()
+        });
+    let age_width = super::text::display_width(&age);
+    let width = rect.width as usize;
+    let prefix_width = usize::from(indent) + marker.len() + super::text::display_width(&icon_span);
+    let title_budget = width
+        .saturating_sub(prefix_width)
+        .saturating_sub(if age_width > 0 { age_width + 1 } else { 0 });
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::raw(" ".repeat(usize::from(indent))),
+            Span::styled(marker, marker_style),
+            Span::raw(icon_span),
+            Span::styled(
+                super::text::truncate_end(&chat.display_label(), title_budget),
+                title_style,
+            ),
+        ])),
+        rect,
+    );
+    if age_width > 0 && age_width < width {
+        frame.render_widget(
+            Paragraph::new(Span::styled(age, Style::default().fg(p.overlay0)))
+                .alignment(Alignment::Right),
+            rect,
+        );
+    }
+}
+
+/// Draw the chat rows filed under declared containers.
+///
+/// TP-CHAT-MOVE-06: these are laid out by `compute_workspace_list_areas` like
+/// every other chat row, and drawn from those areas — which is why the area
+/// arm is not optional bookkeeping. They sit one step further in than a daily
+/// row, because they *do* hang off a header.
+fn render_module_chat_rows(app: &AppState, frame: &mut Frame, list_bottom: u16) {
+    let now = std::time::SystemTime::now();
+    for row in &app.view.module_chat_row_areas {
+        if row.rect.width == 0 || row.rect.y >= list_bottom {
+            continue;
+        }
+        let chats = module_chat_rows(app, &row.node_key);
+        let Some(chat) = chats.get(row.chat_idx) else {
+            continue;
+        };
+        render_chat_row(app, frame, row.rect, chat, now, DISCLOSURE_WIDTH + 2);
+    }
+}
+
 fn render_daily_section(app: &AppState, frame: &mut Frame, list_bottom: u16) {
     let p = &app.palette;
     let now = std::time::SystemTime::now();
@@ -3388,72 +3563,10 @@ fn render_daily_section(app: &AppState, frame: &mut Frame, list_bottom: u16) {
         let Some(chat) = chats.get(row.chat_idx) else {
             continue;
         };
-        let wired = app.find_resumed_chat_tab(&chat.session_id);
-        let focused = wired.is_some_and(|(ws_idx, tab_idx)| {
-            app.active == Some(ws_idx)
-                && app
-                    .workspaces
-                    .get(ws_idx)
-                    .is_some_and(|ws| ws.active_tab_index() == tab_idx)
-        });
-        let marker = if wired.is_some() { "● " } else { "  " };
-        let (title_style, marker_style) = if focused {
-            (
-                Style::default()
-                    .fg(panel_contrast_fg(p))
-                    .bg(p.accent)
-                    .add_modifier(Modifier::BOLD),
-                Style::default().fg(panel_contrast_fg(p)).bg(p.accent),
-            )
-        } else if wired.is_some() {
-            (Style::default().fg(p.text), Style::default().fg(p.accent))
-        } else {
-            (Style::default().fg(p.overlay1), Style::default())
-        };
-        let icon = app.space_icons.chat.trim();
-        let icon_span = if icon.is_empty() {
-            String::new()
-        } else {
-            format!("{icon} ")
-        };
-        let age = chat
-            .last_modified
-            .map(|seen| format_relative_time(seen, now))
-            .unwrap_or_else(|| {
-                std::time::UNIX_EPOCH
-                    .checked_add(std::time::Duration::from_millis(chat.last_seen_ms))
-                    .map(|seen| format_relative_time(seen, now))
-                    .unwrap_or_default()
-            });
-        let age_width = super::text::display_width(&age);
-        let width = row.rect.width as usize;
         // The section hangs off nothing, so its rows are indented by the
         // disclosure column alone — there is no checkout above them to draw a
         // guide down from.
-        let prefix_width =
-            usize::from(DISCLOSURE_WIDTH) + marker.len() + super::text::display_width(&icon_span);
-        let title_budget = width
-            .saturating_sub(prefix_width)
-            .saturating_sub(if age_width > 0 { age_width + 1 } else { 0 });
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::raw(" ".repeat(usize::from(DISCLOSURE_WIDTH))),
-                Span::styled(marker, marker_style),
-                Span::raw(icon_span),
-                Span::styled(
-                    super::text::truncate_end(&chat.display_label(), title_budget),
-                    title_style,
-                ),
-            ])),
-            row.rect,
-        );
-        if age_width > 0 && age_width < width {
-            frame.render_widget(
-                Paragraph::new(Span::styled(age, Style::default().fg(p.overlay0)))
-                    .alignment(Alignment::Right),
-                row.rect,
-            );
-        }
+        render_chat_row(app, frame, row.rect, chat, now, DISCLOSURE_WIDTH);
     }
 
     if let Some(rect) = app.view.daily_more_area {
@@ -4764,7 +4877,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let body = workspace_list_body_rect(workspace_area, false, app.sidebar_chrome);
 
         let metrics = workspace_list_scroll_metrics(&app, workspace_area);
-        let (cards, _, _headers, _, _, _, _) = compute_workspace_list_areas(&app, area);
+        let (cards, _, _headers, _, _, _, _, _) = compute_workspace_list_areas(&app, area);
 
         assert_eq!(metrics.viewport_rows, 1);
         assert_eq!(cards.len(), 1);
@@ -6141,7 +6254,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
 
         let area = Rect::new(0, 0, 28, 16);
         app.view.sidebar_tab_hit_areas = compute_sidebar_tab_areas(area);
-        let (cards, chats, groups, projects, more, empty_modules, _) =
+        let (cards, chats, groups, projects, more, empty_modules, _, _) =
             compute_workspace_list_areas(&app, area);
         app.view.workspace_card_areas = cards;
         app.view.workspace_chat_row_areas = chats;
@@ -6203,7 +6316,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
     fn spaces_screen(app: &mut AppState, width: u16, height: u16) -> Vec<String> {
         let area = Rect::new(0, 0, width, height);
         app.view.sidebar_tab_hit_areas = compute_sidebar_tab_areas(area);
-        let (cards, chats, groups, projects, more, empty_modules, _) =
+        let (cards, chats, groups, projects, more, empty_modules, _, _) =
             compute_workspace_list_areas(app, area);
         app.view.workspace_card_areas = cards;
         app.view.workspace_chat_row_areas = chats;
@@ -6400,7 +6513,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
     fn spaces_rows(app: &mut AppState, width: u16, height: u16) -> Vec<String> {
         let area = Rect::new(0, 0, width, height);
         app.view.sidebar_tab_hit_areas = compute_sidebar_tab_areas(area);
-        let (cards, chats, groups, projects, more, empty_modules, _) =
+        let (cards, chats, groups, projects, more, empty_modules, _, _) =
             compute_workspace_list_areas(app, area);
         app.view.workspace_card_areas = cards;
         app.view.workspace_chat_row_areas = chats;
@@ -6729,8 +6842,180 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
                 WorkspaceListEntry::DailyHeader => "daily-header",
                 WorkspaceListEntry::DailyChat { .. } => "daily-chat",
                 WorkspaceListEntry::DailyMore { .. } => "daily-more",
+                WorkspaceListEntry::ModuleChat { .. } => "module-chat",
             })
             .collect()
+    }
+
+    /// A declared container holding `chat_count` moved chats, and one
+    /// workspace living somewhere else — the shape the move exists for: the
+    /// container has no directory and never needed one.
+    fn app_with_a_module_holding_moved_chats(chat_count: usize) -> AppState {
+        let mut app = crate::app::state::AppState::test_new();
+        let mut ws = Workspace::test_new("elsewhere");
+        ws.identity_cwd = std::env::temp_dir().join("herdr-module-elsewhere");
+        app.workspaces = vec![ws];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mobile_width_threshold = 0;
+        app.space_nodes = vec![crate::spaces::SpaceNode {
+            key: "docs".to_string(),
+            name: "Docs".to_string(),
+            icon: None,
+            parent: None,
+        }];
+        let key = crate::persist::workspace_chats::module_ledger_key("docs");
+        let rows = (0..chat_count)
+            .map(|idx| crate::app::state::WorkspaceChatRow {
+                session_id: format!("moved-session-{idx}"),
+                agent: "claude".to_string(),
+                title: Some(format!("moved chat {idx}")),
+                last_seen_ms: 3_000 + idx as u64,
+                last_modified: None,
+            })
+            .collect::<Vec<_>>();
+        app.workspace_chat_rows.insert(key, rows);
+        app
+    }
+
+    fn module_chat_positions(app: &AppState) -> Vec<usize> {
+        workspace_list_entries(app)
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| matches!(entry, WorkspaceListEntry::ModuleChat { .. }))
+            .map(|(pos, _)| pos)
+            .collect()
+    }
+
+    // TP-CHAT-MOVE-06 (M6): a chat moved into a container is drawn under that
+    // container's header. Writing the move and never drawing it is the #91
+    // shape of defect: the plumbing works, the product is dead.
+    #[test]
+    fn a_chat_moved_into_a_module_is_drawn_under_its_header() {
+        let app = app_with_a_module_holding_moved_chats(2);
+        let entries = workspace_list_entries(&app);
+
+        let header = entries
+            .iter()
+            .position(|entry| {
+                matches!(entry, WorkspaceListEntry::ProjectHeader { project_key } if project_key == "docs")
+            })
+            .expect("the declared container gets a header even with no checkout under it");
+        let chats = module_chat_positions(&app);
+
+        assert_eq!(
+            chats.len(),
+            2,
+            "both moved chats are drawn; got {entries:?}"
+        );
+        assert!(
+            chats.iter().all(|pos| *pos > header),
+            "they belong under the header that owns them"
+        );
+    }
+
+    // TP-CHAT-MOVE-06 (M7): a container holding chats is not empty. "Nothing
+    // here" printed directly above a list of chats is the opposite of the
+    // readability TP-MOD-03 exists for.
+    #[test]
+    fn a_module_holding_moved_chats_does_not_claim_to_be_empty() {
+        let app = app_with_a_module_holding_moved_chats(1);
+        assert!(
+            !workspace_list_entries(&app)
+                .iter()
+                .any(|entry| matches!(entry, WorkspaceListEntry::EmptyModule { .. })),
+            "a container with chats in it must not print the empty-module row"
+        );
+
+        // And the row is still there when the container really is empty.
+        let mut bare = app_with_a_module_holding_moved_chats(0);
+        bare.workspace_chat_rows.clear();
+        assert!(
+            workspace_list_entries(&bare)
+                .iter()
+                .any(|entry| matches!(entry, WorkspaceListEntry::EmptyModule { .. })),
+            "an actually empty container still says so (TP-MOD-03 is not weakened)"
+        );
+    }
+
+    // TP-CHAT-MOVE-06 (M8): the row carries a container key and no `ws_idx`.
+    // Folded into the workspace-indexed vectors it would resolve as some other
+    // checkout's chat on every press — the trap TP-DAILY-03 keeps daily rows
+    // out of.
+    #[test]
+    fn a_module_chat_row_carries_no_workspace_index() {
+        let app = app_with_a_module_holding_moved_chats(2);
+        for entry in workspace_list_entries(&app) {
+            if let WorkspaceListEntry::ModuleChat { node_key, .. } = &entry {
+                assert_eq!(node_key, "docs", "the row names its container");
+            }
+            assert!(
+                !matches!(entry, WorkspaceListEntry::Chat { .. }),
+                "a moved chat is never emitted as a workspace-indexed chat row"
+            );
+        }
+    }
+
+    // TP-CHAT-MOVE-06 (M9): folding the container takes its chats with it.
+    // Describing the inside of a closed box undoes closing it.
+    #[test]
+    fn folding_a_module_hides_the_chats_moved_into_it() {
+        let mut app = app_with_a_module_holding_moved_chats(2);
+        assert_eq!(module_chat_positions(&app).len(), 2, "precondition");
+        // Fold through the state's own verb rather than by writing the set it
+        // keeps: the fold key is derived, not the bare node key, and a test
+        // that imitates the internal spelling passes or fails for reasons the
+        // product does not have.
+        app.fold_node("docs".to_string());
+        assert!(
+            app.node_folded("docs"),
+            "precondition: the container really is folded"
+        );
+        assert!(
+            module_chat_positions(&app).is_empty(),
+            "a folded container shows none of its chats"
+        );
+    }
+
+    // TP-CHAT-MOVE-06 (M11): the row is laid out, not merely emitted.
+    //
+    // This is the test that matters most in this family. The sidebar paints
+    // chat rows from the laid-out areas, not from the entry list, so a row
+    // that is emitted and measured but never given an area is a row nobody
+    // ever sees — with every emission test green. That failure has a history
+    // in this repository and this assertion is what keeps it from repeating.
+    #[test]
+    fn a_module_chat_row_is_laid_out_so_it_can_be_drawn_and_pressed() {
+        let app = app_with_a_module_holding_moved_chats(2);
+        let (_, _, _, _, _, _, _, module_chats) =
+            compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 40));
+
+        assert_eq!(
+            module_chats.len(),
+            2,
+            "both container chat rows get an area of their own"
+        );
+        assert!(
+            module_chats.iter().all(|row| row.node_key == "docs"),
+            "each area names the container it belongs to"
+        );
+        assert!(
+            module_chats.iter().all(|row| row.rect.width > 0),
+            "an area with no width draws nothing"
+        );
+    }
+
+    // TP-CHAT-MOVE-06 (M10): the glance budget is the same five every other
+    // drawer keeps. A container that collected a thousand transcripts must not
+    // bury the tree under its own history.
+    #[test]
+    fn a_module_shows_the_same_five_chats_every_drawer_does() {
+        let app = app_with_a_module_holding_moved_chats(9);
+        assert_eq!(
+            module_chat_positions(&app).len(),
+            WORKSPACE_CHAT_ROW_LIMIT,
+            "the glance budget bounds the container the same way it bounds a workspace"
+        );
     }
 
     /// An app whose daily directory holds `chat_count` chats and whose one
@@ -6886,7 +7171,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let (mut app, _) = app_with_daily_chats(2);
         let area = Rect::new(0, 0, 30, 20);
         app.view.sidebar_rect = area;
-        let (cards, chats, groups, projects, more, empty, daily) =
+        let (cards, chats, groups, projects, more, empty, daily, _) =
             compute_workspace_list_areas(&app, area);
         app.view.workspace_card_areas = cards;
         app.view.workspace_chat_row_areas = chats;
@@ -6945,7 +7230,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         // Folded, the header stays and states the same count — and the rows
         // below it are gone from the layout, not merely unpainted.
         app.daily_section_collapsed = true;
-        let (_, _, _, _, _, _, folded) = compute_workspace_list_areas(&app, area);
+        let (_, _, _, _, _, _, folded, _) = compute_workspace_list_areas(&app, area);
         assert!(folded.header.is_some());
         assert!(folded.chats.is_empty(), "a fold takes the rows with it");
     }
@@ -6963,7 +7248,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         // which the list's own scroll answers — but that is a different
         // question from the one this test asks.
         let area = Rect::new(0, 0, 30, 40);
-        let (cards, chats, _, _, more, _, daily) = compute_workspace_list_areas(&app, area);
+        let (cards, chats, _, _, more, _, daily, _) = compute_workspace_list_areas(&app, area);
 
         assert_eq!(daily.chats.len(), 7);
         assert!(daily.more.is_some(), "the switch is laid out");
@@ -6990,7 +7275,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let (mut app, _) = app_with_daily_chats(3);
         let area = Rect::new(0, 0, 8, 10);
         app.view.sidebar_rect = area;
-        let (_, _, _, _, _, _, daily) = compute_workspace_list_areas(&app, area);
+        let (_, _, _, _, _, _, daily, _) = compute_workspace_list_areas(&app, area);
         app.view.daily_header_area = daily.header;
         app.view.daily_chat_row_areas = daily.chats;
         app.view.daily_more_area = daily.more;
@@ -7068,7 +7353,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let area = Rect::new(0, 0, 30, 24);
 
         let entries = workspace_list_entries(&app);
-        let (cards, chat_rows, _headers, _, _, _, _) = compute_workspace_list_areas(&app, area);
+        let (cards, chat_rows, _headers, _, _, _, _, _) = compute_workspace_list_areas(&app, area);
 
         assert_eq!(entries.len(), 3, "one workspace plus its two chats");
         assert_eq!(cards.len(), 1);
@@ -7093,7 +7378,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let (mut app, key) = app_with_chat_drawer(3);
         app.expanded_chat_workspaces.insert(key);
 
-        let (cards, chat_rows, _headers, _, _, _, _) =
+        let (cards, chat_rows, _headers, _, _, _, _, _) =
             compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 24));
 
         assert_eq!(cards.len(), 1, "only real workspaces become cards");
@@ -9405,7 +9690,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         app.sidebar_spaces.rows = vec![vec![crate::config::SpaceSidebarToken::Workspace]];
 
         let area = Rect::new(0, 0, 30, 20);
-        let (cards, _, group_headers, _, _, _, _) = compute_workspace_list_areas(&app, area);
+        let (cards, _, group_headers, _, _, _, _, _) = compute_workspace_list_areas(&app, area);
         let drawn_rows: u16 = cards.iter().map(|card| card.rect.height).sum::<u16>()
             + group_headers
                 .iter()
@@ -9462,7 +9747,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         ];
         app.sidebar_spaces.row_gap = 1;
 
-        let (cards, chat_rows, group_headers, _, _, _, _) =
+        let (cards, chat_rows, group_headers, _, _, _, _, _) =
             compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 20));
 
         assert!(chat_rows.is_empty());
@@ -9498,7 +9783,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         app.sidebar_spaces.rows = vec![vec![crate::config::SpaceSidebarToken::Workspace]];
         app.sidebar_spaces.row_gap = 2;
 
-        let (spacious, _, _headers, _, _, _, _) =
+        let (spacious, _, _headers, _, _, _, _, _) =
             compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 30));
         // TP-TREE-06: the three checkouts of one repository are one block and
         // stay compact; the gap falls where the next top-level unit begins.
@@ -9521,7 +9806,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         assert_eq!(spacious_metrics.max_offset_from_bottom, 3);
 
         app.sidebar_spaces.row_gap = 0;
-        let (packed, _, _headers, _, _, _, _) =
+        let (packed, _, _headers, _, _, _, _, _) =
             compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 30));
         assert!(packed
             .windows(2)
@@ -9616,7 +9901,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let area = Rect::new(0, 0, 30, 20);
         app.workspace_scroll = normalized_workspace_scroll(&app, area, 2);
 
-        let (cards, headers, _headers, _, _, _, _) = compute_workspace_list_areas(&app, area);
+        let (cards, headers, _headers, _, _, _, _, _) = compute_workspace_list_areas(&app, area);
 
         assert!(headers.is_empty());
         assert_eq!(app.workspace_scroll, 0);
@@ -9663,7 +9948,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         app.mode = Mode::Terminal;
         app.workspace_scroll = 1;
 
-        let (cards, headers, _headers, _, _, _, _) =
+        let (cards, headers, _headers, _, _, _, _, _) =
             compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 12));
 
         assert!(headers.is_empty());

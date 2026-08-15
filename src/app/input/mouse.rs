@@ -820,6 +820,23 @@ impl AppState {
                         self.open_daily_chat(hit.chat_idx);
                         return None;
                     }
+                    // TP-CHAT-MOVE-07: a container's chat row is pressable
+                    // like any other, matched from its own vector because it
+                    // carries a container key rather than a workspace index.
+                    if let Some(hit) = self
+                        .view
+                        .module_chat_row_areas
+                        .iter()
+                        .find(|row| {
+                            mouse.row == row.rect.y
+                                && mouse.column >= row.rect.x
+                                && mouse.column < row.rect.x + row.rect.width
+                        })
+                        .cloned()
+                    {
+                        self.open_module_chat(&hit.node_key, hit.chat_idx);
+                        return None;
+                    }
                     // TP-DRAW-11: the "older chats" row opens the rest of
                     // this drawer and closes it again. Matched from its own
                     // vector, before the chat rows, for the same reason the
