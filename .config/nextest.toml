@@ -1,0 +1,29 @@
+# Live-server integration tests run one at a time.
+#
+# Every one of these binaries calls `test_lock()` — a process-local mutex — and
+# then spawns a real herdr server on a real socket. Under `cargo test` that lock
+# serialised them, because those tests shared one process and its threads. This
+# repository runs `cargo nextest`, which gives every test its OWN process, and a
+# process-local mutex serialises nothing across processes. The intent the lock
+# was written to express has therefore been inert for as long as nextest has
+# been the runner.
+#
+# Measured 2026-08-15 on tests/live_handoff.rs, three tests, same commit, same
+# machine, same load:
+#
+#     -j 4 (parallel):  0 of 3 passed
+#     -j 1 (serial):    2 of 3 passed, twice in a row
+#
+# Two of the three were pure victims of concurrency. The third fails serially
+# too and has its own cause, tracked separately.
+#
+# This group makes the lock's intent true again. It costs wall-clock time in
+# exchange for a gate that means what it says — and a gate that fails at random
+# costs more, because every red one has to be investigated before it can be
+# dismissed.
+[test-groups.live-server]
+max-threads = 1
+
+[[profile.default.overrides]]
+filter = 'binary(live_handoff)'
+test-group = 'live-server'
