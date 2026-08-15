@@ -2025,6 +2025,26 @@ impl App {
                 self.save_default_chat_agent(agent);
                 leave_modal(&mut self.state);
             }
+            // TP-AGPANEL-27: the workspace card's "+" answers on this road too.
+            // It answered only in the `#[cfg(test)]` sibling body until now, so
+            // the menu opened, offered its agents, and started nothing — green
+            // tests over a dead affordance. Found by grepping both bodies for
+            // every `ContextMenuKind`, which is the only way this class of
+            // defect surfaces without a user report.
+            (ContextMenuKind::WorkspaceNewChat { ws_idx, .. }, Some("New worktree")) => {
+                self.state.request_new_linked_worktree = Some(ws_idx);
+                leave_modal(&mut self.state);
+            }
+            (ContextMenuKind::WorkspaceNewChat { ws_idx, .. }, Some("Open worktree...")) => {
+                self.state.request_open_existing_worktree = Some(ws_idx);
+                leave_modal(&mut self.state);
+            }
+            (ContextMenuKind::WorkspaceNewChat { ws_idx, .. }, Some(agent)) => {
+                self.state.default_chat_agent = agent.to_string();
+                self.state.request_workspace_chat(ws_idx);
+                self.save_default_chat_agent(agent);
+                leave_modal(&mut self.state);
+            }
             // TP-AGPANEL-06: the chat road resolves the session's tab NOW,
             // not at open time — a menu can outlive the agent it was opened
             // for, and a stale index would close a bystander.
@@ -2949,6 +2969,50 @@ mod tests {
     // sibling body in this file is `#[cfg(test)]`, so a menu wired only there
     // passes its unit tests while doing nothing at all in the product — this
     // test exists because that is exactly what happened while writing it.
+    // TP-AGPANEL-27 (#91): the workspace card's "+" lands on the road the
+    // mouse and keyboard actually take. This arm lived only in the
+    // `#[cfg(test)]` sibling body, so picking an agent there passed every test
+    // and started nothing in the product — the same shape as TP-DAILY-11's
+    // note, found by measuring rather than by a report.
+    #[test]
+    fn the_workspace_plus_menu_starts_a_chat_on_the_production_road() {
+        let mut app = app_with_test_workspaces(&["main"]);
+        let checkout = std::path::PathBuf::from("/repo/checkout");
+        app.state.workspaces[0].identity_cwd = checkout.clone();
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::WorkspaceNewChat {
+                ws_idx: 0,
+                offers_worktree: false,
+            },
+            x: 0,
+            y: 0,
+            list: crate::app::state::MenuListState::new(0),
+        };
+        let agent = *crate::app::projects::CHAT_AGENTS.first().expect("an agent");
+        let idx = menu
+            .items()
+            .iter()
+            .position(|item| *item == agent)
+            .expect("the agent is on the menu");
+
+        app.apply_context_menu_action_via_api(menu, idx);
+
+        let request = app
+            .state
+            .request_project_chat_tab
+            .as_ref()
+            .expect("the product road queues the chat");
+        assert_eq!(
+            request.project_path, checkout,
+            "the chat starts in the workspace's own checkout (TP-WSID-02)"
+        );
+        assert_eq!(request.session_id, None, "a new chat resumes nothing");
+        assert_eq!(
+            app.state.default_chat_agent, agent,
+            "the chosen agent becomes the default the next press starts on"
+        );
+    }
+
     #[test]
     fn the_daily_menu_starts_a_chat_on_the_production_road() {
         let mut app = app_with_test_workspaces(&["main"]);
