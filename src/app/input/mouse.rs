@@ -782,6 +782,17 @@ impl AppState {
                             && mouse.column >= rect.x
                             && mouse.column < rect.x + rect.width
                         {
+                            // TP-DAILY-10: the "+" is matched BEFORE the fold.
+                            // Both live on this one row, and a fold that ran
+                            // first would eat every press aimed at the plus —
+                            // leaving the section able to show old chats and
+                            // unable to start a new one, which is the half of
+                            // the surface a person actually reaches for.
+                            let plus = crate::ui::daily_new_chat_cell(rect);
+                            if self.mouse_capture && plus.width > 0 && mouse.column == plus.x {
+                                self.open_daily_new_chat_menu(mouse.column, mouse.row);
+                                return None;
+                            }
                             self.toggle_daily_section();
                             return None;
                         }
@@ -3422,6 +3433,99 @@ mod tests {
                 app.state.context_menu.as_ref().map(|menu| &menu.kind)
             );
         }
+    }
+
+    // TP-DAILY-10: the daily header carries two gestures on one row, and the
+    // order between them is the whole behavior. The "+" is matched first, so
+    // a press there opens the agent menu and leaves the fold alone; every
+    // other column on the row still folds. Without mouse capture the plus is
+    // not drawn, so that column folds like the rest — chrome that is invisible
+    // must not be clickable, or the section becomes unfoldable by accident.
+    #[test]
+    fn a_left_press_on_the_daily_plus_opens_the_menu_instead_of_folding() {
+        let mut app = app_for_mouse_test();
+        let daily = std::path::PathBuf::from("/home/tester");
+        let mut elsewhere = crate::workspace::Workspace::test_new("elsewhere");
+        elsewhere.identity_cwd = std::path::PathBuf::from("/repo/checkout");
+        app.state.workspaces = vec![elsewhere];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mobile_width_threshold = 0;
+        app.state.daily_chat_cwd = Some(daily.clone());
+        let key = crate::persist::workspace_chats::ledger_key(&daily);
+        app.state.workspace_chat_rows.insert(
+            key,
+            (0..3)
+                .map(|idx| crate::app::state::WorkspaceChatRow {
+                    session_id: format!("daily-{idx}"),
+                    agent: "claude".to_string(),
+                    title: Some(format!("daily chat {idx}")),
+                    last_seen_ms: 10 + idx as u64,
+                    last_modified: None,
+                })
+                .collect(),
+        );
+        app.state.mouse_capture = true;
+
+        let area = ratatui::layout::Rect::new(0, 0, 106, 20);
+        crate::ui::compute_view(&mut app.state, area);
+        let header = app
+            .state
+            .view
+            .daily_header_area
+            .expect("the section draws its header");
+        let plus = crate::ui::daily_new_chat_cell(header);
+        assert!(plus.width > 0, "a header this wide reserves a '+' cell");
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            plus.x,
+            plus.y,
+        ));
+        assert!(
+            matches!(
+                app.state.context_menu.as_ref().map(|menu| &menu.kind),
+                Some(crate::app::state::ContextMenuKind::DailyNewChat)
+            ),
+            "the plus opens the agent menu; got {:?}",
+            app.state.context_menu.as_ref().map(|menu| &menu.kind)
+        );
+        assert!(
+            !app.state.daily_section_collapsed,
+            "the plus never folds the section"
+        );
+
+        // Any other column on the row is still the fold.
+        app.state.context_menu = None;
+        app.state.mode = Mode::Terminal;
+        crate::ui::compute_view(&mut app.state, area);
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            header.x + 1,
+            header.y,
+        ));
+        assert!(
+            app.state.daily_section_collapsed,
+            "the rest of the header still folds"
+        );
+        assert!(app.state.context_menu.is_none(), "the fold opens no menu");
+
+        // Mouse chrome: with the panel unowned the same column folds back.
+        app.state.mouse_capture = false;
+        crate::ui::compute_view(&mut app.state, area);
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            plus.x,
+            plus.y,
+        ));
+        assert!(
+            !app.state.daily_section_collapsed,
+            "without capture the plus column is just header, and unfolds"
+        );
+        assert!(
+            app.state.context_menu.is_none(),
+            "a plus that is not drawn opens nothing"
+        );
     }
 
     // TP-DOTS-17: the header's "+" is a second door to the module's

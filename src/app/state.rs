@@ -2359,6 +2359,12 @@ pub enum ContextMenuKind {
         source_pane_id: Option<PaneId>,
         has_manual_label: bool,
     },
+    /// Agent selector for a new chat in the daily directory (TP-DAILY-11).
+    ///
+    /// Carries no index of any kind: the daily section belongs to no
+    /// workspace, so there is nothing here that a refresh could invalidate —
+    /// unlike every sibling below, this menu cannot go stale.
+    DailyNewChat,
     /// Agent selector for a new chat in a pinned project (Projects tab).
     /// Selecting an agent makes it the persisted default and opens the chat.
     /// When the project is also open as a workspace, the menu additionally
@@ -2529,6 +2535,9 @@ impl ContextMenuState {
                 has_workspace: true,
                 ..
             } => crate::app::projects::PROJECT_CHAT_MENU_WITH_WORKTREES.to_vec(),
+            // TP-DAILY-11: agents only. The daily directory is not a checkout,
+            // so a worktree verb here would be an offer the tree cannot keep.
+            ContextMenuKind::DailyNewChat => crate::app::projects::CHAT_AGENTS.to_vec(),
             ContextMenuKind::WorkspaceNewChat {
                 offers_worktree: false,
                 ..
@@ -4941,6 +4950,9 @@ impl AppState {
                         self.workspaces.len()
                     );
                 }
+                // TP-DAILY-11: nothing index-shaped to validate — the daily
+                // menu names a directory, and a refresh cannot invalidate it.
+                ContextMenuKind::DailyNewChat => {}
                 ContextMenuKind::ProjectNewChat { proj_idx, .. } => {
                     assert!(
                         proj_idx < self.projects_sessions.len(),

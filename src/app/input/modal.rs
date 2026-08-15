@@ -952,6 +952,13 @@ pub(super) fn apply_context_menu_action(
             state.request_workspace_chat(ws_idx);
             leave_modal(state);
         }
+        // TP-DAILY-11: the same road, rooted at the daily directory instead of
+        // at a workspace — the section's answer to "start something new here".
+        (ContextMenuKind::DailyNewChat, Some(agent)) => {
+            state.default_chat_agent = agent.to_string();
+            state.request_daily_chat();
+            leave_modal(state);
+        }
         (ContextMenuKind::GitWorkspace { ws_idx, .. }, Some("New worktree")) => {
             state.request_new_linked_worktree = Some(ws_idx);
             leave_modal(state);
@@ -2008,6 +2015,16 @@ impl App {
                     };
                 }
             }
+            // TP-DAILY-11: the daily "+" lands HERE, on the road both the
+            // mouse and the keyboard actually take — the sibling body above
+            // is `#[cfg(test)]`, so a menu answered only there is a menu that
+            // works in tests and does nothing in the product.
+            (ContextMenuKind::DailyNewChat, Some(agent)) => {
+                self.state.default_chat_agent = agent.to_string();
+                self.state.request_daily_chat();
+                self.save_default_chat_agent(agent);
+                leave_modal(&mut self.state);
+            }
             // TP-AGPANEL-06: the chat road resolves the session's tab NOW,
             // not at open time — a menu can outlive the agent it was opened
             // for, and a stale index would close a bystander.
@@ -2925,6 +2942,42 @@ mod tests {
         assert_eq!(app.state.selected, 0);
         assert_eq!(app.state.mode, Mode::ConfirmClose);
         assert_eq!(app.state.workspaces.len(), 2);
+    }
+
+    // TP-DAILY-11: the daily "+" is answered on the PRODUCTION road, the one
+    // both the mouse (`MouseAction::ContextMenu`) and the keyboard take. The
+    // sibling body in this file is `#[cfg(test)]`, so a menu wired only there
+    // passes its unit tests while doing nothing at all in the product — this
+    // test exists because that is exactly what happened while writing it.
+    #[test]
+    fn the_daily_menu_starts_a_chat_on_the_production_road() {
+        let mut app = app_with_test_workspaces(&["main"]);
+        let daily = std::path::PathBuf::from("/home/tester");
+        app.state.workspaces[0].identity_cwd = std::path::PathBuf::from("/repo/checkout");
+        app.state.daily_chat_cwd = Some(daily.clone());
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::DailyNewChat,
+            x: 0,
+            y: 0,
+            list: crate::app::state::MenuListState::new(0),
+        };
+        let agent = *crate::app::projects::CHAT_AGENTS.first().expect("an agent");
+        let idx = menu
+            .items()
+            .iter()
+            .position(|item| *item == agent)
+            .expect("the agent is on the menu");
+
+        app.apply_context_menu_action_via_api(menu, idx);
+
+        let request = app
+            .state
+            .request_project_chat_tab
+            .as_ref()
+            .expect("the product road queues the chat");
+        assert_eq!(request.project_path, daily);
+        assert_eq!(request.session_id, None);
+        assert_eq!(app.state.default_chat_agent, agent);
     }
 
     // ---- Projects-tab worktree menu entries (FEAT-A) ----

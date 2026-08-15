@@ -948,6 +948,19 @@ pub(crate) fn header_new_branch_cell(head_rect: Rect) -> Rect {
     Rect::new(head_rect.x + head_rect.width - 1, head_rect.y, 1, 1)
 }
 
+/// The daily header's "+": the trailing edge of the section header, opening
+/// the same agent menu a workspace card's "+" opens (TP-DAILY-10).
+///
+/// Geometry deliberately identical to [`header_new_branch_cell`] — one plus
+/// sits at one place on this sidebar, wherever it appears. Mouse chrome, so
+/// the count underneath it keeps the row whenever the mouse is elsewhere.
+pub(crate) fn daily_new_chat_cell(head_rect: Rect) -> Rect {
+    if head_rect.width < 6 {
+        return Rect::default();
+    }
+    Rect::new(head_rect.x + head_rect.width - 1, head_rect.y, 1, 1)
+}
+
 /// The Spaces rows the mobile switcher lays out: workspaces only.
 ///
 /// Its geometry is a strict two rows per workspace and it is a switcher rather
@@ -3333,15 +3346,36 @@ fn render_daily_section(app: &AppState, frame: &mut Frame, list_bottom: u16) {
                 )),
                 rect,
             );
+            // TP-DAILY-10: the "+" is mouse chrome, like every other plus on
+            // this sidebar — drawn only while the mouse owns the panel. The
+            // count steps two columns left for exactly that long, so the two
+            // never share a cell: information when the mouse is away, the
+            // action when it is here.
+            let plus = daily_new_chat_cell(rect);
+            let plus_drawn = app.mouse_capture && plus.width > 0;
+            if plus_drawn {
+                frame.render_widget(
+                    Paragraph::new(Span::styled("+", Style::default().fg(p.overlay1))),
+                    plus,
+                );
+            }
             // The count answers "how much is in here" while the section is
             // folded — the one question a closed container cannot otherwise
             // answer, and the reason a fold is safe to leave closed.
             let count = chats.len().to_string();
-            if super::text::display_width(&count) < rect.width as usize {
+            let count_room = if plus_drawn {
+                rect.width.saturating_sub(2)
+            } else {
+                rect.width
+            };
+            if super::text::display_width(&count) < count_room as usize {
                 frame.render_widget(
                     Paragraph::new(Span::styled(count, Style::default().fg(p.overlay0)))
                         .alignment(Alignment::Right),
-                    rect,
+                    Rect {
+                        width: count_room,
+                        ..rect
+                    },
                 );
             }
         }
@@ -6825,6 +6859,24 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         );
     }
 
+    // TP-DAILY-10: a header too narrow to hold a "+" reserves no cell at all.
+    // A half-drawn plus would look pressable and do nothing — the same reason
+    // every other cell on this sidebar refuses below six columns.
+    #[test]
+    fn a_header_too_narrow_reserves_no_daily_plus() {
+        assert_eq!(
+            daily_new_chat_cell(Rect::new(0, 0, 5, 1)),
+            Rect::default(),
+            "five columns is too narrow for a plus"
+        );
+        let cell = daily_new_chat_cell(Rect::new(0, 3, 20, 1));
+        assert_eq!(
+            (cell.x, cell.y, cell.width),
+            (19, 3, 1),
+            "the plus sits on the header's trailing column, like every other plus"
+        );
+    }
+
     // TP-DAILY-02/03: the section says what it is, whether it is open, and
     // how much it holds — the last one is the question a folded container
     // cannot otherwise answer, and the reason a fold is safe to leave closed.
@@ -6862,7 +6914,26 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let header = row_text(buffer, header_rect.y, header_rect.width);
         assert!(header.contains(DAILY_SECTION_TITLE), "header: {header:?}");
         assert!(header.contains(DISCLOSURE_OPEN), "open arrow: {header:?}");
-        assert!(header.trim_end().ends_with('2'), "count: {header:?}");
+        // TP-DAILY-10: with the mouse on the panel the plus owns the trailing
+        // column and the count steps left of it — both are on the row, and
+        // neither is painted over the other.
+        assert!(
+            header.trim_end().ends_with("2 +"),
+            "count and plus: {header:?}"
+        );
+
+        // TP-DAILY-10: with the mouse away the plus is gone and the count
+        // takes the trailing column back — no cell is left reserved for
+        // chrome that is not drawn.
+        app.mouse_capture = false;
+        let mut plain = Terminal::new(TestBackend::new(30, 20)).unwrap();
+        plain
+            .draw(|frame| render_sidebar(&app, &TerminalRuntimeRegistry::new(), frame, area))
+            .unwrap();
+        let quiet = row_text(plain.backend().buffer(), header_rect.y, header_rect.width);
+        assert!(quiet.trim_end().ends_with('2'), "count alone: {quiet:?}");
+        assert!(!quiet.contains('+'), "no plus without capture: {quiet:?}");
+        app.mouse_capture = true;
 
         let first = row_text(
             buffer,
