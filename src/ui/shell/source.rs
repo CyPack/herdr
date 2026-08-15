@@ -2034,6 +2034,117 @@ mod tests {
         }
     }
 
+    /// The `toml` blocks of the guide's "Edge bars" section, in the order they
+    /// are written.
+    fn documented_bar_examples() -> Vec<String> {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("docs/next/website/src/content/docs/configuration.mdx");
+        let guide = std::fs::read_to_string(&path)
+            .unwrap_or_else(|err| panic!("the configuration guide at {path:?} is readable: {err}"));
+
+        let after_heading = guide
+            .split_once("\n## Edge bars\n")
+            .unwrap_or_else(|| panic!("the guide still has an \"Edge bars\" section"))
+            .1;
+        let section = after_heading
+            .split_once("\n## ")
+            .map_or(after_heading, |(before, _)| before);
+
+        section
+            .split("```toml\n")
+            .skip(1)
+            .filter_map(|rest| rest.split_once("```"))
+            .map(|(block, _)| block.to_string())
+            .collect()
+    }
+
+    /// Every example in the guide is a config this build accepts.
+    ///
+    /// A documented example is the first thing anyone copies, an agent most of
+    /// all, so an example that quietly produces an empty section is worse than
+    /// no example at all. The parser here is the real one rather than the
+    /// installed binary's: measured 2026-08-15, running the guide's examples
+    /// through `~/.local/bin/herdr` reported an "unknown config key" for a key
+    /// this branch had just added — the check was one commit behind the thing it
+    /// was checking. In-process, that skew cannot exist.
+    #[test]
+    fn every_bar_example_in_the_guide_is_a_config_this_build_accepts() {
+        // TP-CHROME-94: every example the guide prints is a config this build
+        // accepts. A documented example is the first thing anyone copies, an
+        // agent most of all, so one that quietly produces an empty section is
+        // worse than no example at all.
+        let examples = documented_bar_examples();
+
+        // Guard the harvest itself: a renamed heading or a changed fence would
+        // leave this test passing over nothing at all, which is the failure mode
+        // a documentation gate is least likely to notice about itself.
+        assert!(
+            examples.len() >= 5,
+            "expected the Edge bars section to still carry its examples, found {}",
+            examples.len()
+        );
+
+        for (index, block) in examples.iter().enumerate() {
+            let config: crate::config::Config = toml::from_str(block).unwrap_or_else(|err| {
+                panic!(
+                    "guide example {} is not valid TOML: {err}\n{block}",
+                    index + 1
+                )
+            });
+            let problems = shell_bar_config_problems(&config.shell.bars, config.shell.glyph_icons)
+                .into_iter()
+                .map(|problem| problem.to_string())
+                .collect::<Vec<_>>();
+            assert!(
+                problems.is_empty(),
+                "guide example {} is refused by this build: {problems:?}\n{block}",
+                index + 1
+            );
+        }
+    }
+
+    /// The guide shows every kind there is, and shows nothing that is not one.
+    ///
+    /// Both directions matter and they fail differently: a kind the guide never
+    /// mentions is a feature nobody can find, and a kind the guide invents is a
+    /// config an agent will write and Herdr will refuse.
+    // TODO(L1): read these from the shared kind table once it exists, so this
+    // list stops being a second place the kinds are written down.
+    #[test]
+    fn the_guide_shows_every_widget_and_action_kind() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("docs/next/website/src/content/docs/configuration.mdx");
+        let guide = std::fs::read_to_string(&path).expect("the configuration guide is readable");
+
+        // TP-CHROME-95: the guide shows every kind there is and invents none.
+        // A kind it never mentions is a feature nobody can find; a kind it
+        // invents is a config an agent writes and Herdr refuses.
+        for kind in ["label", "resource", "meter", "icon"] {
+            assert!(
+                guide.contains(&format!("kind = \"{kind}\"")),
+                "the guide never shows widget kind {kind:?}"
+            );
+        }
+        for kind in ["popup", "plugin"] {
+            assert!(
+                guide.contains(&format!("kind = \"{kind}\"")),
+                "the guide never shows action kind {kind:?}"
+            );
+        }
+        for art in ["herd", "dot"] {
+            assert!(
+                guide.contains(art),
+                "the guide never names the bundled art {art:?}"
+            );
+        }
+        for metric in ["cpu", "mem", "ram", "swap"] {
+            assert!(
+                guide.contains(metric),
+                "the guide never names the metric {metric:?}"
+            );
+        }
+    }
+
     fn section_with_action(kind: &str, action_kind: &str, argv: &[&str]) -> ShellBarSectionConfig {
         let mut section = plain_section(kind);
         section.action.kind = action_kind.to_string();
