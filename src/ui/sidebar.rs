@@ -1066,8 +1066,52 @@ fn daily_section_visible(app: &AppState) -> bool {
         .any(|chat| app.find_resumed_chat_tab(&chat.session_id).is_some())
 }
 
+/// The workspaces that stand in the daily directory itself.
+///
+/// TP-DAILY-13: a workspace whose effective directory *is* the daily directory
+/// has no checkout of its own to sit under. The tree drew it anyway, as a
+/// sibling of real checkouts, and on the machine this was built for there were
+/// seven of them — seven rows that looked like branches, listed the same ledger,
+/// and opened and closed together because the drawer's fold state is keyed by
+/// that shared ledger key. They belong under the daily area, not beside it.
+///
+/// Three gates, all of which must hold:
+///
+/// - the section must be drawn at all, or these rows would land beneath a
+///   header that is not there — a row you cannot see is the #88 failure again;
+/// - there must be a daily directory to compare against;
+/// - the workspace's *effective* directory must resolve to the same ledger key.
+///   Effective, not `worktree_space`: reading only the checkout field is what
+///   made #88's first measurement wrong, because every one of those seven
+///   workspaces has no worktree at all and answers with its birthplace.
+///
+/// This returns indices rather than filtering the workspace set, because the
+/// set feeds the client frame as well as the sidebar. Removing a workspace at
+/// the source removes it from every surface that reads it — the regression the
+/// first attempt at this shipped and had to take back.
+fn daily_owned_workspaces(app: &AppState) -> Vec<usize> {
+    if !daily_section_visible(app) {
+        return Vec::new();
+    }
+    let Some(daily) = app.daily_chat_cwd.as_deref() else {
+        return Vec::new();
+    };
+    let daily_key = crate::persist::workspace_chats::ledger_key(daily);
+    app.workspaces
+        .iter()
+        .enumerate()
+        .filter(|(_, ws)| {
+            crate::persist::workspace_chats::ledger_key(ws.effective_cwd()) == daily_key
+        })
+        .map(|(ws_idx, _)| ws_idx)
+        .collect()
+}
+
 /// Append the daily section — header first, then its chats — above the tree.
-fn push_daily_section(app: &AppState, entries: &mut Vec<WorkspaceListEntry>) {
+///
+/// `owned` is [`daily_owned_workspaces`], computed once by the caller so the
+/// tree walk and this function cannot disagree about which rows belong here.
+fn push_daily_section(app: &AppState, entries: &mut Vec<WorkspaceListEntry>, owned: &[usize]) {
     if !daily_section_visible(app) {
         return;
     }
@@ -1087,6 +1131,22 @@ fn push_daily_section(app: &AppState, entries: &mut Vec<WorkspaceListEntry>) {
     }
     if chats.len() > WORKSPACE_CHAT_ROW_LIMIT {
         entries.push(WorkspaceListEntry::DailyMore { expanded });
+    }
+    // TP-DAILY-13: the workspaces standing in this very directory, drawn as
+    // the area's own rows rather than as branches in the tree.
+    //
+    // No chat drawer is opened under them, deliberately. Such a workspace
+    // reads the daily ledger key — the same one the rows above came from — so
+    // its drawer would repeat this section's chat list verbatim. That repeat
+    // is what #96 was: seven rows listing the same twelve chats, opening and
+    // closing together because one shared key holds their fold state. The row
+    // is here to reach the workspace and its panes; the chats are already
+    // above it.
+    for ws_idx in owned {
+        entries.push(WorkspaceListEntry::Workspace {
+            ws_idx: *ws_idx,
+            indented: true,
+        });
     }
 }
 
@@ -1189,9 +1249,23 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
     // empty module never gets one.
     let focused = focus_visible_workspaces(app);
     let shows = |ws_idx: usize| focused.as_ref().is_none_or(|set| set.contains(&ws_idx));
+    // TP-DAILY-13: the daily area emits its own workspaces, so the tree must
+    // not emit them a second time. Computed once, here, and handed to both
+    // sides — two independent answers to "is this row the area's own?" is how
+    // a row ends up drawn twice or not at all.
+    //
+    // This skips the row in the *walk*; it does not remove the workspace from
+    // any set. `app.workspaces` is untouched and the row is re-emitted below
+    // by `push_daily_section`, so every surface reading this list still sees
+    // it. Filtering at the source is what the first attempt did, and it took
+    // API-created workspaces off the client frame as well.
+    let daily_owned = daily_owned_workspaces(app);
     let mut members_by_key = std::collections::HashMap::<String, Vec<usize>>::new();
     for ws_idx in 0..app.workspaces.len() {
         if !shows(ws_idx) {
+            continue;
+        }
+        if daily_owned.contains(&ws_idx) {
             continue;
         }
         if let Some(space) = effective_space(app, ws_idx) {
@@ -1368,7 +1442,7 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
     // TP-DAILY-02: above the tree, before anything the walk emits. These
     // chats belong to no checkout, so there is no branch of the tree they
     // could be placed under without lying about where they came from.
-    push_daily_section(app, &mut entries);
+    push_daily_section(app, &mut entries, &daily_owned);
     let seeds = (0..app.workspaces.len())
         .map(Seed::Checkout)
         .chain(declared_roots.into_iter().map(Seed::DeclaredRoot));
@@ -1407,6 +1481,13 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
             }
         };
         if !shows(ws_idx) {
+            continue;
+        }
+        // TP-DAILY-13: already emitted under the daily area. Both tree exits
+        // below — the space block and the stack walk — are downstream of this
+        // gate, so one skip covers the walk however the row would have found
+        // its way in.
+        if daily_owned.contains(&ws_idx) {
             continue;
         }
         let space = effective_space(app, ws_idx);
@@ -3332,25 +3413,44 @@ fn render_daily_section(app: &AppState, frame: &mut Frame, list_bottom: u16) {
             } else {
                 DISCLOSURE_OPEN
             };
-            let icon = app.space_icons.chat.trim();
-            let icon_span = if icon.is_empty() {
-                String::new()
-            } else {
-                format!("{icon} ")
-            };
-            let label = format!("{arrow} {icon_span}{DAILY_SECTION_TITLE}");
-            frame.render_widget(
-                Paragraph::new(Span::styled(
-                    super::text::truncate_end(&label, rect.width as usize),
-                    Style::default().fg(p.text).add_modifier(Modifier::BOLD),
-                )),
-                rect,
-            );
+            // TP-DAILY-12: the section is drawn in the containers' dialect,
+            // not in a section-title's. It sits at the top of the same tree
+            // the projects sit in, so reading it as a heading rather than as
+            // a place — a coloured arrow, an icon, a bold name and the manage
+            // chrome every container header wears — was the difference
+            // between "a label above the tree" and "the area my day lives in".
+            let mut spans = vec![
+                Span::styled(arrow, Style::default().fg(p.accent)),
+                Span::raw(" "),
+            ];
+            // TP-DAILY-12: its own icon, not the chat glyph. This row names a
+            // place — the one that is always yours — and a speech bubble made
+            // it read as one more conversation rather than as where they live.
+            let icon = app.space_icons.daily.trim();
+            if !icon.is_empty() {
+                spans.push(Span::raw(format!("{icon} ")));
+            }
+            let used = spans
+                .iter()
+                .map(|span| super::text::display_width(span.content.as_ref()))
+                .sum::<usize>();
+            // TP-DOTS-09's measure: the trailing chrome is reserved so a name
+            // truncates short of it instead of bleeding underneath. Here the
+            // count lives in that lane too, so it reserves one column more.
+            let reserved = if app.mouse_capture { 5 } else { 2 };
+            spans.push(Span::styled(
+                super::text::truncate_end(
+                    DAILY_SECTION_TITLE,
+                    (rect.width as usize).saturating_sub(used + reserved),
+                ),
+                Style::default().fg(p.text).add_modifier(Modifier::BOLD),
+            ));
+            frame.render_widget(Paragraph::new(Line::from(spans)), rect);
             // TP-DAILY-10: the "+" is mouse chrome, like every other plus on
             // this sidebar — drawn only while the mouse owns the panel. The
-            // count steps two columns left for exactly that long, so the two
-            // never share a cell: information when the mouse is away, the
-            // action when it is here.
+            // count steps left of it for exactly that long, so the two never
+            // share a cell: information when the mouse is away, the action
+            // when it is here.
             let plus = daily_new_chat_cell(rect);
             let plus_drawn = app.mouse_capture && plus.width > 0;
             if plus_drawn {
@@ -3359,12 +3459,16 @@ fn render_daily_section(app: &AppState, frame: &mut Frame, list_bottom: u16) {
                     plus,
                 );
             }
+            // TP-DAILY-12: the "⋯" every container header wears — the visible
+            // door to the menu a right-click opens. Without it this row is the
+            // only header on the sidebar a person cannot manage.
+            draw_header_menu_dots(app, frame, rect);
             // The count answers "how much is in here" while the section is
             // folded — the one question a closed container cannot otherwise
             // answer, and the reason a fold is safe to leave closed.
             let count = chats.len().to_string();
             let count_room = if plus_drawn {
-                rect.width.saturating_sub(2)
+                rect.width.saturating_sub(4)
             } else {
                 rect.width
             };
@@ -6761,6 +6865,226 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         (app, daily)
     }
 
+    /// The shape the machine actually had: a workspace born in the daily
+    /// directory itself, with no worktree, so `effective_cwd` answers with its
+    /// birthplace and it shares the daily area's ledger key.
+    fn app_with_a_workspace_standing_in_the_daily_directory(
+        chat_count: usize,
+    ) -> (AppState, std::path::PathBuf) {
+        let (mut app, daily) = app_with_daily_chats(chat_count);
+        let mut home = Workspace::test_new("ayaz");
+        home.identity_cwd = daily.clone();
+        app.workspaces.push(home);
+        (app, daily)
+    }
+
+    // TP-DAILY-13: the workspace that stands in the daily directory is the
+    // area's own. Without this the tree draws it as a branch beside real
+    // checkouts — which is exactly what was on screen, seven times over.
+    #[test]
+    fn a_workspace_standing_in_the_daily_directory_belongs_to_the_area() {
+        let (app, _) = app_with_a_workspace_standing_in_the_daily_directory(2);
+        assert_eq!(
+            daily_owned_workspaces(&app),
+            vec![1],
+            "the workspace whose effective directory is the daily directory is the area's own"
+        );
+    }
+
+    // TP-DAILY-13: `effective_cwd` has two branches and both of them count.
+    // Reading only `worktree_space` is what made #88's first measurement say
+    // "nothing claims $HOME" while seven workspaces did.
+    #[test]
+    fn a_checkout_that_points_at_the_daily_directory_also_belongs_to_the_area() {
+        let (mut app, daily) = app_with_daily_chats(2);
+        let mut adopted = Workspace::test_new("adopted");
+        adopted.identity_cwd = std::env::temp_dir().join("herdr-daily-birthplace");
+        adopted.worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
+            key: "adopted-space".to_string(),
+            label: "adopted".to_string(),
+            repo_root: daily.clone(),
+            checkout_path: daily.clone(),
+            is_linked_worktree: false,
+        });
+        app.workspaces.push(adopted);
+        assert_eq!(
+            daily_owned_workspaces(&app),
+            vec![1],
+            "the checkout branch of effective_cwd counts the same as the birthplace branch"
+        );
+    }
+
+    // TP-DAILY-13: no daily directory, nothing to belong to. Without this gate
+    // the move has no destination and the rows would vanish instead.
+    #[test]
+    fn without_a_daily_directory_no_workspace_belongs_to_the_area() {
+        let (mut app, _) = app_with_a_workspace_standing_in_the_daily_directory(2);
+        app.daily_chat_cwd = None;
+        assert!(
+            daily_owned_workspaces(&app).is_empty(),
+            "with no daily directory there is nothing for a workspace to belong to"
+        );
+    }
+
+    // TP-DAILY-13: only a real collision moves. If this gate goes, every
+    // workspace in the tree falls into the daily area.
+    #[test]
+    fn a_workspace_that_lives_elsewhere_stays_out_of_the_area() {
+        let (app, _) = app_with_daily_chats(2);
+        assert!(
+            daily_owned_workspaces(&app).is_empty(),
+            "the fixture's only workspace lives elsewhere and must not be claimed"
+        );
+    }
+
+    /// Where a workspace row sits in the emitted list, by index.
+    fn workspace_row_position(app: &AppState, ws_idx: usize) -> Option<usize> {
+        workspace_list_entries(app).iter().position(
+            |entry| matches!(entry, WorkspaceListEntry::Workspace { ws_idx: idx, .. } if *idx == ws_idx),
+        )
+    }
+
+    fn workspace_row_count(app: &AppState) -> usize {
+        workspace_list_entries(app)
+            .iter()
+            .filter(|entry| matches!(entry, WorkspaceListEntry::Workspace { .. }))
+            .count()
+    }
+
+    // TP-DAILY-13 (H1): the row moves under the daily area and leaves the tree.
+    // Both halves are asserted in one test on purpose — emitting it in both
+    // places is real duplication, emitting it in neither loses the way in to
+    // fifteen live panes.
+    #[test]
+    fn the_daily_area_s_own_workspace_sits_under_it_and_not_in_the_tree() {
+        let (app, _) = app_with_a_workspace_standing_in_the_daily_directory(2);
+        let entries = workspace_list_entries(&app);
+
+        let home = workspace_row_position(&app, 1).expect("the area's own workspace is emitted");
+        let elsewhere = workspace_row_position(&app, 0).expect("the tree's workspace is emitted");
+        let last_daily_chat = entries
+            .iter()
+            .rposition(|entry| matches!(entry, WorkspaceListEntry::DailyChat { .. }))
+            .expect("the section has chats");
+
+        assert!(
+            home > last_daily_chat,
+            "the area's own workspace belongs after the section's chats"
+        );
+        assert!(
+            home < elsewhere,
+            "it belongs under the daily area, above everything the tree walk emits"
+        );
+        assert!(
+            matches!(
+                entries[home],
+                WorkspaceListEntry::Workspace { indented: true, .. }
+            ),
+            "a row inside a container is drawn as one"
+        );
+    }
+
+    // TP-DAILY-13 (H2): moving a row is not closing it. The workspace, its
+    // tabs and its panes are untouched — on the machine this was built for
+    // those seven rows held nine tabs and fifteen panes, one of them a blocked
+    // agent still waiting.
+    #[test]
+    fn moving_the_row_does_not_touch_the_workspace_itself() {
+        let (app, _) = app_with_a_workspace_standing_in_the_daily_directory(2);
+        assert_eq!(app.workspaces.len(), 2, "both workspaces are still there");
+        assert!(
+            workspace_row_position(&app, 1).is_some(),
+            "the moved workspace is still reachable from the list"
+        );
+    }
+
+    // TP-DAILY-13 (H3): the container takes its contents with it. A section
+    // that folds its chats but keeps its workspace rows reads as damage.
+    #[test]
+    fn folding_the_daily_area_folds_the_workspace_it_owns() {
+        let (mut app, _) = app_with_a_workspace_standing_in_the_daily_directory(2);
+        assert!(workspace_row_position(&app, 1).is_some(), "precondition");
+        app.daily_section_collapsed = true;
+        assert_eq!(
+            workspace_row_position(&app, 1),
+            None,
+            "a folded container shows none of its rows"
+        );
+        assert!(
+            workspace_row_position(&app, 0).is_some(),
+            "the tree is unaffected by the section's fold"
+        );
+    }
+
+    // TP-DAILY-13 (H7): the move is a move, never a removal. This set feeds
+    // the client frame as well as the sidebar, and the first attempt at this
+    // filtered at the source — which took API-created workspaces off every
+    // surface at once. Count preserved means no surface lost a row.
+    #[test]
+    fn moving_the_row_never_removes_it_from_the_shared_set() {
+        let (mut app, _) = app_with_a_workspace_standing_in_the_daily_directory(2);
+        let moved = workspace_row_count(&app);
+
+        // Same state, with nothing to move to: the tree keeps both rows.
+        app.daily_chat_cwd = None;
+        let untouched = workspace_row_count(&app);
+
+        assert_eq!(
+            moved, untouched,
+            "every workspace that had a row still has one; only its place changed"
+        );
+        assert_eq!(moved, 2, "and both workspaces are that count");
+    }
+
+    // TP-DAILY-13 (H8): the moved row is a row, not a picture of one. Hit
+    // testing reads the same entry list, so the workspace under the daily area
+    // gets a card area and stays clickable — which is the whole reason this is
+    // a move and not a hide. Fifteen live panes are reached through it.
+    #[test]
+    fn the_row_under_the_daily_area_is_still_clickable() {
+        let (app, _) = app_with_a_workspace_standing_in_the_daily_directory(2);
+        let areas = compute_workspace_card_areas(&app, Rect::new(0, 0, 30, 40));
+        assert!(
+            areas.iter().any(|card| card.ws_idx == 1),
+            "the area's own workspace gets a card area like any other row"
+        );
+        assert!(
+            areas.iter().any(|card| card.ws_idx == 0),
+            "and the tree's workspace keeps its own"
+        );
+    }
+
+    // TP-DAILY-13 (H4 at the emit layer): with no daily directory the rows
+    // stay exactly where the tree put them.
+    #[test]
+    fn without_a_daily_directory_the_tree_keeps_its_rows() {
+        let (mut app, _) = app_with_a_workspace_standing_in_the_daily_directory(2);
+        app.daily_chat_cwd = None;
+        assert!(
+            workspace_row_position(&app, 1).is_some(),
+            "the workspace is still emitted by the tree walk"
+        );
+    }
+
+    // TP-DAILY-13: an undrawn section owns nothing. Rows placed under a header
+    // that was never emitted are invisible — the #88 class of silent defect.
+    #[test]
+    fn an_undrawn_daily_area_owns_nothing() {
+        let (mut app, _) = app_with_a_workspace_standing_in_the_daily_directory(2);
+        assert_eq!(daily_owned_workspaces(&app), vec![1], "precondition: drawn");
+        // TP-DAILY-06's filter: focus-only with no resumed daily chat silences
+        // the section.
+        app.spaces_focus_only = true;
+        assert!(
+            !daily_section_visible(&app),
+            "precondition: the section is now silent"
+        );
+        assert!(
+            daily_owned_workspaces(&app).is_empty(),
+            "a section that is not drawn cannot own rows"
+        );
+    }
+
     // TP-DAILY-02: the section is born at the very top, above the tree —
     // that is where a person looks for what they were just doing. A chat
     // outside every checkout has no workspace to hang under, so if this row
@@ -6859,6 +7183,62 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         );
     }
 
+    // TP-DAILY-12: the header is drawn in the containers' dialect — the same
+    // accent-coloured disclosure arrow every project and module header wears,
+    // and the same "⋯" door to its menu. Drawn as a plain heading instead, the
+    // area reads as a label ABOVE the tree rather than as the first place IN
+    // it, which is precisely the complaint that produced this behaviour.
+    #[test]
+    fn the_daily_header_is_drawn_in_the_container_dialect() {
+        let (mut app, _) = app_with_daily_chats(2);
+        let area = Rect::new(0, 0, 30, 20);
+        app.view.sidebar_rect = area;
+        let (cards, chats, groups, projects, more, empty, daily) =
+            compute_workspace_list_areas(&app, area);
+        app.view.workspace_card_areas = cards;
+        app.view.workspace_chat_row_areas = chats;
+        app.view.workspace_group_header_areas = groups;
+        app.view.workspace_project_header_areas = projects;
+        app.view.workspace_more_chats_areas = more;
+        app.view.workspace_empty_module_areas = empty;
+        app.view.daily_header_area = daily.header;
+        app.view.daily_chat_row_areas = daily.chats;
+        app.view.daily_more_area = daily.more;
+        let header_rect = app.view.daily_header_area.expect("the section is drawn");
+
+        let mut terminal = Terminal::new(TestBackend::new(30, 20)).unwrap();
+        terminal
+            .draw(|frame| render_sidebar(&app, &TerminalRuntimeRegistry::new(), frame, area))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+
+        // The arrow carries the accent every container header uses, and is a
+        // span of its own rather than a character inside the label.
+        let arrow_x = find_symbol_x(buffer, header_rect.y, header_rect.width, DISCLOSURE_OPEN);
+        assert_eq!(
+            buffer[(arrow_x, header_rect.y)].style().fg,
+            Some(app.palette.accent),
+            "the disclosure arrow wears the container accent"
+        );
+
+        // The "⋯" door is present while the mouse owns the panel, and it does
+        // not sit on top of the "+".
+        let dots = header_menu_cell(header_rect);
+        let plus = daily_new_chat_cell(header_rect);
+        assert!(dots.width > 0 && plus.width > 0);
+        assert_ne!(dots.x, plus.x, "the two doors keep separate cells");
+        let row = row_text(buffer, header_rect.y, header_rect.width);
+        assert!(
+            row.contains('⋯'),
+            "the header wears the manage chrome: {row:?}"
+        );
+        assert!(row.contains('+'), "and its plus: {row:?}");
+        assert!(
+            row.contains(DAILY_SECTION_TITLE),
+            "without losing its name: {row:?}"
+        );
+    }
+
     // TP-DAILY-10: a header too narrow to hold a "+" reserves no cell at all.
     // A half-drawn plus would look pressable and do nothing — the same reason
     // every other cell on this sidebar refuses below six columns.
@@ -6914,17 +7294,17 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let header = row_text(buffer, header_rect.y, header_rect.width);
         assert!(header.contains(DAILY_SECTION_TITLE), "header: {header:?}");
         assert!(header.contains(DISCLOSURE_OPEN), "open arrow: {header:?}");
-        // TP-DAILY-10: with the mouse on the panel the plus owns the trailing
-        // column and the count steps left of it — both are on the row, and
-        // neither is painted over the other.
+        // TP-DAILY-10/12: with the mouse on the panel the container chrome
+        // owns the trailing columns — the count, then the "⋯", then the "+" —
+        // and none of the three is painted over another.
         assert!(
-            header.trim_end().ends_with("2 +"),
-            "count and plus: {header:?}"
+            header.trim_end().ends_with("2 ⋯ +"),
+            "count, dots and plus: {header:?}"
         );
 
-        // TP-DAILY-10: with the mouse away the plus is gone and the count
-        // takes the trailing column back — no cell is left reserved for
-        // chrome that is not drawn.
+        // TP-DAILY-10/12: with the mouse away the chrome is gone and the
+        // count takes the trailing column back — no cell is left reserved
+        // for chrome that is not drawn.
         app.mouse_capture = false;
         let mut plain = Terminal::new(TestBackend::new(30, 20)).unwrap();
         plain
@@ -6933,6 +7313,10 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let quiet = row_text(plain.backend().buffer(), header_rect.y, header_rect.width);
         assert!(quiet.trim_end().ends_with('2'), "count alone: {quiet:?}");
         assert!(!quiet.contains('+'), "no plus without capture: {quiet:?}");
+        assert!(
+            !quiet.contains('⋯'),
+            "no dots without capture either: {quiet:?}"
+        );
         app.mouse_capture = true;
 
         let first = row_text(

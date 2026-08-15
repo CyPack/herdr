@@ -852,6 +852,12 @@
           "type": "string",
           "default": "\"💬\"",
           "description": "Glyph drawn before chat rows in a workspace's chat drawer. Empty disables the glyph."
+        },
+        {
+          "key": "spaces.icons.daily",
+          "type": "string",
+          "default": "\"🏠\"",
+          "description": "Glyph drawn before the daily area's header — the chats no checkout claims. A home rather than a speech bubble: that row names a place, not a conversation. Empty disables the glyph."
         }
       ]
     },

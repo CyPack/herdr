@@ -447,6 +447,10 @@ pub struct SpaceIconsConfig {
     pub branch: String,
     /// Chat drawer rows.
     pub chat: String,
+    /// The daily area's header — the chats no checkout claims. A home rather
+    /// than a speech bubble: that row names a place, not a conversation, and
+    /// it is the one place on this sidebar that is always yours.
+    pub daily: String,
 }
 
 impl Default for SpaceIconsConfig {
@@ -455,6 +459,7 @@ impl Default for SpaceIconsConfig {
             project: "📁".to_string(),
             branch: "".to_string(),
             chat: "💬".to_string(),
+            daily: "🏠".to_string(),
         }
     }
 }
