@@ -3782,16 +3782,21 @@ impl HeadlessServer {
             .map(|(&client_id, client)| (client_id, client.terminal_size))
             .collect();
 
-        // tab index -> (negotiated cols, negotiated rows, owning client)
-        let mut per_tab: HashMap<usize, (u16, u16, u64)> = HashMap::new();
+        // (workspace, tab) -> (negotiated cols, negotiated rows, owning
+        // client). Keyed by both halves: two workspaces both have a tab at
+        // index zero, and merging those entries would size a watched tab to
+        // a display that is looking at a different workspace — and leave the
+        // other display's tab with no negotiation at all.
+        let mut per_tab: HashMap<(usize, usize), (u16, u16, u64)> = HashMap::new();
         for (client_id, (cols, rows)) in candidates {
             let previous = self.app.state.enter_viewer(Some(client_id));
-            let tab = self
-                .app
-                .state
-                .active
-                .and_then(|idx| self.app.state.workspaces.get(idx))
-                .map(|workspace| workspace.active_tab_index());
+            let tab = self.app.state.active.and_then(|ws_idx| {
+                self.app
+                    .state
+                    .workspaces
+                    .get(ws_idx)
+                    .map(|workspace| (ws_idx, workspace.active_tab_index()))
+            });
             self.app.state.restore_viewer(previous);
             let Some(tab) = tab else {
                 continue;
