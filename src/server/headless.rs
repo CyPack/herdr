@@ -3832,7 +3832,7 @@ impl HeadlessServer {
             // full compute-and-discard frame — measured live at up to 62
             // thrown-away frames a second on detached servers. Size changes
             // while detached re-enter through the size-change event path,
-            // which recomputes the view itself.
+            // which recomputes the view itself. TP-MCF-SIZE-06
             let resize_panes = self.app.state.view.pane_infos.is_empty();
             if !resize_panes {
                 self.app.full_redraw_pending = false;
@@ -9845,6 +9845,7 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
     // A frame nobody sees is not drawn: with no client attached the view is
     // computed once to keep pane geometry alive for the API and the first
     // attach, and PTY output after that stops producing thrown-away frames.
+    // TP-MCF-SIZE-06
     #[tokio::test]
     async fn frames_with_no_attached_client_are_computed_once_not_per_tick() {
         let mut server = test_headless_server();
