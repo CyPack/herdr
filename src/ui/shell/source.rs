@@ -2025,6 +2025,304 @@ mod tests {
         }
     }
 
+    // A type in a bar config lives in six closed sets, and each one lives in two
+    // places: the match that builds it, and the message that lists what it accepts.
+    //
+    //   surface      built by                       listed by                       refusal costs
+    //   sizing       section_policy                 UnknownSectionKind              the whole bar
+    //   widget       section_widget                 UnknownSectionWidgetKind        one blank section
+    //   action       section_action                 UnknownSectionActionKind        one inert section
+    //   secondary    secondary_presentation         UnknownSecondaryPresentation    one inert right press
+    //   metric       resource::ResourceMetric       UnknownSectionWidgetMetric      one blank section
+    //   icon art     icon::builtin                  UnknownIconArt                  one blank section
+    //
+    // Nothing holds the two halves together, so they drift in either direction and
+    // both are silent: a name the parser takes but the message never mentions is a
+    // feature nobody can find, and a name the message offers but the parser refuses
+    // is a config somebody writes on the message's word.
+    //
+    // These pin today's answers before a type table moves them. The shape is the one
+    // the documentation gate already uses: harvest the list out of the text, then ask
+    // the product about every name in it. What differs is the source — a message the
+    // product writes about itself rather than a guide somebody else maintains.
+
+    /// The quoted names on the "expected" side of a refusal.
+    ///
+    /// The message carries the offending name in quotes too (`… is "gauge"; expected
+    /// …`), so the harvest starts after `expected`. Losing that split would let the
+    /// refused name count as an accepted one, and the check would agree with itself.
+    fn expected_names(message: &str) -> Vec<String> {
+        let tail = match message.split_once("expected ") {
+            Some((_, tail)) => tail,
+            None => return Vec::new(),
+        };
+        tail.split('"')
+            .skip(1)
+            .step_by(2)
+            .map(|name| name.to_string())
+            .collect()
+    }
+
+    /// One section in one bar, and whatever it is reported for.
+    fn problems_for(section: ShellBarSectionConfig) -> Vec<String> {
+        let config = ShellBarsConfig {
+            top: bar_with_sections(vec![section]),
+            ..Default::default()
+        };
+        shell_bar_config_problems(&config, true)
+            .into_iter()
+            .map(|problem| problem.to_string())
+            .collect()
+    }
+
+    /// The refusal a surface writes when it is handed a name it does not know.
+    fn message_naming(section: ShellBarSectionConfig, needle: &str) -> String {
+        problems_for(section)
+            .into_iter()
+            .find(|text| text.contains(needle))
+            .unwrap_or_else(|| panic!("no problem mentioned {needle:?}"))
+    }
+
+    /// Every name a message lists is a name its surface takes.
+    ///
+    /// The claim is not that nothing is reported — a resource still wants a metric, an
+    /// icon still wants a picture, a fixed section still wants cells. It is that the
+    /// name itself was recognised, which is the half a type table is about to own.
+    fn assert_every_listed_name_is_accepted(
+        message: &str,
+        at_least: usize,
+        refusal_shape: impl Fn(&str) -> String,
+        apply: impl Fn(&str) -> ShellBarSectionConfig,
+    ) {
+        let listed = expected_names(message);
+
+        // The harvest is pinned as well. Reword the message and it would find nothing,
+        // the loop below would never run, and the check would pass in silence — which
+        // is the failure mode this whole shape exists to prevent.
+        assert!(
+            listed.len() >= at_least,
+            "the message no longer lists what it accepts: {message}"
+        );
+
+        for name in &listed {
+            let refused = problems_for(apply(name))
+                .into_iter()
+                .any(|problem| problem.contains(&refusal_shape(name)));
+            assert!(
+                !refused,
+                "the message lists {name:?} but the parser refuses it"
+            );
+        }
+    }
+
+    // TP-CHROME-99: the sizing surface, whose refusal costs the whole bar rather than
+    // one section, so a message that offers a kind the parser will not take is the
+    // most expensive of the six to get wrong.
+    #[test]
+    fn the_section_kinds_the_message_lists_are_exactly_the_ones_accepted() {
+        let message = message_naming(plain_section("stretch"), "sections[0].kind is \"stretch\"");
+
+        // The anchor carries `sections[0].` because a bare `kind is "…"` is a substring
+        // of `widget.kind is "…"` and `action.kind is "…"` as well. Three surfaces share
+        // one sentence and only the prefix tells them apart.
+        assert_every_listed_name_is_accepted(
+            &message,
+            3,
+            |name| format!("sections[0].kind is \"{name}\""),
+            plain_section,
+        );
+
+        assert!(
+            !expected_names(&message)
+                .iter()
+                .any(|name| name == "stretch"),
+            "an unknown sizing kind leaked into the accepted list"
+        );
+    }
+
+    // TP-CHROME-96: the widget surface.
+    #[test]
+    fn the_widget_kinds_the_message_lists_are_exactly_the_ones_accepted() {
+        let mut unknown = plain_section("fill");
+        unknown.widget.kind = "gauge".to_string();
+        let message = message_naming(unknown, "widget.kind is \"gauge\"");
+
+        assert_every_listed_name_is_accepted(
+            &message,
+            4,
+            |name| format!("widget.kind is \"{name}\""),
+            |name| {
+                let mut section = plain_section("fill");
+                section.widget.kind = name.to_string();
+                section
+            },
+        );
+    }
+
+    // TP-CHROME-97: the action surface. A refused action costs only its own section,
+    // which makes this the quietest drift of the four: the bar still divides and the
+    // part simply stops answering.
+    #[test]
+    fn the_action_kinds_the_message_lists_are_exactly_the_ones_accepted() {
+        let mut unknown = plain_section("fill");
+        unknown.action.kind = "teleport".to_string();
+        let message = message_naming(unknown, "action.kind is \"teleport\"");
+
+        assert_every_listed_name_is_accepted(
+            &message,
+            2,
+            |name| format!("action.kind is \"{name}\""),
+            |name| {
+                let mut section = plain_section("fill");
+                section.action.kind = name.to_string();
+                section
+            },
+        );
+    }
+
+    // TP-CHROME-98: this pair crosses a module boundary. The message is written here
+    // and the parser lives in `crate::resource`, so a table gathered inside this file
+    // cannot close the gap — it can only keep it visible.
+    #[test]
+    fn the_metrics_the_message_lists_are_exactly_the_ones_resource_parses() {
+        let mut section = plain_section("fill");
+        section.widget.kind = "resource".to_string();
+        section.widget.metric = "flux".to_string();
+        let message = message_naming(section, "widget.metric is \"flux\"");
+
+        let listed = expected_names(&message);
+        assert!(
+            listed.len() >= 3,
+            "the message no longer lists the accepted metrics: {message}"
+        );
+        for metric in &listed {
+            assert!(
+                crate::resource::ResourceMetric::parse(metric).is_some(),
+                "the message lists {metric:?} but ResourceMetric does not parse it"
+            );
+        }
+        assert!(
+            crate::resource::ResourceMetric::parse("flux").is_none(),
+            "an unknown metric parsed"
+        );
+    }
+
+    // TP-CHROME-102: `ram` is taken and never advertised.
+    //
+    // This is characterisation, not endorsement. The alias works and the guide says so,
+    // but the refusal names only cpu, mem and swap, so somebody who mistypes it is told
+    // nothing about the spelling that would have worked. A type table has to carry
+    // aliases or it will drop this one without a word; adding it to the message instead
+    // is a decision with its own docs, and either way this test should be the thing
+    // that makes the change deliberate.
+    #[test]
+    fn the_mem_metric_answers_to_ram_without_advertising_it() {
+        assert_eq!(
+            crate::resource::ResourceMetric::parse("ram"),
+            crate::resource::ResourceMetric::parse("mem"),
+            "ram stopped being an alias for mem"
+        );
+
+        let mut section = plain_section("fill");
+        section.widget.kind = "resource".to_string();
+        section.widget.metric = "flux".to_string();
+        let message = message_naming(section, "widget.metric is \"flux\"");
+        assert!(
+            !expected_names(&message).iter().any(|name| name == "ram"),
+            "ram started being advertised, which is a behaviour change rather than a \
+             refactor: {message}"
+        );
+    }
+
+    // TP-CHROME-103: the secondary surface, and the only list with a single member.
+    //
+    // `expected "tab"` has no separator in it. A generated list pinned only against the
+    // longer forms could produce a broken sentence here and nothing else would notice.
+    //
+    // The presentation is only read on the popup arm, and an empty argv is refused
+    // before it, so reaching this refusal needs a popup that is otherwise valid.
+    #[test]
+    fn the_secondary_presentations_the_message_lists_are_exactly_the_ones_accepted() {
+        let mut unknown = section_with_action("fill", "popup", &["true"]);
+        unknown.action.secondary = "tabs".to_string();
+        let message = message_naming(unknown, "action.secondary is \"tabs\"");
+
+        assert_every_listed_name_is_accepted(
+            &message,
+            1,
+            |name| format!("action.secondary is \"{name}\""),
+            |name| {
+                let mut section = section_with_action("fill", "popup", &["true"]);
+                section.action.secondary = name.to_string();
+                section
+            },
+        );
+    }
+
+    // TP-CHROME-104: the icon catalogue is the one closed set that refuses without
+    // saying what it holds.
+    //
+    // Characterised as it stands rather than defended. Five surfaces tell a person what
+    // may be written and this one does not, which is a gap worth closing on purpose.
+    // When it is closed this test turns red, and that is the point: the change should
+    // arrive as a decision with its docs rather than as a side effect.
+    #[test]
+    fn the_icon_catalogue_refuses_without_saying_what_it_bundles() {
+        let mut section = plain_section("fill");
+        section.widget.kind = "icon".to_string();
+        section.widget.art = "hrd".to_string();
+        let message = message_naming(section, "widget.art is \"hrd\"");
+
+        assert!(
+            message.contains("does not bundle"),
+            "the icon refusal changed shape: {message}"
+        );
+        assert!(
+            expected_names(&message).is_empty(),
+            "the icon catalogue started listing what it bundles; if that is deliberate, \
+             update this test and the guide together: {message}"
+        );
+    }
+
+    // TP-CHROME-101: the empty kind is never offered as something to write.
+    //
+    // It is not a kind. It is where the leftover checks live, and they ask a different
+    // question — whether a width, a presentation or a plugin id outlived the action
+    // that gave them meaning. Listing `""` would invite people to write it, and a
+    // refactor that folded it into the kind table would lose those checks entirely.
+    #[test]
+    fn the_empty_kind_is_never_offered_as_something_to_write() {
+        let mut widget = plain_section("fill");
+        widget.widget.kind = "gauge".to_string();
+        let mut action = plain_section("fill");
+        action.action.kind = "teleport".to_string();
+
+        for message in [
+            message_naming(plain_section("stretch"), "sections[0].kind is \"stretch\""),
+            message_naming(widget, "widget.kind is \"gauge\""),
+            message_naming(action, "action.kind is \"teleport\""),
+        ] {
+            assert!(
+                !expected_names(&message).iter().any(|name| name.is_empty()),
+                "the empty kind was offered as something to write: {message}"
+            );
+        }
+    }
+
+    // The harvest reads only what follows `expected`, including the one-item form that
+    // has no separator to lean on.
+    #[test]
+    fn the_harvest_reads_only_what_comes_after_expected() {
+        let message = "shell.bars.top.sections[0].kind is \"stretch\"; expected \"fixed\", \
+                       \"fill\" or \"content\", so this bar is drawn undivided";
+        assert_eq!(expected_names(message), vec!["fixed", "fill", "content"]);
+        assert_eq!(expected_names("no such word here"), Vec::<String>::new());
+        assert_eq!(
+            expected_names("… action.secondary is \"tabs\"; expected \"tab\", so a right press …"),
+            vec!["tab"]
+        );
+    }
+
     fn plain_section(kind: &str) -> ShellBarSectionConfig {
         ShellBarSectionConfig {
             kind: kind.to_string(),
