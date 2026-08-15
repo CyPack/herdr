@@ -793,6 +793,14 @@ impl AppState {
                                 self.open_daily_new_chat_menu(mouse.column, mouse.row);
                                 return None;
                             }
+                            // TP-DAILY-12 / TP-DOTS-04: the "⋯" opens the very
+                            // menu the right-click opens, matched before the
+                            // fold for the same reason the plus is.
+                            let dots = crate::ui::header_menu_cell(rect);
+                            if self.mouse_capture && dots.width > 0 && mouse.column == dots.x {
+                                self.open_daily_header_menu(mouse.column, mouse.row);
+                                return None;
+                            }
                             self.toggle_daily_section();
                             return None;
                         }
@@ -1538,6 +1546,19 @@ impl AppState {
                     }
                     return None;
                 }
+                // TP-DAILY-12 / TP-DOTS-04: the area's header answers a
+                // right-click with the same menu its "⋯" opens. Matched with
+                // the other headers, from its own rect, because it belongs to
+                // no workspace and would otherwise resolve through one.
+                if let Some(rect) = self.view.daily_header_area {
+                    if mouse.row == rect.y
+                        && mouse.column >= rect.x
+                        && mouse.column < rect.x + rect.width
+                    {
+                        self.open_daily_header_menu(mouse.column, mouse.row);
+                        return None;
+                    }
+                }
                 // TP-DOTS-02: the tree's header rows own menus of their own —
                 // matched from their own vectors, like the click road, so a
                 // header can never resolve through a workspace sharing its
@@ -1593,7 +1614,15 @@ impl AppState {
                 }
                 if let Some(idx) = self.workspace_at_row(mouse.row) {
                     self.open_workspace_row_menu(terminal_runtimes, idx, mouse.column, mouse.row);
+                    return None;
                 }
+                // TP-MOD-31: the blank below the tree. Matched LAST, after
+                // every row vector has had its say, because a blank menu that
+                // ran first would shadow every right-click this sidebar has.
+                // Until now the empty space answered nothing at all — and it
+                // is the only surface from which a container can be made
+                // without already standing inside one.
+                self.open_sidebar_blank_menu(mouse.column, mouse.row);
             }
 
             MouseEventKind::Down(MouseButton::Right)
@@ -3433,6 +3462,147 @@ mod tests {
                 app.state.context_menu.as_ref().map(|menu| &menu.kind)
             );
         }
+    }
+
+    // TP-DAILY-12 / TP-DOTS-04: the area's header is managed like every other
+    // container header — its "⋯" and a right-click on it open the SAME menu.
+    // A header with no menu at all was the one row on this sidebar a person
+    // could not act on, which is what made it read as a caption rather than
+    // as a place.
+    #[test]
+    fn the_daily_header_answers_the_dots_and_the_right_click_with_one_menu() {
+        let mut app = app_for_mouse_test();
+        let daily = std::path::PathBuf::from("/home/tester");
+        let mut elsewhere = crate::workspace::Workspace::test_new("elsewhere");
+        elsewhere.identity_cwd = std::path::PathBuf::from("/repo/checkout");
+        app.state.workspaces = vec![elsewhere];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mobile_width_threshold = 0;
+        app.state.daily_chat_cwd = Some(daily.clone());
+        let key = crate::persist::workspace_chats::ledger_key(&daily);
+        app.state.workspace_chat_rows.insert(
+            key,
+            vec![crate::app::state::WorkspaceChatRow {
+                session_id: "daily-0".to_string(),
+                agent: "claude".to_string(),
+                title: Some("daily chat".to_string()),
+                last_seen_ms: 10,
+                last_modified: None,
+            }],
+        );
+        app.state.mouse_capture = true;
+
+        let area = ratatui::layout::Rect::new(0, 0, 106, 20);
+        crate::ui::compute_view(&mut app.state, area);
+        let header = app
+            .state
+            .view
+            .daily_header_area
+            .expect("the area draws its header");
+
+        // Right-click anywhere on the row.
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Right),
+            header.x + 2,
+            header.y,
+        ));
+        assert!(
+            matches!(
+                app.state.context_menu.as_ref().map(|menu| &menu.kind),
+                Some(crate::app::state::ContextMenuKind::DailyHeader { collapsed: false })
+            ),
+            "the right-click opens the area menu; got {:?}",
+            app.state.context_menu.as_ref().map(|menu| &menu.kind)
+        );
+
+        // The "⋯" opens the very same one, and does not fold on the way.
+        app.state.context_menu = None;
+        app.state.mode = Mode::Terminal;
+        crate::ui::compute_view(&mut app.state, area);
+        let dots = crate::ui::header_menu_cell(header);
+        assert!(dots.width > 0, "a header this wide reserves a '⋯' cell");
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            dots.x,
+            dots.y,
+        ));
+        assert!(
+            matches!(
+                app.state.context_menu.as_ref().map(|menu| &menu.kind),
+                Some(crate::app::state::ContextMenuKind::DailyHeader { .. })
+            ),
+            "the dots open the same menu; got {:?}",
+            app.state.context_menu.as_ref().map(|menu| &menu.kind)
+        );
+        assert!(
+            !app.state.daily_section_collapsed,
+            "opening the menu never folds the area"
+        );
+    }
+
+    // TP-MOD-31: the tree's empty space answers a right-click with the one
+    // verb that needs no row — "New module...". It is matched last, so a
+    // right-click that lands on an actual row still gets that row's menu; a
+    // blank matched first would shadow every context menu this sidebar has.
+    #[test]
+    fn a_right_press_on_the_trees_blank_offers_to_make_a_container() {
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![crate::workspace::Workspace::test_new("only")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mobile_width_threshold = 0;
+
+        let area = ratatui::layout::Rect::new(0, 0, 106, 20);
+        crate::ui::compute_view(&mut app.state, area);
+        let card = *app
+            .state
+            .view
+            .workspace_card_areas
+            .last()
+            .expect("the one workspace is laid out");
+        let footer_top = app.state.sidebar_footer_rect().y;
+        let blank_row = card.rect.y + card.rect.height + 1;
+        assert!(
+            blank_row < footer_top,
+            "the fixture must leave a blank row between the tree and the footer"
+        );
+        assert!(
+            app.state.workspace_at_row(blank_row).is_none(),
+            "the chosen row is genuinely empty"
+        );
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Right),
+            2,
+            blank_row,
+        ));
+        assert!(
+            matches!(
+                app.state.context_menu.as_ref().map(|menu| &menu.kind),
+                Some(crate::app::state::ContextMenuKind::SidebarBlank)
+            ),
+            "the blank offers the container menu; got {:?}",
+            app.state.context_menu.as_ref().map(|menu| &menu.kind)
+        );
+
+        // A right-click that lands on a row still belongs to that row.
+        app.state.context_menu = None;
+        app.state.mode = Mode::Terminal;
+        crate::ui::compute_view(&mut app.state, area);
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Right),
+            card.rect.x + 1,
+            card.rect.y,
+        ));
+        assert!(
+            !matches!(
+                app.state.context_menu.as_ref().map(|menu| &menu.kind),
+                Some(crate::app::state::ContextMenuKind::SidebarBlank)
+            ),
+            "a row keeps its own menu; got {:?}",
+            app.state.context_menu.as_ref().map(|menu| &menu.kind)
+        );
     }
 
     // TP-DAILY-10: the daily header carries two gestures on one row, and the
