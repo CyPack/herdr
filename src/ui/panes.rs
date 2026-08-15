@@ -265,6 +265,12 @@ fn stable_scrollbar_gutter(rt: &TerminalRuntime, pane_inner: Rect) -> (Rect, Opt
 }
 
 /// Resize every visible runtime in a tab to the geometry it would receive if the tab were selected.
+///
+/// A pane whose child has already been reaped is left alone: no process
+/// remains to receive the size, and the reflow would rewrap its whole
+/// scrollback for a terminal nobody is looking at. It still gets sized the
+/// moment it becomes the tab on screen, through `compute_pane_infos` — which
+/// is why that path deliberately carries no such guard. TP-PANE-RETIRED-01
 pub(super) fn resize_tab_panes(
     app: &AppState,
     terminal_runtimes: &TerminalRuntimeRegistry,
@@ -284,7 +290,7 @@ pub(super) fn resize_tab_panes(
             };
             let pane_inner = pane_inner_rect(area, borders);
             let inner_rect = stable_terminal_inner_rect(pane_inner);
-            if !app.direct_attach_resize_locks.contains(terminal_id) {
+            if !app.direct_attach_resize_locks.contains(terminal_id) && !rt.child_exited() {
                 rt.resize(
                     inner_rect.height,
                     inner_rect.width,
@@ -301,7 +307,7 @@ pub(super) fn resize_tab_panes(
 
         if let Some((terminal_id, rt)) = runtime_for_tab_pane(terminal_runtimes, tab, info.id) {
             let inner_rect = stable_terminal_inner_rect(pane_inner);
-            if !app.direct_attach_resize_locks.contains(terminal_id) {
+            if !app.direct_attach_resize_locks.contains(terminal_id) && !rt.child_exited() {
                 rt.resize(
                     inner_rect.height,
                     inner_rect.width,

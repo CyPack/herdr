@@ -2448,6 +2448,22 @@ impl PaneRuntime {
         (rows, cols)
     }
 
+    /// Whether this pane's child process has been reaped.
+    ///
+    /// Answers `false` when the pane carries no such record. That is the safe
+    /// direction: callers use this to *skip* work, and skipping on a guess
+    /// would starve a live process of a resize it needs.
+    pub(crate) fn child_exited(&self) -> bool {
+        self.child_wait_completed
+            .as_deref()
+            .is_some_and(|reaped| reaped.load(Ordering::Acquire))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_mark_child_exited(&mut self) {
+        self.child_wait_completed = Some(Arc::new(AtomicBool::new(true)));
+    }
+
     /// How many resizes actually ran on this pane. Each one reflows the whole
     /// scrollback, so a frame that changes nothing must not add to this.
     #[cfg(test)]

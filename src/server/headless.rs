@@ -9452,6 +9452,80 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
         );
     }
 
+    // TP-PANE-RETIRED-01
+    #[tokio::test]
+    async fn a_background_pane_whose_child_exited_is_not_resized() {
+        let mut server = test_headless_server();
+        let mut workspace = crate::workspace::Workspace::test_new("test");
+        let active_pane = workspace.tabs[0].root_pane;
+        let background_tab = workspace.test_add_tab(Some("background"));
+        let background_pane = workspace.tabs[background_tab].root_pane;
+        workspace.tabs[0].runtimes.insert(
+            active_pane,
+            crate::terminal::TerminalRuntime::test_with_screen_bytes(80, 24, b"live"),
+        );
+        // Identical to its neighbour in every way except that its child has
+        // already been reaped.
+        let mut retired =
+            crate::terminal::TerminalRuntime::test_with_screen_bytes(80, 24, b"retired");
+        retired.test_mark_child_exited();
+        workspace.tabs[background_tab]
+            .runtimes
+            .insert(background_pane, retired);
+        server.app.state.workspaces = vec![workspace];
+        server.app.state.active = Some(0);
+        server.app.state.selected = 0;
+        server.app.state.mode = crate::app::Mode::Terminal;
+
+        server.clients.insert(
+            1,
+            ClientConnection::new(
+                (120, 40),
+                crate::kitty_graphics::HostCellSize::default(),
+                crate::terminal_theme::TerminalTheme::default(),
+                None,
+                1,
+                RenderEncoding::SemanticFrame,
+                None,
+            ),
+        );
+        server.foreground_client_id = Some(1);
+        server.sync_foreground_client_state();
+        server.resize_shared_runtime_to_effective_size();
+
+        let before = server.app.state.workspaces[0].tabs[background_tab].runtimes[&background_pane]
+            .applied_resizes_for_test();
+
+        // A second size-change event, to a size nothing has been sized to yet.
+        if let Some(client) = server.clients.get_mut(&1) {
+            client.terminal_size = (100, 30);
+        }
+        server.sync_foreground_client_state();
+        server.resize_shared_runtime_to_effective_size();
+
+        let after = server.app.state.workspaces[0].tabs[background_tab].runtimes[&background_pane]
+            .applied_resizes_for_test();
+        let (active_rows, active_cols) =
+            server.app.state.workspaces[0].tabs[0].runtimes[&active_pane].current_size();
+
+        assert_eq!(
+            after,
+            before,
+            "a pane whose child is gone must not be resized while it is out of \
+             sight: no process is left to receive the size, and the reflow rewraps \
+             its whole scrollback for nobody ({} applied)",
+            after - before
+        );
+        assert_eq!(
+            (active_rows, active_cols),
+            (
+                server.app.state.view.terminal_area.height,
+                server.app.state.view.terminal_area.width.saturating_sub(1)
+            ),
+            "the tab being looked at still follows the session size"
+        );
+    }
+
     // TP-MCF-SIZE-05
     #[tokio::test]
     async fn same_tab_index_in_different_workspaces_sizes_independently() {
