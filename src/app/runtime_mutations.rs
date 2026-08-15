@@ -97,6 +97,13 @@ impl App {
         self.dispatch_runtime_mutation(id, Method::PaneFocus(PaneTarget { pane_id }))
     }
 
+    pub(crate) fn revive_closed_agent_via_api(&mut self, agent_id: String) {
+        self.dispatch_runtime_mutation(
+            "tui.closed_agent.revive",
+            Method::ClosedAgentRevive(crate::api::schema::ClosedAgentReviveParams { agent_id }),
+        );
+    }
+
     pub(crate) fn runtime_pane_close(&mut self, id: &'static str, pane_id: String) -> String {
         self.dispatch_runtime_mutation(id, Method::PaneClose(PaneTarget { pane_id }))
     }

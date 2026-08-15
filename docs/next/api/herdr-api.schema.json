@@ -1667,6 +1667,18 @@
           ],
           "type": "object"
         },
+        "ClosedAgentReviveParams": {
+          "properties": {
+            "agent_id": {
+              "description": "The identity of the closed-agent record to revive.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "agent_id"
+          ],
+          "type": "object"
+        },
         "EmptyParams": {
           "type": "object"
         },
@@ -5495,6 +5507,22 @@
         {
           "properties": {
             "method": {
+              "const": "closed_agent.revive",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/ClosedAgentReviveParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
               "const": "popup.close",
               "type": "string"
             },
@@ -6225,6 +6253,55 @@
             "no_foreground_client"
           ],
           "type": "string"
+        },
+        "ClosedAgentInfo": {
+          "properties": {
+            "agent_id": {
+              "description": "Stable identity: what a revival request names, and the dedup key that\nkeeps one agent from appearing twice.",
+              "type": "string"
+            },
+            "closed_at": {
+              "description": "Close time in milliseconds since the epoch; newest first.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "cwd": {
+              "description": "Where the agent last worked. Absent when the close never knew one — a\nrevival must refuse to guess rather than fall back to `$HOME`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "label": {
+              "description": "The display name frozen at close time; the live state it came from is\ngone, so the record carries it.",
+              "type": "string"
+            },
+            "reviving": {
+              "description": "True while a revival spawn is in flight; further requests are inert.",
+              "type": "boolean"
+            },
+            "session_id": {
+              "description": "The conversation the revival reattaches to.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "workspace_id": {
+              "description": "The workspace the revival returns under.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "agent_id",
+            "label",
+            "closed_at"
+          ],
+          "type": "object"
         },
         "ConfigReloadStatus": {
           "enum": [
@@ -9606,6 +9683,13 @@
             "agents": {
               "items": {
                 "$ref": "#/schemas/success_response/$defs/AgentInfo"
+              },
+              "type": "array"
+            },
+            "closed_agents": {
+              "description": "Recently closed agents, newest first. Dead records carrying a revival\nrecipe — no runtime stands behind a row. Default + skip-if-empty keeps\nthe wire identical for sessions that never closed an agent.",
+              "items": {
+                "$ref": "#/schemas/success_response/$defs/ClosedAgentInfo"
               },
               "type": "array"
             },

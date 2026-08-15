@@ -41,6 +41,9 @@ pub(super) enum MouseAction {
         ws_idx: usize,
         pane_id: crate::layout::PaneId,
     },
+    ReviveClosedAgent {
+        agent_id: String,
+    },
     FocusToastTarget,
     ToggleProjectsActives,
     ToggleSpacesFocus,
@@ -1000,6 +1003,12 @@ impl AppState {
                     {
                         self.mode = Mode::Terminal;
                         return Some(MouseAction::FocusPane { ws_idx, pane_id });
+                    }
+
+                    // TP-AGPANEL-23: a click on a grey row asks the server to
+                    // revive that ghost; the server's state machine answers.
+                    if let Some(agent_id) = self.closed_agent_target_at(mouse.row) {
+                        return Some(MouseAction::ReviveClosedAgent { agent_id });
                     }
                 } else if let Some(info) = self.pane_at(mouse.column, mouse.row).cloned() {
                     if self.mode != Mode::Terminal {

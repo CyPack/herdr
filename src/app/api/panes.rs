@@ -1543,6 +1543,9 @@ impl App {
                 "closing this pane would close a worktree group",
             ));
         }
+        // TP-AGPANEL-12: the ghost is born BEFORE removal — this is the last
+        // moment the terminal, the tab and the resume key are all still alive.
+        self.state.note_agent_closed(ws_idx, pane_id);
         let workspace_snapshot = self.workspace_info(ws_idx);
         let terminal_id = self.state.terminal_id_for_pane(ws_idx, pane_id);
         let should_close_workspace = {

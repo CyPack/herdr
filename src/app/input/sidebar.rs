@@ -735,6 +735,20 @@ impl AppState {
             && row < rect.y + rect.height
     }
 
+    /// The ghost under `row`, resolved through the painter's own layout
+    /// function so a grey row's hit box can never sit beside its paint.
+    pub(super) fn closed_agent_target_at(&self, row: u16) -> Option<String> {
+        if self.sidebar_collapsed {
+            return None;
+        }
+        let (_, ghost_rows) = crate::ui::closed_agent_row_slots(self, self.agent_panel_rect())?;
+        let hit = ghost_rows.iter().position(|y| *y == row)?;
+        self.closed_agents
+            .entries()
+            .nth(hit)
+            .map(|record| record.agent_id.clone())
+    }
+
     pub(super) fn agent_detail_target_at(
         &self,
         row: u16,
@@ -1014,6 +1028,63 @@ mod tests {
             snapshot.workspaces[0].tabs[first_tab].focused,
             Some(second_pane.raw())
         );
+    }
+
+    // TP-AGPANEL-23: the ghost click resolves through the painter's own
+    // layout function, so the hit box can never sit beside the paint — and a
+    // click above or below the graveyard names nobody.
+    #[test]
+    fn a_click_on_a_ghost_row_names_that_ghost() {
+        let mut app = app_for_mouse_test();
+        let ws = Workspace::test_new("one");
+        let pane = ws.tabs[0].root_pane;
+        app.state.workspaces = vec![ws];
+        app.state.ensure_test_terminals();
+        let terminal_id = app.state.workspaces[0].tabs[0].panes[&pane]
+            .attached_terminal_id
+            .clone();
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .detected_agent = Some(Agent::Pi);
+        app.state.sidebar_agents.rows = vec![vec![crate::config::AgentSidebarToken::Agent]];
+
+        for (id, at) in [("elder", 1), ("newer", 2)] {
+            app.state
+                .closed_agents
+                .record_closed(crate::app::closed_agents::ClosedAgentRecord {
+                    agent_id: id.into(),
+                    label: id.into(),
+                    cwd: None,
+                    workspace_key: None,
+                    session: None,
+                    closed_at: at,
+                    revival: crate::app::closed_agents::RevivalState::Dormant,
+                });
+        }
+
+        let detail_area = app.state.agent_panel_rect();
+        let (separator_y, ghost_rows) = crate::ui::closed_agent_row_slots(&app.state, detail_area)
+            .expect("two ghosts and a roomy panel paint a graveyard");
+        assert_eq!(ghost_rows.len(), 2);
+
+        assert_eq!(
+            app.state.closed_agent_target_at(ghost_rows[0]).as_deref(),
+            Some("newer"),
+            "the newest ghost sits first under the separator"
+        );
+        assert_eq!(
+            app.state.closed_agent_target_at(ghost_rows[1]).as_deref(),
+            Some("elder")
+        );
+        assert_eq!(
+            app.state.closed_agent_target_at(separator_y),
+            None,
+            "the separator is furniture, not a target"
+        );
+        // The live row above still resolves to the live road, not a ghost.
+        assert!(app.state.closed_agent_target_at(separator_y - 1).is_none());
     }
 
     #[test]
