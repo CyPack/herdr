@@ -392,8 +392,15 @@ fn wait_for_output(socket_path: &Path, pane_id: &str, needle: &str) {
     );
 }
 
+/// Same factor and same reason as `tests/api_ping.rs`: what this waits for is a
+/// spawned process getting far enough to write, and that is bounded by the
+/// machine rather than by the number written here.
+const FILE_CONTENT_SLACK: u32 = 12;
+
 fn wait_for_file_contains(path: &Path, needle: &str, timeout: Duration) -> String {
-    let deadline = Instant::now() + timeout;
+    let budget = timeout * FILE_CONTENT_SLACK;
+    let started = Instant::now();
+    let deadline = started + budget;
     let mut last_text = String::new();
     while Instant::now() < deadline {
         if let Ok(text) = fs::read_to_string(path) {
@@ -405,8 +412,9 @@ fn wait_for_file_contains(path: &Path, needle: &str, timeout: Duration) -> Strin
         thread::sleep(Duration::from_millis(50));
     }
     panic!(
-        "{} did not contain {needle:?}; last text was {last_text:?}",
-        path.display()
+        "{} did not contain {needle:?} after {:?} of a {budget:?} budget; last text was {last_text:?}",
+        path.display(),
+        started.elapsed()
     );
 }
 

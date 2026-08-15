@@ -105,15 +105,38 @@ pub(super) fn cleanup_spawned_herdr(spawned: SpawnedHerdr, base: PathBuf) {
     cleanup_test_base(&base);
 }
 
+/// How much longer than it says every socket wait in this harness is actually
+/// given, matching `tests/api_ping.rs`.
+///
+/// All thirty-eight callers state five seconds, and five seconds is a budget for
+/// a herdr server's cold start: a process spawn, a config load, a tokio runtime
+/// and a socket bind. On an idle machine that is far inside the budget, and on a
+/// loaded one it is not a budget at all. Measured 2026-08-15: five consecutive
+/// landing-gate runs of the full suite, four of them red on
+/// `cases::sessions::*`, each failing at 5.09s with "socket did not appear" —
+/// the same shape `binary(api_ping)` showed before it was given slack, and the
+/// same number, because it is the same five-second wait for the same cold start.
+///
+/// Twelve is the factor already chosen there, from a measured 17.6s start; it is
+/// kept identical here rather than tuned separately, because two different slack
+/// factors for one kind of wait would be two numbers to explain instead of one.
+const SOCKET_TIMEOUT_SLACK: u32 = 12;
+
 pub(super) fn wait_for_socket(path: &Path, timeout: Duration) {
-    let deadline = Instant::now() + timeout;
+    let budget = timeout * SOCKET_TIMEOUT_SLACK;
+    let started = Instant::now();
+    let deadline = started + budget;
     while Instant::now() < deadline {
         if path.exists() && std::os::unix::net::UnixStream::connect(path).is_ok() {
             return;
         }
         thread::sleep(Duration::from_millis(25));
     }
-    panic!("socket did not appear at {}", path.display());
+    panic!(
+        "socket did not appear at {} after {:?} of a {budget:?} budget",
+        path.display(),
+        started.elapsed()
+    );
 }
 
 pub(super) fn spawn_herdr(

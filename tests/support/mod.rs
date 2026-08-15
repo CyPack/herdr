@@ -110,15 +110,29 @@ pub fn cleanup_test_base(base: &Path) {
     let _ = fs::remove_dir_all(base);
 }
 
+/// How much longer than it says every socket wait here is actually given.
+///
+/// Same factor and same reason as [`REAP_SLACK`] and `tests/api_ping.rs`: the
+/// stated timeout is a budget for a herdr server's cold start, and on a loaded
+/// machine a cold start is not bounded by the number someone typed. The waits
+/// stay failure detectors; they stop being performance assertions.
+const SOCKET_TIMEOUT_SLACK: u32 = 12;
+
 pub fn wait_for_socket(path: &Path, timeout: Duration) {
-    let deadline = Instant::now() + timeout;
+    let budget = timeout * SOCKET_TIMEOUT_SLACK;
+    let started = Instant::now();
+    let deadline = started + budget;
     while Instant::now() < deadline {
         if path.exists() && UnixStream::connect(path).is_ok() {
             return;
         }
         thread::sleep(Duration::from_millis(25));
     }
-    panic!("socket did not appear at {}", path.display());
+    panic!(
+        "socket did not appear at {} after {:?} of a {budget:?} budget",
+        path.display(),
+        started.elapsed()
+    );
 }
 
 pub fn wait_for_file(path: &Path, timeout: Duration) {
