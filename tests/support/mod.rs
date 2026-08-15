@@ -110,16 +110,23 @@ pub fn cleanup_test_base(base: &Path) {
     let _ = fs::remove_dir_all(base);
 }
 
-/// How much longer than it says every socket wait here is actually given.
+/// How much longer than it says every wait in this file is actually given.
 ///
-/// Same factor and same reason as [`REAP_SLACK`] and `tests/api_ping.rs`: the
-/// stated timeout is a budget for a herdr server's cold start, and on a loaded
-/// machine a cold start is not bounded by the number someone typed. The waits
-/// stay failure detectors; they stop being performance assertions.
-const SOCKET_TIMEOUT_SLACK: u32 = 12;
+/// Same factor and same reason as [`REAP_SLACK`] and `tests/api_ping.rs`: a
+/// stated timeout here is a budget for something a herdr server has to finish —
+/// a cold start, a marker file, a message on a socket — and on a loaded machine
+/// none of those is bounded by the number someone typed. The waits stay failure
+/// detectors; they stop being performance assertions.
+///
+/// One constant rather than one per helper: the number is the same because the
+/// reason is the same, and four names for it would be four things to keep in
+/// agreement. Measured 2026-08-15: `wait_for_socket` was given slack while
+/// `wait_for_file` was not, and a landing gate spent an afternoon failing on the
+/// half that was missed.
+const WAIT_SLACK: u32 = 12;
 
 pub fn wait_for_socket(path: &Path, timeout: Duration) {
-    let budget = timeout * SOCKET_TIMEOUT_SLACK;
+    let budget = timeout * WAIT_SLACK;
     let started = Instant::now();
     let deadline = started + budget;
     while Instant::now() < deadline {
@@ -136,14 +143,20 @@ pub fn wait_for_socket(path: &Path, timeout: Duration) {
 }
 
 pub fn wait_for_file(path: &Path, timeout: Duration) {
-    let deadline = Instant::now() + timeout;
+    let budget = timeout * WAIT_SLACK;
+    let started = Instant::now();
+    let deadline = started + budget;
     while Instant::now() < deadline {
         if path.exists() {
             return;
         }
         thread::sleep(Duration::from_millis(25));
     }
-    panic!("file did not appear at {}", path.display());
+    panic!(
+        "file did not appear at {} after {:?} of a {budget:?} budget",
+        path.display(),
+        started.elapsed()
+    );
 }
 
 pub fn encode_varint_u32(v: u32) -> Vec<u8> {
@@ -371,7 +384,7 @@ pub fn wait_for_message_variant(
     stream
         .set_read_timeout(Some(Duration::from_millis(200)))
         .map_err(|e| e.to_string())?;
-    let deadline = Instant::now() + timeout;
+    let deadline = Instant::now() + timeout * WAIT_SLACK;
     while Instant::now() < deadline {
         match read_server_message(stream) {
             Ok((got, _)) if got == variant => return Ok(true),
@@ -384,7 +397,7 @@ pub fn wait_for_message_variant(
 
 pub fn wait_for_disconnect(stream: &mut UnixStream, timeout: Duration) -> Result<bool, String> {
     stream.set_nonblocking(true).map_err(|e| e.to_string())?;
-    let deadline = Instant::now() + timeout;
+    let deadline = Instant::now() + timeout * WAIT_SLACK;
     let mut idle_since = None;
     let result = loop {
         match read_server_message(stream) {

@@ -19,6 +19,19 @@ use support::{
     unregister_spawned_herdr_pid, CURRENT_PROTOCOL,
 };
 
+/// How much longer than it says every wait in this file is actually given.
+///
+/// Same factor and same reason as `tests/api_ping.rs` and `tests/support/mod.rs`:
+/// these budgets are for a herdr server's cold start, and on a loaded machine a
+/// cold start is not bounded by the number someone typed. Measured 2026-08-15:
+/// a landing gate failed here at 10.1s with "socket did not accept connections",
+/// the same shape three other files had already been given slack for.
+///
+/// `try_*` helpers are left alone on purpose: a `try_` that returns nothing is
+/// answering a question, not failing, and scaling it would only make the answer
+/// slower.
+const WAIT_SLACK: u32 = 12;
+
 fn unique_test_dir() -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -81,7 +94,7 @@ fn test_lock() -> MutexGuard<'static, ()> {
 }
 
 fn wait_for_socket(path: &Path, timeout: Duration) {
-    let deadline = Instant::now() + timeout;
+    let deadline = Instant::now() + timeout * WAIT_SLACK;
     while Instant::now() < deadline {
         if path.exists() && UnixStream::connect(path).is_ok() {
             return;
@@ -92,7 +105,7 @@ fn wait_for_socket(path: &Path, timeout: Duration) {
 }
 
 fn wait_for_file(path: &Path, timeout: Duration) {
-    let deadline = Instant::now() + timeout;
+    let deadline = Instant::now() + timeout * WAIT_SLACK;
     while Instant::now() < deadline {
         if path.exists() && UnixStream::connect(path).is_ok() {
             return;
@@ -211,7 +224,7 @@ fn wait_for_log_occurrence_count(
     min_count: usize,
     timeout: Duration,
 ) -> bool {
-    let deadline = Instant::now() + timeout;
+    let deadline = Instant::now() + timeout * WAIT_SLACK;
     while Instant::now() < deadline {
         if count_log_occurrences(path, needle) >= min_count {
             return true;
@@ -309,7 +322,7 @@ fn pane_read_recent_contains(
     needle: &str,
     timeout: Duration,
 ) -> bool {
-    let deadline = Instant::now() + timeout;
+    let deadline = Instant::now() + timeout * WAIT_SLACK;
     while Instant::now() < deadline {
         if pane_read_recent(socket_path, pane_id, 200).contains(needle) {
             return true;
@@ -674,7 +687,7 @@ fn drain_server_messages(stream: &mut UnixStream, max_drain: Duration) {
 }
 
 fn wait_for_frame(stream: &mut UnixStream, timeout: Duration) -> bool {
-    let deadline = Instant::now() + timeout;
+    let deadline = Instant::now() + timeout * WAIT_SLACK;
     while Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(Instant::now());
         let slice = remaining.min(Duration::from_millis(75));
@@ -693,7 +706,7 @@ fn wait_for_frame_matching_with_snapshots(
     timeout: Duration,
     predicate: impl Fn(&FrameWire) -> bool,
 ) -> io::Result<(bool, Vec<String>)> {
-    let deadline = Instant::now() + timeout;
+    let deadline = Instant::now() + timeout * WAIT_SLACK;
     let mut snapshots = VecDeque::with_capacity(5);
     while Instant::now() < deadline {
         let slice = deadline
