@@ -1437,6 +1437,12 @@
           "type": "integer",
           "default": "3",
           "description": "Thickness of the top bar in rows, border included. Values outside 1-32 leave the bar undrawn, and a bordered bar needs at least 3."
+        },
+        {
+          "key": "shell.glyph_icons",
+          "type": "boolean",
+          "default": "true",
+          "description": "Let bar sections draw their glyph icons. Off, a section that names a glyph draws its text instead, and one that names no text is reported rather than left blank. Pictures made of cells (art, pixels) are unaffected. Turn this off for a terminal whose font has no icon glyphs, where they would otherwise render as tofu."
         }
       ]
     }

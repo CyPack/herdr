@@ -935,7 +935,7 @@ mod tests {
             None,
             crate::ui::shell::ShellBars::from_config(&config),
         );
-        app.state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config);
+        app.state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config, true);
         app
     }
 

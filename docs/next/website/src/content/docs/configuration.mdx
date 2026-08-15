@@ -500,6 +500,30 @@ The label is clipped to the section by display width, so an icon that takes two 
 
 A `widget.kind` Herdr does not know, or `text` with no `widget.kind` to show it, leaves that section empty and is reported by `herdr config check`.
 
+#### Icons on a machine whose font may not have them
+
+An `icon` widget can draw a single `glyph`. A glyph is only a picture where the font has that codepoint, and Herdr cannot ask a terminal whether it does — so on a machine without the font it renders as tofu, which reads as broken chrome rather than as a missing icon.
+
+Give the section a `text` as well, and turn the switch off where the font is not there:
+
+```toml
+[shell]
+glyph_icons = false          # default: true
+
+[[shell.bars.top.sections]]
+kind   = "fixed"
+cells  = 6
+widget = { kind = "icon", glyph = "\uf4bc", text = "cpu" }   # a Nerd Font codepoint
+```
+
+With the switch on, the glyph is drawn and the text is unused. With it off, the section draws the text instead, clipped by display width exactly as a label is.
+
+The switch is deliberately a plain on/off rather than an `auto`: an `auto` would be pretending to detect something Herdr has no way to ask about.
+
+Turning it off is the one setting that can invalidate a section that was valid before: a section with a glyph and no `text` — or a `text` of only spaces, which draws the same nothing — is reported by `herdr config check` rather than drawn empty, because an empty section is indistinguishable from one left empty on purpose.
+
+Pictures made of cells are unaffected. `art` and `pixels` are drawn with half blocks, which every font has, so the switch leaves them alone.
+
 ### Making a section clickable
 
 A section can carry an `action`. Without one it is an indicator: clicks land on it and stop there, but nothing happens.
