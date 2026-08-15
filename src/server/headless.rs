@@ -9452,6 +9452,32 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
         );
     }
 
+    // TP-PANE-RETIRED-02
+    #[tokio::test]
+    async fn a_handoff_pane_whose_process_is_gone_counts_as_retired() {
+        // A pane imported through a live handoff carries no reaping record --
+        // `from_handoff_fd` keeps the child's pid but leaves
+        // `child_wait_completed` empty, because the task that would have set it
+        // died with the previous server. Every pane in a session that has been
+        // updated in place looks like this, so the record alone would report
+        // every one of them as still running forever.
+        let live = crate::terminal::TerminalRuntime::test_with_screen_bytes(80, 24, b"live");
+        assert!(
+            !live.child_exited(),
+            "a pane with no pid and no record must read as live -- the safe answer"
+        );
+
+        let departed =
+            crate::terminal::TerminalRuntime::test_with_screen_bytes(80, 24, b"departed");
+        // Above every possible pid on any supported platform, so the process
+        // cannot exist and the lookup is the only thing that can answer.
+        departed.test_set_child_pid(u32::from(u16::MAX) * 2 + 1);
+        assert!(
+            departed.child_exited(),
+            "with no reaping record, a pid the OS does not know must read as gone"
+        );
+    }
+
     // TP-PANE-RETIRED-01
     #[tokio::test]
     async fn a_background_pane_whose_child_exited_is_not_resized() {

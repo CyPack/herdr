@@ -2454,14 +2454,31 @@ impl PaneRuntime {
     /// direction: callers use this to *skip* work, and skipping on a guess
     /// would starve a live process of a resize it needs.
     pub(crate) fn child_exited(&self) -> bool {
-        self.child_wait_completed
+        if self
+            .child_wait_completed
             .as_deref()
             .is_some_and(|reaped| reaped.load(Ordering::Acquire))
+        {
+            return true;
+        }
+        // A pane imported through a live handoff keeps its child's pid but not
+        // the reaping record: the task that would have set that flag belonged
+        // to the server which exited. Every pane in a session that has been
+        // updated in place is in exactly that state, so the flag alone answers
+        // "still running" for panes that have been gone for hours. Asking the
+        // OS is the second source the record cannot be.
+        self.child_pid()
+            .is_some_and(|pid| !crate::platform::process_exists(pid))
     }
 
     #[cfg(test)]
     pub(crate) fn test_mark_child_exited(&mut self) {
         self.child_wait_completed = Some(Arc::new(AtomicBool::new(true)));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_set_child_pid(&self, pid: u32) {
+        self.child_pid.store(pid, Ordering::Release);
     }
 
     /// How many resizes actually ran on this pane. Each one reflows the whole
