@@ -608,7 +608,18 @@ fn is_test_herdr_server_process(pid: u32) -> bool {
         return false;
     };
 
-    if !is_test_herdr_binary(&exe_path) {
+    // Path shape alone goes blind the moment CARGO_TARGET_DIR moves the
+    // build out of the checkout: the exe stops matching, every reaper
+    // predicate turns false, and the servers this suite spawned keep running
+    // with nobody responsible for them — measured live as 24 handoff
+    // grandchildren surviving their test run by hours. Cargo stamps
+    // CARGO_MANIFEST_DIR into the test process's environment, children
+    // inherit it, and handoff grandchildren inherit it again, so the
+    // inherited stamp identifies exactly the processes this checkout's suite
+    // is answerable for, wherever the build artifacts live.
+    if !is_test_herdr_binary(&exe_path)
+        && !(is_herdr_executable_name(&exe_path) && process_spawned_by_this_suite(pid))
+    {
         return false;
     }
 
@@ -674,6 +685,33 @@ fn current_checkout_root() -> &'static Path {
 
 fn is_test_herdr_binary(path: &Path) -> bool {
     path.ends_with("target/debug/herdr") && path.starts_with(current_checkout_root())
+}
+
+/// Whether this executable name is a herdr binary, including one whose file
+/// was rebuilt or deleted while the process kept running.
+fn is_herdr_executable_name(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    name.strip_suffix(" (deleted)").unwrap_or(name) == "herdr"
+}
+
+/// Whether this process inherited its environment from a run of *this*
+/// checkout's suite. See `is_test_herdr_server_process` for why identity
+/// cannot rest on the executable path alone.
+fn process_spawned_by_this_suite(pid: u32) -> bool {
+    let Ok(environ) = fs::read(format!("/proc/{pid}/environ")) else {
+        return false;
+    };
+    environ_declares_manifest_dir(&environ, current_checkout_root())
+}
+
+fn environ_declares_manifest_dir(environ: &[u8], root: &Path) -> bool {
+    environ.split(|byte| *byte == 0).any(|entry| {
+        String::from_utf8_lossy(entry)
+            .strip_prefix("CARGO_MANIFEST_DIR=")
+            .is_some_and(|value| Path::new(value) == root)
+    })
 }
 
 extern "C" fn run_atexit_cleanup() {
@@ -829,5 +867,38 @@ mod tests {
             !is_test_herdr_binary(Path::new("/home/can/.local/bin/herdr")),
             "installed binaries must not be considered test-owned"
         );
+    }
+
+    #[test]
+    fn herdr_executable_names_match_wherever_the_target_dir_lives() {
+        // The exact path shape CARGO_TARGET_DIR produces — the reason
+        // identity cannot rest on the path alone.
+        assert!(is_herdr_executable_name(Path::new(
+            "/var/tmp/wt-orphan-reap-target/debug/herdr"
+        )));
+        assert!(is_herdr_executable_name(Path::new(
+            "/tmp/x/target/debug/herdr (deleted)"
+        )));
+        assert!(!is_herdr_executable_name(Path::new(
+            "/tmp/x/target/debug/herdr-web"
+        )));
+        assert!(!is_herdr_executable_name(Path::new("/usr/bin/cargo")));
+    }
+
+    #[test]
+    fn suite_identity_comes_from_the_inherited_manifest_dir() {
+        let root = current_checkout_root();
+        let matching = format!("A=1\0CARGO_MANIFEST_DIR={}\0B=2\0", root.display());
+        assert!(environ_declares_manifest_dir(matching.as_bytes(), root));
+        assert!(!environ_declares_manifest_dir(
+            b"CARGO_MANIFEST_DIR=/somewhere/else\0",
+            root
+        ));
+        assert!(!environ_declares_manifest_dir(b"A=1\0B=2\0", root));
+        // The running test process carries the stamp itself, so the reaper
+        // recognizes this suite's own spawns however the target dir is set.
+        // If this fails, the suite is running outside cargo entirely and the
+        // reaper is blind by construction.
+        assert!(process_spawned_by_this_suite(std::process::id()));
     }
 }
