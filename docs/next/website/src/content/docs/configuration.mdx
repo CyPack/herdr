@@ -453,6 +453,8 @@ size    = 3      # rows for the top and bottom bars, columns for the left and ri
 border  = true   # a bordered bar needs size >= 3 to have room for its contents
 ```
 
+Bars are bordered unless told otherwise, so a bar thinner than three asks for `border = false` — a one-row bordered bar has no room for a row of content between its two border lines.
+
 A size outside 1–32, or a bordered bar too thin to hold a border and a row of content, is refused rather than adjusted: the bar is not drawn and the log names the edge. See `shell.bars` in the [Config reference](/docs/config-reference/) for colours and gradients.
 
 ### Dividing a bar into sections
@@ -483,11 +485,34 @@ max  = 20         # at least four cells, at most twenty, as much as there is roo
 
 Fixed sections are satisfied first, then content sections grow toward their maximum, and whatever remains is shared among the filling sections in proportion to their weights. A section that ends up with no cells is simply not drawn.
 
-Writing more than eight sections, naming a `kind` Herdr does not know, or giving a content section a `max` below its `min` leaves that bar undivided rather than guessing: one unreadable section would otherwise renumber every section after it, and the number is how a section is addressed.
+A bar carries eight sections unless it says otherwise. `max_sections` raises or lowers that, up to a hard ceiling of sixteen:
+
+```toml
+[shell.bars.top]
+enabled      = true
+size         = 1
+border       = false
+max_sections = 12
+```
+
+Writing more sections than the bar allows, asking for a `max_sections` of zero or more than sixteen, naming a `kind` Herdr does not know, or giving a content section a `max` below its `min` leaves that bar undivided rather than guessing: one unreadable section would otherwise renumber every section after it, and the number is how a section is addressed.
 
 ### Putting something in a section
 
-A section is empty until it is given a widget. Today there is one:
+A section is empty until it is given a widget. There are four kinds:
+
+| `widget.kind` | Draws | Names |
+|---|---|---|
+| `label` | fixed text | `text` |
+| `resource` | a machine counter, as a figure | `metric` |
+| `meter` | the same counter, as a filled bar | `metric` |
+| `icon` | one picture | `glyph`, or `art`, or `pixels` + `palette` |
+
+No widget ever changes how wide its section is. The sizing rules above decide that, and content that does not fit is cut rather than pushing its neighbours around — clipping is by display width, so a two-cell emoji counts as two.
+
+A `widget.kind` Herdr does not know, or `text` with no `widget.kind` to show it, leaves that section empty and is reported by `herdr config check`.
+
+#### Text
 
 ```toml
 [[shell.bars.top.sections]]
@@ -496,9 +521,95 @@ cells  = 10
 widget = { kind = "label", text = "  CPU" }
 ```
 
-The label is clipped to the section by display width, so an icon that takes two cells is counted as two. A label never changes how wide its section is: the sizing rules above decide that, and text that does not fit is cut rather than pushing its neighbours around.
+#### A machine counter
 
-A `widget.kind` Herdr does not know, or `text` with no `widget.kind` to show it, leaves that section empty and is reported by `herdr config check`.
+`resource` writes the number; `meter` draws how full it is. Both name the same `metric`, and the value is sampled on the server's own clock rather than read by whatever draws it — so two sections showing the same metric always agree.
+
+```toml
+[[shell.bars.top.sections]]
+kind   = "fixed"
+cells  = 8
+widget = { kind = "resource", metric = "cpu" }
+
+[[shell.bars.top.sections]]
+kind   = "fixed"
+cells  = 10
+widget = { kind = "meter", metric = "mem" }
+```
+
+`metric` is one of `cpu`, `mem` (`ram` is accepted as the same thing) or `swap`. A metric this build does not know is refused where it is written rather than drawn as an empty section: a typo that renders as blank cannot be told from a section left blank on purpose.
+
+#### A picture
+
+An `icon` names its picture exactly one way. Writing two is refused rather than ranked, because a precedence rule between them is not something the config file can show:
+
+```toml
+[shell.bars.top]
+enabled = true
+size    = 3
+
+# a grapheme the font already has
+[[shell.bars.top.sections]]
+kind   = "fixed"
+cells  = 2
+widget = { kind = "icon", glyph = "★" }
+
+# a bundled picture, by name
+[[shell.bars.top.sections]]
+kind   = "fixed"
+cells  = 10
+widget = { kind = "icon", art = "herd" }
+
+# a picture written here, in half blocks
+[[shell.bars.top.sections]]
+kind   = "fixed"
+cells  = 10
+widget = { kind = "icon", palette = { a = "mauve", b = "teal" }, pixels = [
+  "..a....a..",
+  "...a..a...",
+  "....aa....",
+  "....bb....",
+  "...bbbb...",
+  "..bb..bb..",
+] }
+```
+
+Pixel art is drawn with the upper half block `▀`, which paints the foreground in the top half of a cell and the background in the bottom. One cell is therefore **two vertical pixels**, each with its own colour: a picture ten pixels wide by six tall occupies ten cells by three rows. Every character in `pixels` is a key into `palette`; `.` and a space are transparent and let the bar through. An odd number of pixel rows leaves the bottom half of the last cell row transparent rather than inventing a colour for it.
+
+`palette` keys are single characters, and the values are written in the same grammar as `shell.bars.<edge>.color`. A key a row uses but the palette does not define is refused — writing `x` and believing it transparent looks exactly like writing `.`, and it is not.
+
+Bundled `art` names available today:
+
+| `art` | Size | What it is |
+|---|---|---|
+| `herd` | 10 × 6 pixels (10 cells × 3 rows) | Two chevrons narrowing into a stem — agents converging into one runtime |
+| `dot` | 4 × 2 pixels (4 cells × 1 row) | A filled dot, for a bar one row tall |
+
+A picture too wide or too tall for a section that declared its own `cells` is refused where it is written. A section sized by the terminal — `fill`, `content` — is not, because its width is not known until the terminal has one, and refusing then would mean a config that loads on one screen and not on another; there, a picture that does not fit is clipped like any other content.
+
+#### Icons on a machine whose font may not have them
+
+An `icon` widget can draw a single `glyph`. A glyph is only a picture where the font has that codepoint, and Herdr cannot ask a terminal whether it does — so on a machine without the font it renders as tofu, which reads as broken chrome rather than as a missing icon.
+
+Give the section a `text` as well, and turn the switch off where the font is not there:
+
+```toml
+[shell]
+glyph_icons = false          # default: true
+
+[[shell.bars.top.sections]]
+kind   = "fixed"
+cells  = 6
+widget = { kind = "icon", glyph = "\uf4bc", text = "cpu" }   # a Nerd Font codepoint
+```
+
+With the switch on, the glyph is drawn and the text is unused. With it off, the section draws the text instead, clipped by display width exactly as a label is.
+
+The switch is deliberately a plain on/off rather than an `auto`: an `auto` would be pretending to detect something Herdr has no way to ask about.
+
+Turning it off is the one setting that can invalidate a section that was valid before: a section with a glyph and no `text` — or a `text` of only spaces, which draws the same nothing — is reported by `herdr config check` rather than drawn empty, because an empty section is indistinguishable from one left empty on purpose.
+
+Pictures made of cells are unaffected. `art` and `pixels` are drawn with half blocks, which every font has, so the switch leaves them alone.
 
 ### Making a section clickable
 
@@ -531,6 +642,147 @@ Clicking outside a popup sends Esc into the program rather than closing the pane
 A whole bar is chrome, so every click, release and scroll over one of its sections stops at the bar rather than reaching the pane behind it. A gesture that started somewhere else — a drag, a divider resize — keeps its owner even when the pointer crosses a bar.
 
 An `action.kind` Herdr does not know, or a `popup` with no command in `argv`, leaves that one section without an action. Unlike a sizing mistake it does not undivide the bar, and it does not shift any other section's number. `herdr config check` names the edge, the section's index and what is wrong with it.
+
+#### A second gesture on the same section
+
+A `popup` section can answer the secondary press — right button, or a two-finger tap — differently from the primary one:
+
+```toml
+[[shell.bars.top.sections]]
+kind   = "fixed"
+cells  = 12
+action = { kind = "popup", argv = ["btop"], secondary = "tab" }
+```
+
+`secondary = "tab"` opens the same command in a tab instead of a popup, for the times you want to keep it around. It is the only presentation there is today; anything else is refused rather than quietly treated as the default, because a misspelling that silently opens a popup is indistinguishable from not having written the key at all.
+
+#### Running a plugin action
+
+A section can invoke an installed plugin's action instead of a command line of its own:
+
+```toml
+[[shell.bars.top.sections]]
+kind    = "fixed"
+cells   = 8
+widget  = { kind = "label", text = " review" }
+action  = { kind = "plugin", command = "open" }
+```
+
+`command` here is the **plugin action's id**, not a shell command — the `id` of an entry in that plugin's `[[actions]]` table. Ids are made of letters, digits and `: . _ -`.
+
+Herdr looks the id up across every installed plugin, so a bare id only works while it is unique. Ids are not: `open` is a common one, and several plugins can carry it at once. Where more than one matches, the press reports that the id is ambiguous rather than picking a plugin, so name the owner:
+
+```toml
+action = { kind = "plugin", command = "worktrunk.open" }
+```
+
+The qualified form is `<plugin id>.<action id>`. `herdr plugin action list` prints what is installed, with the `plugin_id` and `action_id` of each.
+
+The plugin decides what the action does and how it is presented, so a plugin section carries none of the popup's own fields: `argv`, `width`, `height` and `secondary` are refused on a `plugin` action rather than ignored. Each would be a line that looks like it configures something and never can.
+
+Pressing a section whose plugin is installed but switched off says so, which is a different message from a plugin that is not installed at all — the first is a setting, the second is an install.
+
+#### Fields that can never take effect
+
+Herdr refuses a half-finished edit rather than leaving it looking meaningful. A section with no `action.kind` but a leftover `width`, `height`, `secondary` or `command` is reported, because in every one of those shapes the command was removed and its settings stayed behind. The same rule catches a `command` on a `popup` action and an `argv` on a `plugin` one: both leave an id or a command line somewhere nothing will ever read it.
+
+### What a section can be
+
+A section is three independent choices, and every combination is allowed:
+
+| How wide | What it shows | What a press does |
+|---|---|---|
+| `fixed` — exactly `cells` | nothing | nothing — an indicator that swallows the click |
+| `fill` — a share of the rest, by `weight` | `label` | `popup` — run `argv` in a popup pane |
+| `content` — between `min` and `max` | `resource` · `meter` | `plugin` — invoke an installed plugin's action |
+| | `icon` | |
+
+The three are asked separately on purpose: adding a widget never changes how wide a section is, and adding an action never changes what it draws. A picture that opens a popup is an icon widget plus a popup action, not a fourth kind of thing.
+
+### Recipes
+
+Each of these is a complete fragment. After editing, `herdr config check` reports anything Herdr would refuse, and `herdr server reload-config` applies it without restarting panes.
+
+**Show the machine's CPU on one side and memory on the other**
+
+```toml
+[shell.bars.top]
+enabled = true
+size    = 1
+border  = false
+
+[[shell.bars.top.sections]]
+kind   = "fixed"
+cells  = 8
+widget = { kind = "resource", metric = "cpu" }
+
+[[shell.bars.top.sections]]
+kind = "fill"
+
+[[shell.bars.top.sections]]
+kind   = "fixed"
+cells  = 10
+widget = { kind = "meter", metric = "mem" }
+```
+
+The `fill` section in the middle carries nothing; it exists to push the two ends apart.
+
+**Make a section a button**
+
+```toml
+[[shell.bars.top.sections]]
+kind   = "fixed"
+cells  = 12
+widget = { kind = "label", text = " btop " }
+action = { kind = "popup", argv = ["btop"], width = "80%", height = "70%" }
+```
+
+Any widget can carry any action, so the same works with an icon in place of the label.
+
+**Put your own mark in the bar**
+
+```toml
+[shell.bars.top]
+enabled = true
+size    = 2
+border  = false
+
+[[shell.bars.top.sections]]
+kind   = "fixed"
+cells  = 4
+widget = { kind = "icon", palette = { a = "accent" }, pixels = [
+  ".aa.",
+  "a..a",
+  "a..a",
+  ".aa.",
+] }
+```
+
+Four pixel rows are two cell rows, which is why this bar asks for `size = 2`.
+
+**Run a plugin action from the bar**
+
+```toml
+[[shell.bars.top.sections]]
+kind   = "fixed"
+cells  = 10
+widget = { kind = "label", text = " palette " }
+action = { kind = "plugin", command = "jt.command-palette.open" }
+```
+
+**Keep the bar readable where the font has no icon glyphs**
+
+```toml
+[shell]
+glyph_icons = false
+
+[[shell.bars.top.sections]]
+kind   = "fixed"
+cells  = 6
+widget = { kind = "icon", glyph = "\uf4bc", text = "cpu" }
+```
+
+With the switch on the glyph is drawn, with it off the text is. Give every glyph section a `text` and one config works on both machines.
 
 ## Notifications
 

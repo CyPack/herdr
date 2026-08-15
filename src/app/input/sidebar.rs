@@ -455,6 +455,31 @@ impl AppState {
         });
     }
 
+    /// Open the daily area's header menu (TP-DAILY-12) — the one door both
+    /// the "⋯" and the right-click walk, so they can never drift apart.
+    pub(crate) fn open_daily_header_menu(&mut self, x: u16, y: u16) {
+        self.context_menu = Some(crate::app::state::ContextMenuState {
+            kind: crate::app::state::ContextMenuKind::DailyHeader {
+                collapsed: self.daily_section_collapsed,
+            },
+            x,
+            y,
+            list: crate::app::state::MenuListState::new(0),
+        });
+        self.enter_overlay_mode(crate::app::Mode::ContextMenu);
+    }
+
+    /// Open the tree's empty-space menu (TP-MOD-31).
+    pub(crate) fn open_sidebar_blank_menu(&mut self, x: u16, y: u16) {
+        self.context_menu = Some(crate::app::state::ContextMenuState {
+            kind: crate::app::state::ContextMenuKind::SidebarBlank,
+            x,
+            y,
+            list: crate::app::state::MenuListState::new(0),
+        });
+        self.enter_overlay_mode(crate::app::Mode::ContextMenu);
+    }
+
     /// Open the daily section's "+" menu: the agents, and nothing else.
     pub(crate) fn open_daily_new_chat_menu(&mut self, x: u16, y: u16) {
         let highlighted = crate::app::projects::CHAT_AGENTS

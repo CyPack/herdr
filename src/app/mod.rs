@@ -916,7 +916,10 @@ impl App {
                 &config.shell.bars,
                 &theme_palette,
             )),
-            shell_bar_chrome: crate::ui::shell::ShellBarChrome::from_config(&config.shell.bars),
+            shell_bar_chrome: crate::ui::shell::ShellBarChrome::from_config(
+                &config.shell.bars,
+                config.shell.glyph_icons,
+            ),
             drag: None,
             workspace_press: None,
             tab_press: None,

@@ -2107,13 +2107,26 @@ impl AppState {
     /// empty rather than leaving a gap (TP-MOD-13, TP-MOD-03). This comment
     /// used to say the opposite — that an empty node draws nothing — which was
     /// the tree's rule until the second seed landed.
-    pub(crate) fn submit_new_module(&mut self, parent: Option<String>, name: &str) {
+    /// Write a module's name into the machine's overlay — a creation when
+    /// `rename_key` is absent, a rename when it is present.
+    ///
+    /// TP-MOD-32: a rename carries the EXISTING key. Deriving one from the new
+    /// name, the way a creation does, would write a second module and leave
+    /// the first one's children and members pointing at a key nothing declares
+    /// any more — the orphaning TP-MOD-30 has to clean up after.
+    pub(crate) fn submit_module_name(
+        &mut self,
+        rename_key: Option<String>,
+        parent: Option<String>,
+        name: &str,
+    ) {
         let name = name.trim();
         if name.is_empty() {
             return;
         }
         let node = crate::cli::space::NodePlan {
-            key: format!("group:{}", crate::cli::space::slug_for_branch(name)),
+            key: rename_key
+                .unwrap_or_else(|| format!("group:{}", crate::cli::space::slug_for_branch(name))),
             name: name.to_string(),
             parent,
         };

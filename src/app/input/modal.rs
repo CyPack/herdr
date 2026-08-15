@@ -400,7 +400,23 @@ fn open_move_new_group_input(state: &mut AppState, ws_idx: usize) {
 /// parent rides in its own slot so a plain rename can never write a node —
 /// the same isolation the move-naming road relies on.
 fn open_new_module_input(state: &mut AppState, parent: Option<String>) {
-    state.pending_new_module = Some(crate::app::state::PendingNewModule { parent });
+    open_module_name_input(state, parent, None);
+}
+
+/// TP-MOD-32: the rename prompt. Deliberately the same body as the
+/// creation prompt — one modal, one set of cleared fields — differing only
+/// in the key it carries forward, because a rename that derived a new key
+/// from the new name would re-key the container and orphan its children.
+fn open_rename_module_input(state: &mut AppState, node_key: String, parent: Option<String>) {
+    open_module_name_input(state, parent, Some(node_key));
+}
+
+fn open_module_name_input(
+    state: &mut AppState,
+    parent: Option<String>,
+    rename_key: Option<String>,
+) {
+    state.pending_new_module = Some(crate::app::state::PendingNewModule { parent, rename_key });
     state.pending_move_new_group = None;
     state.pending_workspace_create_cwd = None;
     state.rename_pane_target = None;
@@ -584,7 +600,7 @@ pub(super) fn apply_rename_action(state: &mut AppState, action: ModalAction) {
                 // The module-naming road (TP-DOTS-05), mirrored the same way.
                 Mode::RenameWorkspace if state.pending_new_module.is_some() => {
                     if let Some(pending) = state.pending_new_module.take() {
-                        state.submit_new_module(pending.parent, &new_name);
+                        state.submit_module_name(pending.rename_key, pending.parent, &new_name);
                     }
                 }
                 Mode::RenameWorkspace
@@ -952,6 +968,16 @@ pub(super) fn apply_context_menu_action(
             state.request_workspace_chat(ws_idx);
             leave_modal(state);
         }
+        (ContextMenuKind::SidebarBlank, Some("New module...")) => {
+            open_new_module_input(state, None);
+        }
+        (ContextMenuKind::DailyHeader { .. }, Some("New chat...")) => {
+            state.open_daily_new_chat_menu(menu_x, menu_y);
+        }
+        (ContextMenuKind::DailyHeader { .. }, Some("Collapse" | "Expand")) => {
+            state.toggle_daily_section();
+            leave_modal(state);
+        }
         // TP-DAILY-11: the same road, rooted at the daily directory instead of
         // at a workspace — the section's answer to "start something new here".
         (ContextMenuKind::DailyNewChat, Some(agent)) => {
@@ -1055,6 +1081,14 @@ pub(super) fn apply_context_menu_action(
         (ContextMenuKind::NodeHeader { node_key, .. }, Some("Expand")) => {
             state.unfold_node(&node_key);
             leave_modal(state);
+        }
+        (ContextMenuKind::NodeHeader { node_key, .. }, Some("Rename module...")) => {
+            let parent = state
+                .space_nodes
+                .iter()
+                .find(|node| node.key == node_key)
+                .and_then(|node| node.parent.clone());
+            open_rename_module_input(state, node_key, parent);
         }
         // TP-MOD-08: the keyboard road to taking a module back.
         (ContextMenuKind::NodeHeader { node_key, .. }, Some("Delete module")) => {
@@ -1457,7 +1491,8 @@ impl App {
             // managed node entry; consumed here for the same reason.
             Mode::RenameWorkspace if self.state.pending_new_module.is_some() => {
                 if let Some(pending) = self.state.pending_new_module.take() {
-                    self.state.submit_new_module(pending.parent, &new_name);
+                    self.state
+                        .submit_module_name(pending.rename_key, pending.parent, &new_name);
                 }
             }
             Mode::RenameWorkspace => {
@@ -1793,6 +1828,19 @@ impl App {
                 self.state.unfold_node(&node_key);
                 leave_modal(&mut self.state);
             }
+            // TP-MOD-32: the rename prompt keeps the module's own key and its
+            // own parent — only the name is up for change. Resolved from the
+            // live node list rather than from the menu, because the menu
+            // carries no parent and guessing one would re-seat the module.
+            (ContextMenuKind::NodeHeader { node_key, .. }, Some("Rename module...")) => {
+                let parent = self
+                    .state
+                    .space_nodes
+                    .iter()
+                    .find(|node| node.key == node_key)
+                    .and_then(|node| node.parent.clone());
+                open_rename_module_input(&mut self.state, node_key, parent);
+            }
             // TP-MOD-08: the same verb on the mouse dispatch.
             (ContextMenuKind::NodeHeader { node_key, .. }, Some("Delete module")) => {
                 self.state.delete_managed_node(&node_key);
@@ -2062,6 +2110,21 @@ impl App {
                         Mode::Navigate
                     };
                 }
+            }
+            // TP-MOD-31: the blank's one verb, on the production road for the
+            // same reason the daily menu below is — `parent: None`, so the
+            // container is born at the top where the person can see it.
+            (ContextMenuKind::SidebarBlank, Some("New module...")) => {
+                open_new_module_input(&mut self.state, None);
+            }
+            // TP-DAILY-12: the area's own verbs. "New chat..." walks the very
+            // road the "+" walks, so the two doors cannot drift apart.
+            (ContextMenuKind::DailyHeader { .. }, Some("New chat...")) => {
+                self.state.open_daily_new_chat_menu(menu_x, menu_y);
+            }
+            (ContextMenuKind::DailyHeader { .. }, Some("Collapse" | "Expand")) => {
+                self.state.toggle_daily_section();
+                leave_modal(&mut self.state);
             }
             // TP-DAILY-11: the daily "+" lands HERE, on the road both the
             // mouse and the keyboard actually take — the sibling body above
@@ -3092,6 +3155,178 @@ mod tests {
         assert_eq!(app.state.default_chat_agent, agent);
     }
 
+    // TP-MOD-32: a module can be renamed from its own menu, and the rename
+    // keeps the module's key. Deriving a key from the new name — the way a
+    // creation does — would write a second module and leave this one's
+    // children and members pointing at a key nothing declares any more.
+    // Offered only on modules the machine owns, for the reason the delete
+    // verb is: a rename written into the overlay for a hand-written module
+    // loses to it at first-match and does nothing at all.
+    #[test]
+    fn renaming_a_module_keeps_its_key_and_its_parent() {
+        let mut app = app_with_test_workspaces(&["main"]);
+        app.state.space_nodes = vec![crate::spaces::SpaceNode {
+            key: "group:docs".into(),
+            name: "Docs".into(),
+            icon: None,
+            parent: Some("project:herdr".into()),
+        }];
+
+        let managed = ContextMenuState {
+            kind: ContextMenuKind::NodeHeader {
+                node_key: "group:docs".into(),
+                collapsed: false,
+                deletable: true,
+            },
+            x: 0,
+            y: 0,
+            list: crate::app::state::MenuListState::new(0),
+        };
+        let items = managed.items();
+        assert!(
+            items.contains(&"Rename module..."),
+            "a module the machine owns can be renamed: {items:?}"
+        );
+        let idx = items
+            .iter()
+            .position(|item| *item == "Rename module...")
+            .expect("the verb is on the menu");
+
+        app.apply_context_menu_action_via_api(managed, idx);
+
+        let pending = app
+            .state
+            .pending_new_module
+            .as_ref()
+            .expect("the rename prompt opens");
+        assert_eq!(
+            pending.rename_key.as_deref(),
+            Some("group:docs"),
+            "the rename carries the EXISTING key; a derived one orphans the children"
+        );
+        assert_eq!(
+            pending.parent.as_deref(),
+            Some("project:herdr"),
+            "and the module keeps its seat in the tree"
+        );
+        assert_eq!(app.state.mode, Mode::RenameWorkspace);
+
+        // TP-MOD-32: a hand-written module is not offered the verb — the
+        // overlay write would lose to the config at first-match.
+        let hand_written = ContextMenuState {
+            kind: ContextMenuKind::NodeHeader {
+                node_key: "group:docs".into(),
+                collapsed: false,
+                deletable: false,
+            },
+            x: 0,
+            y: 0,
+            list: crate::app::state::MenuListState::new(0),
+        };
+        assert!(
+            !hand_written.items().contains(&"Rename module..."),
+            "no rename offered for a module the machine cannot rewrite: {:?}",
+            hand_written.items()
+        );
+    }
+
+    // TP-DAILY-12: the area's menu folds it and starts chats — on the
+    // production road, and "New chat..." hands off to the very menu the "+"
+    // opens rather than duplicating its body, so the two doors cannot drift.
+    #[test]
+    fn the_daily_header_menu_folds_and_starts_chats() {
+        let mut app = app_with_test_workspaces(&["main"]);
+        app.state.daily_chat_cwd = Some(std::path::PathBuf::from("/home/tester"));
+
+        let fold = ContextMenuState {
+            kind: ContextMenuKind::DailyHeader { collapsed: false },
+            x: 0,
+            y: 0,
+            list: crate::app::state::MenuListState::new(0),
+        };
+        assert_eq!(fold.items(), vec!["New chat...", "Collapse"]);
+        let idx = fold
+            .items()
+            .iter()
+            .position(|item| *item == "Collapse")
+            .expect("the fold verb is on the menu");
+        app.apply_context_menu_action_via_api(fold, idx);
+        assert!(app.state.daily_section_collapsed, "the menu folds the area");
+
+        // Folded, the verb reads the other way round.
+        let unfold = ContextMenuState {
+            kind: ContextMenuKind::DailyHeader { collapsed: true },
+            x: 0,
+            y: 0,
+            list: crate::app::state::MenuListState::new(0),
+        };
+        assert_eq!(unfold.items(), vec!["New chat...", "Expand"]);
+
+        // "New chat..." opens the agent menu — the same one the "+" opens.
+        let start = ContextMenuState {
+            kind: ContextMenuKind::DailyHeader { collapsed: true },
+            x: 4,
+            y: 2,
+            list: crate::app::state::MenuListState::new(0),
+        };
+        app.apply_context_menu_action_via_api(start, 0);
+        assert!(
+            matches!(
+                app.state.context_menu.as_ref().map(|menu| &menu.kind),
+                Some(ContextMenuKind::DailyNewChat)
+            ),
+            "the verb hands off to the agent menu; got {:?}",
+            app.state.context_menu.as_ref().map(|menu| &menu.kind)
+        );
+    }
+
+    // TP-MOD-31: the blank's verb opens the name prompt with NO parent, so
+    // the container is born at the top level where the person who asked for
+    // it can see it — a parent leaking in here would bury it inside whatever
+    // happened to be nearby. Walked on the production road for the reason
+    // TP-DAILY-11 records. The write itself (managed overlay only, never the
+    // hand-written config) is `upsert_managed_node`'s own contract, and is
+    // deliberately not re-exercised here: calling it would write to this
+    // machine's real `spaces.managed.toml`.
+    #[test]
+    fn the_blank_menu_opens_a_top_level_module_prompt() {
+        let mut app = app_with_test_workspaces(&["main"]);
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::SidebarBlank,
+            x: 3,
+            y: 9,
+            list: crate::app::state::MenuListState::new(0),
+        };
+        assert_eq!(
+            menu.items(),
+            vec!["New module..."],
+            "no 'New project...': the blank has no repository to claim, and an \
+             entry that cannot be honoured does not belong on a menu"
+        );
+        let idx = menu
+            .items()
+            .iter()
+            .position(|item| *item == "New module...")
+            .expect("the verb is on the menu");
+
+        app.apply_context_menu_action_via_api(menu, idx);
+
+        let pending = app
+            .state
+            .pending_new_module
+            .as_ref()
+            .expect("the production road opens the name prompt");
+        assert_eq!(
+            pending.parent, None,
+            "the blank makes a TOP-LEVEL container; a parent here hides it"
+        );
+        assert_eq!(app.state.mode, Mode::RenameWorkspace);
+        assert!(
+            app.state.context_menu.is_none(),
+            "the menu closes behind the prompt"
+        );
+    }
+
     // ---- Projects-tab worktree menu entries (FEAT-A) ----
 
     fn app_with_pinned_project(project_path: &str) -> crate::app::App {
@@ -3422,6 +3657,10 @@ mod tests {
                 "New sub-module...",
                 "New parallel module...",
                 "Collapse",
+                // TP-MOD-32: renaming rides with the delete verb — both
+                // rewrite the file the machine owns, so both are offered on
+                // exactly the modules it can rewrite.
+                "Rename module...",
                 "Delete module",
             ]
         );
@@ -3562,6 +3801,7 @@ mod tests {
             app.state.pending_new_module,
             Some(crate::app::state::PendingNewModule {
                 parent: Some("herdr:tiling".into()),
+                rename_key: None,
             })
         );
     }
@@ -3586,7 +3826,10 @@ mod tests {
 
         assert_eq!(
             app.state.pending_new_module,
-            Some(crate::app::state::PendingNewModule { parent: None }),
+            Some(crate::app::state::PendingNewModule {
+                parent: None,
+                rename_key: None,
+            }),
             "no resolvable owner makes a top-level sibling"
         );
     }
@@ -3615,6 +3858,7 @@ mod tests {
             app.state.pending_new_module,
             Some(crate::app::state::PendingNewModule {
                 parent: Some("group:ui".into()),
+                rename_key: None,
             })
         );
         assert_eq!(app.state.name_input, "", "the name starts empty");
@@ -3659,6 +3903,7 @@ mod tests {
             app.state.pending_new_module,
             Some(crate::app::state::PendingNewModule {
                 parent: Some("group:ops".into()),
+                rename_key: None,
             }),
             "a nested header's sibling shares its parent"
         );
@@ -3669,7 +3914,10 @@ mod tests {
         app.apply_context_menu_action_via_api(menu, idx);
         assert_eq!(
             app.state.pending_new_module,
-            Some(crate::app::state::PendingNewModule { parent: None }),
+            Some(crate::app::state::PendingNewModule {
+                parent: None,
+                rename_key: None,
+            }),
             "a top-level header's sibling is top level"
         );
     }
@@ -3681,6 +3929,7 @@ mod tests {
         let mut app = app_with_movable_branch();
         app.state.pending_new_module = Some(crate::app::state::PendingNewModule {
             parent: Some("group:ui".into()),
+            rename_key: None,
         });
         app.state.enter_overlay_mode(Mode::RenameWorkspace);
 

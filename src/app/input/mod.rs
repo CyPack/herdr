@@ -1406,24 +1406,108 @@ fn unique_temp_path(name: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!("herdr-{name}-{}-{nanos}", std::process::id()))
 }
 
+/// Same factor and same reason the integration suites carry: what this waits for
+/// is a spawned command getting far enough to write, and that is bounded by the
+/// machine rather than by the number written here.
+///
+/// Two seconds covered it until a landing gate ran the whole suite at once and
+/// two tests here timed out together. That failure has not been reproduced in
+/// isolation — neither a CPU quota taken down to five percent nor the entire unit
+/// suite run on its own brought it back — so the wider budget is a hypothesis
+/// rather than a measurement, and the message below is what will confirm or
+/// refute it the next time the gate is busy enough.
+#[cfg(test)]
+const SPAWNED_WRITE_SLACK: u32 = 12;
+
 #[cfg(test)]
 #[cfg(unix)]
 fn wait_for_file(path: &std::path::Path) -> String {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    wait_for_file_within(
+        path,
+        std::time::Duration::from_secs(2) * SPAWNED_WRITE_SLACK,
+    )
+}
+
+/// The wait above, with the budget spelled out so its own failure can be tested
+/// without spending the real one.
+///
+/// The panic separates two failures that used to share a sentence: a file that
+/// never appeared, and a file that appeared and stayed empty. They come from
+/// different causes — the command has not been scheduled yet, against the command
+/// having run and written nothing — and reading one as the other cost this
+/// project a day elsewhere in the suite.
+#[cfg(test)]
+#[cfg(unix)]
+fn wait_for_file_within(path: &std::path::Path, budget: std::time::Duration) -> String {
+    let started = std::time::Instant::now();
+    let deadline = started + budget;
+    let mut last = String::from("it was never looked at");
     while std::time::Instant::now() < deadline {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            if !content.is_empty() {
-                return content;
-            }
+        match std::fs::read_to_string(path) {
+            Ok(content) if !content.is_empty() => return content,
+            Ok(_) => last = "the file was there and empty".to_string(),
+            Err(error) => last = format!("the file could not be read ({:?})", error.kind()),
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
-    panic!("timed out waiting for {}", path.display());
+    panic!(
+        "timed out waiting for {} after {:?} of a {budget:?} budget; {last}",
+        path.display(),
+        started.elapsed()
+    );
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // A wait that runs out has to say which failure it hit, because the two it can
+    // hit look identical from the outside and lead to opposite fixes: a file that
+    // never appeared means the command has not been scheduled yet and the budget is
+    // the thing to look at, while a file that appeared and stayed empty means the
+    // command ran and wrote nothing, which no amount of waiting will change.
+    //
+    // Tested through the budgeted form so the assertion costs milliseconds instead
+    // of the real budget.
+    #[cfg(unix)]
+    #[test]
+    fn a_wait_that_runs_out_says_whether_the_file_was_missing_or_empty() {
+        let missing = unique_temp_path("wait-diagnosis-missing");
+        let empty = unique_temp_path("wait-diagnosis-empty");
+        std::fs::write(&empty, b"").expect("create the empty file");
+
+        let reason = |outcome: Box<dyn std::any::Any + Send>| -> String {
+            outcome
+                .downcast_ref::<String>()
+                .cloned()
+                .unwrap_or_else(|| "the panic carried no message".to_string())
+        };
+
+        let budget = std::time::Duration::from_millis(50);
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let missing_outcome = std::panic::catch_unwind(|| wait_for_file_within(&missing, budget));
+        let empty_outcome = std::panic::catch_unwind(|| wait_for_file_within(&empty, budget));
+        std::panic::set_hook(previous);
+
+        let missing_reason = reason(missing_outcome.expect_err("a missing file cannot satisfy it"));
+        let empty_reason = reason(empty_outcome.expect_err("an empty file cannot satisfy it"));
+
+        assert!(
+            missing_reason.contains("could not be read"),
+            "a file that never appeared was not named as such: {missing_reason}"
+        );
+        assert!(
+            empty_reason.contains("there and empty"),
+            "a file that stayed empty was not named as such: {empty_reason}"
+        );
+        assert!(
+            missing_reason.contains("budget"),
+            "the wait did not say what it was waiting against: {missing_reason}"
+        );
+
+        let _ = std::fs::remove_file(empty);
+    }
 
     #[tokio::test]
     async fn active_shell_resize_capture_owns_key_before_terminal_dispatch() {
@@ -1565,7 +1649,7 @@ mod tests {
             None,
             crate::ui::shell::ShellBars::from_config(&bars),
         );
-        app.state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&bars);
+        app.state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&bars, true);
         crate::ui::compute_view(&mut app.state, ratatui::layout::Rect::new(0, 0, 106, 40));
         app
     }
@@ -1578,18 +1662,21 @@ mod tests {
         };
         section.action.kind = "plugin".to_string();
         section.action.command = command.to_string();
-        crate::ui::shell::ShellBarChrome::from_config(&crate::config::ShellBarsConfig {
-            top: crate::config::ShellBarConfig {
-                enabled: true,
-                size: 1,
-                border: false,
-                color: String::new(),
-                gradient: Vec::new(),
-                sections: vec![section],
+        crate::ui::shell::ShellBarChrome::from_config(
+            &crate::config::ShellBarsConfig {
+                top: crate::config::ShellBarConfig {
+                    enabled: true,
+                    size: 1,
+                    border: false,
+                    color: String::new(),
+                    gradient: Vec::new(),
+                    sections: vec![section],
+                    ..Default::default()
+                },
                 ..Default::default()
             },
-            ..Default::default()
-        })
+            true,
+        )
     }
 
     // TC-66-15 · an icon that dies silently under the finger is the worst thing
@@ -1735,7 +1822,7 @@ mod tests {
             None,
             crate::ui::shell::ShellBars::from_config(&bars),
         );
-        app.state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&bars);
+        app.state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&bars, true);
         crate::ui::compute_view(&mut app.state, ratatui::layout::Rect::new(0, 0, 106, 40));
 
         let consumed = app.handle_bar_section_mouse(bar_mouse(
@@ -1822,7 +1909,7 @@ mod tests {
             None,
             crate::ui::shell::ShellBars::from_config(&bars),
         );
-        app.state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&bars);
+        app.state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&bars, true);
         crate::ui::compute_view(&mut app.state, ratatui::layout::Rect::new(0, 0, 106, 40));
         app
     }
@@ -1957,18 +2044,21 @@ mod tests {
             section.action.kind = "popup".to_string();
             section.action.argv = vec!["btop".to_string()];
             section.action.secondary = "tab".to_string();
-            crate::ui::shell::ShellBarChrome::from_config(&crate::config::ShellBarsConfig {
-                top: crate::config::ShellBarConfig {
-                    enabled: true,
-                    size: 1,
-                    border: false,
-                    color: String::new(),
-                    gradient: Vec::new(),
-                    sections: vec![section],
+            crate::ui::shell::ShellBarChrome::from_config(
+                &crate::config::ShellBarsConfig {
+                    top: crate::config::ShellBarConfig {
+                        enabled: true,
+                        size: 1,
+                        border: false,
+                        color: String::new(),
+                        gradient: Vec::new(),
+                        sections: vec![section],
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
-                ..Default::default()
-            })
+                true,
+            )
         };
         assert!(
             app.state.active.is_none(),

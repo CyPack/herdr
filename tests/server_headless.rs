@@ -17,6 +17,19 @@ use support::{
     unregister_spawned_herdr_pid, CURRENT_PROTOCOL,
 };
 
+/// How much longer than it says every wait in this file is actually given.
+///
+/// Same factor and same reason as `tests/api_ping.rs` and `tests/support/mod.rs`:
+/// these budgets are for a herdr server's cold start, and on a loaded machine a
+/// cold start is not bounded by the number someone typed. Measured 2026-08-15:
+/// a landing gate failed here at 10.1s with "socket did not accept connections",
+/// the same shape three other files had already been given slack for.
+///
+/// `try_*` helpers are left alone on purpose: a `try_` that returns nothing is
+/// answering a question, not failing, and scaling it would only make the answer
+/// slower.
+const WAIT_SLACK: u32 = 12;
+
 fn unique_test_dir() -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -75,7 +88,7 @@ fn test_lock() -> MutexGuard<'static, ()> {
 }
 
 fn wait_for_socket(path: &Path, timeout: Duration) {
-    let deadline = Instant::now() + timeout;
+    let deadline = Instant::now() + timeout * WAIT_SLACK;
     while Instant::now() < deadline {
         if path.exists() && UnixStream::connect(path).is_ok() {
             return;
@@ -86,7 +99,7 @@ fn wait_for_socket(path: &Path, timeout: Duration) {
 }
 
 fn wait_for_file(path: &Path, timeout: Duration) {
-    let deadline = Instant::now() + timeout;
+    let deadline = Instant::now() + timeout * WAIT_SLACK;
     while Instant::now() < deadline {
         if path.exists() && UnixStream::connect(path).is_ok() {
             return;
