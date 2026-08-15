@@ -7600,7 +7600,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let (mut app, _) = app_with_daily_chats(2);
         let area = Rect::new(0, 0, 30, 20);
         app.view.sidebar_rect = area;
-        let (cards, chats, groups, projects, more, empty, daily) =
+        let (cards, chats, groups, projects, more, empty, daily, _) =
             compute_workspace_list_areas(&app, area);
         app.view.workspace_card_areas = cards;
         app.view.workspace_chat_row_areas = chats;
