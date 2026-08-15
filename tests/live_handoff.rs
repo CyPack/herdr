@@ -397,6 +397,42 @@ fn wait_for_output(socket_path: &Path, pane_id: &str, needle: &str) {
 /// machine rather than by the number written here.
 const FILE_CONTENT_SLACK: u32 = 12;
 
+/// How long the helper script keeps its own read window open, in seconds.
+///
+/// This is the one wait in this file that is not written in Rust: it lives
+/// inside the Python the test generates, and it opens *before* the handoff
+/// starts. Everything between has to happen inside it — the ping, the handoff
+/// itself, the replacement server coming up, the client connecting, the
+/// handshake, and finally the key. Five seconds covers that on an idle machine
+/// and nothing else, so under load the script stopped waiting, wrote an empty
+/// string, and the Rust side then spent its whole budget watching a file whose
+/// content was already final.
+///
+/// So it gets the same slack as every other wait here, plus a margin, and the
+/// margin has a direction: the script must outlast the Rust budget below it,
+/// never the other way round. Whoever gives up first is who explains the
+/// failure, and "the key never arrived" is a better sentence than an empty
+/// file.
+const SCRIPT_READ_WINDOW_SECS: u32 = 5 * FILE_CONTENT_SLACK + 5;
+
+/// The margin above has a direction, and prose cannot keep it.
+///
+/// If the script ever stops outlasting the wait that reads what it writes, the
+/// failure stops being a missing key and becomes an empty file — which is what
+/// this file spent a full budget staring at before the window was widened. That
+/// is a worse sentence for whoever reads the panic, and nothing else here would
+/// notice the day it came back.
+#[test]
+fn the_helper_script_outlasts_the_wait_that_reads_it() {
+    let script_window = Duration::from_secs(u64::from(SCRIPT_READ_WINDOW_SECS));
+    let reader_budget = Duration::from_secs(5) * FILE_CONTENT_SLACK;
+    assert!(
+        script_window > reader_budget,
+        "the script gives up after {script_window:?} but the wait reading it runs \
+         for {reader_budget:?}, so a slow handoff would be reported as an empty file"
+    );
+}
+
 fn wait_for_file_contains(path: &Path, needle: &str, timeout: Duration) -> String {
     let budget = timeout * FILE_CONTENT_SLACK;
     let started = Instant::now();
@@ -980,12 +1016,13 @@ sys.stdout.buffer.write(b"\x1b[>5u")
 sys.stdout.flush()
 pathlib.Path({ready:?}).write_text("ready")
 tty.setraw(sys.stdin.fileno())
-ready_fds, _, _ = select.select([sys.stdin.fileno()], [], [], 5)
+ready_fds, _, _ = select.select([sys.stdin.fileno()], [], [], {window})
 data = os.read(sys.stdin.fileno(), 32) if ready_fds else b""
 pathlib.Path({received:?}).write_text(data.hex())
 "#,
             ready = ready_marker.display().to_string(),
-            received = received_marker.display().to_string()
+            received = received_marker.display().to_string(),
+            window = SCRIPT_READ_WINDOW_SECS
         ),
     )
     .unwrap();
@@ -1071,12 +1108,13 @@ sys.stdout.buffer.write(b"\x1b[>4;2m")
 sys.stdout.flush()
 pathlib.Path({ready:?}).write_text("ready")
 tty.setraw(sys.stdin.fileno())
-ready_fds, _, _ = select.select([sys.stdin.fileno()], [], [], 5)
+ready_fds, _, _ = select.select([sys.stdin.fileno()], [], [], {window})
 data = os.read(sys.stdin.fileno(), 32) if ready_fds else b""
 pathlib.Path({received:?}).write_text(data.hex())
 "#,
             ready = ready_marker.display().to_string(),
-            received = received_marker.display().to_string()
+            received = received_marker.display().to_string(),
+            window = SCRIPT_READ_WINDOW_SECS
         ),
     )
     .unwrap();
