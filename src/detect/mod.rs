@@ -1227,13 +1227,25 @@ mod tests {
         writer.write_all(b"exec sleep 999\n").ok();
         drop(writer);
 
-        std::thread::sleep(std::time::Duration::from_millis(100));
-
-        let job = foreground_job(pid).expect("expected foreground job");
-        assert!(
-            job.processes.iter().any(|p| p.name == "sleep"),
-            "expected sleep in {job:?}"
-        );
+        // The shell has to read the line and exec before sleep becomes the
+        // foreground job, and on a loaded machine that is not bounded by any
+        // fixed number: a full-suite run measured this failing behind a flat
+        // 100ms sleep while the same test passes alone. Wait for the state,
+        // not for a duration — the deadline stays a failure detector.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let job = loop {
+            if let Some(job) = foreground_job(pid) {
+                if job.processes.iter().any(|p| p.name == "sleep") {
+                    break job;
+                }
+                if std::time::Instant::now() >= deadline {
+                    panic!("expected sleep to become the foreground job, got {job:?}");
+                }
+            } else if std::time::Instant::now() >= deadline {
+                panic!("expected a foreground job to appear");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        };
         assert_eq!(
             identify_agent_in_job(&job),
             None,
