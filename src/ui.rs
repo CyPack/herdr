@@ -215,10 +215,14 @@ pub fn compute_view_with_cell_size(
     );
 }
 
-/// Compute view geometry for one client's render pass, resizing the panes
-/// that pass draws while leaving background tabs to the size-change event
-/// path. See [`BackgroundTabSweep`].
-pub(crate) fn compute_view_for_client_render(
+/// Compute view geometry for one display, resizing the panes that display is
+/// looking at while leaving background tabs to the size-change event path.
+///
+/// Used by the per-client render passes and by the pre-input reconcile: both
+/// serve a single display, and neither is a change in session geometry, so
+/// neither has any business rewriting tabs nobody is watching.
+/// See [`BackgroundTabSweep`].
+pub(crate) fn compute_view_skipping_background_tabs(
     app: &mut AppState,
     terminal_runtimes: &TerminalRuntimeRegistry,
     area: Rect,

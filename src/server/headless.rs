@@ -279,6 +279,10 @@ pub struct HeadlessServer {
     /// that the skip actually skips.
     #[cfg(test)]
     view_recomputes_for_input: usize,
+    /// Counts virtual frames computed while no client is attached, so a test
+    /// can pin that a watcherless tick stops paying for a frame nobody sees.
+    #[cfg(test)]
+    watcherless_virtual_frames: usize,
     /// Server-owned keybindings, restored when foreground clients use server mode.
     server_keybindings: crate::config::LiveKeybindConfig,
     /// Full server config warning shown to clients that use server keybindings.
@@ -478,6 +482,8 @@ impl HeadlessServer {
             view_owner: None,
             #[cfg(test)]
             view_recomputes_for_input: 0,
+            #[cfg(test)]
+            watcherless_virtual_frames: 0,
             server_keybindings,
             server_config_diagnostic,
             server_config_diagnostic_without_keybindings,
@@ -963,17 +969,35 @@ impl HeadlessServer {
         stamp
     }
 
+    /// Reconcile geometry after a change in session size: a display attaching,
+    /// detaching, or reporting a new terminal size. Background tabs are swept
+    /// here, which is the trigger the sweep was written for.
     fn resize_shared_runtime_to_effective_size(&mut self) {
-        self.resize_shared_runtime_to_effective_size_with_pending_agent_resumes(true);
+        self.resize_shared_runtime_to_effective_size_with_pending_agent_resumes(
+            true,
+            crate::ui::BackgroundTabSweep::Reconcile,
+        );
     }
 
+    /// Reconcile geometry before routing input to the display that just became
+    /// foreground, or after its theme changed.
+    ///
+    /// Neither is a change in session size. The foreground display's own tab
+    /// still follows it, but sweeping background tabs here would rewrite every
+    /// unwatched pane to whichever window was last typed in -- and reflow its
+    /// whole scrollback -- on every alternation between two windows.
+    /// TP-MCF-SIZE-04
     fn resize_shared_runtime_to_effective_size_before_input(&mut self) {
-        self.resize_shared_runtime_to_effective_size_with_pending_agent_resumes(false);
+        self.resize_shared_runtime_to_effective_size_with_pending_agent_resumes(
+            false,
+            crate::ui::BackgroundTabSweep::Skip,
+        );
     }
 
     fn resize_shared_runtime_to_effective_size_with_pending_agent_resumes(
         &mut self,
         start_pending_agent_resumes: bool,
+        sweep: crate::ui::BackgroundTabSweep,
     ) {
         if self.foreground_client_id.is_none() {
             return;
@@ -986,19 +1010,26 @@ impl HeadlessServer {
         };
         let (cols, rows) = self.effective_size;
         let area = Rect::new(0, 0, cols, rows);
-        if self.app.state.kitty_graphics_enabled && client.cell_size.is_known() {
-            crate::ui::compute_view_with_cell_size(
-                &mut self.app.state,
-                &self.app.terminal_runtimes,
-                area,
-                client.cell_size,
-            );
+        let cell_size = if self.app.state.kitty_graphics_enabled && client.cell_size.is_known() {
+            client.cell_size
         } else {
-            crate::ui::compute_view_with_runtime_registry(
+            crate::kitty_graphics::HostCellSize::default()
+        };
+        match sweep {
+            crate::ui::BackgroundTabSweep::Reconcile => crate::ui::compute_view_with_cell_size(
                 &mut self.app.state,
                 &self.app.terminal_runtimes,
                 area,
-            );
+                cell_size,
+            ),
+            crate::ui::BackgroundTabSweep::Skip => {
+                crate::ui::compute_view_skipping_background_tabs(
+                    &mut self.app.state,
+                    &self.app.terminal_runtimes,
+                    area,
+                    cell_size,
+                )
+            }
         }
 
         // Shared runtime size changes affect pane wrapping and foreground-driven
@@ -3793,6 +3824,10 @@ impl HeadlessServer {
             let (cols, rows) = self.effective_size;
             let area = Rect::new(0, 0, cols, rows);
             let resize_panes = self.app.state.view.pane_infos.is_empty();
+            #[cfg(test)]
+            {
+                self.watcherless_virtual_frames += 1;
+            }
             let render_started = crate::render_prof::timer();
             let _ = crate::server::render_stream::render_virtual_with_runtime_registry(
                 &mut self.app.state,
@@ -3849,7 +3884,7 @@ impl HeadlessServer {
                     let resize_while_rendering = negotiated == Some((cols, rows));
                     if let Some((resize_cols, resize_rows)) = negotiated {
                         if !resize_while_rendering {
-                            crate::ui::compute_view_for_client_render(
+                            crate::ui::compute_view_skipping_background_tabs(
                                 &mut self.app.state,
                                 &self.app.terminal_runtimes,
                                 Rect::new(0, 0, resize_cols, resize_rows),
@@ -4830,6 +4865,8 @@ mod tests {
             view_owner: None,
             #[cfg(test)]
             view_recomputes_for_input: 0,
+            #[cfg(test)]
+            watcherless_virtual_frames: 0,
             server_keybindings,
             server_config_diagnostic: None,
             server_config_diagnostic_without_keybindings: None,
@@ -9399,6 +9436,81 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
         );
     }
 
+    // TP-MCF-SIZE-04
+    #[tokio::test]
+    async fn moving_input_between_displays_costs_no_background_resize() {
+        let mut server = test_headless_server();
+        let mut workspace = crate::workspace::Workspace::test_new("test");
+        let first_pane = workspace.tabs[0].root_pane;
+        let background_tab = workspace.test_add_tab(Some("background"));
+        let background_pane = workspace.tabs[background_tab].root_pane;
+        for (tab, pane) in [(0, first_pane), (background_tab, background_pane)] {
+            workspace.tabs[tab].runtimes.insert(
+                pane,
+                crate::terminal::TerminalRuntime::test_with_screen_bytes(80, 24, b"x"),
+            );
+        }
+        server.app.state.workspaces = vec![workspace];
+        server.app.state.active = Some(0);
+        server.app.state.selected = 0;
+        server.app.state.mode = crate::app::Mode::Terminal;
+
+        let (wide_tx, _wide_control_rx, _wide_rx) = test_client_writer();
+        let (narrow_tx, _narrow_control_rx, _narrow_rx) = test_client_writer();
+        server.clients.insert(
+            1,
+            ClientConnection::new(
+                (200, 50),
+                crate::kitty_graphics::HostCellSize::default(),
+                crate::terminal_theme::TerminalTheme::default(),
+                None,
+                1,
+                RenderEncoding::SemanticFrame,
+                Some(wide_tx),
+            ),
+        );
+        server.clients.insert(
+            2,
+            ClientConnection::new(
+                (60, 20),
+                crate::kitty_graphics::HostCellSize::default(),
+                crate::terminal_theme::TerminalTheme::default(),
+                None,
+                2,
+                RenderEncoding::SemanticFrame,
+                Some(narrow_tx),
+            ),
+        );
+        server.foreground_client_id = Some(1);
+        server.sync_foreground_client_state();
+        // A real size-change event settles every tab, background ones included.
+        server.resize_shared_runtime_to_effective_size();
+        server.render_and_stream();
+
+        // Typing in the other window makes it foreground. That is a change of
+        // input focus, not a change of session geometry: the tab being typed
+        // in follows the new display, but a tab nobody is watching has no
+        // reason to be rewritten -- and rewriting it reflows its scrollback.
+        let before = server.app.state.workspaces[0].tabs[background_tab].runtimes[&background_pane]
+            .applied_resizes_for_test();
+        for client_id in [2, 1, 2] {
+            if server.promote_client_to_foreground(client_id) {
+                server.resize_shared_runtime_to_effective_size_before_input();
+            }
+        }
+        let after = server.app.state.workspaces[0].tabs[background_tab].runtimes[&background_pane]
+            .applied_resizes_for_test();
+
+        assert_eq!(
+            after,
+            before,
+            "moving input focus between displays must not resize an unwatched tab; \
+             it was rewritten to each display's geometry in turn, reflowing its whole \
+             scrollback every time ({} resizes over three focus changes)",
+            after - before
+        );
+    }
+
     // TP-MCF-SIZE-03
     #[tokio::test]
     async fn a_steady_frame_costs_no_background_resize() {
@@ -9479,6 +9591,194 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
              rewriting it to its own geometry, and every one of those reflows the whole \
              scrollback (applied {} resizes over two idle frames)",
             after - before
+        );
+    }
+
+    // TP-MCF-SIZE-03 — the event-path residual: handing the foreground to a
+    // display of another shape is not a size-change event for tabs nobody
+    // watches. Only the input path pays it, so only the input path is pinned.
+    #[tokio::test]
+    async fn foreground_handoff_between_displays_does_not_resweep_background_tabs() {
+        let mut server = test_headless_server();
+        let mut workspace = crate::workspace::Workspace::test_new("test");
+        let watched_pane = workspace.tabs[0].root_pane;
+        let background_tab = workspace.test_add_tab(Some("background"));
+        let background_pane = workspace.tabs[background_tab].root_pane;
+        for (tab, pane) in [(0, watched_pane), (background_tab, background_pane)] {
+            workspace.tabs[tab].runtimes.insert(
+                pane,
+                crate::terminal::TerminalRuntime::test_with_screen_bytes(80, 24, b"x"),
+            );
+        }
+        server.app.state.workspaces = vec![workspace];
+        server.app.state.active = Some(0);
+        server.app.state.selected = 0;
+        server.app.state.mode = crate::app::Mode::Terminal;
+
+        let (wide_tx, _wide_control_rx, _wide_rx) = test_client_writer();
+        let (narrow_tx, _narrow_control_rx, _narrow_rx) = test_client_writer();
+        server.clients.insert(
+            1,
+            ClientConnection::new(
+                (200, 50),
+                crate::kitty_graphics::HostCellSize::default(),
+                crate::terminal_theme::TerminalTheme::default(),
+                None,
+                1,
+                RenderEncoding::SemanticFrame,
+                Some(wide_tx),
+            ),
+        );
+        server.clients.insert(
+            2,
+            ClientConnection::new(
+                (60, 20),
+                crate::kitty_graphics::HostCellSize::default(),
+                crate::terminal_theme::TerminalTheme::default(),
+                None,
+                2,
+                RenderEncoding::SemanticFrame,
+                Some(narrow_tx),
+            ),
+        );
+        server.foreground_client_id = Some(1);
+        server.sync_foreground_client_state();
+        server.resize_shared_runtime_to_effective_size();
+        server.render_and_stream();
+
+        // Typing lands on the narrow display, then back on the wide one. The
+        // foreground hand-off resizes the shared runtime for input, but the
+        // background tab is watched by neither display and must not move.
+        let before = server.app.state.workspaces[0].tabs[background_tab].runtimes[&background_pane]
+            .applied_resizes_for_test();
+        server.promote_client_to_foreground(2);
+        server.resize_shared_runtime_to_effective_size_before_input();
+        server.promote_client_to_foreground(1);
+        server.resize_shared_runtime_to_effective_size_before_input();
+        let after = server.app.state.workspaces[0].tabs[background_tab].runtimes[&background_pane]
+            .applied_resizes_for_test();
+
+        assert_eq!(
+            after,
+            before,
+            "a foreground hand-off between displays of different shapes must \
+             not resweep background tabs (applied {} resizes across two \
+             hand-offs); each one reflows that pane's whole scrollback",
+            after - before
+        );
+    }
+
+    // Negotiation is per tab, not per tab *index*: a session with two
+    // workspaces has two tabs at index zero, and merging them would size a
+    // watched tab to a display that is looking at a different workspace.
+    #[tokio::test]
+    async fn tabs_in_different_workspaces_do_not_share_a_size_negotiation() {
+        let mut server = test_headless_server();
+        let mut left = crate::workspace::Workspace::test_new("left");
+        let left_pane = left.tabs[0].root_pane;
+        left.tabs[0].runtimes.insert(
+            left_pane,
+            crate::terminal::TerminalRuntime::test_with_screen_bytes(80, 24, b"left"),
+        );
+        let mut right = crate::workspace::Workspace::test_new("right");
+        let right_pane = right.tabs[0].root_pane;
+        right.tabs[0].runtimes.insert(
+            right_pane,
+            crate::terminal::TerminalRuntime::test_with_screen_bytes(80, 24, b"right"),
+        );
+        server.app.state.workspaces = vec![left, right];
+        server.app.state.active = Some(0);
+        server.app.state.selected = 0;
+        server.app.state.mode = crate::app::Mode::Terminal;
+
+        let (wide_tx, _wide_control_rx, _wide_rx) = test_client_writer();
+        let (narrow_tx, _narrow_control_rx, _narrow_rx) = test_client_writer();
+        server.clients.insert(
+            1,
+            ClientConnection::new(
+                (200, 50),
+                crate::kitty_graphics::HostCellSize::default(),
+                crate::terminal_theme::TerminalTheme::default(),
+                None,
+                1,
+                RenderEncoding::SemanticFrame,
+                Some(wide_tx),
+            ),
+        );
+        server.clients.insert(
+            2,
+            ClientConnection::new(
+                (60, 20),
+                crate::kitty_graphics::HostCellSize::default(),
+                crate::terminal_theme::TerminalTheme::default(),
+                None,
+                2,
+                RenderEncoding::SemanticFrame,
+                Some(narrow_tx),
+            ),
+        );
+        server.foreground_client_id = Some(1);
+
+        // Both displays attach on the left workspace, then the narrow one
+        // moves to the right workspace. Each workspace's only tab sits at
+        // index zero, watched by exactly one display.
+        server.render_and_stream();
+        let previous = server.app.state.enter_viewer(Some(2));
+        server.app.state.active = Some(1);
+        server.app.state.restore_viewer(previous);
+        server.render_and_stream();
+
+        let (left_rows, left_cols) =
+            server.app.state.workspaces[0].tabs[0].runtimes[&left_pane].current_size();
+        let (right_rows, right_cols) =
+            server.app.state.workspaces[1].tabs[0].runtimes[&right_pane].current_size();
+
+        assert!(
+            left_cols > 60,
+            "the tab only the wide display watches keeps the wide width even \
+             though another workspace has a tab at the same index, got {left_cols}"
+        );
+        assert!(
+            left_rows > 20,
+            "the tab only the wide display watches keeps the wide height, got {left_rows}"
+        );
+        assert!(
+            right_cols <= 60 && right_rows <= 20,
+            "the tab only the narrow display watches fits the narrow display, \
+             got {right_rows}x{right_cols}"
+        );
+    }
+
+    // A frame nobody sees is not drawn: with no client attached the view is
+    // computed once to keep pane geometry alive for the API and the first
+    // attach, and PTY output after that stops producing thrown-away frames.
+    #[tokio::test]
+    async fn frames_with_no_attached_client_are_computed_once_not_per_tick() {
+        let mut server = test_headless_server();
+        let mut workspace = crate::workspace::Workspace::test_new("test");
+        let pane = workspace.tabs[0].root_pane;
+        workspace.tabs[0].runtimes.insert(
+            pane,
+            crate::terminal::TerminalRuntime::test_with_screen_bytes(80, 24, b"x"),
+        );
+        server.app.state.workspaces = vec![workspace];
+        server.app.state.active = Some(0);
+        server.app.state.selected = 0;
+        server.app.state.mode = crate::app::Mode::Terminal;
+        assert!(server.clients.is_empty());
+
+        server.render_and_stream();
+        server.render_and_stream();
+        server.render_and_stream();
+
+        assert_eq!(
+            server.watcherless_virtual_frames, 1,
+            "with no client attached, geometry is established once and later \
+             ticks must not compute and discard full frames"
+        );
+        assert!(
+            !server.app.state.view.pane_infos.is_empty(),
+            "the one computed frame must still establish pane geometry"
         );
     }
 

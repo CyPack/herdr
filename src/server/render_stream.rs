@@ -316,7 +316,12 @@ pub(crate) fn render_virtual_with_runtime_registry(
         // to the size-change event path — sweeping them here would rewrite
         // every unwatched tab to this client's geometry on every frame.
         // TP-MCF-SIZE-03
-        crate::ui::compute_view_for_client_render(app_state, terminal_runtimes, area, cell_size);
+        crate::ui::compute_view_skipping_background_tabs(
+            app_state,
+            terminal_runtimes,
+            area,
+            cell_size,
+        );
     } else {
         crate::ui::compute_view_without_resizing_panes(app_state, terminal_runtimes, area);
     }
