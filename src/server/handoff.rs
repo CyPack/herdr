@@ -29,6 +29,29 @@ pub(crate) const MAX_REPLAY_BYTES_PER_PANE: usize = 8 * 1024;
 #[cfg(unix)]
 pub(crate) const COMMIT_TIMEOUT: Duration = READY_TIMEOUT;
 
+/// Give a timed-out protocol wait a name before it leaves this module.
+///
+/// Every read in the handoff conversation carries `SO_RCVTIMEO`, so a wait that runs
+/// out arrives as a bare `EAGAIN` and travels up as "Resource temporarily unavailable
+/// (os error 11)". That string reaches the person who ran `herdr update`, and it names
+/// neither the step that stalled nor the budget it stalled against — on a machine busy
+/// enough to miss the budget, it is the only record of what happened.
+///
+/// Only a timeout is renamed. Anything else already describes itself.
+#[cfg(unix)]
+fn name_handoff_wait(step: &'static str, budget: Duration, err: io::Error) -> io::Error {
+    if !matches!(
+        err.kind(),
+        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+    ) {
+        return err;
+    }
+    io::Error::new(
+        err.kind(),
+        format!("handoff timed out waiting for {step} after {budget:?} ({err})"),
+    )
+}
+
 #[cfg(unix)]
 #[derive(Serialize, Deserialize)]
 pub(crate) struct HandoffManifest {
@@ -142,11 +165,14 @@ pub(crate) fn accept_and_validate_on(
     token: &str,
     manifest: &HandoffManifest,
 ) -> io::Result<UnixStream> {
-    let (mut stream, _) = accept_with_timeout(&listener, READY_TIMEOUT)?;
+    let (mut stream, _) = accept_with_timeout(&listener, READY_TIMEOUT).map_err(|err| {
+        name_handoff_wait("the replacement server to connect", READY_TIMEOUT, err)
+    })?;
     stream.set_nonblocking(false)?;
     stream.set_read_timeout(Some(READY_TIMEOUT))?;
     stream.set_write_timeout(Some(READY_TIMEOUT))?;
-    let token_line = read_line_unbuffered(&mut stream)?;
+    let token_line = read_line_unbuffered(&mut stream)
+        .map_err(|err| name_handoff_wait("the replacement server's token", READY_TIMEOUT, err))?;
     if token_line.trim_end() != token {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
@@ -159,7 +185,8 @@ pub(crate) fn accept_and_validate_on(
     stream.flush()?;
 
     stream.set_read_timeout(Some(READY_TIMEOUT))?;
-    let validated = read_line_unbuffered(&mut stream)?;
+    let validated = read_line_unbuffered(&mut stream)
+        .map_err(|err| name_handoff_wait("the manifest to be validated", READY_TIMEOUT, err))?;
     if validated.trim_end() != "validated" {
         return Err(io::Error::other("handoff import did not validate manifest"));
     }
@@ -178,7 +205,8 @@ pub(crate) fn send_fds_and_wait_restored(stream: &mut UnixStream, fds: &[RawFd])
     send_fds(stream, fds)?;
 
     stream.set_read_timeout(Some(READY_TIMEOUT))?;
-    let restored = read_line_unbuffered(&mut *stream)?;
+    let restored = read_line_unbuffered(&mut *stream)
+        .map_err(|err| name_handoff_wait("the pane runtimes to be restored", READY_TIMEOUT, err))?;
     if restored.trim_end() != "restored" {
         return Err(io::Error::other(
             "handoff import did not report restored runtimes",
@@ -190,7 +218,9 @@ pub(crate) fn send_fds_and_wait_restored(stream: &mut UnixStream, fds: &[RawFd])
 #[cfg(unix)]
 pub(crate) fn wait_ready(stream: &mut UnixStream) -> io::Result<()> {
     stream.set_read_timeout(Some(READY_TIMEOUT))?;
-    let ready = read_line_unbuffered(&mut *stream)?;
+    let ready = read_line_unbuffered(&mut *stream).map_err(|err| {
+        name_handoff_wait("the replacement server to become ready", READY_TIMEOUT, err)
+    })?;
     if ready.trim_end() != "ready" {
         return Err(io::Error::other("handoff import did not report ready"));
     }
@@ -285,7 +315,8 @@ pub(crate) fn report_ready(stream: &mut UnixStream) -> io::Result<()> {
 #[cfg(unix)]
 pub(crate) fn wait_committed(stream: &mut UnixStream) -> io::Result<()> {
     stream.set_read_timeout(Some(READY_TIMEOUT))?;
-    let committed = read_line_unbuffered(&mut *stream)?;
+    let committed = read_line_unbuffered(&mut *stream)
+        .map_err(|err| name_handoff_wait("the commit acknowledgement", READY_TIMEOUT, err))?;
     if committed.trim_end() != "committed" {
         return Err(io::Error::other("handoff source did not commit"));
     }
@@ -463,4 +494,48 @@ fn recv_fds(stream: &UnixStream, expected: usize) -> io::Result<Vec<RawFd>> {
 #[cfg(unix)]
 pub(crate) fn log_import_result(panes: usize) {
     info!(panes, "handoff import ready");
+}
+
+#[cfg(all(unix, test))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_timed_out_handoff_wait_names_its_step_and_budget() {
+        let named = name_handoff_wait(
+            "replacement server ready",
+            Duration::from_secs(30),
+            io::Error::from(io::ErrorKind::WouldBlock),
+        );
+        let message = named.to_string();
+
+        // TP-SRV-HANDOFF-DIAG-01: a handoff wait that runs out of time says which
+        // wait it was and how long it was given. Every read in this protocol carries
+        // SO_RCVTIMEO, so exhausting one arrives as a bare EAGAIN — "Resource
+        // temporarily unavailable (os error 11)" — and that string is what the person
+        // running `herdr update` on a busy machine is left holding.
+        assert!(
+            message.contains("replacement server ready"),
+            "the message has to name the step that stalled, got {message:?}"
+        );
+        assert!(
+            message.contains("30s"),
+            "the message has to state the budget it stalled against, got {message:?}"
+        );
+    }
+
+    #[test]
+    fn a_handoff_failure_that_is_not_a_timeout_is_left_alone() {
+        let original = io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "handoff import token mismatch",
+        );
+        let passed = name_handoff_wait("replacement server ready", READY_TIMEOUT, original);
+
+        // TP-SRV-HANDOFF-DIAG-02: only a timeout is renamed. A token mismatch, a
+        // closed stream or a version refusal already says what it is, and wrapping
+        // those in waiting language would describe the wrong failure.
+        assert_eq!(passed.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(passed.to_string(), "handoff import token mismatch");
+    }
 }
