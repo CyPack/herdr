@@ -1066,8 +1066,52 @@ fn daily_section_visible(app: &AppState) -> bool {
         .any(|chat| app.find_resumed_chat_tab(&chat.session_id).is_some())
 }
 
+/// The workspaces that stand in the daily directory itself.
+///
+/// TP-DAILY-13: a workspace whose effective directory *is* the daily directory
+/// has no checkout of its own to sit under. The tree drew it anyway, as a
+/// sibling of real checkouts, and on the machine this was built for there were
+/// seven of them — seven rows that looked like branches, listed the same ledger,
+/// and opened and closed together because the drawer's fold state is keyed by
+/// that shared ledger key. They belong under the daily area, not beside it.
+///
+/// Three gates, all of which must hold:
+///
+/// - the section must be drawn at all, or these rows would land beneath a
+///   header that is not there — a row you cannot see is the #88 failure again;
+/// - there must be a daily directory to compare against;
+/// - the workspace's *effective* directory must resolve to the same ledger key.
+///   Effective, not `worktree_space`: reading only the checkout field is what
+///   made #88's first measurement wrong, because every one of those seven
+///   workspaces has no worktree at all and answers with its birthplace.
+///
+/// This returns indices rather than filtering the workspace set, because the
+/// set feeds the client frame as well as the sidebar. Removing a workspace at
+/// the source removes it from every surface that reads it — the regression the
+/// first attempt at this shipped and had to take back.
+fn daily_owned_workspaces(app: &AppState) -> Vec<usize> {
+    if !daily_section_visible(app) {
+        return Vec::new();
+    }
+    let Some(daily) = app.daily_chat_cwd.as_deref() else {
+        return Vec::new();
+    };
+    let daily_key = crate::persist::workspace_chats::ledger_key(daily);
+    app.workspaces
+        .iter()
+        .enumerate()
+        .filter(|(_, ws)| {
+            crate::persist::workspace_chats::ledger_key(ws.effective_cwd()) == daily_key
+        })
+        .map(|(ws_idx, _)| ws_idx)
+        .collect()
+}
+
 /// Append the daily section — header first, then its chats — above the tree.
-fn push_daily_section(app: &AppState, entries: &mut Vec<WorkspaceListEntry>) {
+///
+/// `owned` is [`daily_owned_workspaces`], computed once by the caller so the
+/// tree walk and this function cannot disagree about which rows belong here.
+fn push_daily_section(app: &AppState, entries: &mut Vec<WorkspaceListEntry>, owned: &[usize]) {
     if !daily_section_visible(app) {
         return;
     }
@@ -1087,6 +1131,22 @@ fn push_daily_section(app: &AppState, entries: &mut Vec<WorkspaceListEntry>) {
     }
     if chats.len() > WORKSPACE_CHAT_ROW_LIMIT {
         entries.push(WorkspaceListEntry::DailyMore { expanded });
+    }
+    // TP-DAILY-13: the workspaces standing in this very directory, drawn as
+    // the area's own rows rather than as branches in the tree.
+    //
+    // No chat drawer is opened under them, deliberately. Such a workspace
+    // reads the daily ledger key — the same one the rows above came from — so
+    // its drawer would repeat this section's chat list verbatim. That repeat
+    // is what #96 was: seven rows listing the same twelve chats, opening and
+    // closing together because one shared key holds their fold state. The row
+    // is here to reach the workspace and its panes; the chats are already
+    // above it.
+    for ws_idx in owned {
+        entries.push(WorkspaceListEntry::Workspace {
+            ws_idx: *ws_idx,
+            indented: true,
+        });
     }
 }
 
@@ -1189,9 +1249,23 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
     // empty module never gets one.
     let focused = focus_visible_workspaces(app);
     let shows = |ws_idx: usize| focused.as_ref().is_none_or(|set| set.contains(&ws_idx));
+    // TP-DAILY-13: the daily area emits its own workspaces, so the tree must
+    // not emit them a second time. Computed once, here, and handed to both
+    // sides — two independent answers to "is this row the area's own?" is how
+    // a row ends up drawn twice or not at all.
+    //
+    // This skips the row in the *walk*; it does not remove the workspace from
+    // any set. `app.workspaces` is untouched and the row is re-emitted below
+    // by `push_daily_section`, so every surface reading this list still sees
+    // it. Filtering at the source is what the first attempt did, and it took
+    // API-created workspaces off the client frame as well.
+    let daily_owned = daily_owned_workspaces(app);
     let mut members_by_key = std::collections::HashMap::<String, Vec<usize>>::new();
     for ws_idx in 0..app.workspaces.len() {
         if !shows(ws_idx) {
+            continue;
+        }
+        if daily_owned.contains(&ws_idx) {
             continue;
         }
         if let Some(space) = effective_space(app, ws_idx) {
@@ -1368,7 +1442,7 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
     // TP-DAILY-02: above the tree, before anything the walk emits. These
     // chats belong to no checkout, so there is no branch of the tree they
     // could be placed under without lying about where they came from.
-    push_daily_section(app, &mut entries);
+    push_daily_section(app, &mut entries, &daily_owned);
     let seeds = (0..app.workspaces.len())
         .map(Seed::Checkout)
         .chain(declared_roots.into_iter().map(Seed::DeclaredRoot));
@@ -1407,6 +1481,13 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
             }
         };
         if !shows(ws_idx) {
+            continue;
+        }
+        // TP-DAILY-13: already emitted under the daily area. Both tree exits
+        // below — the space block and the stack walk — are downstream of this
+        // gate, so one skip covers the walk however the row would have found
+        // its way in.
+        if daily_owned.contains(&ws_idx) {
             continue;
         }
         let space = effective_space(app, ws_idx);
@@ -6782,6 +6863,226 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             .collect::<Vec<_>>();
         app.workspace_chat_rows.insert(key, rows);
         (app, daily)
+    }
+
+    /// The shape the machine actually had: a workspace born in the daily
+    /// directory itself, with no worktree, so `effective_cwd` answers with its
+    /// birthplace and it shares the daily area's ledger key.
+    fn app_with_a_workspace_standing_in_the_daily_directory(
+        chat_count: usize,
+    ) -> (AppState, std::path::PathBuf) {
+        let (mut app, daily) = app_with_daily_chats(chat_count);
+        let mut home = Workspace::test_new("ayaz");
+        home.identity_cwd = daily.clone();
+        app.workspaces.push(home);
+        (app, daily)
+    }
+
+    // TP-DAILY-13: the workspace that stands in the daily directory is the
+    // area's own. Without this the tree draws it as a branch beside real
+    // checkouts — which is exactly what was on screen, seven times over.
+    #[test]
+    fn a_workspace_standing_in_the_daily_directory_belongs_to_the_area() {
+        let (app, _) = app_with_a_workspace_standing_in_the_daily_directory(2);
+        assert_eq!(
+            daily_owned_workspaces(&app),
+            vec![1],
+            "the workspace whose effective directory is the daily directory is the area's own"
+        );
+    }
+
+    // TP-DAILY-13: `effective_cwd` has two branches and both of them count.
+    // Reading only `worktree_space` is what made #88's first measurement say
+    // "nothing claims $HOME" while seven workspaces did.
+    #[test]
+    fn a_checkout_that_points_at_the_daily_directory_also_belongs_to_the_area() {
+        let (mut app, daily) = app_with_daily_chats(2);
+        let mut adopted = Workspace::test_new("adopted");
+        adopted.identity_cwd = std::env::temp_dir().join("herdr-daily-birthplace");
+        adopted.worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
+            key: "adopted-space".to_string(),
+            label: "adopted".to_string(),
+            repo_root: daily.clone(),
+            checkout_path: daily.clone(),
+            is_linked_worktree: false,
+        });
+        app.workspaces.push(adopted);
+        assert_eq!(
+            daily_owned_workspaces(&app),
+            vec![1],
+            "the checkout branch of effective_cwd counts the same as the birthplace branch"
+        );
+    }
+
+    // TP-DAILY-13: no daily directory, nothing to belong to. Without this gate
+    // the move has no destination and the rows would vanish instead.
+    #[test]
+    fn without_a_daily_directory_no_workspace_belongs_to_the_area() {
+        let (mut app, _) = app_with_a_workspace_standing_in_the_daily_directory(2);
+        app.daily_chat_cwd = None;
+        assert!(
+            daily_owned_workspaces(&app).is_empty(),
+            "with no daily directory there is nothing for a workspace to belong to"
+        );
+    }
+
+    // TP-DAILY-13: only a real collision moves. If this gate goes, every
+    // workspace in the tree falls into the daily area.
+    #[test]
+    fn a_workspace_that_lives_elsewhere_stays_out_of_the_area() {
+        let (app, _) = app_with_daily_chats(2);
+        assert!(
+            daily_owned_workspaces(&app).is_empty(),
+            "the fixture's only workspace lives elsewhere and must not be claimed"
+        );
+    }
+
+    /// Where a workspace row sits in the emitted list, by index.
+    fn workspace_row_position(app: &AppState, ws_idx: usize) -> Option<usize> {
+        workspace_list_entries(app).iter().position(
+            |entry| matches!(entry, WorkspaceListEntry::Workspace { ws_idx: idx, .. } if *idx == ws_idx),
+        )
+    }
+
+    fn workspace_row_count(app: &AppState) -> usize {
+        workspace_list_entries(app)
+            .iter()
+            .filter(|entry| matches!(entry, WorkspaceListEntry::Workspace { .. }))
+            .count()
+    }
+
+    // TP-DAILY-13 (H1): the row moves under the daily area and leaves the tree.
+    // Both halves are asserted in one test on purpose — emitting it in both
+    // places is real duplication, emitting it in neither loses the way in to
+    // fifteen live panes.
+    #[test]
+    fn the_daily_area_s_own_workspace_sits_under_it_and_not_in_the_tree() {
+        let (app, _) = app_with_a_workspace_standing_in_the_daily_directory(2);
+        let entries = workspace_list_entries(&app);
+
+        let home = workspace_row_position(&app, 1).expect("the area's own workspace is emitted");
+        let elsewhere = workspace_row_position(&app, 0).expect("the tree's workspace is emitted");
+        let last_daily_chat = entries
+            .iter()
+            .rposition(|entry| matches!(entry, WorkspaceListEntry::DailyChat { .. }))
+            .expect("the section has chats");
+
+        assert!(
+            home > last_daily_chat,
+            "the area's own workspace belongs after the section's chats"
+        );
+        assert!(
+            home < elsewhere,
+            "it belongs under the daily area, above everything the tree walk emits"
+        );
+        assert!(
+            matches!(
+                entries[home],
+                WorkspaceListEntry::Workspace { indented: true, .. }
+            ),
+            "a row inside a container is drawn as one"
+        );
+    }
+
+    // TP-DAILY-13 (H2): moving a row is not closing it. The workspace, its
+    // tabs and its panes are untouched — on the machine this was built for
+    // those seven rows held nine tabs and fifteen panes, one of them a blocked
+    // agent still waiting.
+    #[test]
+    fn moving_the_row_does_not_touch_the_workspace_itself() {
+        let (app, _) = app_with_a_workspace_standing_in_the_daily_directory(2);
+        assert_eq!(app.workspaces.len(), 2, "both workspaces are still there");
+        assert!(
+            workspace_row_position(&app, 1).is_some(),
+            "the moved workspace is still reachable from the list"
+        );
+    }
+
+    // TP-DAILY-13 (H3): the container takes its contents with it. A section
+    // that folds its chats but keeps its workspace rows reads as damage.
+    #[test]
+    fn folding_the_daily_area_folds_the_workspace_it_owns() {
+        let (mut app, _) = app_with_a_workspace_standing_in_the_daily_directory(2);
+        assert!(workspace_row_position(&app, 1).is_some(), "precondition");
+        app.daily_section_collapsed = true;
+        assert_eq!(
+            workspace_row_position(&app, 1),
+            None,
+            "a folded container shows none of its rows"
+        );
+        assert!(
+            workspace_row_position(&app, 0).is_some(),
+            "the tree is unaffected by the section's fold"
+        );
+    }
+
+    // TP-DAILY-13 (H7): the move is a move, never a removal. This set feeds
+    // the client frame as well as the sidebar, and the first attempt at this
+    // filtered at the source — which took API-created workspaces off every
+    // surface at once. Count preserved means no surface lost a row.
+    #[test]
+    fn moving_the_row_never_removes_it_from_the_shared_set() {
+        let (mut app, _) = app_with_a_workspace_standing_in_the_daily_directory(2);
+        let moved = workspace_row_count(&app);
+
+        // Same state, with nothing to move to: the tree keeps both rows.
+        app.daily_chat_cwd = None;
+        let untouched = workspace_row_count(&app);
+
+        assert_eq!(
+            moved, untouched,
+            "every workspace that had a row still has one; only its place changed"
+        );
+        assert_eq!(moved, 2, "and both workspaces are that count");
+    }
+
+    // TP-DAILY-13 (H8): the moved row is a row, not a picture of one. Hit
+    // testing reads the same entry list, so the workspace under the daily area
+    // gets a card area and stays clickable — which is the whole reason this is
+    // a move and not a hide. Fifteen live panes are reached through it.
+    #[test]
+    fn the_row_under_the_daily_area_is_still_clickable() {
+        let (app, _) = app_with_a_workspace_standing_in_the_daily_directory(2);
+        let areas = compute_workspace_card_areas(&app, Rect::new(0, 0, 30, 40));
+        assert!(
+            areas.iter().any(|card| card.ws_idx == 1),
+            "the area's own workspace gets a card area like any other row"
+        );
+        assert!(
+            areas.iter().any(|card| card.ws_idx == 0),
+            "and the tree's workspace keeps its own"
+        );
+    }
+
+    // TP-DAILY-13 (H4 at the emit layer): with no daily directory the rows
+    // stay exactly where the tree put them.
+    #[test]
+    fn without_a_daily_directory_the_tree_keeps_its_rows() {
+        let (mut app, _) = app_with_a_workspace_standing_in_the_daily_directory(2);
+        app.daily_chat_cwd = None;
+        assert!(
+            workspace_row_position(&app, 1).is_some(),
+            "the workspace is still emitted by the tree walk"
+        );
+    }
+
+    // TP-DAILY-13: an undrawn section owns nothing. Rows placed under a header
+    // that was never emitted are invisible — the #88 class of silent defect.
+    #[test]
+    fn an_undrawn_daily_area_owns_nothing() {
+        let (mut app, _) = app_with_a_workspace_standing_in_the_daily_directory(2);
+        assert_eq!(daily_owned_workspaces(&app), vec![1], "precondition: drawn");
+        // TP-DAILY-06's filter: focus-only with no resumed daily chat silences
+        // the section.
+        app.spaces_focus_only = true;
+        assert!(
+            !daily_section_visible(&app),
+            "precondition: the section is now silent"
+        );
+        assert!(
+            daily_owned_workspaces(&app).is_empty(),
+            "a section that is not drawn cannot own rows"
+        );
     }
 
     // TP-DAILY-02: the section is born at the very top, above the tree —
