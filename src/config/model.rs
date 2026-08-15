@@ -738,10 +738,45 @@ pub struct Config {
 /// Nothing here is on by default. Most people never want an edge bar, and the
 /// ones who do should not have to pay for it with a changed screen until they
 /// ask; every field below is inert until it is set.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(default)]
 pub struct ShellConfig {
     pub bars: ShellBarsConfig,
+    /// Whether a bar section may draw its `glyph` icon.
+    ///
+    /// A glyph is only a picture on a machine whose font has that codepoint.
+    /// herdr cannot ask: there is no capability probe, so a terminal without
+    /// the font draws tofu, and tofu reads as broken chrome rather than as a
+    /// missing icon. This switch is the declaration that stands in for the
+    /// question nobody can ask, which is why it is a plain on/off and not an
+    /// `auto`: an `auto` would be pretending to detect something.
+    ///
+    /// Off, a section with a glyph draws its `text` instead. Pictures made of
+    /// cells — `art` and `pixels` — are untouched, because a half block carries
+    /// no font risk and turning those off would destroy information for nothing.
+    ///
+    /// Defaults on: shipping this must not change a screen anyone already has.
+    #[serde(default = "ShellConfig::glyph_icons_default")]
+    pub glyph_icons: bool,
+}
+
+impl ShellConfig {
+    fn glyph_icons_default() -> bool {
+        true
+    }
+}
+
+// Written out rather than derived: `bool`'s own default is `false`, and a
+// derived `Default` here would turn every existing bar's glyphs off through
+// whichever of serde's two default rules applies to a missing field. The
+// neighbouring `[shell.bars]` fields are spelled out for the same reason.
+impl Default for ShellConfig {
+    fn default() -> Self {
+        Self {
+            bars: ShellBarsConfig::default(),
+            glyph_icons: Self::glyph_icons_default(),
+        }
+    }
 }
 
 /// `[shell.bars]` — one optional strip per edge of the frame.
@@ -3011,6 +3046,38 @@ repos = ["/repo/a"]
             config.spaces.projects()[0].icon,
             None,
             "a blank icon means \"use the configured default\", not an empty glyph"
+        );
+    }
+
+    /// The switch defaults on, and it has to survive two different ways of
+    /// writing a config that never mentions it.
+    ///
+    /// A `bool` field's own type default is `false`, so a switch that leans on
+    /// `#[serde(default)]` alone would turn every existing bar's glyphs off the
+    /// moment it shipped — a silent change to a screen nobody asked to change.
+    /// The neighbouring `[shell.bars]` fields carry per-field defaults for the
+    /// same reason, and this test is here so the next person does not have to
+    /// remember which of the two serde rules applies.
+    #[test]
+    fn glyph_icons_stay_on_until_someone_turns_them_off() {
+        let absent: Config = toml::from_str("").expect("empty config parses");
+        assert!(
+            absent.shell.glyph_icons,
+            "a config with no [shell] section must not disable glyph icons"
+        );
+
+        let shell_written: Config =
+            toml::from_str("[shell.bars.top]\n").expect("bar-only config parses");
+        assert!(
+            shell_written.shell.glyph_icons,
+            "writing a bar must not disable the glyphs that bar might draw"
+        );
+
+        let off: Config =
+            toml::from_str("[shell]\nglyph_icons = false\n").expect("switch config parses");
+        assert!(
+            !off.shell.glyph_icons,
+            "the switch has to be reachable, or the fallback can never be seen"
         );
     }
 

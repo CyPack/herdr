@@ -1451,7 +1451,7 @@ mod tests {
             None,
             crate::ui::shell::ShellBars::from_config(&config),
         );
-        app.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config);
+        app.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config, true);
         compute_view(&mut app, frame);
 
         let mut terminal =
@@ -1542,7 +1542,7 @@ mod tests {
             None,
             crate::ui::shell::ShellBars::from_config(&config),
         );
-        app.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config);
+        app.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config, true);
         compute_view(&mut app, frame);
 
         let mut terminal =
@@ -1623,7 +1623,7 @@ mod tests {
             None,
             crate::ui::shell::ShellBars::from_config(&config),
         );
-        app.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config);
+        app.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config, true);
         // A reading nothing else could have produced.
         app.resources = crate::resource::ResourceSample {
             mem: Some(crate::resource::Usage {
@@ -1697,7 +1697,7 @@ mod tests {
             None,
             crate::ui::shell::ShellBars::from_config(&config),
         );
-        app.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config);
+        app.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config, true);
         app
     }
 
@@ -1856,7 +1856,7 @@ mod tests {
             None,
             crate::ui::shell::ShellBars::from_config(&config),
         );
-        app.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config);
+        app.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config, true);
         app.resources = sample;
         app
     }

@@ -465,6 +465,19 @@ pub(crate) enum BarConfigProblem {
         edge: &'static str,
         index: usize,
     },
+    /// `shell.glyph_icons` is off and this section's glyph has nothing to fall
+    /// back to.
+    ///
+    /// Drawing nothing would be worse than saying so: an empty section is what
+    /// a section with no widget looks like, so a person reading the bar could
+    /// not tell a disabled glyph from one they never wrote. The switch is the
+    /// only setting that can invalidate a section that was valid before, and
+    /// that is deliberate — it is a visible cost, and the alternative is a
+    /// silent gap.
+    IconGlyphOffWithoutText {
+        edge: &'static str,
+        index: usize,
+    },
     UnknownIconArt {
         edge: &'static str,
         index: usize,
@@ -629,6 +642,12 @@ impl std::fmt::Display for BarConfigProblem {
                 "shell.bars.{edge}.sections[{index}].widget is an icon but names no picture; \
                  set one of glyph, art or pixels"
             ),
+            Self::IconGlyphOffWithoutText { edge, index } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}].widget draws a glyph, but \
+                 shell.glyph_icons is off and the section names no text to draw instead; \
+                 give it a text, or turn the switch back on"
+            ),
             Self::IconWithTwoPictures { edge, index } => write!(
                 formatter,
                 "shell.bars.{edge}.sections[{index}].widget names more than one picture; \
@@ -725,7 +744,10 @@ fn section_count_problem(
 /// Only enabled edges are examined: a disabled bar is not drawn either, but
 /// that is what the person asked for, and reporting it would bury the real
 /// complaints under noise.
-pub(crate) fn shell_bar_config_problems(config: &ShellBarsConfig) -> Vec<BarConfigProblem> {
+pub(crate) fn shell_bar_config_problems(
+    config: &ShellBarsConfig,
+    glyph_icons: bool,
+) -> Vec<BarConfigProblem> {
     let mut problems = Vec::new();
     for (bar, edge) in [
         (&config.top, "top"),
@@ -766,7 +788,7 @@ pub(crate) fn shell_bar_config_problems(config: &ShellBarsConfig) -> Vec<BarConf
             // guess that the other was also refused. The widget is asked before
             // the action so a section's complaints read in the order the table
             // is written.
-            if let Err(problem) = section_widget(section, edge, index) {
+            if let Err(problem) = section_widget(section, edge, index, glyph_icons) {
                 problems.push(problem);
             }
             if let Err(problem) = section_action(section, edge, index) {
@@ -1085,12 +1107,12 @@ pub(crate) struct ShellBarChrome {
 }
 
 impl ShellBarChrome {
-    pub(crate) fn from_config(config: &ShellBarsConfig) -> Self {
+    pub(crate) fn from_config(config: &ShellBarsConfig, glyph_icons: bool) -> Self {
         Self {
-            top: bar_section_chrome(&config.top, "top"),
-            bottom: bar_section_chrome(&config.bottom, "bottom"),
-            left: bar_section_chrome(&config.left, "left"),
-            right: bar_section_chrome(&config.right, "right"),
+            top: bar_section_chrome(&config.top, "top", glyph_icons),
+            bottom: bar_section_chrome(&config.bottom, "bottom", glyph_icons),
+            left: bar_section_chrome(&config.left, "left", glyph_icons),
+            right: bar_section_chrome(&config.right, "right", glyph_icons),
         }
     }
 
@@ -1152,7 +1174,11 @@ impl ShellBarChrome {
 // TP-CHROME-37/39/40/45/46/52: chrome answers at the index it was written at, a
 // refused division leaves none, a refused entry costs only its section, a popup
 // carries the size it was written with, and a widget is read the same way.
-fn bar_section_chrome(config: &ShellBarConfig, edge: &'static str) -> BarSectionChrome {
+fn bar_section_chrome(
+    config: &ShellBarConfig,
+    edge: &'static str,
+    glyph_icons: bool,
+) -> BarSectionChrome {
     if !config.enabled || config.sections.is_empty() {
         return BarSectionChrome::EMPTY;
     }
@@ -1170,7 +1196,7 @@ fn bar_section_chrome(config: &ShellBarConfig, edge: &'static str) -> BarSection
         .iter()
         .enumerate()
         .map(|(index, section)| SectionChrome {
-            widget: match section_widget(section, edge, index) {
+            widget: match section_widget(section, edge, index, glyph_icons) {
                 Ok(widget) => widget,
                 Err(problem) => {
                     tracing::warn!(%problem, "the section is drawn with nothing in it");
@@ -1197,6 +1223,7 @@ fn section_widget(
     config: &ShellBarSectionConfig,
     edge: &'static str,
     index: usize,
+    glyph_icons: bool,
 ) -> Result<SectionWidget, BarConfigProblem> {
     match config.widget.kind.as_str() {
         // Text with no widget to put it in is the same half-finished shape a
@@ -1214,7 +1241,7 @@ fn section_widget(
         // same reasoning as an unknown widget kind: a typo that renders as
         // blank is indistinguishable from one that renders as nothing on
         // purpose.
-        "icon" => section_icon(config, edge, index),
+        "icon" => section_icon(config, edge, index, glyph_icons),
         "meter" => crate::resource::ResourceMetric::parse(&config.widget.metric)
             .map(|metric| SectionWidget::Meter { metric })
             .ok_or(BarConfigProblem::UnknownSectionWidgetMetric {
@@ -1255,6 +1282,7 @@ fn section_icon(
     config: &ShellBarSectionConfig,
     edge: &'static str,
     index: usize,
+    glyph_icons: bool,
 ) -> Result<SectionWidget, BarConfigProblem> {
     let widget = &config.widget;
     let named = usize::from(!widget.glyph.trim().is_empty())
@@ -1279,6 +1307,21 @@ fn section_icon(
     };
 
     if !widget.glyph.trim().is_empty() {
+        // With the switch off the section keeps its place and its meaning by
+        // saying the same thing in letters. That is a label, not a third kind
+        // of widget: reusing it means the clipping rule, the geometry rule and
+        // the unchanged-buffer property all come from the one place that
+        // already owns them, instead of being written a second time and
+        // drifting.
+        if !glyph_icons {
+            let text = widget.text.trim();
+            if text.is_empty() {
+                return Err(BarConfigProblem::IconGlyphOffWithoutText { edge, index });
+            }
+            return Ok(SectionWidget::Label {
+                text: widget.text.clone(),
+            });
+        }
         let glyph = widget.glyph.clone();
         let needs = u16::try_from(unicode_width::UnicodeWidthStr::width(glyph.as_str()))
             .unwrap_or(u16::MAX);
@@ -1991,6 +2034,117 @@ mod tests {
         }
     }
 
+    /// The `toml` blocks of the guide's "Edge bars" section, in the order they
+    /// are written.
+    fn documented_bar_examples() -> Vec<String> {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("docs/next/website/src/content/docs/configuration.mdx");
+        let guide = std::fs::read_to_string(&path)
+            .unwrap_or_else(|err| panic!("the configuration guide at {path:?} is readable: {err}"));
+
+        let after_heading = guide
+            .split_once("\n## Edge bars\n")
+            .unwrap_or_else(|| panic!("the guide still has an \"Edge bars\" section"))
+            .1;
+        let section = after_heading
+            .split_once("\n## ")
+            .map_or(after_heading, |(before, _)| before);
+
+        section
+            .split("```toml\n")
+            .skip(1)
+            .filter_map(|rest| rest.split_once("```"))
+            .map(|(block, _)| block.to_string())
+            .collect()
+    }
+
+    /// Every example in the guide is a config this build accepts.
+    ///
+    /// A documented example is the first thing anyone copies, an agent most of
+    /// all, so an example that quietly produces an empty section is worse than
+    /// no example at all. The parser here is the real one rather than the
+    /// installed binary's: measured 2026-08-15, running the guide's examples
+    /// through `~/.local/bin/herdr` reported an "unknown config key" for a key
+    /// this branch had just added — the check was one commit behind the thing it
+    /// was checking. In-process, that skew cannot exist.
+    #[test]
+    fn every_bar_example_in_the_guide_is_a_config_this_build_accepts() {
+        // TP-CHROME-94: every example the guide prints is a config this build
+        // accepts. A documented example is the first thing anyone copies, an
+        // agent most of all, so one that quietly produces an empty section is
+        // worse than no example at all.
+        let examples = documented_bar_examples();
+
+        // Guard the harvest itself: a renamed heading or a changed fence would
+        // leave this test passing over nothing at all, which is the failure mode
+        // a documentation gate is least likely to notice about itself.
+        assert!(
+            examples.len() >= 5,
+            "expected the Edge bars section to still carry its examples, found {}",
+            examples.len()
+        );
+
+        for (index, block) in examples.iter().enumerate() {
+            let config: crate::config::Config = toml::from_str(block).unwrap_or_else(|err| {
+                panic!(
+                    "guide example {} is not valid TOML: {err}\n{block}",
+                    index + 1
+                )
+            });
+            let problems = shell_bar_config_problems(&config.shell.bars, config.shell.glyph_icons)
+                .into_iter()
+                .map(|problem| problem.to_string())
+                .collect::<Vec<_>>();
+            assert!(
+                problems.is_empty(),
+                "guide example {} is refused by this build: {problems:?}\n{block}",
+                index + 1
+            );
+        }
+    }
+
+    /// The guide shows every kind there is, and shows nothing that is not one.
+    ///
+    /// Both directions matter and they fail differently: a kind the guide never
+    /// mentions is a feature nobody can find, and a kind the guide invents is a
+    /// config an agent will write and Herdr will refuse.
+    // TODO(L1): read these from the shared kind table once it exists, so this
+    // list stops being a second place the kinds are written down.
+    #[test]
+    fn the_guide_shows_every_widget_and_action_kind() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("docs/next/website/src/content/docs/configuration.mdx");
+        let guide = std::fs::read_to_string(&path).expect("the configuration guide is readable");
+
+        // TP-CHROME-95: the guide shows every kind there is and invents none.
+        // A kind it never mentions is a feature nobody can find; a kind it
+        // invents is a config an agent writes and Herdr refuses.
+        for kind in ["label", "resource", "meter", "icon"] {
+            assert!(
+                guide.contains(&format!("kind = \"{kind}\"")),
+                "the guide never shows widget kind {kind:?}"
+            );
+        }
+        for kind in ["popup", "plugin"] {
+            assert!(
+                guide.contains(&format!("kind = \"{kind}\"")),
+                "the guide never shows action kind {kind:?}"
+            );
+        }
+        for art in ["herd", "dot"] {
+            assert!(
+                guide.contains(art),
+                "the guide never names the bundled art {art:?}"
+            );
+        }
+        for metric in ["cpu", "mem", "ram", "swap"] {
+            assert!(
+                guide.contains(metric),
+                "the guide never names the metric {metric:?}"
+            );
+        }
+    }
+
     fn section_with_action(kind: &str, action_kind: &str, argv: &[&str]) -> ShellBarSectionConfig {
         let mut section = plain_section(kind);
         section.action.kind = action_kind.to_string();
@@ -2008,6 +2162,119 @@ mod tests {
             sections,
             ..Default::default()
         }
+    }
+
+    /// A glyph is only a picture where the font has it, and herdr cannot ask
+    /// whether it does. These four tests are the whole of what the switch is
+    /// for: what it changes, what it refuses, what it must not touch, and what
+    /// does not count as something to fall back to.
+    #[test]
+    fn a_switched_off_glyph_draws_its_text_as_a_label() {
+        let mut section = plain_section("fixed");
+        section.widget.kind = "icon".to_string();
+        section.widget.glyph = "★".to_string();
+        section.widget.text = "cpu".to_string();
+
+        let config = ShellBarsConfig {
+            top: bar_with_sections(vec![section]),
+            ..Default::default()
+        };
+
+        // TP-CHROME-89: the switch defaults on and changes nothing there, because
+        // shipping it must not alter a bar anybody already has.
+        assert_eq!(
+            ShellBarChrome::from_config(&config, true).widget_for(RegionId::TopBar, 0),
+            Some(&SectionWidget::Icon {
+                glyph: "★".to_string()
+            }),
+        );
+
+        // TP-CHROME-90: off, the section keeps its meaning in letters — and what
+        // it becomes is the label that already owns clipping and geometry, not a
+        // third kind of widget that would own them a second time.
+        assert_eq!(
+            ShellBarChrome::from_config(&config, false).widget_for(RegionId::TopBar, 0),
+            Some(&SectionWidget::Label {
+                text: "cpu".to_string()
+            }),
+        );
+    }
+
+    #[test]
+    fn a_switched_off_glyph_with_nothing_to_say_is_reported() {
+        let mut section = plain_section("fixed");
+        section.widget.kind = "icon".to_string();
+        section.widget.glyph = "★".to_string();
+
+        let config = ShellBarsConfig {
+            top: bar_with_sections(vec![section]),
+            ..Default::default()
+        };
+
+        assert!(
+            shell_bar_config_problems(&config, true).is_empty(),
+            "a glyph with no text is a complete section while glyphs are on"
+        );
+
+        // TP-CHROME-91: turning the switch off can invalidate a section that was
+        // valid before, and it says so. Drawing nothing instead would be
+        // indistinguishable from a section somebody left empty on purpose.
+        let reported = shell_bar_config_problems(&config, false)
+            .into_iter()
+            .map(|problem| problem.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(reported.len(), 1, "{reported:?}");
+        assert!(
+            reported[0].contains("names no text to draw instead"),
+            "{reported:?}"
+        );
+    }
+
+    #[test]
+    fn the_glyph_switch_leaves_pictures_made_of_cells_alone() {
+        let mut section = plain_section("fill");
+        section.widget.kind = "icon".to_string();
+        section.widget.art = "herd".to_string();
+
+        let config = ShellBarsConfig {
+            top: bar_with_sections(vec![section]),
+            ..Default::default()
+        };
+
+        // TP-CHROME-92: the switch is a statement about fonts. A half block is
+        // not a font question, so turning glyphs off must not erase a picture
+        // that was never at risk — that would destroy information for nothing.
+        assert_eq!(
+            ShellBarChrome::from_config(&config, true).widget_for(RegionId::TopBar, 0),
+            ShellBarChrome::from_config(&config, false).widget_for(RegionId::TopBar, 0),
+        );
+        assert!(shell_bar_config_problems(&config, false).is_empty());
+    }
+
+    #[test]
+    fn whitespace_is_not_something_to_fall_back_to() {
+        let mut section = plain_section("fixed");
+        section.widget.kind = "icon".to_string();
+        section.widget.glyph = "★".to_string();
+        section.widget.text = "   ".to_string();
+
+        let config = ShellBarsConfig {
+            top: bar_with_sections(vec![section]),
+            ..Default::default()
+        };
+
+        // TP-CHROME-93: a text of spaces draws the same nothing an absent one
+        // does, and the person who wrote it believes they have a fallback. The
+        // blank is caught where it is written rather than on screen.
+        let reported = shell_bar_config_problems(&config, false)
+            .into_iter()
+            .map(|problem| problem.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(reported.len(), 1, "{reported:?}");
+        assert!(
+            reported[0].contains("names no text to draw instead"),
+            "{reported:?}"
+        );
     }
 
     fn popup_argv(actions: &ShellBarChrome, region: RegionId, index: u8) -> Option<Vec<String>> {
@@ -2055,7 +2322,7 @@ mod tests {
             ..Default::default()
         };
 
-        let actions = ShellBarChrome::from_config(&config);
+        let actions = ShellBarChrome::from_config(&config, true);
 
         assert_eq!(
             popup_size(&actions, RegionId::TopBar, 0),
@@ -2119,7 +2386,7 @@ mod tests {
             ..Default::default()
         };
 
-        let reported = shell_bar_config_problems(&config)
+        let reported = shell_bar_config_problems(&config, true)
             .into_iter()
             .map(|problem| problem.to_string())
             .collect::<Vec<_>>();
@@ -2136,7 +2403,7 @@ mod tests {
             "a refusal has to name both numbers or it cannot be acted on: {reported:?}"
         );
 
-        let chrome = ShellBarChrome::from_config(&config);
+        let chrome = ShellBarChrome::from_config(&config, true);
         for index in 0..4 {
             assert_eq!(
                 chrome.widget_for(RegionId::TopBar, index),
@@ -2163,8 +2430,8 @@ mod tests {
             ..Default::default()
         };
 
-        assert!(shell_bar_config_problems(&config).is_empty());
-        let chrome = ShellBarChrome::from_config(&config);
+        assert!(shell_bar_config_problems(&config, true).is_empty());
+        let chrome = ShellBarChrome::from_config(&config, true);
         let widget = chrome
             .widget_for(RegionId::TopBar, 0)
             .expect("the section has chrome");
@@ -2194,7 +2461,7 @@ mod tests {
             ..Default::default()
         };
 
-        let reported = shell_bar_config_problems(&config)
+        let reported = shell_bar_config_problems(&config, true)
             .into_iter()
             .map(|problem| problem.to_string())
             .collect::<Vec<_>>();
@@ -2205,7 +2472,7 @@ mod tests {
             "the message has to name the metric that was wrong: {reported:?}"
         );
 
-        let chrome = ShellBarChrome::from_config(&config);
+        let chrome = ShellBarChrome::from_config(&config, true);
         assert_eq!(
             chrome.widget_for(RegionId::TopBar, 0),
             Some(&SectionWidget::None),
@@ -2238,7 +2505,7 @@ mod tests {
             ..Default::default()
         };
 
-        let reported = shell_bar_config_problems(&config)
+        let reported = shell_bar_config_problems(&config, true)
             .into_iter()
             .map(|problem| problem.to_string())
             .collect::<Vec<_>>();
@@ -2253,7 +2520,7 @@ mod tests {
             "{reported:?}"
         );
 
-        let chrome = ShellBarChrome::from_config(&config);
+        let chrome = ShellBarChrome::from_config(&config, true);
         assert_eq!(
             chrome.widget_for(RegionId::TopBar, 0),
             Some(&SectionWidget::None),
@@ -2285,8 +2552,8 @@ mod tests {
             "a label must never decide how wide its section is"
         );
         assert_ne!(
-            ShellBarChrome::from_config(&one),
-            ShellBarChrome::from_config(&other),
+            ShellBarChrome::from_config(&one, true),
+            ShellBarChrome::from_config(&other, true),
             "control: the chrome itself must notice, or the assertion above is empty"
         );
     }
@@ -2316,7 +2583,7 @@ mod tests {
             ..Default::default()
         };
 
-        let reported = shell_bar_config_problems(&config)
+        let reported = shell_bar_config_problems(&config, true)
             .into_iter()
             .map(|problem| problem.to_string())
             .collect::<Vec<_>>();
@@ -2345,7 +2612,7 @@ mod tests {
             top: bar_with_sections(vec![wrong_kind]),
             ..Default::default()
         };
-        let reported = shell_bar_config_problems(&single_cause)
+        let reported = shell_bar_config_problems(&single_cause, true)
             .into_iter()
             .map(|problem| problem.to_string())
             .collect::<Vec<_>>();
@@ -2368,9 +2635,9 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(shell_bar_config_problems(&config).len(), 1);
+        assert_eq!(shell_bar_config_problems(&config, true).len(), 1);
         assert_eq!(
-            ShellBarChrome::from_config(&config).action_for(RegionId::TopBar, 0),
+            ShellBarChrome::from_config(&config, true).action_for(RegionId::TopBar, 0),
             Some(&SectionAction::None),
             "the section the checker complained about must carry no action at all"
         );
@@ -2397,8 +2664,8 @@ mod tests {
             "the bars value the geometry key compares must not notice a popup size"
         );
         assert_ne!(
-            ShellBarChrome::from_config(&small),
-            ShellBarChrome::from_config(&large),
+            ShellBarChrome::from_config(&small, true),
+            ShellBarChrome::from_config(&large, true),
             "control: the actions themselves must notice, or the test above proves nothing"
         );
     }
@@ -2444,7 +2711,7 @@ mod tests {
     /// section that exists in a vector but answers `None` at its own index is
     /// a section nothing can click.
     fn addressable_sections(config: &ShellBarsConfig, region: RegionId) -> usize {
-        let chrome = ShellBarChrome::from_config(config);
+        let chrome = ShellBarChrome::from_config(config, true);
         (0..u8::MAX)
             .take_while(|index| chrome.for_section(region, *index).is_some())
             .count()
@@ -2469,7 +2736,7 @@ mod tests {
             ..Default::default()
         };
         assert!(
-            shell_bar_config_problems(&eight).is_empty(),
+            shell_bar_config_problems(&eight, true).is_empty(),
             "eight was always allowed"
         );
         assert_eq!(addressable_sections(&eight, RegionId::TopBar), 8);
@@ -2478,7 +2745,7 @@ mod tests {
             top: bar_with_sections((0..9).map(|_| plain_section("fill")).collect()),
             ..Default::default()
         };
-        let reported = shell_bar_config_problems(&nine)
+        let reported = shell_bar_config_problems(&nine, true)
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>();
@@ -2502,7 +2769,7 @@ mod tests {
             ..Default::default()
         };
         assert!(
-            shell_bar_config_problems(&twelve).is_empty(),
+            shell_bar_config_problems(&twelve, true).is_empty(),
             "twelve sections under a budget of twelve is not a problem"
         );
         assert_eq!(
@@ -2515,7 +2782,7 @@ mod tests {
             top: bar_with_budget(12, 13),
             ..Default::default()
         };
-        let reported = shell_bar_config_problems(&thirteen)
+        let reported = shell_bar_config_problems(&thirteen, true)
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>();
@@ -2540,7 +2807,7 @@ mod tests {
                 ..Default::default()
             };
 
-            let reported = shell_bar_config_problems(&config)
+            let reported = shell_bar_config_problems(&config, true)
                 .iter()
                 .map(ToString::to_string)
                 .collect::<Vec<_>>();
@@ -2571,7 +2838,7 @@ mod tests {
             ..Default::default()
         };
 
-        let reported = shell_bar_config_problems(&config)
+        let reported = shell_bar_config_problems(&config, true)
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>();
@@ -2608,7 +2875,7 @@ mod tests {
             ..Default::default()
         };
 
-        let actions = ShellBarChrome::from_config(&config);
+        let actions = ShellBarChrome::from_config(&config, true);
 
         assert_eq!(
             popup_secondary(&actions, RegionId::TopBar, 0),
@@ -2621,7 +2888,7 @@ mod tests {
             "a section written before this field existed must still mean what it meant"
         );
         assert!(
-            shell_bar_config_problems(&config).is_empty(),
+            shell_bar_config_problems(&config, true).is_empty(),
             "neither spelling is a problem worth reporting"
         );
     }
@@ -2644,7 +2911,7 @@ mod tests {
             ..Default::default()
         };
 
-        let actions = ShellBarChrome::from_config(&config);
+        let actions = ShellBarChrome::from_config(&config, true);
 
         assert_eq!(
             plugin_action(&actions, RegionId::TopBar, 0).as_deref(),
@@ -2663,7 +2930,7 @@ mod tests {
             "a popup section beside a plugin section keeps its own answer"
         );
         assert!(
-            shell_bar_config_problems(&config).is_empty(),
+            shell_bar_config_problems(&config, true).is_empty(),
             "neither spelling is a problem worth reporting"
         );
     }
@@ -2685,7 +2952,7 @@ mod tests {
                 ..Default::default()
             };
 
-            let reported = shell_bar_config_problems(&config)
+            let reported = shell_bar_config_problems(&config, true)
                 .iter()
                 .map(ToString::to_string)
                 .collect::<Vec<_>>();
@@ -2700,7 +2967,7 @@ mod tests {
                 "the message must name the field and the index: {reported:?}"
             );
 
-            let actions = ShellBarChrome::from_config(&config);
+            let actions = ShellBarChrome::from_config(&config, true);
             assert_eq!(
                 actions.action_for(RegionId::TopBar, 0),
                 Some(&SectionAction::None),
@@ -2751,7 +3018,7 @@ mod tests {
                 ..Default::default()
             };
 
-            let reported = shell_bar_config_problems(&config)
+            let reported = shell_bar_config_problems(&config, true)
                 .iter()
                 .map(ToString::to_string)
                 .collect::<Vec<_>>();
@@ -2783,7 +3050,7 @@ mod tests {
             ..Default::default()
         };
 
-        let reported = shell_bar_config_problems(&config)
+        let reported = shell_bar_config_problems(&config, true)
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>();
@@ -2815,7 +3082,7 @@ mod tests {
                 ..Default::default()
             };
 
-            let reported = shell_bar_config_problems(&config)
+            let reported = shell_bar_config_problems(&config, true)
                 .iter()
                 .map(ToString::to_string)
                 .collect::<Vec<_>>();
@@ -2851,7 +3118,7 @@ mod tests {
             ..Default::default()
         };
 
-        let actions = ShellBarChrome::from_config(&config);
+        let actions = ShellBarChrome::from_config(&config, true);
 
         assert_eq!(
             addressable_sections(&config, RegionId::TopBar),
@@ -2888,7 +3155,7 @@ mod tests {
             ..Default::default()
         };
 
-        let reported = shell_bar_config_problems(&config)
+        let reported = shell_bar_config_problems(&config, true)
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>();
@@ -2918,7 +3185,7 @@ mod tests {
                 ..Default::default()
             };
 
-            let reported = shell_bar_config_problems(&config)
+            let reported = shell_bar_config_problems(&config, true)
                 .iter()
                 .map(ToString::to_string)
                 .collect::<Vec<_>>();
@@ -2938,7 +3205,7 @@ mod tests {
             // TC-67-5 · a refused action costs only its own section. Measured at
             // source.rs `bar_section_chrome`: sizing and policy problems leave a
             // bar undivided, a refused action does not.
-            let actions = ShellBarChrome::from_config(&config);
+            let actions = ShellBarChrome::from_config(&config, true);
             assert_eq!(
                 actions.action_for(RegionId::TopBar, 0),
                 Some(&SectionAction::None),
@@ -2965,7 +3232,7 @@ mod tests {
             ..Default::default()
         };
 
-        let reported = shell_bar_config_problems(&config)
+        let reported = shell_bar_config_problems(&config, true)
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>();
@@ -2991,7 +3258,7 @@ mod tests {
             ..Default::default()
         };
 
-        let actions = ShellBarChrome::from_config(&config);
+        let actions = ShellBarChrome::from_config(&config, true);
 
         assert_eq!(
             popup_argv(&actions, RegionId::TopBar, 1).as_deref(),
@@ -3025,7 +3292,7 @@ mod tests {
             right: bar_with_sections(vec![section_with_action("fill", "popup", &["right-cmd"])]),
         };
 
-        let actions = ShellBarChrome::from_config(&config);
+        let actions = ShellBarChrome::from_config(&config, true);
         let bars = ShellBars::from_config(&config);
 
         for (region, expected) in [
@@ -3071,7 +3338,7 @@ mod tests {
         };
 
         let bars = ShellBars::from_config(&config);
-        let actions = ShellBarChrome::from_config(&config);
+        let actions = ShellBarChrome::from_config(&config, true);
 
         assert!(
             bars.top.sections().is_empty(),
@@ -3101,7 +3368,7 @@ mod tests {
         };
 
         let bars = ShellBars::from_config(&config);
-        let actions = ShellBarChrome::from_config(&config);
+        let actions = ShellBarChrome::from_config(&config, true);
 
         assert_eq!(
             bars.top.sections().len(),
@@ -3137,7 +3404,7 @@ mod tests {
             ..Default::default()
         };
 
-        let reported = shell_bar_config_problems(&config)
+        let reported = shell_bar_config_problems(&config, true)
             .into_iter()
             .map(|problem| problem.to_string())
             .collect::<Vec<_>>();
@@ -3167,7 +3434,7 @@ mod tests {
             top: bar_with_sections(vec![plain_section("fill")]),
             ..Default::default()
         };
-        assert!(shell_bar_config_problems(&quiet).is_empty());
+        assert!(shell_bar_config_problems(&quiet, true).is_empty());
     }
 
     fn bordered_config_bar(size: u16) -> ShellBarConfig {
@@ -3822,7 +4089,7 @@ mod tests {
         // Before this, the value parsed perfectly, the checker said "ok", and
         // the bar simply never appeared — sending the person to look at their
         // terminal rather than at the line they had just written.
-        let problems = shell_bar_config_problems(&bars_with_top(enabled_bar(999, false)));
+        let problems = shell_bar_config_problems(&bars_with_top(enabled_bar(999, false)), true);
         assert_eq!(problems.len(), 1);
         let text = problems[0].to_string();
         assert!(text.contains("shell.bars.top.size"), "{text}");
@@ -3832,7 +4099,7 @@ mod tests {
     // T-CFG-2 · two different mistakes must not read as the same mistake
     #[test]
     fn a_bordered_bar_too_thin_reads_differently_from_one_out_of_range() {
-        let thin = shell_bar_config_problems(&bars_with_top(enabled_bar(1, true)));
+        let thin = shell_bar_config_problems(&bars_with_top(enabled_bar(1, true)), true);
         assert_eq!(thin.len(), 1);
         assert_eq!(
             thin[0],
@@ -3846,7 +4113,7 @@ mod tests {
         // The same thickness without a border is perfectly drawable, so it
         // must produce nothing at all: a person told to fix a working setting
         // learns to stop reading.
-        assert!(shell_bar_config_problems(&bars_with_top(enabled_bar(1, false))).is_empty());
+        assert!(shell_bar_config_problems(&bars_with_top(enabled_bar(1, false)), true).is_empty());
     }
 
     // T-CFG-3 · a section's complaint names which section it is
@@ -3854,7 +4121,7 @@ mod tests {
     fn an_unknown_section_kind_is_reported_with_its_index() {
         let mut bar = enabled_bar(3, true);
         bar.sections = vec![fixed_section(4), section_config("nonsense")];
-        let problems = shell_bar_config_problems(&bars_with_top(bar));
+        let problems = shell_bar_config_problems(&bars_with_top(bar), true);
 
         assert_eq!(problems.len(), 1);
         let text = problems[0].to_string();
@@ -3874,13 +4141,16 @@ mod tests {
             max: 4,
             ..Default::default()
         }];
-        assert_eq!(shell_bar_config_problems(&bars_with_top(narrow)).len(), 1);
+        assert_eq!(
+            shell_bar_config_problems(&bars_with_top(narrow), true).len(),
+            1
+        );
 
         let mut crowded = enabled_bar(3, true);
         crowded.sections = (0..=MAX_BAR_SECTIONS)
             .map(|_| section_config("fill"))
             .collect();
-        let problems = shell_bar_config_problems(&bars_with_top(crowded));
+        let problems = shell_bar_config_problems(&bars_with_top(crowded), true);
         assert_eq!(problems.len(), 1);
         assert!(
             problems[0].to_string().contains("at most"),
@@ -3894,16 +4164,16 @@ mod tests {
     fn a_drawable_configuration_produces_no_complaints() {
         let mut bar = enabled_bar(3, true);
         bar.sections = vec![fixed_section(12), section_config("fill")];
-        assert!(shell_bar_config_problems(&bars_with_top(bar)).is_empty());
+        assert!(shell_bar_config_problems(&bars_with_top(bar), true).is_empty());
 
         // A disabled bar is not drawn either, but that is what was asked for.
         // Reporting it would bury the real complaints under noise.
         let mut disabled = enabled_bar(999, false);
         disabled.enabled = false;
-        assert!(shell_bar_config_problems(&bars_with_top(disabled)).is_empty());
+        assert!(shell_bar_config_problems(&bars_with_top(disabled), true).is_empty());
 
         // And a bar nobody configured at all.
-        assert!(shell_bar_config_problems(&ShellBarsConfig::default()).is_empty());
+        assert!(shell_bar_config_problems(&ShellBarsConfig::default(), true).is_empty());
     }
 
     // T-CFG-7 · what is reported and what is drawn come from one predicate
@@ -3928,15 +4198,18 @@ mod tests {
         for (bar, expected_drawn) in cases {
             let size = bar.size;
             let border = bar.border;
-            let reported = shell_bar_config_problems(&bars_with_top(ShellBarConfig {
-                enabled: true,
-                size,
-                border,
-                color: String::new(),
-                gradient: Vec::new(),
-                sections: Vec::new(),
-                ..Default::default()
-            }))
+            let reported = shell_bar_config_problems(
+                &bars_with_top(ShellBarConfig {
+                    enabled: true,
+                    size,
+                    border,
+                    color: String::new(),
+                    gradient: Vec::new(),
+                    sections: Vec::new(),
+                    ..Default::default()
+                }),
+                true,
+            )
             .is_empty();
             let drawn = BarTrack::from_config(&bar, "top").enabled();
 

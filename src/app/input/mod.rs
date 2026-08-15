@@ -1649,7 +1649,7 @@ mod tests {
             None,
             crate::ui::shell::ShellBars::from_config(&bars),
         );
-        app.state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&bars);
+        app.state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&bars, true);
         crate::ui::compute_view(&mut app.state, ratatui::layout::Rect::new(0, 0, 106, 40));
         app
     }
@@ -1662,18 +1662,21 @@ mod tests {
         };
         section.action.kind = "plugin".to_string();
         section.action.command = command.to_string();
-        crate::ui::shell::ShellBarChrome::from_config(&crate::config::ShellBarsConfig {
-            top: crate::config::ShellBarConfig {
-                enabled: true,
-                size: 1,
-                border: false,
-                color: String::new(),
-                gradient: Vec::new(),
-                sections: vec![section],
+        crate::ui::shell::ShellBarChrome::from_config(
+            &crate::config::ShellBarsConfig {
+                top: crate::config::ShellBarConfig {
+                    enabled: true,
+                    size: 1,
+                    border: false,
+                    color: String::new(),
+                    gradient: Vec::new(),
+                    sections: vec![section],
+                    ..Default::default()
+                },
                 ..Default::default()
             },
-            ..Default::default()
-        })
+            true,
+        )
     }
 
     // TC-66-15 · an icon that dies silently under the finger is the worst thing
@@ -1819,7 +1822,7 @@ mod tests {
             None,
             crate::ui::shell::ShellBars::from_config(&bars),
         );
-        app.state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&bars);
+        app.state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&bars, true);
         crate::ui::compute_view(&mut app.state, ratatui::layout::Rect::new(0, 0, 106, 40));
 
         let consumed = app.handle_bar_section_mouse(bar_mouse(
@@ -1906,7 +1909,7 @@ mod tests {
             None,
             crate::ui::shell::ShellBars::from_config(&bars),
         );
-        app.state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&bars);
+        app.state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&bars, true);
         crate::ui::compute_view(&mut app.state, ratatui::layout::Rect::new(0, 0, 106, 40));
         app
     }
@@ -2041,18 +2044,21 @@ mod tests {
             section.action.kind = "popup".to_string();
             section.action.argv = vec!["btop".to_string()];
             section.action.secondary = "tab".to_string();
-            crate::ui::shell::ShellBarChrome::from_config(&crate::config::ShellBarsConfig {
-                top: crate::config::ShellBarConfig {
-                    enabled: true,
-                    size: 1,
-                    border: false,
-                    color: String::new(),
-                    gradient: Vec::new(),
-                    sections: vec![section],
+            crate::ui::shell::ShellBarChrome::from_config(
+                &crate::config::ShellBarsConfig {
+                    top: crate::config::ShellBarConfig {
+                        enabled: true,
+                        size: 1,
+                        border: false,
+                        color: String::new(),
+                        gradient: Vec::new(),
+                        sections: vec![section],
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
-                ..Default::default()
-            })
+                true,
+            )
         };
         assert!(
             app.state.active.is_none(),
