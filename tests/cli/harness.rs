@@ -106,17 +106,7 @@ pub(super) fn cleanup_spawned_herdr(spawned: SpawnedHerdr, base: PathBuf) {
 }
 
 pub(super) fn wait_for_socket(path: &Path, timeout: Duration) {
-    // A first server start in a cold checkout is read from disk, not from the
-    // page cache, and five seconds is not reliably enough there: measured
-    // 2026-08-15, these tests passed on a warm tree and failed on the same
-    // commit in a freshly created worktree with `socket did not appear`,
-    // which reads as a code failure and is not one. The landing gate builds a
-    // speculative worktree for every attempt, so it met the cold path every
-    // time. Callers' timeouts are raised to a floor rather than replaced: a
-    // warm machine loses nothing, because the loop returns the moment the
-    // socket answers.
-    const COLD_START_FLOOR: Duration = Duration::from_secs(30);
-    let deadline = Instant::now() + timeout.max(COLD_START_FLOOR);
+    let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
         if path.exists() && std::os::unix::net::UnixStream::connect(path).is_ok() {
             return;
