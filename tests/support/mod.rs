@@ -630,9 +630,9 @@ fn is_test_herdr_server_process(pid: u32) -> bool {
     // inherit it, and handoff grandchildren inherit it again, so the
     // inherited stamp identifies exactly the processes this checkout's suite
     // is answerable for, wherever the build artifacts live.
-    if !is_test_herdr_binary(&exe_path)
-        && !(is_herdr_executable_name(&exe_path) && process_spawned_by_this_suite(pid))
-    {
+    let owned_by_suite = is_test_herdr_binary(&exe_path)
+        || (is_herdr_executable_name(&exe_path) && process_spawned_by_this_suite(pid));
+    if !owned_by_suite {
         return false;
     }
 
