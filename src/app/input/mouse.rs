@@ -1481,11 +1481,19 @@ impl AppState {
                 // is bounded to the panel body and cannot claim a row that
                 // belongs to the list above it.
                 if let Some((ws_idx, tab_idx, pane_id)) = self.agent_detail_target_at(mouse.row) {
+                    // TP-AGPANEL-28: the chat identity is read HERE, while the
+                    // row under the cursor is still the row the menu is for.
+                    let session_id = self
+                        .workspaces
+                        .get(ws_idx)
+                        .and_then(|ws| ws.tabs.get(tab_idx))
+                        .and_then(|tab| tab.resumed_session_id.clone());
                     self.context_menu = Some(ContextMenuState {
                         kind: ContextMenuKind::AgentEntry {
                             ws_idx,
                             tab_idx,
                             pane_id,
+                            session_id,
                         },
                         x: mouse.column,
                         y: mouse.row,
@@ -3427,7 +3435,7 @@ mod tests {
         assert!(
             matches!(
                 app.state.context_menu.as_ref().map(|menu| &menu.kind),
-                Some(crate::app::state::ContextMenuKind::AgentEntry { ws_idx: 0, tab_idx: 0, pane_id })
+                Some(crate::app::state::ContextMenuKind::AgentEntry { ws_idx: 0, tab_idx: 0, pane_id, .. })
                     if *pane_id == root
             ),
             "the agent row owns a menu carrying its own pane; got {:?}",

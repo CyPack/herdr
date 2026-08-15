@@ -1099,6 +1099,29 @@ pub(super) fn apply_context_menu_action(
         }
         // TP-CHAT-MOVE-04: the chat menu parks its decision for the App
         // loop, which owns the ledger the decision is written into.
+        // TP-AGPANEL-28: the same road from the agents panel. The panel row
+        // knows which chat it is running, so "send this agent somewhere" is
+        // the same decision the chat row already parks — one ledger, two ways
+        // in.
+        (
+            ContextMenuKind::AgentEntry {
+                ws_idx,
+                session_id: Some(session_id),
+                ..
+            },
+            Some("Move to..."),
+        ) => {
+            let targets = state.chat_move_target_entries(ws_idx);
+            state.context_menu = Some(crate::app::state::ContextMenuState {
+                kind: ContextMenuKind::ChatMoveTarget {
+                    session_id,
+                    targets,
+                },
+                x: menu_x,
+                y: menu_y,
+                list: crate::app::state::MenuListState::new(0),
+            });
+        }
         (
             ContextMenuKind::WorkspaceChat {
                 ws_idx, session_id, ..
@@ -1322,6 +1345,7 @@ pub(super) fn apply_context_menu_action(
                 ws_idx,
                 tab_idx,
                 pane_id,
+                ..
             },
             Some("Close agent"),
         ) => {
@@ -1810,6 +1834,28 @@ impl App {
             }
             // TP-CHAT-MOVE-04: the chat menu on the mouse road — the same
             // request-parking the keyboard dispatch does.
+            // TP-AGPANEL-28: and on the road the mouse actually takes. #91
+            // was exactly this arm missing from exactly this body; adding a
+            // menu item without adding it here ships a dead affordance.
+            (
+                ContextMenuKind::AgentEntry {
+                    ws_idx,
+                    session_id: Some(session_id),
+                    ..
+                },
+                Some("Move to..."),
+            ) => {
+                let targets = self.state.chat_move_target_entries(ws_idx);
+                self.state.context_menu = Some(crate::app::state::ContextMenuState {
+                    kind: ContextMenuKind::ChatMoveTarget {
+                        session_id,
+                        targets,
+                    },
+                    x: menu_x,
+                    y: menu_y,
+                    list: crate::app::state::MenuListState::new(0),
+                });
+            }
             (
                 ContextMenuKind::WorkspaceChat {
                     ws_idx, session_id, ..
@@ -3755,10 +3801,13 @@ mod tests {
         assert_eq!(app.state.request_new_linked_worktree, None);
     }
 
-    // TP-AGPANEL-03: an agents-panel row owns a menu with exactly one verb.
-    // The panel is a list of running agents, so the question it can answer
-    // that no other surface answers is "close this one" — and a longer menu
-    // here would duplicate the pane menu the row's own pane already has.
+    // TP-AGPANEL-03/28: an agents-panel row whose chat the ledger cannot name
+    // owns exactly one verb. The panel is a list of running agents, so the
+    // question it answers that no other surface answers is "close this one",
+    // and a longer menu here would duplicate the pane menu the row's own pane
+    // already has. The move verb is the one exception, and it appears only
+    // when there is an identity to move (see the sibling test below) — an
+    // offer that cannot be honoured is worse than no offer.
     #[test]
     fn the_agent_row_menu_offers_exactly_the_close_verb() {
         let workspace = Workspace::test_new("one");
@@ -3768,6 +3817,7 @@ mod tests {
                 ws_idx: 0,
                 tab_idx: 0,
                 pane_id,
+                session_id: None,
             },
             x: 0,
             y: 0,
@@ -3775,6 +3825,73 @@ mod tests {
         };
 
         assert_eq!(menu.items(), vec!["Close agent"]);
+    }
+
+    // TP-AGPANEL-28 (N1): a row whose chat the ledger knows can send it
+    // somewhere. This is the user's own sentence — "I should be able to send
+    // the agent I want to the module area I want" — answered on the surface
+    // where the running agents actually are.
+    #[test]
+    fn an_agent_row_with_a_known_chat_offers_to_move_it() {
+        let workspace = Workspace::test_new("one");
+        let pane_id = workspace.tabs[0].root_pane;
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::AgentEntry {
+                ws_idx: 0,
+                tab_idx: 0,
+                pane_id,
+                session_id: Some("sess-7".to_string()),
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+
+        assert_eq!(menu.items(), vec!["Move to...", "Close agent"]);
+    }
+
+    // TP-AGPANEL-28 (N3 + N4): the verb opens the target picker carrying THIS
+    // row's session — and it does so on the production road, the one the mouse
+    // and keyboard take. #91 was this exact arm missing from this exact body.
+    #[test]
+    fn moving_from_an_agent_row_opens_the_picker_on_the_production_road() {
+        let mut app = app_with_test_workspaces(&["main", "other"]);
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::AgentEntry {
+                ws_idx: 0,
+                tab_idx: 0,
+                pane_id,
+                session_id: Some("sess-7".to_string()),
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        let idx = menu
+            .items()
+            .iter()
+            .position(|item| *item == "Move to...")
+            .expect("the move verb is on the menu");
+
+        app.apply_context_menu_action_via_api(menu, idx);
+
+        match app.state.context_menu.as_ref().map(|m| &m.kind) {
+            Some(ContextMenuKind::ChatMoveTarget {
+                session_id,
+                targets,
+            }) => {
+                assert_eq!(
+                    session_id, "sess-7",
+                    "the picker carries the row's own chat, resolved when the menu opened"
+                );
+                assert!(
+                    !targets.is_empty(),
+                    "the picker offers somewhere to go; got {targets:?}"
+                );
+            }
+            other => panic!("the production road opens the target picker; got {other:?}"),
+        }
     }
 
     // TP-AGPANEL-04: closing from an agent row closes THAT row's pane, not
@@ -3795,6 +3912,7 @@ mod tests {
                 ws_idx: 0,
                 tab_idx: 0,
                 pane_id: second,
+                session_id: None,
             },
             x: 0,
             y: 0,

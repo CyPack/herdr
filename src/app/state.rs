@@ -2336,6 +2336,15 @@ pub enum ContextMenuKind {
         ws_idx: usize,
         tab_idx: usize,
         pane_id: crate::layout::PaneId,
+        /// The chat this row is running, when the ledger knows it.
+        ///
+        /// TP-AGPANEL-28: carried in the menu rather than looked up when the
+        /// verb fires, for the reason TP-AGPANEL-06 already states — a menu
+        /// can outlive the panel it was opened from, and a late lookup would
+        /// answer for whatever moved into that slot. `None` when the tab was
+        /// never opened to resume a known session; such a chat has no identity
+        /// the ledger can file, so it cannot be moved.
+        session_id: Option<String>,
     },
     /// The drawer picker a chat move opens: open workspaces as
     /// `(ledger key, display name)`, resolved by index like MoveTarget.
@@ -2501,7 +2510,17 @@ impl ContextMenuState {
             }
             // TP-AGPANEL-03: the agents panel lists what is running, so the
             // single verb it owns is ending one.
-            ContextMenuKind::AgentEntry { .. } => vec!["Close agent"],
+            // TP-AGPANEL-28: the panel row can send its chat somewhere, when
+            // the ledger knows which chat it is. The move verb comes first and
+            // the close verb stays last — the one item here that cannot be
+            // undone belongs at the end (TP-AGPANEL-05's ordering).
+            ContextMenuKind::AgentEntry { session_id, .. } => {
+                if session_id.is_some() {
+                    vec!["Move to...", "Close agent"]
+                } else {
+                    vec!["Close agent"]
+                }
+            }
             ContextMenuKind::ChatMoveTarget { targets, .. } => {
                 targets.iter().map(|(_, label)| label.as_str()).collect()
             }
@@ -5012,6 +5031,7 @@ impl AppState {
                     ws_idx,
                     tab_idx,
                     pane_id,
+                    ..
                 } => {
                     // TP-AGPANEL-03: the row's target is the menu's identity —
                     // it must still name a live pane, or the close would fire
