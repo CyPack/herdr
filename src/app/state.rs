@@ -699,6 +699,16 @@ pub struct WorkspaceChatRowArea {
     pub chat_idx: usize,
 }
 
+/// One laid-out chat row of the daily section.
+///
+/// It carries an index into the daily rows and nothing else: the section has
+/// no workspace, and giving it a `ws_idx` would be inventing one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DailyChatRowArea {
+    pub rect: Rect,
+    pub chat_idx: usize,
+}
+
 /// The laid-out "… N older" / "… fewer" row of one drawer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceMoreChatsArea {
@@ -1633,6 +1643,15 @@ pub struct ViewState {
     /// The "older chats" rows, in their own vector so a press there can never
     /// resolve as the chat above it (TP-DRAW-11).
     pub workspace_more_chats_areas: Vec<WorkspaceMoreChatsArea>,
+    /// The daily section's own rows, in vectors of their own.
+    ///
+    /// TP-DAILY-03/07: the section carries no `ws_idx` at all, so folding its
+    /// rows into the workspace-indexed vectors would make every press resolve
+    /// as some other workspace's chat. The header, the chats and the "older"
+    /// switch answer three different gestures and so keep three vectors.
+    pub daily_header_area: Option<Rect>,
+    pub daily_chat_row_areas: Vec<DailyChatRowArea>,
+    pub daily_more_area: Option<Rect>,
     /// Worktree-group header rows, kept apart for the same reason: a header is
     /// not a workspace, so it must never be resolvable through a ws_idx.
     pub workspace_group_header_areas: Vec<WorkspaceGroupHeaderArea>,
@@ -2987,6 +3006,16 @@ client_surfaces! {
     /// one display's activations shoved another's drawers around.
     expanded_chat_workspaces: std::collections::HashSet<String>,
     suppressed_chat_drawers: std::collections::HashSet<String>,
+    /// Whether this display folded the daily-chats section away.
+    ///
+    /// TP-DAILY-03: the same sentence as the folds above — a fold is a
+    /// statement about one screen. It lives here rather than in a shared
+    /// field so that folding the section on a laptop does not close it on the
+    /// monitor next to it.
+    daily_section_collapsed: bool,
+    /// Whether this display asked the daily section for every chat it holds
+    /// rather than the glance surface's five (TP-DAILY-04).
+    daily_section_expanded: bool,
     /// Which overlay, if any, owns this display's input.
     mode: Mode,
     /// The mode to return to when the overlay on top of it closes.
@@ -3346,6 +3375,11 @@ pub struct AppState {
     /// would bury the workspace list the tab exists for. So closed is the
     /// default and this records the exceptions.
     pub expanded_chat_workspaces: std::collections::HashSet<String>,
+    /// Whether this display folded the daily-chats section away (TP-DAILY-03).
+    pub daily_section_collapsed: bool,
+    /// Whether this display asked the daily section for every chat it holds
+    /// rather than the glance surface's five (TP-DAILY-04).
+    pub daily_section_expanded: bool,
     /// Whether this display shows only the tree it is working in: the active
     /// checkout and the ones running an agent, with the module chain above
     /// them. Per display for the same reason the folds are — focusing one
@@ -4405,6 +4439,8 @@ impl AppState {
             spaces_focus_only: false,
             fully_open_chat_drawers: std::collections::HashSet::new(),
             expanded_chat_workspaces: std::collections::HashSet::new(),
+            daily_section_collapsed: false,
+            daily_section_expanded: false,
             suppressed_chat_drawers: std::collections::HashSet::new(),
             tab_branch_cache: std::collections::HashMap::new(),
             sessions_parse_cache: Default::default(),
@@ -4439,6 +4475,9 @@ impl AppState {
                 workspace_card_areas: Vec::new(),
                 workspace_chat_row_areas: Vec::new(),
                 workspace_more_chats_areas: Vec::new(),
+                daily_header_area: None,
+                daily_chat_row_areas: Vec::new(),
+                daily_more_area: None,
                 workspace_group_header_areas: Vec::new(),
                 workspace_project_header_areas: Vec::new(),
                 workspace_empty_module_areas: Vec::new(),

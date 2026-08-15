@@ -540,6 +540,16 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
                 });
                 project_group_idx += 1;
             }
+            // The daily section is a desktop surface for now: its rows carry
+            // no workspace, and the phone drawer's targets are all
+            // workspace-shaped. Skipped deliberately rather than half-drawn —
+            // a header the phone cannot open would be a promise it does not
+            // keep. The parity pass lands with the phone's own targets (its
+            // behaviour id is reserved in `behaviors/daily-chats.md` under
+            // "not yet landed"); until then the rows simply are not there.
+            crate::ui::sidebar::WorkspaceListEntry::DailyHeader
+            | crate::ui::sidebar::WorkspaceListEntry::DailyChat { .. }
+            | crate::ui::sidebar::WorkspaceListEntry::DailyMore { .. } => {}
             crate::ui::sidebar::WorkspaceListEntry::GroupHeader { space_key } => {
                 let collapsed = app.collapsed_space_keys.contains(&space_key);
                 // Inside a project every level steps in one (TP-MOB-98).

@@ -802,11 +802,34 @@ pub(crate) enum WorkspaceListEntry {
         /// with no off position is not a switch.
         expanded: bool,
     },
+    /// The header of the daily-chats section, above the whole tree.
+    ///
+    /// TP-DAILY-02: chats started outside every checkout have no workspace to
+    /// hang under — since `effective_cwd` prefers the checkout, nothing claims
+    /// `$HOME` and those conversations were reachable from nowhere. The
+    /// section is their home, and it sits at the top because that is where a
+    /// person looks for what they were just doing.
+    ///
+    /// Like the other header rows it carries no `ws_idx`: it must never fold
+    /// into a workspace-indexed vector.
+    DailyHeader,
+    /// A chat under the daily section, indexed into `daily_chat_rows`.
+    DailyChat {
+        chat_idx: usize,
+    },
+    /// The daily section's own "… N older" switch (TP-DRAW-11's sibling).
+    DailyMore {
+        expanded: bool,
+    },
 }
 
 /// How many chats a workspace's drawer lists before folding the rest into a
 /// single "older" row. The sidebar is a glance surface, not an archive.
 pub(crate) const WORKSPACE_CHAT_ROW_LIMIT: usize = 5;
+
+/// What the daily section calls itself. One constant so the screen, the tests
+/// and the phone drawer can never disagree about the words.
+pub(crate) const DAILY_SECTION_TITLE: &str = "daily chats";
 
 impl WorkspaceListEntry {
     /// `Some(indented)` only for a workspace row.
@@ -989,6 +1012,72 @@ pub(crate) fn visible_active_chat(app: &AppState) -> Option<(usize, usize)> {
                 .is_some_and(|(w, tab)| w == ws_idx && tab == active_tab)
         })
         .map(|chat_idx| (ws_idx, chat_idx))
+}
+
+/// The chats of the daily directory — the ones no checkout claims.
+///
+/// Empty whenever there is no daily directory, nothing has been started
+/// there, or a workspace already holds that directory: in the last case the
+/// chats are that workspace's drawer, and drawing them twice would leave the
+/// reader asking which of the two is live (TP-DAILY-05).
+pub(crate) fn daily_chat_rows(app: &AppState) -> &[crate::app::state::WorkspaceChatRow] {
+    let Some(daily) = app.daily_chat_cwd.as_deref() else {
+        return &[];
+    };
+    let key = crate::persist::workspace_chats::ledger_key(daily);
+    if app
+        .workspaces
+        .iter()
+        .any(|ws| crate::persist::workspace_chats::ledger_key(ws.effective_cwd()) == key)
+    {
+        return &[];
+    }
+    app.workspace_chat_rows
+        .get(&key)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+}
+
+/// Whether the daily section draws at all on this display.
+///
+/// TP-DAILY-06: the focus switch narrows the tree to what this display is
+/// working in, and daily chats are not in any tree — so they go quiet with
+/// everything else. The exception is a daily chat that is actually running:
+/// a filter may narrow what you see, never hide where you are.
+fn daily_section_visible(app: &AppState) -> bool {
+    if daily_chat_rows(app).is_empty() {
+        return false;
+    }
+    if !app.spaces_focus_only {
+        return true;
+    }
+    daily_chat_rows(app)
+        .iter()
+        .any(|chat| app.find_resumed_chat_tab(&chat.session_id).is_some())
+}
+
+/// Append the daily section — header first, then its chats — above the tree.
+fn push_daily_section(app: &AppState, entries: &mut Vec<WorkspaceListEntry>) {
+    if !daily_section_visible(app) {
+        return;
+    }
+    entries.push(WorkspaceListEntry::DailyHeader);
+    if app.daily_section_collapsed {
+        return;
+    }
+    let chats = daily_chat_rows(app);
+    let expanded = app.daily_section_expanded;
+    let shown = if expanded {
+        chats.len()
+    } else {
+        chats.len().min(WORKSPACE_CHAT_ROW_LIMIT)
+    };
+    for chat_idx in 0..shown {
+        entries.push(WorkspaceListEntry::DailyChat { chat_idx });
+    }
+    if chats.len() > WORKSPACE_CHAT_ROW_LIMIT {
+        entries.push(WorkspaceListEntry::DailyMore { expanded });
+    }
 }
 
 /// Append a workspace's chat drawer rows, if it is open.
@@ -1266,6 +1355,10 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
     let mut emitted_groups = std::collections::HashSet::<String>::new();
     let mut emitted_nodes = std::collections::HashSet::<String>::new();
     let mut entries = Vec::new();
+    // TP-DAILY-02: above the tree, before anything the walk emits. These
+    // chats belong to no checkout, so there is no branch of the tree they
+    // could be placed under without lying about where they came from.
+    push_daily_section(app, &mut entries);
     let seeds = (0..app.workspaces.len())
         .map(Seed::Checkout)
         .chain(declared_roots.into_iter().map(Seed::DeclaredRoot));
@@ -1825,6 +1918,13 @@ fn entry_row_metrics(
         WorkspaceListEntry::GroupHeader { .. } | WorkspaceListEntry::ProjectHeader { .. } => {
             Some((1, 0))
         }
+        // TP-DAILY-02: one line each, and the section's last row carries the
+        // usual gap so the tree below starts as its own block rather than
+        // running on from the daily chats.
+        WorkspaceListEntry::DailyHeader => Some((1, 0)),
+        WorkspaceListEntry::DailyChat { .. } | WorkspaceListEntry::DailyMore { .. } => {
+            Some((1, workspace_entry_gap(app, entries, entry_idx)))
+        }
         WorkspaceListEntry::Workspace { ws_idx, indented } => {
             let workspace = app.workspaces.get(*ws_idx)?;
             Some((
@@ -2078,7 +2178,22 @@ pub(crate) type WorkspaceListAreas = (
     // The sixth carries no meaning for a press: it exists so the note gets
     // painted (TP-MOD-25).
     Vec<crate::app::state::WorkspaceEmptyModuleArea>,
+    // The daily section's rows, gathered rather than spread across three more
+    // tuple slots: they belong to one surface and are read together.
+    DailySectionAreas,
 );
+
+/// The daily section's laid-out rows.
+///
+/// TP-DAILY-03/07: three gestures — fold, open the rest, resume a chat — and
+/// so three separate targets. None of them carries a `ws_idx`, which is the
+/// whole point: the section belongs to no workspace.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct DailySectionAreas {
+    pub header: Option<Rect>,
+    pub chats: Vec<crate::app::state::DailyChatRowArea>,
+    pub more: Option<Rect>,
+}
 
 pub(crate) fn compute_workspace_list_areas(app: &AppState, area: Rect) -> WorkspaceListAreas {
     let ws_area = workspace_list_rect(area, app.sidebar_section_split, app.sidebar_chrome);
@@ -2090,6 +2205,7 @@ pub(crate) fn compute_workspace_list_areas(app: &AppState, area: Rect) -> Worksp
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            DailySectionAreas::default(),
         );
     }
 
@@ -2104,6 +2220,7 @@ pub(crate) fn compute_workspace_list_areas(app: &AppState, area: Rect) -> Worksp
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            DailySectionAreas::default(),
         );
     }
 
@@ -2116,6 +2233,7 @@ pub(crate) fn compute_workspace_list_areas(app: &AppState, area: Rect) -> Worksp
     let mut project_headers = Vec::new();
     let mut more_chats = Vec::new();
     let mut empty_modules = Vec::new();
+    let mut daily = DailySectionAreas::default();
 
     let entries = workspace_list_entries(app);
     for (entry_idx, entry) in entries.iter().enumerate().skip(scroll) {
@@ -2164,6 +2282,22 @@ pub(crate) fn compute_workspace_list_areas(app: &AppState, area: Rect) -> Worksp
                     ws_idx: *ws_idx,
                 });
             }
+            // TP-DAILY-03/07: three gestures, three vectors, no `ws_idx` in
+            // any of them — the section belongs to no workspace, and folding
+            // it into a workspace-indexed vector is how a press would land on
+            // whichever checkout happened to share the row.
+            WorkspaceListEntry::DailyHeader => {
+                daily.header = Some(rect);
+            }
+            WorkspaceListEntry::DailyChat { chat_idx } => {
+                daily.chats.push(crate::app::state::DailyChatRowArea {
+                    rect,
+                    chat_idx: *chat_idx,
+                });
+            }
+            WorkspaceListEntry::DailyMore { .. } => {
+                daily.more = Some(rect);
+            }
             // TP-MOD-25: laid out to be drawn, not to be pressed.
             WorkspaceListEntry::EmptyModule { node_key } => {
                 empty_modules.push(crate::app::state::WorkspaceEmptyModuleArea {
@@ -2188,6 +2322,7 @@ pub(crate) fn compute_workspace_list_areas(app: &AppState, area: Rect) -> Worksp
         project_headers,
         more_chats,
         empty_modules,
+        daily,
     )
 }
 
@@ -2926,6 +3061,7 @@ fn render_workspace_list(
     render_workspace_group_headers(app, frame, list_bottom);
 
     render_workspace_chat_rows(app, frame, list_bottom);
+    render_daily_section(app, frame, list_bottom);
     render_workspace_empty_module_rows(app, frame, list_bottom);
     render_workspace_more_chats_rows(app, frame, list_bottom);
 
@@ -3164,6 +3300,149 @@ fn render_workspace_more_chats_rows(app: &AppState, frame: &mut Frame, list_bott
             )),
             row.rect,
         );
+    }
+}
+
+/// The daily section's own three row kinds.
+///
+/// TP-DAILY-02/03/04: the header states what the section is and whether it is
+/// open; the chats speak the same visual language as every other chat row, so
+/// a reader learns one dialect rather than two; the switch says how many are
+/// hidden and how to get back. Drawn from the section's own area vectors, so
+/// a row here can never be painted over a workspace's.
+fn render_daily_section(app: &AppState, frame: &mut Frame, list_bottom: u16) {
+    let p = &app.palette;
+    let now = std::time::SystemTime::now();
+    let chats = daily_chat_rows(app);
+
+    if let Some(rect) = app.view.daily_header_area {
+        if rect.width > 0 && rect.y < list_bottom {
+            let arrow = if app.daily_section_collapsed {
+                DISCLOSURE_CLOSED
+            } else {
+                DISCLOSURE_OPEN
+            };
+            let icon = app.space_icons.chat.trim();
+            let icon_span = if icon.is_empty() {
+                String::new()
+            } else {
+                format!("{icon} ")
+            };
+            let label = format!("{arrow} {icon_span}{DAILY_SECTION_TITLE}");
+            frame.render_widget(
+                Paragraph::new(Span::styled(
+                    super::text::truncate_end(&label, rect.width as usize),
+                    Style::default().fg(p.text).add_modifier(Modifier::BOLD),
+                )),
+                rect,
+            );
+            // The count answers "how much is in here" while the section is
+            // folded — the one question a closed container cannot otherwise
+            // answer, and the reason a fold is safe to leave closed.
+            let count = chats.len().to_string();
+            if super::text::display_width(&count) < rect.width as usize {
+                frame.render_widget(
+                    Paragraph::new(Span::styled(count, Style::default().fg(p.overlay0)))
+                        .alignment(Alignment::Right),
+                    rect,
+                );
+            }
+        }
+    }
+
+    for row in &app.view.daily_chat_row_areas {
+        if row.rect.width == 0 || row.rect.y >= list_bottom {
+            continue;
+        }
+        let Some(chat) = chats.get(row.chat_idx) else {
+            continue;
+        };
+        let wired = app.find_resumed_chat_tab(&chat.session_id);
+        let focused = wired.is_some_and(|(ws_idx, tab_idx)| {
+            app.active == Some(ws_idx)
+                && app
+                    .workspaces
+                    .get(ws_idx)
+                    .is_some_and(|ws| ws.active_tab_index() == tab_idx)
+        });
+        let marker = if wired.is_some() { "● " } else { "  " };
+        let (title_style, marker_style) = if focused {
+            (
+                Style::default()
+                    .fg(panel_contrast_fg(p))
+                    .bg(p.accent)
+                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(panel_contrast_fg(p)).bg(p.accent),
+            )
+        } else if wired.is_some() {
+            (Style::default().fg(p.text), Style::default().fg(p.accent))
+        } else {
+            (Style::default().fg(p.overlay1), Style::default())
+        };
+        let icon = app.space_icons.chat.trim();
+        let icon_span = if icon.is_empty() {
+            String::new()
+        } else {
+            format!("{icon} ")
+        };
+        let age = chat
+            .last_modified
+            .map(|seen| format_relative_time(seen, now))
+            .unwrap_or_else(|| {
+                std::time::UNIX_EPOCH
+                    .checked_add(std::time::Duration::from_millis(chat.last_seen_ms))
+                    .map(|seen| format_relative_time(seen, now))
+                    .unwrap_or_default()
+            });
+        let age_width = super::text::display_width(&age);
+        let width = row.rect.width as usize;
+        // The section hangs off nothing, so its rows are indented by the
+        // disclosure column alone — there is no checkout above them to draw a
+        // guide down from.
+        let prefix_width =
+            usize::from(DISCLOSURE_WIDTH) + marker.len() + super::text::display_width(&icon_span);
+        let title_budget = width
+            .saturating_sub(prefix_width)
+            .saturating_sub(if age_width > 0 { age_width + 1 } else { 0 });
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::raw(" ".repeat(usize::from(DISCLOSURE_WIDTH))),
+                Span::styled(marker, marker_style),
+                Span::raw(icon_span),
+                Span::styled(
+                    super::text::truncate_end(&chat.display_label(), title_budget),
+                    title_style,
+                ),
+            ])),
+            row.rect,
+        );
+        if age_width > 0 && age_width < width {
+            frame.render_widget(
+                Paragraph::new(Span::styled(age, Style::default().fg(p.overlay0)))
+                    .alignment(Alignment::Right),
+                row.rect,
+            );
+        }
+    }
+
+    if let Some(rect) = app.view.daily_more_area {
+        if rect.width > 0 && rect.y < list_bottom {
+            let label = if app.daily_section_expanded {
+                "   … fewer".to_string()
+            } else {
+                format!(
+                    "   … {} older",
+                    chats.len().saturating_sub(WORKSPACE_CHAT_ROW_LIMIT)
+                )
+            };
+            frame.render_widget(
+                Paragraph::new(Span::styled(
+                    super::text::truncate_end(&label, rect.width as usize),
+                    Style::default().fg(p.overlay0),
+                )),
+                rect,
+            );
+        }
     }
 }
 
@@ -4454,7 +4733,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let body = workspace_list_body_rect(workspace_area, false, app.sidebar_chrome);
 
         let metrics = workspace_list_scroll_metrics(&app, workspace_area);
-        let (cards, _, _headers, _, _, _) = compute_workspace_list_areas(&app, area);
+        let (cards, _, _headers, _, _, _, _) = compute_workspace_list_areas(&app, area);
 
         assert_eq!(metrics.viewport_rows, 1);
         assert_eq!(cards.len(), 1);
@@ -5831,7 +6110,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
 
         let area = Rect::new(0, 0, 28, 16);
         app.view.sidebar_tab_hit_areas = compute_sidebar_tab_areas(area);
-        let (cards, chats, groups, projects, more, empty_modules) =
+        let (cards, chats, groups, projects, more, empty_modules, _) =
             compute_workspace_list_areas(&app, area);
         app.view.workspace_card_areas = cards;
         app.view.workspace_chat_row_areas = chats;
@@ -5893,7 +6172,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
     fn spaces_screen(app: &mut AppState, width: u16, height: u16) -> Vec<String> {
         let area = Rect::new(0, 0, width, height);
         app.view.sidebar_tab_hit_areas = compute_sidebar_tab_areas(area);
-        let (cards, chats, groups, projects, more, empty_modules) =
+        let (cards, chats, groups, projects, more, empty_modules, _) =
             compute_workspace_list_areas(app, area);
         app.view.workspace_card_areas = cards;
         app.view.workspace_chat_row_areas = chats;
@@ -6090,7 +6369,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
     fn spaces_rows(app: &mut AppState, width: u16, height: u16) -> Vec<String> {
         let area = Rect::new(0, 0, width, height);
         app.view.sidebar_tab_hit_areas = compute_sidebar_tab_areas(area);
-        let (cards, chats, groups, projects, more, empty_modules) =
+        let (cards, chats, groups, projects, more, empty_modules, _) =
             compute_workspace_list_areas(app, area);
         app.view.workspace_card_areas = cards;
         app.view.workspace_chat_row_areas = chats;
@@ -6416,8 +6695,246 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
                 WorkspaceListEntry::NoChats { .. } => "no-chats",
                 WorkspaceListEntry::EmptyModule { .. } => "empty-module",
                 WorkspaceListEntry::MoreChats { .. } => "more",
+                WorkspaceListEntry::DailyHeader => "daily-header",
+                WorkspaceListEntry::DailyChat { .. } => "daily-chat",
+                WorkspaceListEntry::DailyMore { .. } => "daily-more",
             })
             .collect()
+    }
+
+    /// An app whose daily directory holds `chat_count` chats and whose one
+    /// workspace lives somewhere else entirely — the shape the section exists
+    /// for (nothing claims `$HOME`).
+    fn app_with_daily_chats(chat_count: usize) -> (AppState, std::path::PathBuf) {
+        let mut app = crate::app::state::AppState::test_new();
+        let daily = std::env::temp_dir().join("herdr-daily-fixture");
+        let mut workspace = Workspace::test_new("elsewhere");
+        workspace.identity_cwd = std::env::temp_dir().join("herdr-daily-elsewhere");
+        app.workspaces = vec![workspace];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mobile_width_threshold = 0;
+        app.daily_chat_cwd = Some(daily.clone());
+
+        let key = crate::persist::workspace_chats::ledger_key(&daily);
+        let rows = (0..chat_count)
+            .map(|idx| crate::app::state::WorkspaceChatRow {
+                session_id: format!("daily-session-{idx}"),
+                agent: "claude".to_string(),
+                title: Some(format!("daily chat {idx}")),
+                last_seen_ms: 2_000 + idx as u64,
+                last_modified: None,
+            })
+            .collect::<Vec<_>>();
+        app.workspace_chat_rows.insert(key, rows);
+        (app, daily)
+    }
+
+    // TP-DAILY-02: the section is born at the very top, above the tree —
+    // that is where a person looks for what they were just doing. A chat
+    // outside every checkout has no workspace to hang under, so if this row
+    // is not first it is nowhere.
+    #[test]
+    fn the_daily_section_is_emitted_above_the_tree() {
+        let (app, _) = app_with_daily_chats(2);
+        assert_eq!(
+            entry_kinds(&app),
+            vec!["daily-header", "daily-chat", "daily-chat", "workspace"]
+        );
+    }
+
+    // TP-DAILY-02: an empty section is never drawn. A header promising
+    // content that is not there reads as a broken surface, and this section
+    // is empty on every machine that has never started a chat outside a
+    // checkout.
+    #[test]
+    fn a_daily_section_with_no_chats_is_not_drawn_at_all() {
+        let (app, _) = app_with_daily_chats(0);
+        assert_eq!(entry_kinds(&app), vec!["workspace"]);
+
+        // Nor when there is no daily directory to read in the first place.
+        let (mut homeless, _) = app_with_daily_chats(3);
+        homeless.daily_chat_cwd = None;
+        assert_eq!(entry_kinds(&homeless), vec!["workspace"]);
+    }
+
+    // TP-DAILY-03: folding takes the whole section with it, header excepted —
+    // a half-folded section reads as damage rather than as a fold.
+    #[test]
+    fn folding_the_daily_section_takes_every_row_below_it() {
+        let (mut app, _) = app_with_daily_chats(3);
+        app.daily_section_collapsed = true;
+        assert_eq!(entry_kinds(&app), vec!["daily-header", "workspace"]);
+    }
+
+    // TP-DAILY-04: the glance contract, the same one every drawer keeps —
+    // five rows and a switch. Without the bound a machine with a thousand
+    // home transcripts buries the tree under its own history.
+    #[test]
+    fn the_daily_section_lists_five_chats_and_offers_the_rest() {
+        let (mut app, _) = app_with_daily_chats(7);
+        assert_eq!(
+            entry_kinds(&app),
+            vec![
+                "daily-header",
+                "daily-chat",
+                "daily-chat",
+                "daily-chat",
+                "daily-chat",
+                "daily-chat",
+                "daily-more",
+                "workspace"
+            ]
+        );
+        assert!(workspace_list_entries(&app)
+            .iter()
+            .any(|entry| matches!(entry, WorkspaceListEntry::DailyMore { expanded: false })));
+
+        // TP-DRAW-11's sibling: the row is the way in AND the way back, so it
+        // stays on screen once opened — a switch with no off position is not
+        // a switch.
+        app.daily_section_expanded = true;
+        let opened = entry_kinds(&app);
+        assert_eq!(
+            opened.iter().filter(|kind| **kind == "daily-chat").count(),
+            7
+        );
+        assert!(workspace_list_entries(&app)
+            .iter()
+            .any(|entry| matches!(entry, WorkspaceListEntry::DailyMore { expanded: true })));
+    }
+
+    // TP-DAILY-05: the moment a workspace claims that directory the section
+    // goes quiet — those chats are that workspace's drawer now. Drawn in both
+    // places, the reader has no way to tell which of the two is live (#45's
+    // lesson in a different surface).
+    #[test]
+    fn a_workspace_claiming_the_daily_directory_silences_the_section() {
+        let (mut app, daily) = app_with_daily_chats(3);
+        app.workspaces[0].identity_cwd = daily;
+        assert_eq!(entry_kinds(&app), vec!["workspace"]);
+    }
+
+    // TP-DAILY-02/03: the section says what it is, whether it is open, and
+    // how much it holds — the last one is the question a folded container
+    // cannot otherwise answer, and the reason a fold is safe to leave closed.
+    // Its chats speak the same visual dialect as every other chat row.
+    #[test]
+    fn the_daily_section_draws_a_header_its_count_and_its_chats() {
+        let (mut app, _) = app_with_daily_chats(2);
+        let area = Rect::new(0, 0, 30, 20);
+        app.view.sidebar_rect = area;
+        let (cards, chats, groups, projects, more, empty, daily) =
+            compute_workspace_list_areas(&app, area);
+        app.view.workspace_card_areas = cards;
+        app.view.workspace_chat_row_areas = chats;
+        app.view.workspace_group_header_areas = groups;
+        app.view.workspace_project_header_areas = projects;
+        app.view.workspace_more_chats_areas = more;
+        app.view.workspace_empty_module_areas = empty;
+        app.view.daily_header_area = daily.header;
+        app.view.daily_chat_row_areas = daily.chats;
+        app.view.daily_more_area = daily.more;
+
+        let header_rect = app.view.daily_header_area.expect("the section is drawn");
+        assert_eq!(
+            app.view.daily_chat_row_areas.len(),
+            2,
+            "both chats are laid out"
+        );
+
+        let mut terminal = Terminal::new(TestBackend::new(30, 20)).unwrap();
+        terminal
+            .draw(|frame| render_sidebar(&app, &TerminalRuntimeRegistry::new(), frame, area))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+
+        let header = row_text(buffer, header_rect.y, header_rect.width);
+        assert!(header.contains(DAILY_SECTION_TITLE), "header: {header:?}");
+        assert!(header.contains(DISCLOSURE_OPEN), "open arrow: {header:?}");
+        assert!(header.trim_end().ends_with('2'), "count: {header:?}");
+
+        let first = row_text(
+            buffer,
+            app.view.daily_chat_row_areas[0].rect.y,
+            header_rect.width,
+        );
+        assert!(first.contains("daily chat 0"), "chat row: {first:?}");
+
+        // Folded, the header stays and states the same count — and the rows
+        // below it are gone from the layout, not merely unpainted.
+        app.daily_section_collapsed = true;
+        let (_, _, _, _, _, _, folded) = compute_workspace_list_areas(&app, area);
+        assert!(folded.header.is_some());
+        assert!(folded.chats.is_empty(), "a fold takes the rows with it");
+    }
+
+    // TP-DAILY-03/07: the section's rows keep vectors of their own. Folded
+    // into the workspace-indexed ones, every press here would resolve as some
+    // other checkout's chat — the failure TP-DRAW-11 pinned for the "older"
+    // row, one surface over.
+    #[test]
+    fn daily_rows_stay_out_of_the_workspace_indexed_vectors() {
+        let (mut app, _) = app_with_daily_chats(7);
+        app.daily_section_expanded = true;
+        // Tall enough that both the opened section and the tree below it are
+        // laid out: an opened section CAN push the tree past the viewport,
+        // which the list's own scroll answers — but that is a different
+        // question from the one this test asks.
+        let area = Rect::new(0, 0, 30, 40);
+        let (cards, chats, _, _, more, _, daily) = compute_workspace_list_areas(&app, area);
+
+        assert_eq!(daily.chats.len(), 7);
+        assert!(daily.more.is_some(), "the switch is laid out");
+        assert!(
+            chats.is_empty() && more.is_empty(),
+            "no daily row leaked into the workspace vectors"
+        );
+        assert_eq!(cards.len(), 1, "the tree still lays out its own checkout");
+
+        // Every daily rect is distinct from every workspace rect: two rows
+        // sharing a rect is a click landing on the wrong one.
+        for row in &daily.chats {
+            assert!(
+                !cards.iter().any(|card| card.rect == row.rect),
+                "daily rect collided with a workspace card"
+            );
+        }
+    }
+
+    // A sidebar can be dragged narrow; a section that panics or overflows
+    // there takes the whole frame with it.
+    #[test]
+    fn a_narrow_sidebar_still_draws_the_daily_section() {
+        let (mut app, _) = app_with_daily_chats(3);
+        let area = Rect::new(0, 0, 8, 10);
+        app.view.sidebar_rect = area;
+        let (_, _, _, _, _, _, daily) = compute_workspace_list_areas(&app, area);
+        app.view.daily_header_area = daily.header;
+        app.view.daily_chat_row_areas = daily.chats;
+        app.view.daily_more_area = daily.more;
+
+        let mut terminal = Terminal::new(TestBackend::new(8, 10)).unwrap();
+        terminal
+            .draw(|frame| render_sidebar(&app, &TerminalRuntimeRegistry::new(), frame, area))
+            .unwrap();
+    }
+
+    // TP-DAILY-06: focus narrows the tree to what this display is working in,
+    // and daily chats are in no tree — so they go quiet with everything else.
+    // The exception is a daily chat that is actually running: a filter may
+    // narrow what you see, never hide where you are.
+    #[test]
+    fn focus_hides_the_daily_section_unless_one_of_its_chats_is_running() {
+        let (mut app, _) = app_with_daily_chats(2);
+        app.spaces_focus_only = true;
+        assert!(!entry_kinds(&app).contains(&"daily-header"));
+
+        app.workspaces[0].tabs[0].resumed_session_id = Some("daily-session-1".into());
+        assert!(
+            entry_kinds(&app).contains(&"daily-header"),
+            "a running daily chat keeps its section visible under focus"
+        );
     }
 
     // TP-WSCHAT-15: the drawer is closed until asked for. With a dozen-plus
@@ -6470,7 +6987,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let area = Rect::new(0, 0, 30, 24);
 
         let entries = workspace_list_entries(&app);
-        let (cards, chat_rows, _headers, _, _, _) = compute_workspace_list_areas(&app, area);
+        let (cards, chat_rows, _headers, _, _, _, _) = compute_workspace_list_areas(&app, area);
 
         assert_eq!(entries.len(), 3, "one workspace plus its two chats");
         assert_eq!(cards.len(), 1);
@@ -6495,7 +7012,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let (mut app, key) = app_with_chat_drawer(3);
         app.expanded_chat_workspaces.insert(key);
 
-        let (cards, chat_rows, _headers, _, _, _) =
+        let (cards, chat_rows, _headers, _, _, _, _) =
             compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 24));
 
         assert_eq!(cards.len(), 1, "only real workspaces become cards");
@@ -8807,7 +9324,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         app.sidebar_spaces.rows = vec![vec![crate::config::SpaceSidebarToken::Workspace]];
 
         let area = Rect::new(0, 0, 30, 20);
-        let (cards, _, group_headers, _, _, _) = compute_workspace_list_areas(&app, area);
+        let (cards, _, group_headers, _, _, _, _) = compute_workspace_list_areas(&app, area);
         let drawn_rows: u16 = cards.iter().map(|card| card.rect.height).sum::<u16>()
             + group_headers
                 .iter()
@@ -8864,7 +9381,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         ];
         app.sidebar_spaces.row_gap = 1;
 
-        let (cards, chat_rows, group_headers, _, _, _) =
+        let (cards, chat_rows, group_headers, _, _, _, _) =
             compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 20));
 
         assert!(chat_rows.is_empty());
@@ -8900,7 +9417,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         app.sidebar_spaces.rows = vec![vec![crate::config::SpaceSidebarToken::Workspace]];
         app.sidebar_spaces.row_gap = 2;
 
-        let (spacious, _, _headers, _, _, _) =
+        let (spacious, _, _headers, _, _, _, _) =
             compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 30));
         // TP-TREE-06: the three checkouts of one repository are one block and
         // stay compact; the gap falls where the next top-level unit begins.
@@ -8923,7 +9440,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         assert_eq!(spacious_metrics.max_offset_from_bottom, 3);
 
         app.sidebar_spaces.row_gap = 0;
-        let (packed, _, _headers, _, _, _) =
+        let (packed, _, _headers, _, _, _, _) =
             compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 30));
         assert!(packed
             .windows(2)
@@ -9018,7 +9535,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let area = Rect::new(0, 0, 30, 20);
         app.workspace_scroll = normalized_workspace_scroll(&app, area, 2);
 
-        let (cards, headers, _headers, _, _, _) = compute_workspace_list_areas(&app, area);
+        let (cards, headers, _headers, _, _, _, _) = compute_workspace_list_areas(&app, area);
 
         assert!(headers.is_empty());
         assert_eq!(app.workspace_scroll, 0);
@@ -9065,7 +9582,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         app.mode = Mode::Terminal;
         app.workspace_scroll = 1;
 
-        let (cards, headers, _headers, _, _, _) =
+        let (cards, headers, _headers, _, _, _, _) =
             compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 12));
 
         assert!(headers.is_empty());
