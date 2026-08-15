@@ -2007,6 +2007,17 @@ impl AppState {
     /// map key — but a reader that does can ask
     /// [`crate::persist::workspace_chats::is_module_key`] rather than guess
     /// from the shape of the string.
+    /// Record where a chat was just filed, so the next picker opens on it.
+    ///
+    /// TP-CHAT-MOVE-09: newest first, no duplicates, and short. A history that
+    /// remembers everything is a second list to read rather than a shortcut.
+    pub(crate) fn remember_move_target(&mut self, key: &str) {
+        const REMEMBERED: usize = 3;
+        self.recent_move_targets.retain(|seen| seen != key);
+        self.recent_move_targets.insert(0, key.to_string());
+        self.recent_move_targets.truncate(REMEMBERED);
+    }
+
     /// `exclude_ws_idx` is the drawer the chat is shown in, when it is shown in
     /// one at all. A daily chat belongs to no workspace (TP-CHAT-MOVE-08), so
     /// it passes `None` and every workspace stays on offer — excluding an
@@ -2054,6 +2065,19 @@ impl AppState {
                 label,
             ))
         }));
+
+        // TP-CHAT-MOVE-09: the places this hand filed something into recently
+        // come first, in the order they were used. Everything else keeps the
+        // order it had — workspaces as the tree lists them, then containers.
+        if !self.recent_move_targets.is_empty() {
+            let rank = |key: &str| {
+                self.recent_move_targets
+                    .iter()
+                    .position(|seen| seen == key)
+                    .unwrap_or(usize::MAX)
+            };
+            entries.sort_by_key(|(key, _)| rank(key));
+        }
 
         entries
     }
@@ -4629,6 +4653,63 @@ mod tests {
                 .iter()
                 .any(|(key, _)| key == "module:docs"),
             "a container with nowhere on disk is still somewhere to put a chat"
+        );
+    }
+
+    // TP-CHAT-MOVE-09 (Q1+Q3): the place you just filed something into comes
+    // first next time, and appears once. The feature was asked for as "a few
+    // clicks" because the work develops spontaneously; a picker that lists
+    // every workspace and module in tree order answers that badly.
+    #[test]
+    fn the_place_a_chat_was_just_filed_into_comes_first_next_time() {
+        let mut app = app_with_a_directoryless_module();
+        let module = crate::persist::workspace_chats::module_ledger_key("docs");
+
+        app.remember_move_target(&module);
+        let first = app
+            .chat_move_target_entries(None)
+            .first()
+            .map(|(key, _)| key.clone())
+            .expect("the picker has entries");
+        assert_eq!(
+            first, module,
+            "the most recently used destination opens the list"
+        );
+
+        // Q3: using it twice does not list it twice.
+        app.remember_move_target(&module);
+        assert_eq!(
+            app.recent_move_targets.len(),
+            1,
+            "a destination is remembered once, however often it is used"
+        );
+        assert_eq!(
+            app.chat_move_target_entries(None)
+                .iter()
+                .filter(|(key, _)| *key == module)
+                .count(),
+            1,
+            "and it appears once in the picker"
+        );
+    }
+
+    // TP-CHAT-MOVE-09 (Q2): with no history the order is the one the tree
+    // gives. A convenience that changes what a person sees before they have
+    // used it is not a convenience.
+    #[test]
+    fn with_no_history_the_picker_keeps_the_order_the_tree_gives() {
+        let app = app_with_a_directoryless_module();
+        assert!(app.recent_move_targets.is_empty(), "precondition");
+        let keys: Vec<String> = app
+            .chat_move_target_entries(None)
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect();
+        let module = crate::persist::workspace_chats::module_ledger_key("docs");
+        assert_eq!(
+            keys.last(),
+            Some(&module),
+            "containers still follow the workspaces when nothing has been filed yet"
         );
     }
 

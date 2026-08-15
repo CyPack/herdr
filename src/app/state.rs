@@ -3337,6 +3337,15 @@ pub struct AppState {
     /// state layer needs it to build the chat menu; the ledger itself lives
     /// on the App and is the only writer.
     pub chat_move_overrides: std::collections::BTreeMap<String, String>,
+    /// Ledger keys this display filed a chat into, most recent first.
+    ///
+    /// TP-CHAT-MOVE-09: the request that started this feature said it should
+    /// take "a few clicks" because the work develops spontaneously. A list
+    /// that grows with every workspace and module answers that badly — the
+    /// place you filed something into a minute ago is overwhelmingly the place
+    /// you mean next. Client-local and not persisted: it is a convenience of
+    /// this session's hand, not a fact about the tree.
+    pub recent_move_targets: Vec<String>,
     /// A chat re-home decision waiting for the App loop, which owns the
     /// ledger: `(session_id, Some(target))` moves, `(session_id, None)`
     /// withdraws (TP-CHAT-MOVE-04).
@@ -4450,6 +4459,7 @@ impl AppState {
             pending_new_module: None,
             pending_branch_module: None,
             chat_move_overrides: Default::default(),
+            recent_move_targets: Vec::new(),
             request_chat_move: None,
             request_new_workspace_cwd: None,
             request_remove_linked_worktree: None,

@@ -1151,6 +1151,7 @@ pub(super) fn apply_context_menu_action(
             Some(_),
         ) => {
             if let Some((key, _)) = targets.get(idx) {
+                state.remember_move_target(key);
                 state.request_chat_move = Some((session_id, Some(key.clone())));
             }
             leave_modal(state);
@@ -1885,6 +1886,7 @@ impl App {
                 Some(_),
             ) => {
                 if let Some((key, _)) = targets.get(idx) {
+                    self.state.remember_move_target(key);
                     self.state.request_chat_move = Some((session_id, Some(key.clone())));
                 }
                 leave_modal(&mut self.state);
