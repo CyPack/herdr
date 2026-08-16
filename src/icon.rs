@@ -254,10 +254,14 @@ const BUILTIN_ART: &[BuiltinArt] = &[
         ],
         palette: &[("a", "mauve"), ("b", "teal")],
     },
-    // A filled dot, for the one-cell-row case: two pixel rows, four wide.
+    // A filled dot, for the one-cell-row case: two pixel rows, four wide. The
+    // two lit columns sit in the middle and both their halves are set, so the
+    // cell row paints `·██·` — one solid block with a cell of air on each side.
+    // A terminal cell is about twice as tall as it is wide, which is what makes
+    // two cells by one row read as round rather than as a bar.
     BuiltinArt {
         name: "dot",
-        rows: &["a..a", ".aa."],
+        rows: &[".aa.", ".aa."],
         palette: &[("a", "accent")],
     },
 ];
@@ -413,6 +417,60 @@ mod tests {
                 key: "ab".to_string()
             }),
             "a two-character key makes a pixel row readable two ways"
+        );
+    }
+
+    /// A bundled picture as the characters it will paint, one string per cell
+    /// row: `█` where both halves are set, `▀` upper only, `▄` lower only, `·`
+    /// transparent.
+    ///
+    /// Written as a picture because that is the only form in which a wrong
+    /// shape is obvious. Every other spelling of the same fact — a cell count,
+    /// a pixel index, a width — is a number that looks exactly as plausible
+    /// wrong as right, which is how `dot` came to draw a valley while its own
+    /// description, and the shipped guide, both called it filled.
+    fn drawn(name: &str) -> Vec<String> {
+        let (pixels, palette) = builtin(name).unwrap_or_else(|| panic!("{name} is bundled"));
+        let art = art_from_pixels(&pixels, &palette).expect("a bundled picture parses");
+        (0..art.height())
+            .map(|row| {
+                (0..art.width())
+                    .map(|column| match art.cell(column, row).unwrap_or_default() {
+                        HalfCell {
+                            upper: Some(_),
+                            lower: Some(_),
+                        } => '█',
+                        HalfCell {
+                            upper: Some(_),
+                            lower: None,
+                        } => '▀',
+                        HalfCell {
+                            upper: None,
+                            lower: Some(_),
+                        } => '▄',
+                        HalfCell {
+                            upper: None,
+                            lower: None,
+                        } => '·',
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    // TP-ART-08: a bundled picture is held to the cells it paints, not only to
+    // the size it occupies.
+    #[test]
+    fn the_bundled_pictures_draw_the_shapes_their_descriptions_promise() {
+        assert_eq!(
+            drawn("dot"),
+            vec!["·██·"],
+            "a picture called `dot`, and documented as filled, has to be filled"
+        );
+        assert_eq!(
+            drawn("herd"),
+            vec!["··▀▄··▄▀··", "····██····", "··▄█▀▀█▄··"],
+            "two marks converging into a stem that opens again"
         );
     }
 
