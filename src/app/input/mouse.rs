@@ -814,6 +814,18 @@ impl AppState {
                             return None;
                         }
                     }
+                    // TP-DAILY-18: its own hit test, beside the chat switch's.
+                    // Two switches sharing one rect would each fire the other's
+                    // verb — the confusion TP-TREE-01 split rows to prevent.
+                    if let Some(rect) = self.view.daily_more_workspaces_area {
+                        if mouse.row == rect.y
+                            && mouse.column >= rect.x
+                            && mouse.column < rect.x + rect.width
+                        {
+                            self.daily_workspaces_expanded = !self.daily_workspaces_expanded;
+                            return None;
+                        }
+                    }
                     if let Some(hit) = self
                         .view
                         .daily_chat_row_areas

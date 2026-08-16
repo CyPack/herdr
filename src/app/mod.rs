@@ -915,6 +915,7 @@ impl App {
             expanded_chat_workspaces: std::collections::HashSet::new(),
             daily_section_collapsed: false,
             daily_section_expanded: false,
+            daily_workspaces_expanded: false,
             suppressed_chat_drawers: std::collections::HashSet::new(),
             tab_branch_cache: std::collections::HashMap::new(),
             sessions_parse_cache: Default::default(),
@@ -961,6 +962,7 @@ impl App {
                 daily_chat_row_areas: Vec::new(),
                 module_chat_row_areas: Vec::new(),
                 daily_more_area: None,
+                daily_more_workspaces_area: None,
                 workspace_group_header_areas: Vec::new(),
                 workspace_project_header_areas: Vec::new(),
                 workspace_empty_module_areas: Vec::new(),
@@ -1457,15 +1459,10 @@ impl App {
 
             if self.state.request_new_workspace {
                 self.state.request_new_workspace = false;
-                self.runtime_workspace_create(
-                    "tui.workspace.create",
-                    crate::api::schema::WorkspaceCreateParams {
-                        cwd: None,
-                        focus: true,
-                        label: None,
-                        env: Default::default(),
-                    },
-                );
+                // TP-DAILY-17: the second TUI road to "new workspace", routed
+                // through the same body as the first so the adoption rule
+                // cannot apply to one and not the other.
+                self.tui_new_workspace("tui.workspace.create");
                 needs_render = true;
             }
 
