@@ -863,6 +863,8 @@ impl App {
             detach_requested: false,
             request_new_workspace: false,
             request_merge_daily_workspaces: false,
+            request_module_git_init: None,
+            request_module_branch_workspace: None,
             request_new_tab: false,
             request_new_linked_worktree: None,
             request_open_existing_worktree: None,
@@ -1489,6 +1491,21 @@ impl App {
                         env: Default::default(),
                     },
                 );
+                needs_render = true;
+            }
+
+            // TP-MOD-38: before the worktree request below, so initialising a
+            // repository and branching from it can complete in one pass rather
+            // than making the person press the verb twice.
+            if let Some(module_key) = self.state.request_module_git_init.take() {
+                self.initialize_module_repository(&module_key);
+                needs_render = true;
+            }
+
+            // TP-MOD-37: opens the module's own repository as a workspace and
+            // arms the branch request, which the arm below then answers.
+            if let Some(module_key) = self.state.request_module_branch_workspace.take() {
+                self.open_branch_workspace_for_module(&module_key);
                 needs_render = true;
             }
 

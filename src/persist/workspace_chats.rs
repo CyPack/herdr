@@ -1104,3 +1104,60 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod move_semantics_tests {
+    use super::{apply_chat_moves, module_ledger_key};
+    use std::collections::{BTreeMap, HashMap};
+
+    fn row(session_id: &str, last_seen_ms: u64) -> crate::app::state::WorkspaceChatRow {
+        crate::app::state::WorkspaceChatRow {
+            session_id: session_id.to_string(),
+            agent: "claude".to_string(),
+            title: Some("a conversation".to_string()),
+            last_seen_ms,
+            last_modified: None,
+        }
+    }
+
+    // M1.12 / TP-CHAT-MOVE-01: a move is a MOVE. The chat leaves every drawer
+    // it was in and appears in exactly one.
+    //
+    // The user stated this as the condition of the feature — "clone olarak
+    // degil tasinacak" — and the behaviour is already correct, so this test is
+    // a lock rather than a fix: filing a chat into a module while leaving a
+    // copy behind would turn one conversation into two rows that drift apart,
+    // and the drift would only be visible long after the move.
+    #[test]
+    fn moving_a_chat_leaves_no_copy_behind() {
+        let mut rows: HashMap<String, Vec<crate::app::state::WorkspaceChatRow>> = HashMap::new();
+        rows.insert("/repo/a".to_string(), vec![row("s1", 10), row("other", 5)]);
+        rows.insert("/repo/b".to_string(), vec![row("s1", 3)]);
+
+        let mut moves = BTreeMap::new();
+        moves.insert("s1".to_string(), module_ledger_key("docs"));
+        apply_chat_moves(&mut rows, &moves);
+
+        let occurrences: usize = rows
+            .values()
+            .flatten()
+            .filter(|entry| entry.session_id == "s1")
+            .count();
+        assert_eq!(occurrences, 1, "one conversation, one row");
+        assert!(
+            rows.get(&module_ledger_key("docs"))
+                .is_some_and(|list| list.iter().any(|entry| entry.session_id == "s1")),
+            "and it is in the module it was filed into"
+        );
+        assert!(
+            rows.get("/repo/a")
+                .is_some_and(|list| list.iter().all(|entry| entry.session_id != "s1")),
+            "the drawer it came from no longer shows it"
+        );
+        assert!(
+            rows.get("/repo/a")
+                .is_some_and(|list| list.iter().any(|entry| entry.session_id == "other")),
+            "and its neighbours are untouched"
+        );
+    }
+}

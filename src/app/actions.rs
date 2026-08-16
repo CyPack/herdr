@@ -2192,6 +2192,103 @@ impl AppState {
             .and_then(|row| row.title.clone())
     }
 
+    /// The directory a module stands in — whatever kind of module it is.
+    ///
+    /// TP-MOD-36: the tree calls three different things a module, and to the
+    /// person using it they ARE all modules (TP-DOTS-01/10): a `[[spaces.node]]`
+    /// container, a `[[spaces.project]]` (which is a node, TP-NODE-02), and a
+    /// `[[spaces.split]]` bucket. Only the first two can carry a `dir`; a bucket
+    /// carries a `repo_root` instead, and that is just as much a directory the
+    /// person wrote down.
+    ///
+    /// Measured on the reporting machine: of 24 modules, **20 are buckets**. A
+    /// definition that answered only for nodes would answer "no directory" for
+    /// five sixths of that tree, so every feature built on it would be dead
+    /// where it was asked for.
+    ///
+    /// `None` when nothing was stated. Refusing beats guessing: #46 measured
+    /// where guessed directories land, and TP-CHAT-MOVE-07 drew this boundary
+    /// for exactly that reason. Nothing here consults the filesystem or climbs
+    /// to a parent repository — see `module_branch_source` for why that matters.
+    pub(crate) fn module_directory_for_key(&self, key: &str) -> Option<std::path::PathBuf> {
+        if let Some(dir) = self
+            .space_nodes
+            .iter()
+            .find(|node| node.key == key)
+            .and_then(|node| node.dir.clone())
+        {
+            return Some(dir);
+        }
+        self.space_split_rules
+            .iter()
+            .find(|rule| rule.key == key)
+            .map(|rule| rule.repo_root.clone())
+    }
+
+    /// Every module a chat can be filed into, as `(ledger key, label)`.
+    ///
+    /// TP-CHAT-MOVE-11: split out from `chat_move_target_entries` rather than
+    /// mixed into it. On the reporting machine one combined list would be about
+    /// thirty checkouts and twenty-four modules deep, and finding a module in
+    /// it is the needle in the haystack the report described. Two verbs, two
+    /// lists.
+    ///
+    /// Buckets are included for the reason `module_directory_for_key` reads
+    /// them: they are most of what this person calls a module. The ledger side
+    /// needs nothing new — `module_ledger_key` mints an identity and never asks
+    /// what kind of module minted it (TP-CHAT-MOVE-05).
+    ///
+    /// Modules with a known directory come first. A chat filed into a module
+    /// with no directory cannot be reopened at all (TP-CHAT-MOVE-07/10), so
+    /// offering one of those before a destination that works would be pointing
+    /// at the dead end first.
+    pub(crate) fn module_move_target_entries(&self) -> Vec<(String, String)> {
+        let mut entries: Vec<(String, String, bool)> = Vec::new();
+
+        for node in &self.space_nodes {
+            if node.key.is_empty() {
+                continue;
+            }
+            let label = if node.name.trim().is_empty() {
+                node.key.clone()
+            } else {
+                node.name.clone()
+            };
+            let has_dir = self.module_directory_for_key(&node.key).is_some();
+            entries.push((
+                crate::persist::workspace_chats::module_ledger_key(&node.key),
+                label,
+                has_dir,
+            ));
+        }
+
+        for rule in &self.space_split_rules {
+            if rule.key.is_empty() {
+                continue;
+            }
+            let key = crate::persist::workspace_chats::module_ledger_key(&rule.key);
+            // A bucket key can repeat across rules — the same module is allowed
+            // to claim several branch patterns, and the reporting config does
+            // exactly that for `herdr:web`. One row per module, not per rule.
+            if entries.iter().any(|(existing, _, _)| *existing == key) {
+                continue;
+            }
+            let label = if rule.label.trim().is_empty() {
+                rule.key.clone()
+            } else {
+                rule.label.clone()
+            };
+            let has_dir = self.module_directory_for_key(&rule.key).is_some();
+            entries.push((key, label, has_dir));
+        }
+
+        entries.sort_by_key(|(_, _, has_dir)| !*has_dir);
+        entries
+            .into_iter()
+            .map(|(key, label, _)| (key, label))
+            .collect()
+    }
+
     /// `exclude_ws_idx` is the drawer the chat is shown in, when it is shown in
     /// one at all. A daily chat belongs to no workspace (TP-CHAT-MOVE-08), so
     /// it passes `None` and every workspace stays on offer — excluding an
