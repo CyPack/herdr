@@ -699,6 +699,28 @@ A section is three independent choices, and every combination is allowed:
 
 The three are asked separately on purpose: adding a widget never changes how wide a section is, and adding an action never changes what it draws. A picture that opens a popup is an icon widget plus a popup action, not a fourth kind of thing.
 
+### Asking Herdr what a section can be
+
+The table above is this page's copy of the grammar. Herdr will also tell you its own:
+
+```bash
+herdr shell spec           # the kinds, keys and a working example of each
+herdr shell spec --json    # the same thing, for a program
+```
+
+It needs no server and no session, so it answers before anything is running. Every name it prints comes from the same table the parser dispatches on, and every example it prints is run through the real parser on each build — so an example it hands you is a config this build accepts, not one that used to work.
+
+The JSON form is meant for agents writing config. Alongside each kind it carries the keys that kind reads and the keys it **refuses**, which is the half of a grammar you cannot otherwise learn without being turned down first:
+
+```json
+{ "kind": "plugin",
+  "keys": ["command"],
+  "refuses": ["argv", "width", "height", "secondary"],
+  "example": "…" }
+```
+
+Metrics are listed twice on purpose: `names` is what to write, and `aliases` records that `ram` also works and means the same as `mem`.
+
 ### Recipes
 
 Each of these is a complete fragment. After editing, `herdr config check` reports anything Herdr would refuse, and `herdr server reload-config` applies it without restarting panes.

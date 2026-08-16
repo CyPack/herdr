@@ -692,7 +692,8 @@ impl std::fmt::Display for BarConfigProblem {
             Self::UnknownIconArt { edge, index, name } => write!(
                 formatter,
                 "shell.bars.{edge}.sections[{index}].widget.art is \"{name}\", which this build \
-                 does not bundle, so this section shows nothing"
+                 does not bundle; expected {offered}, so this section shows nothing",
+                offered = accepted_names(&crate::icon::builtin_names())
             ),
             Self::UnreadableIconArt {
                 edge,
@@ -896,6 +897,22 @@ fn section_policies(
 /// mentions — stops being expressible.
 struct SectionKind<T> {
     name: &'static str,
+    /// The keys this kind reads.
+    ///
+    /// Written here rather than beside the builder so that adding a key nobody
+    /// lists is a diff somebody has to look at.
+    keys: &'static [&'static str],
+    /// The keys this kind refuses to be handed.
+    ///
+    /// A refusal is as much a part of the grammar as an acceptance, and it is
+    /// the half a reader has no way to discover except by being turned down.
+    refuses: &'static [&'static str],
+    /// A whole config this build accepts, showing the kind in use.
+    ///
+    /// Standalone on purpose: it is published verbatim by `herdr shell spec`, so
+    /// the gate that checks it can parse exactly the bytes a reader receives
+    /// rather than a reconstruction assembled in a test.
+    example: &'static str,
     build: fn(SectionAt<'_>) -> Result<T, BarConfigProblem>,
 }
 
@@ -942,20 +959,80 @@ impl<T> SectionKind<T> {
     fn find(table: &'static [Self], name: &str) -> Option<&'static Self> {
         table.iter().find(|entry| entry.name == name)
     }
+
+    /// The table with its builders left behind.
+    fn facts(table: &'static [Self]) -> Vec<KindFacts> {
+        table
+            .iter()
+            .map(|entry| KindFacts {
+                name: entry.name,
+                keys: entry.keys,
+                refuses: entry.refuses,
+                example: entry.example,
+            })
+            .collect()
+    }
+}
+
+/// One accepted name, described rather than built.
+///
+/// The tables themselves cannot cross a module boundary: each is typed by what
+/// its builders make, and no two of them make the same thing. What a reader
+/// needs is the half that is the same everywhere, so that is what leaves.
+pub(crate) struct KindFacts {
+    pub name: &'static str,
+    pub keys: &'static [&'static str],
+    pub refuses: &'static [&'static str],
+    pub example: &'static str,
+}
+
+/// The ways a section can ask for space.
+pub(crate) fn sizing_kind_facts() -> Vec<KindFacts> {
+    SectionKind::facts(SIZING_KINDS)
+}
+
+/// The things a section can show.
+pub(crate) fn widget_kind_facts() -> Vec<KindFacts> {
+    SectionKind::facts(WIDGET_KINDS)
+}
+
+/// The things a press can do.
+pub(crate) fn action_kind_facts() -> Vec<KindFacts> {
+    SectionKind::facts(ACTION_KINDS)
+}
+
+/// The presentations a second gesture can ask for.
+pub(crate) fn secondary_presentation_names() -> Vec<&'static str> {
+    SECONDARY_PRESENTATIONS
+        .iter()
+        .map(|(name, _)| *name)
+        .collect()
 }
 
 /// The three ways a section can ask for space.
 const SIZING_KINDS: &[SectionKind<TrackPolicy>] = &[
     SectionKind {
         name: "fixed",
+        keys: &["cells"],
+        refuses: &[],
+        example: "[shell.bars.top]\nenabled = true\n\n\
+                  [[shell.bars.top.sections]]\nkind = \"fixed\"\ncells = 12\n",
         build: fixed_policy,
     },
     SectionKind {
         name: "fill",
+        keys: &["weight"],
+        refuses: &[],
+        example: "[shell.bars.top]\nenabled = true\n\n\
+                  [[shell.bars.top.sections]]\nkind = \"fill\"\nweight = 2\n",
         build: fill_policy,
     },
     SectionKind {
         name: "content",
+        keys: &["min", "max"],
+        refuses: &[],
+        example: "[shell.bars.top]\nenabled = true\n\n\
+                  [[shell.bars.top.sections]]\nkind = \"content\"\nmin = 4\nmax = 24\n",
         build: content_policy,
     },
 ];
@@ -1375,18 +1452,40 @@ fn section_widget(
 const WIDGET_KINDS: &[SectionKind<SectionWidget>] = &[
     SectionKind {
         name: "label",
+        keys: &["text"],
+        refuses: &[],
+        example: "[shell.bars.top]\nenabled = true\n\n\
+                  [[shell.bars.top.sections]]\nkind = \"content\"\n\
+                  widget = { kind = \"label\", text = \"herdr\" }\n",
         build: label_widget,
     },
     SectionKind {
         name: "resource",
+        keys: &["metric"],
+        refuses: &[],
+        example: "[shell.bars.top]\nenabled = true\n\n\
+                  [[shell.bars.top.sections]]\nkind = \"content\"\n\
+                  widget = { kind = \"resource\", metric = \"cpu\" }\n",
         build: resource_widget,
     },
     SectionKind {
         name: "icon",
+        // Exactly one picture, and `text` only so a switched-off glyph still has
+        // something to say.
+        keys: &["glyph", "art", "pixels", "text"],
+        refuses: &[],
+        example: "[shell.bars.top]\nenabled = true\n\n\
+                  [[shell.bars.top.sections]]\nkind = \"content\"\n\
+                  widget = { kind = \"icon\", art = \"herd\" }\n",
         build: section_icon,
     },
     SectionKind {
         name: "meter",
+        keys: &["metric"],
+        refuses: &[],
+        example: "[shell.bars.top]\nenabled = true\n\n\
+                  [[shell.bars.top.sections]]\nkind = \"content\"\n\
+                  widget = { kind = \"meter\", metric = \"mem\" }\n",
         build: meter_widget,
     },
 ];
@@ -1562,10 +1661,26 @@ fn no_action(
 const ACTION_KINDS: &[SectionKind<SectionAction>] = &[
     SectionKind {
         name: "popup",
+        keys: &["argv", "width", "height", "secondary"],
+        // A popup runs what the file says; a plugin id here would be read by
+        // nothing.
+        refuses: &["command"],
+        example: "[shell.bars.top]\nenabled = true\n\n\
+                  [[shell.bars.top.sections]]\nkind = \"content\"\n\
+                  widget = { kind = \"label\", text = \"status\" }\n\
+                  action = { kind = \"popup\", argv = [\"herdr\", \"status\"] }\n",
         build: popup_action,
     },
     SectionKind {
         name: "plugin",
+        keys: &["command"],
+        // Command line, geometry and the second gesture all come from the
+        // plugin's manifest, so every one of these is a setting nothing reads.
+        refuses: &["argv", "width", "height", "secondary"],
+        example: "[shell.bars.top]\nenabled = true\n\n\
+                  [[shell.bars.top.sections]]\nkind = \"content\"\n\
+                  widget = { kind = \"label\", text = \"files\" }\n\
+                  action = { kind = \"plugin\", command = \"files.open\" }\n",
         build: plugin_action,
     },
 ];
@@ -2467,28 +2582,43 @@ mod tests {
         );
     }
 
-    // TP-CHROME-104: the icon catalogue is the one closed set that refuses without
-    // saying what it holds.
+    // TP-CHROME-104: the icon catalogue says what it bundles, like the other five.
     //
-    // Characterised as it stands rather than defended. Five surfaces tell a person what
-    // may be written and this one does not, which is a gap worth closing on purpose.
-    // When it is closed this test turns red, and that is the point: the change should
-    // arrive as a decision with its docs rather than as a side effect.
+    // It was once the exception. A `match` can be asked whether it knows a name but
+    // never asked what names it knows, so this refusal turned a config down and left
+    // the reader with nowhere to look — the one closed set in the grammar that kept
+    // its contents to itself. The earlier version of this test pinned that gap and
+    // said closing it would turn the test red on purpose; the table in `crate::icon`
+    // closed it, and this is the same row now pinning the other direction.
     #[test]
-    fn the_icon_catalogue_refuses_without_saying_what_it_bundles() {
-        let mut section = plain_section("fill");
-        section.widget.kind = "icon".to_string();
-        section.widget.art = "hrd".to_string();
-        let message = message_naming(section, "widget.art is \"hrd\"");
+    fn the_icon_catalogue_names_what_it_bundles() {
+        let art_section = |name: &str| {
+            let mut section = plain_section("fill");
+            section.widget.kind = "icon".to_string();
+            section.widget.art = name.to_string();
+            section
+        };
+        let message = message_naming(art_section("hrd"), "widget.art is \"hrd\"");
 
         assert!(
             message.contains("does not bundle"),
             "the icon refusal changed shape: {message}"
         );
+
+        // The same contract the other five surfaces carry: every name a message
+        // offers is a name its surface takes. A picture still has to fit the
+        // section it is put in, so what is checked is that the name itself was
+        // recognised rather than that nothing at all is reported.
+        assert_every_listed_name_is_accepted(
+            &message,
+            1,
+            |name| format!("widget.art is \"{name}\""),
+            art_section,
+        );
+
         assert!(
-            expected_names(&message).is_empty(),
-            "the icon catalogue started listing what it bundles; if that is deliberate, \
-             update this test and the guide together: {message}"
+            !expected_names(&message).iter().any(|name| name == "hrd"),
+            "an unknown picture leaked into the accepted list: {message}"
         );
     }
 
@@ -2639,36 +2769,65 @@ mod tests {
     /// Both directions matter and they fail differently: a kind the guide never
     /// mentions is a feature nobody can find, and a kind the guide invents is a
     /// config an agent will write and Herdr will refuse.
-    // TODO(L1): read these from the shared kind table once it exists, so this
-    // list stops being a second place the kinds are written down.
+    ///
+    /// Every list below is read from the table that also carries the code
+    /// building each name. It used to be typed out here, which made this test
+    /// the second place the kinds were written down and left it able to agree
+    /// with a guide that both had fallen behind. Adding a kind now fails this
+    /// test until the guide learns it, without anybody having to remember that
+    /// this file exists.
     #[test]
     fn the_guide_shows_every_widget_and_action_kind() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("docs/next/website/src/content/docs/configuration.mdx");
-        let guide = std::fs::read_to_string(&path).expect("the configuration guide is readable");
+        let raw = std::fs::read_to_string(&path).expect("the configuration guide is readable");
+        // The guide aligns its assignments, so a section kind is written
+        // `kind  = "fixed"` with the spaces padded out. Runs of blanks are
+        // collapsed here rather than matched exactly: a gate that reports a
+        // documented kind as missing because of the width of a space sends
+        // somebody to edit a guide that was already right, and a gate nobody
+        // believes is worse than no gate. Newlines are left alone so nothing
+        // matches across two lines that never sat together.
+        let guide = raw
+            .split('\n')
+            .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
+            .collect::<Vec<_>>()
+            .join("\n");
 
         // TP-CHROME-95: the guide shows every kind there is and invents none.
         // A kind it never mentions is a feature nobody can find; a kind it
         // invents is a config an agent writes and Herdr refuses.
-        for kind in ["label", "resource", "meter", "icon"] {
-            assert!(
-                guide.contains(&format!("kind = \"{kind}\"")),
-                "the guide never shows widget kind {kind:?}"
-            );
+        for (surface, kinds) in [
+            ("sizing", SectionKind::offered(SIZING_KINDS)),
+            ("widget", SectionKind::offered(WIDGET_KINDS)),
+            ("action", SectionKind::offered(ACTION_KINDS)),
+        ] {
+            assert!(!kinds.is_empty(), "the {surface} table emptied out");
+            for kind in kinds {
+                assert!(
+                    guide.contains(&format!("kind = \"{kind}\"")),
+                    "the guide never shows {surface} kind {kind:?}"
+                );
+            }
         }
-        for kind in ["popup", "plugin"] {
-            assert!(
-                guide.contains(&format!("kind = \"{kind}\"")),
-                "the guide never shows action kind {kind:?}"
-            );
-        }
-        for art in ["herd", "dot"] {
+        for art in crate::icon::builtin_names() {
             assert!(
                 guide.contains(art),
                 "the guide never names the bundled art {art:?}"
             );
         }
-        for metric in ["cpu", "mem", "ram", "swap"] {
+        // Aliases as well as names: `ram` works, and a guide that omits it
+        // leaves the one spelling a refusal will never teach undocumented
+        // anywhere at all.
+        for metric in crate::resource::ResourceMetric::ACCEPTED
+            .iter()
+            .copied()
+            .chain(
+                crate::resource::ResourceMetric::ALIASES
+                    .iter()
+                    .map(|(alias, _)| *alias),
+            )
+        {
             assert!(
                 guide.contains(metric),
                 "the guide never names the metric {metric:?}"

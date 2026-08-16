@@ -33,6 +33,7 @@ pub(super) fn command() -> Command {
         .subcommand(server_command())
         .subcommand(api_command())
         .subcommand(workspace_command())
+        .subcommand(shell_command())
         .subcommand(space_command())
         .subcommand(worktree_command())
         .subcommand(tab_command())
@@ -256,6 +257,16 @@ fn space_command() -> Command {
                 ),
         )
         .subcommand(Command::new("list").about("List space rules and projects with their source"))
+}
+
+fn shell_command() -> Command {
+    Command::new("shell")
+        .about("Inspect the shell surface")
+        .subcommand(
+            Command::new("spec")
+                .about("Print the bar grammar: kinds, keys and working examples")
+                .arg(json_flag()),
+        )
 }
 
 fn worktree_command() -> Command {
