@@ -3913,6 +3913,10 @@ pub struct AppState {
     pub(crate) pane_graphics_revision: u64,
     /// Session-modal terminal popup. This is intentionally outside workspace layouts.
     pub(crate) popup_pane: Option<PopupPaneState>,
+    /// History files of closed dormant terminals, awaiting deletion by the
+    /// scheduled-task drain. AppState stays pure data: the close path only
+    /// queues, the App layer does the file IO. TP-DORMANT-08
+    pub(crate) pending_dormant_history_removals: Vec<std::path::PathBuf>,
     /// Recent plugin action/event command executions.
     pub(crate) plugin_command_logs: Vec<crate::api::schema::PluginCommandLogInfo>,
     pub(crate) next_plugin_command_log_id: u64,
@@ -4914,6 +4918,7 @@ impl AppState {
             pane_graphics_streams: std::collections::HashMap::new(),
             pane_graphics_revision: 0,
             popup_pane: None,
+            pending_dormant_history_removals: Vec::new(),
             plugin_command_logs: Vec::new(),
             next_plugin_command_log_id: 1,
             plugin_commands_in_flight: 0,

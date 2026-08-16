@@ -4240,6 +4240,7 @@ impl HeadlessServer {
         changed |= self.app.sync_file_manager_agent_handoff_send();
         changed |= self.app.sync_agent_attachment_delivery();
         changed |= self.app.sync_pane_dormancy_sweep(now);
+        self.app.sync_dormant_history_removals();
         changed |= self.app.wake_dormant_panes_on_watched_tabs();
         // An idle server retires itself: no client, no running child, and a
         // grace period on the clock. Retired panes' scrollback goes to disk

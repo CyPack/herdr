@@ -1116,6 +1116,7 @@ impl App {
             pane_graphics_streams: std::collections::HashMap::new(),
             pane_graphics_revision: 0,
             popup_pane: None,
+            pending_dormant_history_removals: Vec::new(),
             plugin_command_logs: Vec::new(),
             next_plugin_command_log_id: 1,
             plugin_commands_in_flight: 0,
