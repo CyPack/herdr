@@ -2061,27 +2061,109 @@ fn tint_from_parts(
     }
 }
 
+/// One colour name the bar grammar knows, and what it reads from the palette.
+pub(crate) struct BarColorToken {
+    pub name: &'static str,
+    /// What this name resolves to against a live palette. A function rather
+    /// than a stored `Color` for the same reason `IconArt` keeps its specs
+    /// unresolved: the palette changes with the theme, and a colour decided
+    /// once would be the one surface that kept the old one.
+    pub read: fn(&Palette) -> Color,
+}
+
+/// The colour names a bar config may write, in the order a reader meets them.
+///
+/// A table rather than a `match`, for the third time in this grammar and for
+/// the same reason as the first two: a `match` can be asked whether it knows a
+/// name but never asked what names it knows. The section kinds became a table
+/// so a refusal could say what it would have accepted, and the bundled
+/// pictures became one so an unknown name could offer the known ones. This set
+/// had the same shape and a worse ending — an unrecognised colour is not
+/// refused at all. It falls through to `parse_color`, which warns into the log
+/// and returns cyan, so a name nobody could look up anywhere becomes a colour
+/// nobody asked for, on screen, silently.
+///
+/// `peach`/`orange` and `surface`/`dim` are spellings of one colour rather
+/// than a name and an alias. Nothing here refuses an unknown colour, so unlike
+/// the metric aliases there is no refusal message for a second spelling to
+/// contradict: both are simply names, and both are published.
+pub(crate) const BAR_COLOR_TOKENS: &[BarColorToken] = &[
+    BarColorToken {
+        name: "accent",
+        read: |palette| palette.accent,
+    },
+    BarColorToken {
+        name: "text",
+        read: |palette| palette.text,
+    },
+    BarColorToken {
+        name: "mauve",
+        read: |palette| palette.mauve,
+    },
+    BarColorToken {
+        name: "green",
+        read: |palette| palette.green,
+    },
+    BarColorToken {
+        name: "yellow",
+        read: |palette| palette.yellow,
+    },
+    BarColorToken {
+        name: "red",
+        read: |palette| palette.red,
+    },
+    BarColorToken {
+        name: "blue",
+        read: |palette| palette.blue,
+    },
+    BarColorToken {
+        name: "teal",
+        read: |palette| palette.teal,
+    },
+    BarColorToken {
+        name: "peach",
+        read: |palette| palette.peach,
+    },
+    BarColorToken {
+        name: "orange",
+        read: |palette| palette.peach,
+    },
+    BarColorToken {
+        name: "surface",
+        read: |palette| palette.surface_dim,
+    },
+    BarColorToken {
+        name: "dim",
+        read: |palette| palette.surface_dim,
+    },
+];
+
+/// The colour names this build resolves against the palette.
+pub(crate) fn bar_color_tokens() -> Vec<&'static str> {
+    BAR_COLOR_TOKENS.iter().map(|token| token.name).collect()
+}
+
 /// A palette token first, a literal colour second.
 ///
 /// Writing `accent` should follow the theme the way every other herdr surface
 /// does; writing `#fab387` should mean exactly that. An empty setting is the
 /// warm default, which is what makes an unconfigured bar look deliberate
 /// rather than like a rendering fault.
+///
+/// An unreadable colour still answers. Refusing one would mean a config that
+/// loads today and not tomorrow, and this function is called from the
+/// renderer, which has no one to refuse to.
 pub(crate) fn bar_color(spec: &str, palette: &Palette) -> Color {
-    match spec.trim().to_lowercase().as_str() {
-        "" => palette.peach,
-        "accent" => palette.accent,
-        "text" => palette.text,
-        "mauve" => palette.mauve,
-        "green" => palette.green,
-        "yellow" => palette.yellow,
-        "red" => palette.red,
-        "blue" => palette.blue,
-        "teal" => palette.teal,
-        "peach" | "orange" => palette.peach,
-        "surface" | "dim" => palette.surface_dim,
-        other => parse_color(other),
+    let name = spec.trim().to_lowercase();
+    // Empty is the warm default rather than a name: nobody writes it, and
+    // offering it as one would put a blank in the list a reader learns from.
+    if name.is_empty() {
+        return palette.peach;
     }
+    BAR_COLOR_TOKENS
+        .iter()
+        .find(|token| token.name == name)
+        .map_or_else(|| parse_color(&name), |token| (token.read)(palette))
 }
 
 /// Whether each half of the left panel wears a frame, and in what tone.
@@ -2805,40 +2887,76 @@ mod tests {
     /// produced would be two readings of one source — green, and measuring
     /// nothing. This column is typed by a person, so it can disagree, and a
     /// gate is only a gate where disagreement is possible.
-    fn documented_bundled_art() -> Vec<(String, [u16; 4])> {
-        const ANCHOR: &str = "Bundled `art` names available today:";
+    /// The data rows of the first markdown table after `anchor`, as trimmed
+    /// cells, with the first cell's backticks stripped.
+    ///
+    /// The header is dropped by finding the `|---|` rule and taking what
+    /// follows, which is markdown's own structure rather than a count. The
+    /// first attempt here dropped the header by recognising it — a first cell
+    /// that is not a backticked name — and that was wrong within one table:
+    /// the picture table's header cell is `` `art` ``, backticks and all, so
+    /// the header sailed through as data and the size parser met the word
+    /// "Size". A rule row is the one line a markdown table is guaranteed to
+    /// have and the one nobody writes by accident.
+    fn guide_table_after(anchor: &str) -> Vec<Vec<String>> {
         let section = edge_bars_section();
         let after = section
-            .split_once(ANCHOR)
-            .unwrap_or_else(|| {
-                panic!("the guide still introduces its bundled pictures with {ANCHOR:?}")
-            })
+            .split_once(anchor)
+            .unwrap_or_else(|| panic!("the guide still has the passage {anchor:?}"))
             .1;
 
-        after
+        // The table is the first run of `|` lines after the anchor, so the walk
+        // stops at the first line that is not one rather than reading on into
+        // whatever table comes next.
+        let rows = after
             .lines()
             .map(str::trim)
-            // The table is the first run of `|` lines after the anchor, so the
-            // walk stops at the first line that is not one rather than reading
-            // on into whatever table comes next.
             .skip_while(|line| !line.starts_with('|'))
             .take_while(|line| line.starts_with('|'))
-            .filter_map(|line| {
-                let columns = line
-                    .trim_matches('|')
-                    .split('|')
-                    .map(str::trim)
-                    .collect::<Vec<_>>();
-                let [name, size, ..] = columns.as_slice() else {
-                    return None;
-                };
-                let name = name.trim_matches('`');
-                // The header row and the `|---|` rule are skipped by what they
-                // are rather than by counting: a row whose first cell is not a
-                // backticked name is not a picture.
-                if name.is_empty() || name == "art" || name.starts_with('-') {
-                    return None;
+            .collect::<Vec<_>>();
+
+        let cells = |line: &str| {
+            line.trim_matches('|')
+                .split('|')
+                .map(|cell| cell.trim().to_string())
+                .collect::<Vec<_>>()
+        };
+        let rule = rows
+            .iter()
+            .position(|line| {
+                cells(line).iter().all(|cell| {
+                    !cell.is_empty() && cell.chars().all(|glyph| glyph == '-' || glyph == ':')
+                })
+            })
+            .unwrap_or_else(|| panic!("the table after {anchor:?} still has a header rule"));
+
+        rows[rule + 1..]
+            .iter()
+            .map(|line| {
+                let mut columns = cells(line);
+                if let Some(first) = columns.first_mut() {
+                    *first = first.trim_matches('`').to_string();
                 }
+                columns
+            })
+            .collect()
+    }
+
+    /// The guide's table of bundled pictures: name, then the four numbers its
+    /// `Size` column writes out.
+    ///
+    /// Hand-written on purpose, and that is the whole point. Everything else
+    /// about the catalogue is derived from `BUILTIN_ART`, so a check that reads
+    /// the catalogue and looks each name up in a guide the catalogue also
+    /// produced would be two readings of one source — green, and measuring
+    /// nothing. This column is typed by a person, so it can disagree, and a
+    /// gate is only a gate where disagreement is possible.
+    fn documented_bundled_art() -> Vec<(String, [u16; 4])> {
+        guide_table_after("Bundled `art` names available today:")
+            .into_iter()
+            .map(|columns| {
+                let name = columns[0].clone();
+                let size = columns.get(1).cloned().unwrap_or_default();
                 // Every run of digits in the Size cell, in the order it wrote
                 // them: pixels wide, pixels tall, cells wide, cell rows.
                 let numbers = size
@@ -2852,8 +2970,16 @@ mod tests {
                          as in \"10 × 6 pixels (10 cells × 3 rows)\""
                     )
                 });
-                Some((name.to_string(), numbers))
+                (name, numbers)
             })
+            .collect()
+    }
+
+    /// The colour names the guide's own table offers.
+    fn documented_bar_colours() -> Vec<String> {
+        guide_table_after("### Colours\n")
+            .into_iter()
+            .map(|columns| columns[0].clone())
             .collect()
     }
 
@@ -3021,6 +3147,41 @@ mod tests {
                 "the guide writes art {art:?}, which this build does not bundle"
             );
         }
+    }
+
+    /// The guide's colour table is the set this build resolves, exactly.
+    ///
+    /// Read from the table rather than searched for in the prose, for the same
+    /// reason the pictures are: half of these names — `text`, `red`, `blue`,
+    /// `green`, `dim` — are ordinary English in a configuration manual, so a
+    /// substring search would answer yes for a colour the guide never offered.
+    ///
+    /// Both directions. A colour this build knows and the guide omits is one
+    /// nobody can discover, because nothing refuses an unknown colour and so
+    /// no message ever names the set. A colour the guide offers and this build
+    /// does not know is worse than undocumented: it is drawn in cyan, and the
+    /// person who wrote it read it here.
+    #[test]
+    fn the_guide_offers_exactly_the_colours_this_build_resolves() {
+        // TP-CHROME-107: the guide's colour table and the resolved set are one
+        // set, in both directions.
+        let documented = documented_bar_colours();
+        assert!(
+            documented.len() >= 8,
+            "the guide's colour table stopped parsing; found {documented:?}"
+        );
+
+        let documented = documented
+            .iter()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>();
+        let known = bar_color_tokens()
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            documented, known,
+            "the guide's colour table and the colours this build resolves are different sets"
+        );
     }
 
     /// The guide's table of pictures is the catalogue, exactly, at the sizes it
@@ -4627,6 +4788,38 @@ mod tests {
         assert_eq!(bar_color("#fab387", &palette), parse_color("#fab387"));
         // Unreadable input must still answer with a colour.
         let _ = bar_color("not-a-colour-at-all", &palette);
+    }
+
+    /// Every published colour name follows the theme.
+    ///
+    /// The table carries a reader rather than a stored colour, so the way it
+    /// can still be wrong is a reader that ignores the palette it was handed —
+    /// a constant, a literal, a copied line that reads the wrong field twice.
+    /// None of those is visible in the table and all of them look right until
+    /// somebody switches theme and one part of the bar does not move.
+    ///
+    /// Two stock themes rather than a fabricated pair: if these two ever agree
+    /// on a colour this turns red, and that is worth knowing too.
+    #[test]
+    fn every_published_bar_colour_follows_the_palette() {
+        // TP-ART-07: a published colour name is read from the palette, so a
+        // theme change moves it.
+        let one = Palette::catppuccin();
+        let other = Palette::tokyo_night();
+
+        assert!(
+            bar_color_tokens().len() >= 8,
+            "the colour table thinned out: {:?}",
+            bar_color_tokens()
+        );
+        for name in bar_color_tokens() {
+            assert_ne!(
+                bar_color(name, &one),
+                bar_color(name, &other),
+                "the colour {name:?} answers the same under two themes, so it is not being \
+                 read from the palette at all"
+            );
+        }
     }
 
     fn gradient_config(stops: &[&str]) -> ShellBarConfig {

@@ -485,6 +485,29 @@ Bars are bordered unless told otherwise, so a bar thinner than three asks for `b
 
 A size outside 1–32, or a bordered bar too thin to hold a border and a row of content, is refused rather than adjusted: the bar is not drawn and the log names the edge. See `shell.bars` in the [Config reference](/docs/config-reference/) for colours and gradients.
 
+### Colours
+
+Everywhere a bar takes a colour — `color`, a `gradient` stop, or a value in a picture's `palette` — it takes one of these names, or a literal.
+
+| Name | What it is in the theme |
+|---|---|
+| `accent` | Highlights and active borders |
+| `text` | Main text |
+| `mauve` | Branch names and special labels |
+| `green` | Done and idle states |
+| `yellow` | Working and running states |
+| `red` | Needs attention, blocked |
+| `blue` | Unseen and done notification accents |
+| `teal` | Notification accents and unseen markers |
+| `peach` | Interrupted and warning states |
+| `orange` | The same colour as `peach` |
+| `surface` | The dim surface separators are drawn in |
+| `dim` | The same colour as `surface` |
+
+A name follows the theme, so switching theme recolours the bar along with everything else. A literal — `#cba6f7`, `#fa8`, or `rgb(203, 166, 247)` — means that exact colour and keeps it through a theme change. Leaving a colour unset is the warm default rather than no colour, which is what makes an unconfigured bar look deliberate instead of unfinished.
+
+Anything else is neither refused nor guessed at: it is written to the log and drawn in cyan. A bar that stopped loading over a misspelled colour would be a config that worked yesterday and not today, so the misspelling is reported where it can be read rather than where it stops the bar. `herdr shell spec` prints this list, so it is something to look up rather than to remember.
+
 ### Dividing a bar into sections
 
 A bar can be divided into at most eight parts along its long axis. Sections are written in the order they appear, and each one asks for its share in one of three ways:
