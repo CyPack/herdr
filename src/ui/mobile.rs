@@ -98,6 +98,15 @@ pub(crate) enum MobileSwitcherTarget {
     DailyChat {
         chat_idx: usize,
     },
+    /// Open a chat filed into a declared container.
+    ///
+    /// TP-MOB-100: addressed by the container's key rather than a workspace
+    /// index, because a container has no workspace — that is the whole reason
+    /// chats can be filed into one.
+    ModuleChat {
+        node_key: String,
+        chat_idx: usize,
+    },
     /// Open a remembered chat under a checkout.
     Chat {
         ws_idx: usize,
@@ -166,6 +175,12 @@ pub(crate) enum DrawerRowContent {
     /// A chat from the daily section: no workspace behind it, so it is drawn
     /// from the daily rows and indexed into them.
     DailyChat {
+        chat_idx: usize,
+    },
+    /// A chat filed into a declared container, drawn from that container's own
+    /// ledger key and indexed into it.
+    ModuleChat {
+        node_key: String,
         chat_idx: usize,
     },
     /// A primary action pinned to the drawer's footer band, styled to read as
@@ -564,7 +579,20 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
             // path of its own before it appears here — and a row a phone can
             // see but not reach is worse than one it does not draw.
             // Parity is tracked as its own piece of work (#92, 92a-3b).
-            crate::ui::sidebar::WorkspaceListEntry::ModuleChat { .. } => {}
+            // TP-MOB-100: the phone draws it too. A chat filed into a
+            // container was reachable from the desktop and from nowhere else —
+            // the gap this file's own lesson names (TP-MOB-60): a remembered
+            // chat a phone cannot reach at all.
+            crate::ui::sidebar::WorkspaceListEntry::ModuleChat { node_key, chat_idx } => {
+                rows.push(DrawerRow {
+                    height: entry_h,
+                    target: Some(MobileSwitcherTarget::ModuleChat {
+                        node_key: node_key.clone(),
+                        chat_idx,
+                    }),
+                    content: DrawerRowContent::ModuleChat { node_key, chat_idx },
+                });
+            }
             crate::ui::sidebar::WorkspaceListEntry::DailyHeader => {
                 rows.push(DrawerRow {
                     height: 1,
@@ -1683,6 +1711,61 @@ fn render_mobile_drawer_content(
             DrawerRowContent::DailyChat { chat_idx } => {
                 if let Some(y) = visible_y(viewport, scroll, doc_y) {
                     let entry = crate::ui::sidebar::daily_chat_rows(app)
+                        .get(*chat_idx)
+                        .cloned();
+                    let title = entry
+                        .as_ref()
+                        .map(|row| row.title.clone().unwrap_or_else(|| row.session_id.clone()))
+                        .unwrap_or_default();
+                    let age = entry
+                        .map(|row| {
+                            let now_ms = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_millis() as u64)
+                                .unwrap_or(row.last_seen_ms);
+                            chat_age_label(now_ms, row.last_seen_ms)
+                        })
+                        .unwrap_or_default();
+                    // Depth 1: the section has no checkout above it to hang
+                    // from, so its rows sit one step in from the title alone.
+                    let indent = drawer_indent(1, content.width);
+                    let age_w = age.len() as u16;
+                    let title_w = content.width.saturating_sub(age_w.saturating_add(1)).max(4);
+                    let chat_icon = app.space_icons.chat.trim();
+                    let marker = if chat_icon.is_empty() {
+                        "·"
+                    } else {
+                        chat_icon
+                    };
+                    frame.render_widget(
+                        Paragraph::new(truncate_end(
+                            &format!("{:indent$}{marker} {title}", "", indent = indent),
+                            title_w as usize,
+                        ))
+                        .style(Style::default().fg(p.subtext0).bg(p.panel_bg)),
+                        Rect::new(content.x, y, title_w, 1),
+                    );
+                    if age_w > 0 && content.width > age_w {
+                        frame.render_widget(
+                            Paragraph::new(age).style(
+                                Style::default()
+                                    .fg(p.overlay1)
+                                    .bg(p.panel_bg)
+                                    .add_modifier(Modifier::DIM),
+                            ),
+                            Rect::new(content.x + content.width.saturating_sub(age_w), y, age_w, 1),
+                        );
+                    }
+                }
+            }
+            // TP-MOB-100: same shape as the daily row above — a chat with no
+            // workspace behind it, drawn from its own ledger key and indexed
+            // into it. Kept as its own arm rather than folded into `DailyChat`
+            // with an optional key: an index meaning two different lists
+            // depending on a `None` is how a row opens someone else's chat.
+            DrawerRowContent::ModuleChat { node_key, chat_idx } => {
+                if let Some(y) = visible_y(viewport, scroll, doc_y) {
+                    let entry = crate::ui::sidebar::module_chat_rows(app, node_key)
                         .get(*chat_idx)
                         .cloned();
                     let title = entry
@@ -3786,6 +3869,43 @@ mod tests {
         assert_eq!(back.mobile_switcher_scroll, 0);
     }
 
+    // TP-MOB-100: a chat filed into a container was reachable from the desktop
+    // and from nowhere else — the gap TP-MOB-60 names. It must be drawn, and
+    // it must be reachable: a row a phone can see but not press is worse than
+    // one it does not draw.
+    #[test]
+    fn the_drawer_draws_a_filed_chat_and_can_reach_it() {
+        let mut app = chat_app(0, 76, 63);
+        app.space_nodes = vec![crate::spaces::SpaceNode {
+            key: "docs".into(),
+            name: "Docs".into(),
+            icon: None,
+            parent: None,
+            dir: None,
+        }];
+        app.workspace_chat_rows.insert(
+            crate::persist::workspace_chats::module_ledger_key("docs"),
+            vec![crate::app::state::WorkspaceChatRow {
+                session_id: "filed".into(),
+                agent: "claude".into(),
+                title: Some("a filed conversation".into()),
+                last_seen_ms: 5_000,
+                last_modified: None,
+            }],
+        );
+
+        let rows = mobile_drawer_rows(&app);
+        let filed = rows
+            .iter()
+            .find(|row| matches!(row.content, DrawerRowContent::ModuleChat { .. }))
+            .expect("the phone draws the filed chat");
+
+        assert!(
+            matches!(filed.target, Some(MobileSwitcherTarget::ModuleChat { .. })),
+            "and it can be pressed"
+        );
+    }
+
     /// A phone app whose daily directory holds `count` chats and whose
     /// checkouts live elsewhere — the shape the section exists for.
     fn daily_phone_app(count: usize) -> AppState {
@@ -3821,6 +3941,7 @@ mod tests {
             .map(|row| match &row.content {
                 DrawerRowContent::SectionTitle(title) if *title == "daily chats" => "daily-title",
                 DrawerRowContent::DailyChat { .. } => "daily-chat",
+                DrawerRowContent::ModuleChat { .. } => "module-chat",
                 DrawerRowContent::SectionTitle(_) => "title",
                 DrawerRowContent::Space { .. } => "space",
                 DrawerRowContent::Chat { .. } => "chat",

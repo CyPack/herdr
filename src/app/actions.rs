@@ -1737,6 +1737,13 @@ impl AppState {
                 self.close_mobile_drawer();
                 self.open_daily_chat(chat_idx);
             }
+            // TP-MOB-100: same contract as the daily row — the drawer closes
+            // and the chat reopens rooted where it was filed, never at
+            // whatever workspace happened to be active.
+            crate::ui::MobileSwitcherTarget::ModuleChat { node_key, chat_idx } => {
+                self.close_mobile_drawer();
+                self.open_module_chat(&node_key, chat_idx);
+            }
             crate::ui::MobileSwitcherTarget::ToggleBranchChats { ws_idx } => {
                 // Looking at a branch's history is not travelling to it, so
                 // the drawer stays open (TP-MOB-84).

@@ -1867,6 +1867,10 @@ impl AppState {
                 self.close_mobile_drawer();
                 self.open_daily_chat(chat_idx);
             }
+            Some(crate::ui::MobileSwitcherTarget::ModuleChat { node_key, chat_idx }) => {
+                self.close_mobile_drawer();
+                self.open_module_chat(&node_key, chat_idx);
+            }
             Some(crate::ui::MobileSwitcherTarget::ToggleBranchChats { ws_idx }) => {
                 self.toggle_mobile_branch_chats(ws_idx);
             }
