@@ -171,6 +171,34 @@ sidebar's indentation stops growing at six. A parented bucket with a single
 member draws no header of its own — the checkout hangs directly under the
 node, which is what "move this branch under X" should look like.
 
+### Renaming a header with `[[spaces.display]]`
+
+Every module header — a `[[spaces.node]]` container, a `[[spaces.split]]`
+bucket, or a `[[spaces.project]]` umbrella — can be renamed from its own
+right-click menu. The new name is written as a `[[spaces.display]]` entry keyed
+by the rule's own key:
+
+```toml
+[[spaces.display]]
+key = "herdr-web:tabs"
+name = "Sekmeler"
+```
+
+A display entry is a name and nothing else. It carries no `repo`, no `match`
+and no `parent`, and it is applied *after* the rules above have resolved
+everything, so renaming a bucket cannot move the branches it claims, cannot
+reorder first-match, and cannot lift a module out of its place in the tree or
+take away the directory it stands in. That is what lets the verb be offered on
+hand-written modules at all: rewriting the rule would work only for entries
+Herdr itself wrote, because a second rule carrying an existing key is either
+dropped as a duplicate or loses at first-match to the one it was meant to
+rename.
+
+When more than one entry names the same key the last one wins — the managed
+overlay is merged after your own file, so "last" means the most recent
+decision. A blank `name` is ignored. Deleting a module deletes its display
+entry with it.
+
 ## Row icons in the Spaces tree
 
 `[spaces.icons]` sets the default glyph per row kind — project headers, workspace (branch) rows, and chat drawer rows. Every field has a working default, so the table is only written to change taste. An empty string disables that glyph.
