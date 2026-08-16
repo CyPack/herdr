@@ -549,6 +549,7 @@ fn set_failed_state(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::test_wait::LoadAwareDeadline;
     use crate::fm::image_preview::{ImagePreviewError, ImagePreviewTarget, PreparedImagePreview};
     use crate::fm::{FmFilePreview, FmImagePreviewState, FmPreview, FmState};
     use crate::kitty_graphics::HostCellSize;
@@ -558,7 +559,7 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{mpsc, Arc};
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
     use tokio::sync::Notify;
 
     fn target(width_px: u32, height_px: u32) -> ImagePreviewTarget {
@@ -633,7 +634,7 @@ mod tests {
             ImagePreviewSync::Started { .. }
         ));
 
-        let deadline = Instant::now() + Duration::from_secs(2);
+        let wait = LoadAwareDeadline::new(2, "the panicking worker's result");
         loop {
             let drained = worker.drain();
             assert!(
@@ -648,10 +649,7 @@ mod tests {
                 ));
                 break;
             }
-            assert!(
-                Instant::now() < deadline,
-                "timed out waiting for panic result"
-            );
+            wait.check();
             std::thread::yield_now();
         }
     }
@@ -712,7 +710,7 @@ mod tests {
             assert!(!stale.disconnected);
 
             release_tx.send(()).expect("release current image request");
-            let deadline = Instant::now() + Duration::from_secs(2);
+            let wait = LoadAwareDeadline::new(2, "the current image result");
             loop {
                 let drained = worker.drain();
                 assert!(!drained.disconnected);
@@ -721,10 +719,7 @@ mod tests {
                     assert!(current.output.is_ok());
                     break;
                 }
-                assert!(
-                    Instant::now() < deadline,
-                    "timed out waiting for current image result"
-                );
+                wait.check();
                 std::thread::yield_now();
             }
         });
@@ -798,7 +793,7 @@ mod tests {
     }
 
     fn wait_for_worker_result_generation(app: &mut crate::app::App, generation: u64) {
-        let deadline = Instant::now() + Duration::from_secs(2);
+        let wait = LoadAwareDeadline::new(2, "the image worker to reach a generation");
         loop {
             let has_result = {
                 let (state, _) = &*app.image_worker().shared;
@@ -810,25 +805,21 @@ mod tests {
             if has_result {
                 return;
             }
-            assert!(
-                Instant::now() < deadline,
-                "timed out waiting for image worker generation {generation}"
-            );
+            // The generation is which run this was, and a fixed name would have
+            // lost it.
+            wait.check_with(format_args!("generation {generation}"));
             std::thread::yield_now();
         }
     }
 
     fn wait_for_ready(app: &mut crate::app::App) -> (ImagePreviewTarget, u32, u32) {
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let wait = LoadAwareDeadline::new(5, "the image preview to arrive");
         loop {
             let _ = app.sync_image_preview_worker();
             if let FmImagePreviewState::Ready { target, prepared } = current_image_state(app) {
                 return (*target, prepared.width, prepared.height);
             }
-            assert!(
-                Instant::now() < deadline,
-                "timed out waiting for image preview"
-            );
+            wait.check();
             std::thread::yield_now();
         }
     }
@@ -1023,7 +1014,7 @@ mod tests {
             "Pending must transition once to Loading"
         );
         let generation = app.image_preview_worker_generation_for_test();
-        let deadline = Instant::now() + Duration::from_secs(2);
+        let wait = LoadAwareDeadline::new(2, "the image failure to settle");
         loop {
             let _ = app.sync_image_preview_worker();
             if matches!(
@@ -1035,10 +1026,7 @@ mod tests {
             ) {
                 break;
             }
-            assert!(
-                Instant::now() < deadline,
-                "timed out waiting for stable image failure"
-            );
+            wait.check();
             std::thread::yield_now();
         }
 

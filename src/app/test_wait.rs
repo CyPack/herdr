@@ -78,12 +78,26 @@ impl LoadAwareDeadline {
     /// exists to remove.
     #[track_caller]
     pub(crate) fn check(&self) {
+        self.check_with(format_args!(""));
+    }
+
+    /// The same, for a wait whose diagnosis needs more than its name.
+    ///
+    /// Some waits already carried a message built at the moment they failed —
+    /// the entries a directory actually held, the generation a worker was on.
+    /// Flattening those into a fixed name would have thrown away the one part
+    /// of the message that says which run this was, which is the opposite of
+    /// what this type is for. So the caller's detail is appended rather than
+    /// replaced, and the three standard facts arrive with it.
+    #[track_caller]
+    pub(crate) fn check_with(&self, detail: std::fmt::Arguments<'_>) {
+        let elapsed = self.started.elapsed();
         assert!(
-            self.started.elapsed() < self.budget,
-            "timed out waiting for {} after {:?} of a {:?} budget",
-            self.what,
-            self.started.elapsed(),
-            self.budget
+            elapsed < self.budget,
+            "timed out waiting for {what} after {elapsed:?} of a {budget:?} budget{separator}{detail}",
+            what = self.what,
+            budget = self.budget,
+            separator = if detail.as_str() == Some("") { "" } else { "; " },
         );
     }
 }
