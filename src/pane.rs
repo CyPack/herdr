@@ -1249,7 +1249,7 @@ fn shutdown_pane_processes(
 }
 
 #[cfg(unix)]
-fn truncate_handoff_history(history: String, max_bytes: usize) -> String {
+pub(crate) fn truncate_handoff_history(history: String, max_bytes: usize) -> String {
     if history.len() <= max_bytes {
         return history;
     }
@@ -1576,8 +1576,15 @@ impl PaneRuntime {
         }
     }
 
+    /// The pane's full primary-screen history, for the handoff freight file.
+    ///
+    /// Untruncated: the freight travels on disk, not inside the manifest line,
+    /// so the inline replay budget does not apply. The alternate-screen guard
+    /// stays — the bindings can only read the active screen, and replaying an
+    /// alternate-screen frame as history would corrupt the primary screen the
+    /// application returns to.
     #[cfg(unix)]
-    pub fn handoff_history_ansi(&self) -> Option<String> {
+    pub fn handoff_history_ansi_full(&self) -> Option<String> {
         if self
             .terminal
             .input_state()
@@ -1585,7 +1592,19 @@ impl PaneRuntime {
         {
             return None;
         }
-        self.snapshot_history().map(|history| {
+        self.snapshot_history()
+    }
+
+    /// The inline manifest replay: the same history cut to the replay budget.
+    ///
+    /// This is the fallback an importer without freight support still gets, so
+    /// its shape must not change. The export site composes it from
+    /// [`Self::handoff_history_ansi_full`] and [`truncate_handoff_history`]
+    /// itself to capture each pane once; this method states the contract for
+    /// the tests that guard it.
+    #[cfg(all(unix, test))]
+    pub fn handoff_history_ansi(&self) -> Option<String> {
+        self.handoff_history_ansi_full().map(|history| {
             truncate_handoff_history(history, crate::server::handoff::MAX_REPLAY_BYTES_PER_PANE)
         })
     }
@@ -3346,6 +3365,54 @@ mod tests {
         );
 
         assert!(runtime.handoff_history_ansi().is_none());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn handoff_history_ansi_full_keeps_what_the_inline_budget_drops() {
+        // TP-HANDOFF-HIST-01 unit contract: the freight capture keeps history
+        // the inline manifest replay has to cut. A live session lost a pane's
+        // whole morning to that cut — the truncated form kept ~40 rendered
+        // rows of an agent transcript.
+        let mut bytes = Vec::new();
+        for line in 0..600 {
+            bytes.extend_from_slice(format!("marker-{line:04}-padpadpadpad\r\n").as_bytes());
+        }
+        let runtime = PaneRuntime::test_with_scrollback_bytes(40, 5, 1 << 20, &bytes);
+
+        let full = runtime.handoff_history_ansi_full().unwrap();
+        let inline = runtime.handoff_history_ansi().unwrap();
+
+        assert!(
+            full.contains("marker-0000"),
+            "the freight capture has to reach the top of the scrollback"
+        );
+        assert!(
+            full.contains("marker-0599"),
+            "the freight capture has to reach the bottom too"
+        );
+        assert!(
+            !inline.contains("marker-0000"),
+            "the inline replay is budgeted; if it holds the whole history this \
+             test is not exercising the cut"
+        );
+        assert!(inline.len() <= crate::server::handoff::MAX_REPLAY_BYTES_PER_PANE);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn handoff_history_ansi_full_skips_alternate_screen() {
+        // The freight shares the alternate-screen guard: the bindings only read
+        // the active screen, and replaying an alt-screen frame as history would
+        // corrupt the primary screen the application returns to.
+        let runtime = PaneRuntime::test_with_scrollback_bytes(
+            40,
+            5,
+            4096,
+            b"primary\r\n\x1b[?1049halt-screen",
+        );
+
+        assert!(runtime.handoff_history_ansi_full().is_none());
     }
 
     #[cfg(unix)]

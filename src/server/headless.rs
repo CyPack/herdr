@@ -1193,21 +1193,46 @@ impl HeadlessServer {
         );
 
         let mut handoff_entries = Vec::new();
+        let mut history_freight = HashMap::new();
         for (terminal_id, runtime) in self.app.terminal_runtimes.iter() {
             let Some(pane_id) = pane_by_terminal.get(terminal_id).copied() else {
                 continue;
             };
             let mut handoff_runtime = runtime.handoff_runtime_state(pane_id);
+            // One capture per pane; the inline replay is cut from it below.
+            let full_history = runtime.handoff_history_ansi_full();
             let has_agent_session = self
                 .app
                 .state
                 .terminals
                 .get(terminal_id)
                 .is_some_and(|terminal| terminal.persisted_agent_session.is_some());
+            // The inline replay keeps its historical shape — agent panes
+            // suppressed, the rest cut to the budget — because it is what an
+            // importer without freight support still receives. The freight
+            // carries every pane's full history: a handed-off agent is the
+            // same process on the same PTY and repaints nothing, so unlike
+            // cold restore there is no repaint to duplicate. TP-HANDOFF-HIST-01
             if !has_agent_session {
-                handoff_runtime.initial_history_ansi = runtime.handoff_history_ansi();
+                handoff_runtime.initial_history_ansi = full_history.clone().map(|history| {
+                    crate::pane::truncate_handoff_history(
+                        history,
+                        crate::server::handoff::MAX_REPLAY_BYTES_PER_PANE,
+                    )
+                });
+            }
+            if let Some(history) = full_history {
+                history_freight.insert(pane_id, history);
             }
             handoff_entries.push((terminal_id.clone(), handoff_runtime));
+        }
+        crate::server::handoff::sweep_dead_history_freight(&crate::session::data_dir());
+        if let Err(err) =
+            crate::server::handoff::write_history_freight(&socket_path, history_freight)
+        {
+            // Freight is an enhancement: without it the importer falls back to
+            // the inline replay, which is exactly the pre-freight behavior.
+            warn!(err = %err, "failed to write handoff history freight; panes will keep only the inline replay");
         }
 
         let panes = handoff_entries
@@ -1401,6 +1426,9 @@ impl HeadlessServer {
         }
         self.handoff_in_progress = false;
         let _ = std::fs::remove_file(socket_path);
+        // The freight shares the socket's lifecycle: a handoff that will not
+        // be imported must not leave its histories on disk.
+        crate::server::handoff::discard_history_freight(socket_path);
     }
 
     #[cfg(unix)]
@@ -4708,9 +4736,19 @@ fn run_handoff_import_server(socket_path: &Path, token: &str) -> io::Result<()> 
     let (api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
     let event_hub = api::EventHub::default();
 
+    // The freight file carries every pane's full history; the manifest's
+    // inline replay is its short fallback. Consume it before building the
+    // runtimes so a replaced entry never replays the cut version first.
+    let mut history_freight =
+        crate::server::handoff::take_history_freight(socket_path).unwrap_or_default();
+
     let mut imports = HashMap::new();
     for (pane, fd) in received.manifest.panes.into_iter().zip(received.fds) {
+        let mut pane = pane;
         let pane_id = pane.pane_id;
+        if let Some(history) = history_freight.remove(&pane_id) {
+            pane.initial_history_ansi = Some(history);
+        }
         imports.insert(
             pane_id,
             crate::handoff_runtime::ImportedHandoffRuntime {

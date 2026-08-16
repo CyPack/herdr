@@ -52,9 +52,12 @@ impl TerminalRuntime {
         self.0.handoff_runtime_state(pane_id)
     }
 
+    /// See [`crate::pane::PaneRuntime::handoff_history_ansi_full`]. The
+    /// export site cuts the inline replay from this itself, so the truncated
+    /// form has no delegation here.
     #[cfg(unix)]
-    pub fn handoff_history_ansi(&self) -> Option<String> {
-        self.0.handoff_history_ansi()
+    pub fn handoff_history_ansi_full(&self) -> Option<String> {
+        self.0.handoff_history_ansi_full()
     }
 
     #[cfg(unix)]
