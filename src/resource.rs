@@ -62,6 +62,15 @@ impl ResourceMetric {
     /// it is an alias `parse` honours, not a spelling to teach.
     pub(crate) const ACCEPTED: &'static [&'static str] = &["cpu", "mem", "swap"];
 
+    /// The spellings `parse` honours that `ACCEPTED` deliberately does not teach,
+    /// each beside the name it is another word for.
+    ///
+    /// Kept apart rather than folded in. A refusal that offered four names would
+    /// present an alias as an equal citizen, and dropping the alias would break
+    /// files that already say it — so the grammar has to be able to state
+    /// "accepted, but not the spelling to learn", and this is where it states it.
+    pub(crate) const ALIASES: &'static [(&'static str, &'static str)] = &[("ram", "mem")];
+
     pub(crate) fn parse(name: &str) -> Option<Self> {
         match name {
             "cpu" => Some(Self::Cpu),

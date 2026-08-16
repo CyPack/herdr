@@ -26,6 +26,7 @@ mod interaction;
 mod layout;
 mod model;
 mod source;
+mod spec;
 mod template;
 mod view;
 
@@ -42,6 +43,7 @@ pub(crate) use source::{
     bar_color, derive_desktop_shell_layout, shell_bar_config_problems, BarColors, BarTint,
     SecondaryPresentation, SectionAction, SectionWidget, ShellBarChrome, ShellBars, SidebarChrome,
 };
+pub(crate) use spec::{render_text as render_shell_spec_text, shell_spec};
 pub(crate) use template::ShellTemplateId;
 pub(crate) use view::{compute_empty_shell_view, compute_shell_view, ShellGeometryKey, ShellView};
 
