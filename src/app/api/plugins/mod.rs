@@ -905,13 +905,55 @@ mod tests {
     /// Wait for non-empty contents at `path`. Shell `>` creates the file empty
     /// before the command writes, so waiting on existence alone can read EOF.
     /// `pump` advances any event loop the command depends on.
+    // TP-PLUGIN-CAP-01: a capture still being written is not read early.
+    //
+    // The deterministic form of a flake that only ever appeared under a loaded
+    // full suite. `pump` runs once per poll and BEFORE the read, so the file has
+    // to grow on the second poll: the first read then sees a partial capture,
+    // which is exactly what a plugin writing line by line does to a reader that
+    // returns on the first byte. Against the pre-fix helper this returns
+    // "first\n" and the assertion below fails, which is what makes it a
+    // reproduction rather than a hope.
+    #[test]
+    fn a_capture_still_being_written_is_not_read_until_it_settles() {
+        let path = unique_temp_path("capture-settle");
+        std::fs::write(&path, "first\n").expect("seed the capture");
+
+        let mut polls = 0_u32;
+        let text = read_capture_when_ready(&path, || {
+            polls += 1;
+            if polls == 2 {
+                std::fs::write(&path, "first\nsecond\n").expect("grow the capture");
+            }
+        });
+
+        assert_eq!(
+            text, "first\nsecond\n",
+            "a capture that was still growing was read as if it were finished"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
     fn read_capture_when_ready(path: &std::path::Path, mut pump: impl FnMut()) -> String {
-        let wait = LoadAwareDeadline::new(5, "a plugin command to write its output");
+        // Non-empty is not ready, and that is what `2fe57a57` left behind when it
+        // stabilised these tests: a plugin writes its capture a line at a time, so
+        // the first byte can land several lines before the last, and a reader that
+        // returns on the first byte gets however much happened to be flushed. The
+        // flake got rarer and stayed -- surfacing as a missing line rather than an
+        // empty file, which is a complaint about the content instead of about the
+        // waiting.
+        //
+        // Settled is ready: the same non-empty contents seen twice in a row.
+        let wait = LoadAwareDeadline::new(5, "a plugin command to finish writing its output");
+        let mut previous: Option<String> = None;
         loop {
             pump();
             if let Ok(contents) = std::fs::read_to_string(path) {
                 if !contents.is_empty() {
-                    return contents;
+                    if previous.as_deref() == Some(contents.as_str()) {
+                        return contents;
+                    }
+                    previous = Some(contents);
                 }
             }
             wait.check_with(format_args!("{}", path.display()));
