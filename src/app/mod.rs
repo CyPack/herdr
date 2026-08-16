@@ -522,6 +522,51 @@ impl App {
         })
     }
 
+    /// Load the graveyard from disk and seed it from the transcript rows.
+    ///
+    /// TP-AGPANEL-40: extracted because this codebase has more than one
+    /// constructor and the live server normally comes from the other one.
+    /// `new_from_handoff` calls `new` with `no_session = true` — correctly, it
+    /// restores its session from a snapshot rather than from disk — and the
+    /// graveyard fell behind that flag with it. The store is not the session:
+    /// it outlives every handoff, and on this machine a handoff happens on
+    /// every delivery. Measured 2026-08-16 05:29: six chats in the ledger,
+    /// none of them live, and zero ghosts in the panel.
+    fn seed_closed_agents(state: &mut AppState) {
+        let stored = crate::persist::closed_agents::load_from_path(
+            &crate::persist::closed_agents::default_store_path(),
+        );
+        let now_ms = crate::persist::workspace_chats::now_ms();
+        let mut records = crate::persist::closed_agents::prune(
+            stored.records,
+            now_ms,
+            crate::persist::closed_agents::RETENTION_MS,
+        );
+        let live: Vec<String> = state
+            .workspaces
+            .iter()
+            .flat_map(|ws| ws.tabs.iter())
+            .filter_map(|tab| tab.resumed_session_id.clone())
+            .collect();
+        let derived: Vec<_> = state
+            .workspace_chat_rows
+            .iter()
+            .flat_map(|(key, rows)| {
+                crate::persist::closed_agents::derive_from_chat_rows(&records, key, rows, &|id| {
+                    live.iter().any(|open| open == id)
+                })
+            })
+            .collect();
+        records.extend(derived);
+        state
+            .closed_agents
+            .load_stored(crate::persist::closed_agents::prune(
+                records,
+                now_ms,
+                crate::persist::closed_agents::RETENTION_MS,
+            ));
+    }
+
     pub fn new(
         config: &Config,
         no_session: bool,
@@ -1098,60 +1143,9 @@ impl App {
             }
         }
 
-        // TP-AGPANEL-36: the graveyard is read on the same terms. Until now it
-        // started empty on every run, and on this machine a run ends whenever
-        // a delivery replaces the server through `live-handoff` — so "restart"
-        // meant "roughly every time anything ships", and the panel forgot the
-        // agent the user had closed minutes earlier.
-        //
-        // Pruned at load rather than only at save: a store written a month ago
-        // by a version that never pruned still has to come back inside its
-        // window, and the window is measured from now, not from the write.
+        // TP-AGPANEL-36/39: read on the same `--no-session` terms.
         if !no_session {
-            let stored = crate::persist::closed_agents::load_from_path(
-                &crate::persist::closed_agents::default_store_path(),
-            );
-            let now_ms = crate::persist::workspace_chats::now_ms();
-            let mut records = crate::persist::closed_agents::prune(
-                stored.records,
-                now_ms,
-                crate::persist::closed_agents::RETENTION_MS,
-            );
-            // TP-AGPANEL-39: the month the user asked to see already happened,
-            // and persistence only remembers deaths it witnessed — it started
-            // witnessing them today. The transcript rows loaded just above are
-            // the surviving record of the ones before that, so the graveyard is
-            // seeded from them rather than starting a month behind.
-            //
-            // A conversation that still has a tab is not a death; without that
-            // filter the same chat would stand in the panel twice, once as a
-            // live agent and once as its own headstone.
-            let live: Vec<String> = state
-                .workspaces
-                .iter()
-                .flat_map(|ws| ws.tabs.iter())
-                .filter_map(|tab| tab.resumed_session_id.clone())
-                .collect();
-            let derived: Vec<_> = state
-                .workspace_chat_rows
-                .iter()
-                .flat_map(|(key, rows)| {
-                    crate::persist::closed_agents::derive_from_chat_rows(
-                        &records,
-                        key,
-                        rows,
-                        &|id| live.iter().any(|open| open == id),
-                    )
-                })
-                .collect();
-            records.extend(derived);
-            state
-                .closed_agents
-                .load_stored(crate::persist::closed_agents::prune(
-                    records,
-                    now_ms,
-                    crate::persist::closed_agents::RETENTION_MS,
-                ));
+            Self::seed_closed_agents(&mut state);
         }
 
         Self {
@@ -1315,6 +1309,12 @@ impl App {
                 .get(idx)
                 .and_then(|ws| ws.focused_pane_id().map(|pane_id| (idx, pane_id)))
         });
+        // TP-AGPANEL-40: the graveyard is not part of the session, so it is
+        // loaded here rather than behind the `no_session` flag this
+        // constructor correctly passes. Seeded AFTER the restore, because the
+        // live filter reads the tabs the handoff just brought back — before
+        // it, every restored chat would be given a headstone of its own.
+        Self::seed_closed_agents(&mut app.state);
         Ok(app)
     }
 
@@ -3159,6 +3159,31 @@ mod tests {
         restore_config_dir(&root, previous);
 
         assert_eq!(count, 0, "a clean start inherits no graveyard");
+    }
+
+    // TP-AGPANEL-40: a handed-off server loads the graveyard too. It calls
+    // `new` with `no_session = true` — correctly, it restores its session from
+    // a snapshot — and the graveyard fell behind that flag with it. On this
+    // machine every delivery is a handoff, so that was the only path that
+    // mattered and the panel was empty on it.
+    #[test]
+    fn a_handed_off_server_loads_the_graveyard() {
+        let (root, store, previous) = with_temp_config_dir("handoff-graveyard");
+        let fresh = crate::persist::workspace_chats::now_ms();
+        std::fs::write(
+            &store,
+            format!(
+                r#"{{"version":1,"records":[{{"agent_id":"ghost","label":"an earlier agent","closed_at":{fresh}}}]}}"#
+            ),
+        )
+        .expect("fake store");
+
+        let mut state = AppState::test_new();
+        App::seed_closed_agents(&mut state);
+        let count = state.closed_agents.entries().count();
+        restore_config_dir(&root, previous);
+
+        assert_eq!(count, 1, "the handoff road reads the store like any other");
     }
 
     // TP-AGPANEL-35: and it writes nothing either. A run that promises to
