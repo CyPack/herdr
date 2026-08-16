@@ -468,6 +468,27 @@ fn open_module_name_input(
 /// source workspace under the module (ancestors included, TP-DOTS-14),
 /// arm the module and request the proven worktree dialog — or report the
 /// missing repository instead of silently doing nothing.
+/// TP-AGPANEL-45: the graveyard verbs, in one body both context-menu bodies
+/// call. `Forget` is pure state so it happens here; `Revive` parks a request
+/// because the API call lives on `App`, which the `#[cfg(test)]` body does not
+/// have. Writing either one out twice is how a verb comes to mean two different
+/// things depending on which door was used.
+pub(super) fn apply_closed_agent_action(state: &mut AppState, agent_id: String, item: &str) {
+    match item {
+        "Revive" => {
+            state.request_revive_closed_agent = Some(agent_id);
+        }
+        "Forget" => {
+            // A row that a refresh already took away is not an error: the menu
+            // can outlive the list it was opened from.
+            if state.closed_agents.forget(&agent_id) {
+                state.mark_session_dirty();
+            }
+        }
+        _ => {}
+    }
+}
+
 pub(super) fn start_branch_from_module(state: &mut AppState, module_key: String) {
     match crate::ui::worktree_source_for_module(state, &module_key) {
         Some(ws_idx) => {
@@ -1019,6 +1040,10 @@ pub(super) fn apply_context_menu_action(
         }
         (ContextMenuKind::SidebarBlank, Some("New module...")) => {
             open_new_module_input(state, None);
+        }
+        (ContextMenuKind::ClosedAgent { agent_id }, Some(item @ ("Revive" | "Forget"))) => {
+            apply_closed_agent_action(state, agent_id, item);
+            leave_modal(state);
         }
         (ContextMenuKind::DailyHeader { .. }, Some("New chat...")) => {
             state.open_daily_new_chat_menu(menu_x, menu_y);
@@ -2237,6 +2262,11 @@ impl App {
             }
             // TP-DAILY-12: the area's own verbs. "New chat..." walks the very
             // road the "+" walks, so the two doors cannot drift apart.
+            // TP-AGPANEL-45: the production twin, through the same body.
+            (ContextMenuKind::ClosedAgent { agent_id }, Some(item @ ("Revive" | "Forget"))) => {
+                apply_closed_agent_action(&mut self.state, agent_id, item);
+                leave_modal(&mut self.state);
+            }
             (ContextMenuKind::DailyHeader { .. }, Some("New chat...")) => {
                 self.state.open_daily_new_chat_menu(menu_x, menu_y);
             }
@@ -3493,6 +3523,100 @@ mod tests {
         assert!(
             app.state.request_merge_daily_workspaces,
             "the test body must request the very same thing"
+        );
+    }
+
+    // G2 / TP-AGPANEL-45: two verbs, and the one that takes something away
+    // comes last — the order TP-MOD-08/26 already keeps for "Delete module".
+    #[test]
+    fn a_graveyard_row_offers_revive_then_forget() {
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::ClosedAgent {
+                agent_id: "ghost-1".to_string(),
+            },
+            x: 0,
+            y: 0,
+            list: crate::app::state::MenuListState::new(0),
+        };
+
+        assert_eq!(menu.items(), vec!["Revive", "Forget"]);
+    }
+
+    // G3 + G6 / TP-AGPANEL-45 / constraint 31: both bodies answer both verbs,
+    // and "Revive" parks the very request the left-click road raises. A verb
+    // wired into one body works in tests and does nothing on screen.
+    #[test]
+    fn both_context_menu_bodies_answer_the_graveyard_verbs() {
+        let mut app = app_with_test_workspaces(&["main"]);
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::ClosedAgent {
+                agent_id: "ghost-1".to_string(),
+            },
+            x: 0,
+            y: 0,
+            list: crate::app::state::MenuListState::new(0),
+        };
+        let revive = menu
+            .items()
+            .iter()
+            .position(|item| *item == "Revive")
+            .expect("revive is on the menu");
+
+        app.apply_context_menu_action_via_api(menu.clone(), revive);
+        assert_eq!(
+            app.state.request_revive_closed_agent.as_deref(),
+            Some("ghost-1"),
+            "the production body must raise the revival request"
+        );
+
+        app.state.request_revive_closed_agent = None;
+        let mut terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
+        apply_context_menu_action(&mut app.state, &mut terminal_runtimes, menu, revive);
+        assert_eq!(
+            app.state.request_revive_closed_agent.as_deref(),
+            Some("ghost-1"),
+            "and so must the test body"
+        );
+    }
+
+    // G4 / TP-AGPANEL-45: "Forget" reaches the ledger through the menu, on the
+    // production road.
+    #[test]
+    fn forgetting_from_the_menu_removes_the_record() {
+        let mut app = app_with_test_workspaces(&["main"]);
+        app.state
+            .closed_agents
+            .record_closed(crate::app::closed_agents::ClosedAgentRecord {
+                agent_id: "ghost-1".to_string(),
+                label: "a ghost".to_string(),
+                cwd: Some(std::path::PathBuf::from("/tmp")),
+                workspace_key: None,
+                session: None,
+                closed_at: 1,
+                revival: crate::app::closed_agents::RevivalState::Dormant,
+            });
+        assert_eq!(app.state.closed_agents.entries().count(), 1);
+
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::ClosedAgent {
+                agent_id: "ghost-1".to_string(),
+            },
+            x: 0,
+            y: 0,
+            list: crate::app::state::MenuListState::new(0),
+        };
+        let forget = menu
+            .items()
+            .iter()
+            .position(|item| *item == "Forget")
+            .expect("forget is on the menu");
+
+        app.apply_context_menu_action_via_api(menu, forget);
+
+        assert_eq!(
+            app.state.closed_agents.entries().count(),
+            0,
+            "the headstone is gone from the graveyard"
         );
     }
 

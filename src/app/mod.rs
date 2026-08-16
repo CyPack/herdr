@@ -862,6 +862,7 @@ impl App {
             detach_exits: no_session,
             detach_requested: false,
             request_new_workspace: false,
+            request_revive_closed_agent: None,
             request_merge_daily_workspaces: false,
             request_new_tab: false,
             request_new_linked_worktree: None,
@@ -1464,6 +1465,13 @@ impl App {
                 // TP-DAILY-19: both context-menu bodies set the flag and the
                 // work happens here, where the API dispatch actually exists.
                 self.merge_daily_workspaces("tui.daily.merge");
+                needs_render = true;
+            }
+
+            // TP-AGPANEL-45: the graveyard menu's revive, on the road the
+            // API actually exists on.
+            if let Some(agent_id) = self.state.request_revive_closed_agent.take() {
+                self.revive_closed_agent_via_api(agent_id);
                 needs_render = true;
             }
 

@@ -231,6 +231,23 @@ impl ClosedAgentLedger {
         self.records.iter()
     }
 
+    /// Drop one ghost from the graveyard.
+    ///
+    /// TP-AGPANEL-45: until now the list only ever grew — records arrive when
+    /// an agent closes and leave only by ageing past capacity or by being
+    /// revived, and reviving is the opposite of what someone wants when they
+    /// look at a row they are done with. Measured on the reporting machine: 62
+    /// records standing, none of them removable.
+    ///
+    /// Returns whether anything went, so the caller can skip a save and can
+    /// tell "removed" from "was not there" rather than reporting success for a
+    /// row a refresh had already taken away.
+    pub fn forget(&mut self, agent_id: &str) -> bool {
+        let before = self.records.len();
+        self.records.retain(|record| record.agent_id != agent_id);
+        before != self.records.len()
+    }
+
     /// Rebuild from what the store kept, newest first.
     ///
     /// TP-AGPANEL-34: a loaded ghost is always `Dormant`. Revival state
@@ -669,5 +686,52 @@ mod tests {
             vec!["codex".to_string(), "resume".into(), "xyz".into()]
         );
         assert!(env.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod forget_tests {
+    use super::{ClosedAgentLedger, ClosedAgentRecord, RevivalState};
+
+    fn record(id: &str) -> ClosedAgentRecord {
+        ClosedAgentRecord {
+            agent_id: id.to_string(),
+            label: format!("agent {id}"),
+            cwd: Some(std::path::PathBuf::from("/tmp")),
+            workspace_key: None,
+            session: None,
+            closed_at: 1,
+            revival: RevivalState::Dormant,
+        }
+    }
+
+    // G4 / TP-AGPANEL-45: one row goes, the rest stay. Removing a headstone is
+    // not clearing the graveyard, and 62 records were standing on the machine
+    // this was reported from with no way to remove any of them.
+    #[test]
+    fn forgetting_one_ghost_leaves_the_others() {
+        let mut ledger = ClosedAgentLedger::default();
+        ledger.record_closed(record("a"));
+        ledger.record_closed(record("b"));
+        ledger.record_closed(record("c"));
+
+        assert!(ledger.forget("b"));
+
+        let ids: Vec<String> = ledger
+            .entries()
+            .map(|entry| entry.agent_id.clone())
+            .collect();
+        assert_eq!(ids, vec!["c".to_string(), "a".to_string()]);
+    }
+
+    // TP-AGPANEL-45: forgetting a row that is not there reports nothing rather
+    // than claiming a removal — the menu can outlive the list it came from.
+    #[test]
+    fn forgetting_an_unknown_ghost_reports_nothing() {
+        let mut ledger = ClosedAgentLedger::default();
+        ledger.record_closed(record("a"));
+
+        assert!(!ledger.forget("nobody"));
+        assert_eq!(ledger.entries().count(), 1);
     }
 }

@@ -2408,6 +2408,14 @@ pub enum ContextMenuKind {
         /// the ledger can file, so it cannot be moved.
         session_id: Option<String>,
     },
+    /// A graveyard row's own menu (TP-AGPANEL-45).
+    ///
+    /// Carries the ghost's id, resolved when the menu opens, for the reason
+    /// `AgentEntry` carries its session id: the panel can refresh under an open
+    /// menu, and a late lookup would answer for whatever moved into that slot.
+    ClosedAgent {
+        agent_id: String,
+    },
     /// The drawer picker a chat move opens: open workspaces as
     /// `(ledger key, display name)`, resolved by index like MoveTarget.
     ChatMoveTarget {
@@ -2601,6 +2609,11 @@ impl ContextMenuState {
             // the ledger knows which chat it is. The move verb comes first and
             // the close verb stays last — the one item here that cannot be
             // undone belongs at the end (TP-AGPANEL-05's ordering).
+            // TP-AGPANEL-45: a headstone's two verbs. "Move to..." is
+            // deliberately absent — a ghost has no running tab to move, and
+            // filing its conversation somewhere is the chat row's job, which
+            // already has a verb for it.
+            ContextMenuKind::ClosedAgent { .. } => vec!["Revive", "Forget"],
             ContextMenuKind::AgentEntry { session_id, .. } => {
                 if session_id.is_some() {
                     vec!["Move to...", "Close agent"]
@@ -3439,6 +3452,13 @@ pub struct AppState {
     /// The server's event loop checks this and handles client detach.
     pub detach_requested: bool,
     pub request_new_workspace: bool,
+    /// A ghost the graveyard menu asked to bring back (TP-AGPANEL-45).
+    ///
+    /// A request rather than the call itself: the `#[cfg(test)]` context-menu
+    /// body is handed an `AppState` and cannot reach the API at all, so writing
+    /// the revival inline would give the verb two implementations — the defect
+    /// class where a menu entry works in tests and does nothing in the product.
+    pub request_revive_closed_agent: Option<String>,
     /// Set by the daily header's "Merge workspaces here" (TP-DAILY-19).
     ///
     /// A request flag rather than the work itself, because the two context-menu
@@ -4616,6 +4636,7 @@ impl AppState {
             detach_exits: false,
             detach_requested: false,
             request_new_workspace: false,
+            request_revive_closed_agent: None,
             request_merge_daily_workspaces: false,
             request_new_tab: false,
             request_new_linked_worktree: None,
@@ -5185,7 +5206,11 @@ impl AppState {
                 // TP-DAILY-11/12 / TP-MOD-31: nothing index-shaped to
                 // validate — these name a directory, a fold state, or no row
                 // at all, and a refresh cannot invalidate any of them.
-                ContextMenuKind::DailyNewChat
+                // TP-AGPANEL-45: an agent id, not an index — a refresh
+                // cannot invalidate it, it can only stop matching, and the
+                // handler answers that with nothing.
+                ContextMenuKind::ClosedAgent { .. }
+                | ContextMenuKind::DailyNewChat
                 | ContextMenuKind::SidebarBlank
                 | ContextMenuKind::DailyHeader { .. } => {}
                 ContextMenuKind::ProjectNewChat { proj_idx, .. } => {

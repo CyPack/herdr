@@ -1500,6 +1500,21 @@ impl AppState {
                 // roads below — and matched through their own resolver, which
                 // is bounded to the panel body and cannot claim a row that
                 // belongs to the list above it.
+                // TP-AGPANEL-45: a headstone answers a right-click with its
+                // own menu. Matched before the living rows below for the same
+                // reason the living rows are matched before the tree: one
+                // vector may own a row, and the graveyard's resolver is the
+                // only one bounded to the ghost cards.
+                if let Some(agent_id) = self.closed_agent_target_at(mouse.row) {
+                    self.context_menu = Some(ContextMenuState {
+                        kind: ContextMenuKind::ClosedAgent { agent_id },
+                        x: mouse.column,
+                        y: mouse.row,
+                        list: MenuListState::new(0),
+                    });
+                    self.enter_overlay_mode(Mode::ContextMenu);
+                    return None;
+                }
                 if let Some((ws_idx, tab_idx, pane_id)) = self.agent_detail_target_at(mouse.row) {
                     // TP-AGPANEL-28: the chat identity is read HERE, while the
                     // row under the cursor is still the row the menu is for.
