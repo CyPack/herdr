@@ -302,7 +302,61 @@ impl App {
         }
         changed
     }
+
+    /// Whether an idle server has earned retirement.
+    ///
+    /// True only when the whole session has been clientless and childless for
+    /// [`IDLE_SERVER_EXIT_GRACE`]. The clock starts at the first idle sighting
+    /// and resets the moment a client attaches or any child is alive again;
+    /// a freshly handed-off server therefore starts a fresh clock. Checks run
+    /// at most once per [`DORMANCY_SWEEP_INTERVAL`] because each one asks the
+    /// OS about every pane's child. TP-SRV-RETIRE-01/02/03
+    pub(crate) fn server_retirement_due(
+        &mut self,
+        now: std::time::Instant,
+        clients_attached: bool,
+    ) -> bool {
+        if !self.idle_server_exit_enabled {
+            return false;
+        }
+        if self.next_retirement_check_at.is_some_and(|at| now < at) {
+            return false;
+        }
+        self.next_retirement_check_at = Some(now + DORMANCY_SWEEP_INTERVAL);
+
+        let any_live_child = self
+            .terminal_runtimes
+            .values()
+            .any(|runtime| !runtime.child_exited());
+        if clients_attached || any_live_child {
+            self.server_idle_since = None;
+            return false;
+        }
+        let since = *self.server_idle_since.get_or_insert(now);
+        now.saturating_duration_since(since) >= IDLE_SERVER_EXIT_GRACE
+    }
+
+    /// Write every retired pane's scrollback to disk before the server exits.
+    ///
+    /// Retirement without this loses exactly the state retirement claims to
+    /// preserve: a runtime's scrollback lives only in this process until a
+    /// dormant file exists.
+    pub(crate) fn dormant_all_retired_panes(&mut self) {
+        let mut pane_ids = Vec::new();
+        for workspace in &self.state.workspaces {
+            for tab in &workspace.tabs {
+                pane_ids.extend(tab.panes.keys().copied());
+            }
+        }
+        for pane_id in pane_ids {
+            let _ = self.make_pane_dormant(pane_id);
+        }
+    }
 }
+
+/// How long a server must be clientless and childless before it may exit.
+pub(crate) const IDLE_SERVER_EXIT_GRACE: std::time::Duration =
+    std::time::Duration::from_secs(30 * 60);
 
 /// How often the dormancy sweep looks at the session at all.
 pub(crate) const DORMANCY_SWEEP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
@@ -518,6 +572,68 @@ mod tests {
         assert!(!app.dormancy_sweep_with_pressure(far_future, true));
         assert!(app.terminal_runtimes.get(&terminal_id).is_some());
         let _ = pane_id;
+    }
+
+    #[tokio::test]
+    async fn a_server_with_a_live_child_never_retires() {
+        // TP-SRV-RETIRE-01: the refuted 2026-08-15 draft ("server lives iff a
+        // direct child exists") would have killed a live session whose panes
+        // were reparented by handoff. The correct signal is the pane ledger:
+        // any runtime whose child is alive keeps the whole server alive.
+        let (mut app, _pane_id) = app_with_scrollback_pane(b"alive\r\n", false);
+        let terminal_id = terminal_id_of(&app, _pane_id);
+        app.terminal_runtimes
+            .get(&terminal_id)
+            .unwrap()
+            .test_set_child_pid(std::process::id());
+        app.idle_server_exit_enabled = true;
+
+        let start = std::time::Instant::now();
+        assert!(!app.server_retirement_due(start, false));
+        let far = start + IDLE_SERVER_EXIT_GRACE * 3;
+        assert!(
+            !app.server_retirement_due(far, false),
+            "a live child blocks retirement no matter how long the clock runs"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_attached_client_resets_the_retirement_clock() {
+        // TP-SRV-RETIRE-02: attaching is the strongest possible signal the
+        // session is wanted; the idle clock starts over from zero.
+        let (mut app, _pane_id) = app_with_scrollback_pane(b"quiet\r\n", true);
+        app.idle_server_exit_enabled = true;
+
+        let start = std::time::Instant::now();
+        assert!(!app.server_retirement_due(start, false), "clock starts");
+        let mid = start + IDLE_SERVER_EXIT_GRACE / 2;
+        app.next_retirement_check_at = None;
+        assert!(!app.server_retirement_due(mid, true), "a client attaches");
+        let after = mid + IDLE_SERVER_EXIT_GRACE / 2 + std::time::Duration::from_secs(61);
+        app.next_retirement_check_at = None;
+        assert!(
+            !app.server_retirement_due(after, false),
+            "the old idle time does not count; the clock restarted at detach"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_childless_clientless_server_retires_after_the_grace() {
+        // TP-SRV-RETIRE-03: 45 orphan servers were measured burning 30.6
+        // hours of CPU drawing frames nobody saw. A session whose every child
+        // has exited and that nobody has attached to for the grace period has
+        // nothing left that disk cannot hold.
+        let (mut app, _pane_id) = app_with_scrollback_pane(b"done\r\n", true);
+        app.idle_server_exit_enabled = true;
+
+        let start = std::time::Instant::now();
+        assert!(
+            !app.server_retirement_due(start, false),
+            "grace not yet served"
+        );
+        let due = start + IDLE_SERVER_EXIT_GRACE + std::time::Duration::from_secs(1);
+        app.next_retirement_check_at = None;
+        assert!(app.server_retirement_due(due, false));
     }
 
     #[test]

@@ -131,6 +131,11 @@ pub struct App {
     /// `[experimental] pane_dormancy` — whether the periodic sweep runs.
     pub(crate) pane_dormancy_enabled: bool,
     pub(crate) next_dormancy_sweep_at: Option<Instant>,
+    /// `[experimental] idle_server_exit` — whether an idle server may retire.
+    pub(crate) idle_server_exit_enabled: bool,
+    /// First moment the session was seen with no client and no live child.
+    pub(crate) server_idle_since: Option<Instant>,
+    pub(crate) next_retirement_check_at: Option<Instant>,
     /// When each terminal's child was first seen exited, for the quiet clock.
     pub(crate) pane_retired_since: HashMap<crate::terminal::TerminalId, Instant>,
     pub(crate) input_rx: Option<mpsc::Receiver<crate::raw_input::RawInputEvent>>,
@@ -1222,6 +1227,9 @@ impl App {
             dormant_dir: None,
             pane_dormancy_enabled: config.experimental.pane_dormancy,
             next_dormancy_sweep_at: None,
+            idle_server_exit_enabled: config.experimental.idle_server_exit,
+            server_idle_since: None,
+            next_retirement_check_at: None,
             pane_retired_since: HashMap::new(),
             input_rx: None,
             file_manager_watcher: per_display::PerDisplay::default(),
@@ -1998,6 +2006,7 @@ impl App {
                 config.experimental.switch_ascii_input_source_in_prefix;
             self.persist_pane_history = config.experimental.pane_history;
             self.pane_dormancy_enabled = config.experimental.pane_dormancy;
+            self.idle_server_exit_enabled = config.experimental.idle_server_exit;
             self.state.pane_history_persistence = config.experimental.pane_history;
             if !self.persist_pane_history {
                 crate::persist::clear_history();

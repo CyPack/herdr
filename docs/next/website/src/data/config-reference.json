@@ -1257,6 +1257,12 @@
           "description": "Automatically put retired panes to sleep: a pane whose child process has exited and that no display is watching gets its scrollback written to disk and its runtime released after a quiet period. Touching the pane wakes it with its history replayed. Panes with a running process are never touched."
         },
         {
+          "key": "experimental.idle_server_exit",
+          "type": "boolean",
+          "default": "false",
+          "description": "Let an idle server exit: when no client is attached and no pane has a running process for a grace period, the server writes every retired pane's scrollback to disk, saves the session, and stops. The next `herdr` start restores the session with that history."
+        },
+        {
           "key": "experimental.reveal_hidden_cursor_for_cjk_ime",
           "type": "boolean",
           "default": "false",

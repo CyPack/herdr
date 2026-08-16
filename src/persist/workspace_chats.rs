@@ -808,6 +808,7 @@ mod tests {
                 }
             }),
             launch_argv: None,
+            dormant_history: None,
         }
     }
 

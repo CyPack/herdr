@@ -4241,6 +4241,20 @@ impl HeadlessServer {
         changed |= self.app.sync_agent_attachment_delivery();
         changed |= self.app.sync_pane_dormancy_sweep(now);
         changed |= self.app.wake_dormant_panes_on_watched_tabs();
+        // An idle server retires itself: no client, no running child, and a
+        // grace period on the clock. Retired panes' scrollback goes to disk
+        // first, and the loop's exit path saves the session that points at
+        // it — the next start restores everything. A handoff in progress
+        // blocks this: that server is mid-transfer, not idle. TP-SRV-RETIRE-01
+        if !self.handoff_in_progress
+            && self
+                .app
+                .server_retirement_due(now, !self.clients.is_empty())
+        {
+            info!("idle server retiring: no clients, no running pane processes");
+            self.app.dormant_all_retired_panes();
+            self.app.state.should_quit = true;
+        }
         // Each display browses its own directory, so the file workers run
         // once per display, inside that display's view. TP-SUR-FM-02
         changed |= self.app.for_each_display(|app| {

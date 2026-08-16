@@ -357,6 +357,11 @@ pub struct PaneSnapshot {
     pub agent_session: Option<PaneAgentSessionSnapshot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch_argv: Option<Vec<String>>,
+    /// Where a dormant pane's scrollback sits on disk. A restore that spawns
+    /// this pane fresh replays the file, so a server restart does not orphan
+    /// the history dormancy promised to keep.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dormant_history: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -627,6 +632,9 @@ fn capture_tab(
             })
             .unwrap_or_default();
         let launch_argv = terminal.and_then(|terminal| terminal.launch_argv.clone());
+        let dormant_history = terminal
+            .and_then(|terminal| terminal.dormant.as_ref())
+            .and_then(|dormant| dormant.history_path.clone());
         let agent_session = terminal.and_then(|terminal| {
             if let Some(authority) = terminal.hook_authority.as_ref() {
                 if let Some(session_ref) = authority.session_ref.as_ref() {
@@ -657,6 +665,7 @@ fn capture_tab(
                 managed_agent_kind,
                 agent_session,
                 launch_argv,
+                dormant_history,
             },
         );
     }
@@ -1170,6 +1179,7 @@ mod tests {
                 managed_agent_kind: None,
                 agent_session: None,
                 launch_argv: None,
+                dormant_history: None,
             },
         );
         panes.insert(
@@ -1181,6 +1191,7 @@ mod tests {
                 managed_agent_kind: None,
                 agent_session: None,
                 launch_argv: None,
+                dormant_history: None,
             },
         );
 
@@ -2122,6 +2133,7 @@ mod tests {
                 managed_agent_kind: None,
                 agent_session: None,
                 launch_argv: None,
+                dormant_history: None,
             },
         );
         panes.insert(
@@ -2135,6 +2147,7 @@ mod tests {
                 managed_agent_kind: None,
                 agent_session: None,
                 launch_argv: None,
+                dormant_history: None,
             },
         );
 

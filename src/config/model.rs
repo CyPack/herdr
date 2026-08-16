@@ -1697,6 +1697,11 @@ pub struct ExperimentalConfig {
     /// pane wakes it with its history replayed. Panes with a running process
     /// are never touched. Default: false.
     pub pane_dormancy: bool,
+    /// Let an idle server exit: when no client is attached and no pane has a
+    /// running process for a grace period, the server writes every retired
+    /// pane's scrollback to disk, saves the session, and stops. The next
+    /// `herdr` start restores the session with that history. Default: false.
+    pub idle_server_exit: bool,
     /// Expose the focused pane's cursor anchor to the outer terminal even when
     /// the pane requested `?25l`, so macOS native input methods keep tracking
     /// the candidate window when TUIs paint their own cursor (Claude Code, pi,
