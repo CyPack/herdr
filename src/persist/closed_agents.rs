@@ -234,9 +234,13 @@ mod tests {
     #[test]
     fn pruning_keeps_the_newest_first_and_evicts_the_oldest() {
         let now = RETENTION_MS * 2;
-        let records: Vec<_> = (0..MAX_RECORDS + 5)
+        // Built OLDEST first on purpose. Generated newest-first, this test
+        // passed with the sort removed — the input was already in the order
+        // the assertion wanted, so it proved nothing. Mutation caught that.
+        let mut records: Vec<_> = (0..MAX_RECORDS + 5)
             .map(|i| record(&format!("g{i}"), now - i as u64))
             .collect();
+        records.reverse();
 
         let kept = prune(records, now, RETENTION_MS);
 

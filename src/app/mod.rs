@@ -3106,9 +3106,16 @@ mod tests {
     #[test]
     fn a_sessionless_start_does_not_read_the_graveyard() {
         let (root, store, previous) = with_temp_config_dir("graveyard-read");
+        // Dated NOW, not at the epoch. Written as `closed_at: 1` this test
+        // passed even with the `no_session` guard removed, because retention
+        // dropped the record before the assertion could see it — the right
+        // answer for the wrong reason. Mutation caught that.
+        let fresh = crate::persist::workspace_chats::now_ms();
         std::fs::write(
             &store,
-            r#"{"version":1,"records":[{"agent_id":"ghost","label":"an older agent","closed_at":1}]}"#,
+            format!(
+                r#"{{"version":1,"records":[{{"agent_id":"ghost","label":"an older agent","closed_at":{fresh}}}]}}"#
+            ),
         )
         .expect("fake store");
 

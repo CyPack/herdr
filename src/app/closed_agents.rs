@@ -10,13 +10,21 @@
 use std::collections::VecDeque;
 use std::path::PathBuf;
 
-/// How many closed agents the panel remembers.
+/// How many closed agents the ledger remembers.
 ///
-/// The sidebar's height is finite: a separator plus eight grey rows sits under
-/// the active cards without pushing them off screen. The bound itself is the
-/// important part — closing agents is one of the most frequent gestures there
-/// is, and an unbounded list is unbounded memory wearing a feature's name.
-pub(crate) const CLOSED_AGENT_CAPACITY: usize = 8;
+/// This used to be eight, and its stated reason was the sidebar's height — a
+/// separator plus eight grey rows fitting under the active cards. That reason
+/// belonged to the drawing layer, which enforces its own bound anyway:
+/// `closed_agent_row_slots` hands out only the rows the body actually has, so
+/// a longer ledger cannot push anything off screen.
+///
+/// Leaving it at eight once the store existed would have been silent data
+/// loss: a run loads up to `MAX_RECORDS` from disk, then the very next close
+/// truncates the list back to eight and the month of history the user asked
+/// for disappears on the first agent they shut down. The bound still matters —
+/// an unbounded list is unbounded memory wearing a feature's name — so it is
+/// the store's bound, kept in one place rather than two that can drift.
+pub(crate) const CLOSED_AGENT_CAPACITY: usize = crate::persist::closed_agents::MAX_RECORDS;
 
 /// Where a ghost is in its journey back to life.
 ///
@@ -372,6 +380,37 @@ mod tests {
         );
     }
 
+    // TP-AGPANEL-38: a month of loaded history is not thrown away by the next
+    // agent that closes. The ring's capacity was eight, sized for the panel's
+    // height — but the panel enforces its own height, and with a store behind
+    // it that eight became silent data loss: load the month, close one agent,
+    // and the month is gone. Found by mutation while the store was being
+    // written, not by any test that existed.
+    #[test]
+    fn a_loaded_history_survives_the_next_close() {
+        let mut written = ClosedAgentLedger::default();
+        for i in 0..50u64 {
+            written.record_closed(record(&format!("old{i}"), 1_000 + i));
+        }
+        let stored = written.to_stored();
+        assert_eq!(stored.len(), 50, "precondition: fifty deaths were kept");
+
+        let mut ledger = ClosedAgentLedger::default();
+        ledger.load_stored(stored);
+        ledger.record_closed(record("fresh", 9_999));
+
+        assert_eq!(
+            ledger.entries().count(),
+            51,
+            "the newest death joins the history instead of replacing it"
+        );
+        assert_eq!(
+            ledger.entries().next().map(|r| r.agent_id.as_str()),
+            Some("fresh"),
+            "and it lands at the front"
+        );
+    }
+
     // TP-AGPANEL-37: everything a revival needs crosses the disk. The cwd is
     // the whole difference between reopening where the user worked and
     // reopening in `$HOME` (#46), and the session ref is what reattaches the
@@ -448,7 +487,14 @@ mod tests {
             !remembered.contains(&"g0".to_string()),
             "en eski tahliye edilir"
         );
-        assert_eq!(remembered.first().map(String::as_str), Some("g8"));
+        // Derived from the capacity, not written out: the bound moved from
+        // eight (the panel's row count) to the store's, and a hardcoded "g8"
+        // pinned this test to a number that no longer means anything.
+        let newest = format!("g{CLOSED_AGENT_CAPACITY}");
+        assert_eq!(
+            remembered.first().map(String::as_str),
+            Some(newest.as_str())
+        );
     }
 
     // TP-AGPANEL-10: revival is a one-way claim, not a debounce. The second
