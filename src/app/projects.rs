@@ -265,10 +265,17 @@ impl super::App {
                 return;
             }
         };
-        let root_pane = self.state.workspaces[ws_idx].tabs[tab_idx].root_pane;
-        self.terminal_runtimes.insert(terminal.id.clone(), runtime);
-        self.state.remove_alias_shadowed_by_new_pane(root_pane);
-        self.state.terminals.insert(terminal.id.clone(), terminal);
+        let Some(root_pane) = self.register_new_tab_pane(ws_idx, tab_idx, terminal, runtime) else {
+            tracing::warn!(
+                project = %req.project_path.display(),
+                "the project chat tab disappeared before it could be registered"
+            );
+            return;
+        };
+
+        // Between the two halves, and only here: a project chat wears the
+        // project's name and remembers the session it resumed, and both have to
+        // be true before anything draws the tab it just moved to.
         apply_project_chat_tab_name(
             &mut self.state.workspaces[ws_idx],
             tab_idx,
@@ -276,21 +283,8 @@ impl super::App {
         );
         self.state.workspaces[ws_idx].tabs[tab_idx].resumed_session_id = req.session_id;
         self.arm_projects_hot_poll();
-        self.state.switch_workspace_tab(ws_idx, tab_idx);
-        self.state.mode = crate::app::Mode::Terminal;
-        self.schedule_session_save();
-        if let Some(tab) = self.tab_info(ws_idx, tab_idx) {
-            self.emit_event(crate::api::schema::EventEnvelope {
-                event: crate::api::schema::EventKind::TabCreated,
-                data: crate::api::schema::EventData::TabCreated { tab },
-            });
-        }
-        if let Some(pane) = self.pane_info(ws_idx, root_pane) {
-            self.emit_event(crate::api::schema::EventEnvelope {
-                event: crate::api::schema::EventKind::PaneCreated,
-                data: crate::api::schema::EventData::PaneCreated { pane },
-            });
-        }
+
+        self.announce_new_tab(ws_idx, tab_idx, root_pane);
     }
 }
 

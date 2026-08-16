@@ -6,14 +6,80 @@
 //! a test red if the third copy drifted, which is exactly the failure a shared
 //! answer prevents.
 //!
-//! The two existing callers are deliberately not routed through this yet: each
-//! does extra work around the common steps (naming the tab and recording a
-//! resumed session; registering plugin ownership and honouring a focus flag),
-//! and moving them is a refactor that wants characterization tests of its own.
+//! The bookkeeping is now two functions rather than one, because the callers do
+//! not all do the same thing between its halves: a project chat names its tab
+//! and records a resumed session before anything takes focus. Registering and
+//! announcing are therefore separate, and what falls between them belongs to
+//! whoever is calling.
+//!
+//! The plugin path stays outside both for now. It reports failure as a wire
+//! error rather than a `Result`, registers plugin ownership of its own, and can
+//! open a tab without focusing it; folding it in would put three unrelated
+//! error vocabularies in one function. When it is folded in, that is when the
+//! focus question becomes a real choice worth a parameter — inventing the
+//! parameter today would only add an arm nothing calls.
 
 use crate::app::App;
+use crate::layout::PaneId;
+use crate::terminal::{TerminalRuntime, TerminalState};
 
 impl App {
+    /// Put a freshly created tab's terminal and runtime into state, and say
+    /// which pane is the tab's root.
+    ///
+    /// The half every caller performs before its own bookkeeping. The root pane
+    /// is returned because the announcement needs it and because otherwise each
+    /// call site indexes three levels deep to find a value the workspace has
+    /// just handed back.
+    ///
+    /// `None` means the workspace or tab is gone, which is a caller's problem to
+    /// report in its own vocabulary rather than this function's to guess at.
+    pub(crate) fn register_new_tab_pane(
+        &mut self,
+        ws_idx: usize,
+        tab_idx: usize,
+        terminal: TerminalState,
+        runtime: TerminalRuntime,
+    ) -> Option<PaneId> {
+        let root_pane = self
+            .state
+            .workspaces
+            .get(ws_idx)?
+            .tabs
+            .get(tab_idx)?
+            .root_pane;
+        self.terminal_runtimes.insert(terminal.id.clone(), runtime);
+        // Before the terminal goes in, because an alias that outlived its pane
+        // would otherwise be live for the moment in between.
+        self.state.remove_alias_shadowed_by_new_pane(root_pane);
+        self.state.terminals.insert(terminal.id.clone(), terminal);
+        Some(root_pane)
+    }
+
+    /// Go to a freshly registered tab, persist the session, and announce both
+    /// the tab and its pane.
+    ///
+    /// Announced in that order: a subscriber that learns about a pane before the
+    /// tab holding it has to hold the pane somewhere until the tab arrives, and
+    /// nothing about the order costs anything to get right here.
+    pub(crate) fn announce_new_tab(&mut self, ws_idx: usize, tab_idx: usize, root_pane: PaneId) {
+        self.state.switch_workspace_tab(ws_idx, tab_idx);
+        self.state.mode = crate::app::Mode::Terminal;
+        self.schedule_session_save();
+
+        if let Some(tab) = self.tab_info(ws_idx, tab_idx) {
+            self.emit_event(crate::api::schema::EventEnvelope {
+                event: crate::api::schema::EventKind::TabCreated,
+                data: crate::api::schema::EventData::TabCreated { tab },
+            });
+        }
+        if let Some(pane) = self.pane_info(ws_idx, root_pane) {
+            self.emit_event(crate::api::schema::EventEnvelope {
+                event: crate::api::schema::EventKind::PaneCreated,
+                data: crate::api::schema::EventData::PaneCreated { pane },
+            });
+        }
+    }
     /// Run `argv` in a new tab of the active workspace, and go there.
     ///
     /// "Full size" needs no zoom: the tab's root pane is the only pane in it, so
@@ -60,26 +126,10 @@ impl App {
             self.state.host_terminal_theme,
         )?;
 
-        let root_pane = self.state.workspaces[ws_idx].tabs[tab_idx].root_pane;
-        self.terminal_runtimes.insert(terminal.id.clone(), runtime);
-        self.state.remove_alias_shadowed_by_new_pane(root_pane);
-        self.state.terminals.insert(terminal.id.clone(), terminal);
-        self.state.switch_workspace_tab(ws_idx, tab_idx);
-        self.state.mode = crate::app::Mode::Terminal;
-        self.schedule_session_save();
-
-        if let Some(tab) = self.tab_info(ws_idx, tab_idx) {
-            self.emit_event(crate::api::schema::EventEnvelope {
-                event: crate::api::schema::EventKind::TabCreated,
-                data: crate::api::schema::EventData::TabCreated { tab },
-            });
-        }
-        if let Some(pane) = self.pane_info(ws_idx, root_pane) {
-            self.emit_event(crate::api::schema::EventEnvelope {
-                event: crate::api::schema::EventKind::PaneCreated,
-                data: crate::api::schema::EventData::PaneCreated { pane },
-            });
-        }
+        let Some(root_pane) = self.register_new_tab_pane(ws_idx, tab_idx, terminal, runtime) else {
+            return Err(std::io::Error::other("the new tab disappeared"));
+        };
+        self.announce_new_tab(ws_idx, tab_idx, root_pane);
         Ok(())
     }
 }
