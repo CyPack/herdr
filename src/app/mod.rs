@@ -862,6 +862,9 @@ impl App {
             detach_exits: no_session,
             detach_requested: false,
             request_new_workspace: false,
+            request_merge_daily_workspaces: false,
+            request_module_git_init: None,
+            request_module_branch_workspace: None,
             request_new_tab: false,
             request_new_linked_worktree: None,
             request_open_existing_worktree: None,
@@ -1458,6 +1461,14 @@ impl App {
                 needs_render = true;
             }
 
+            if self.state.request_merge_daily_workspaces {
+                self.state.request_merge_daily_workspaces = false;
+                // TP-DAILY-19: both context-menu bodies set the flag and the
+                // work happens here, where the API dispatch actually exists.
+                self.merge_daily_workspaces("tui.daily.merge");
+                needs_render = true;
+            }
+
             if self.state.request_new_workspace {
                 self.state.request_new_workspace = false;
                 // TP-DAILY-17: the second TUI road to "new workspace", routed
@@ -1480,6 +1491,21 @@ impl App {
                         env: Default::default(),
                     },
                 );
+                needs_render = true;
+            }
+
+            // TP-MOD-38: before the worktree request below, so initialising a
+            // repository and branching from it can complete in one pass rather
+            // than making the person press the verb twice.
+            if let Some(module_key) = self.state.request_module_git_init.take() {
+                self.initialize_module_repository(&module_key);
+                needs_render = true;
+            }
+
+            // TP-MOD-37: opens the module's own repository as a workspace and
+            // arms the branch request, which the arm below then answers.
+            if let Some(module_key) = self.state.request_module_branch_workspace.take() {
+                self.open_branch_workspace_for_module(&module_key);
                 needs_render = true;
             }
 

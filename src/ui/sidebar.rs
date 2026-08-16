@@ -585,6 +585,73 @@ pub(crate) fn space_owner_for_key(app: &AppState, space_key: &str) -> Option<Str
 /// through it, then the same search up the module's own ancestor chain — a
 /// freshly created (still invisible) module borrows its ancestors' repo
 /// (TP-DOTS-14).
+/// What a module can start a branch from.
+///
+/// TP-MOD-37: "New branch..." has been on every module header since TP-DOTS-13,
+/// but it only ever looked for a checkout already standing under the module.
+/// A module the person gave a directory to — which TP-MOD-33 made possible and
+/// TP-MOD-35 gave a picker for — had nothing to offer, so the verb answered
+/// "move a branch under it first" and stopped there. That is a dead end wearing
+/// the clothes of an explanation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ModuleBranchSource {
+    /// A checkout already stands under this module. Today's behaviour, and it
+    /// wins over everything below: a checkout under the module is a more
+    /// specific answer than the module's own directory, and quietly preferring
+    /// the directory would move the branch somewhere else than before.
+    Workspace(usize),
+    /// The module's own directory IS a git repository root.
+    Repository(std::path::PathBuf),
+    /// The directory is there but is not a repository root — the one case that
+    /// can be fixed on the spot, by initialising it.
+    UninitializedDirectory(std::path::PathBuf),
+    /// Nothing stated, or what was stated is no longer on disk.
+    NoDirectory,
+}
+
+/// Whether `dir` is a git repository ROOT.
+///
+/// ⛔ TP-MOD-37: deliberately NOT `git rev-parse --show-toplevel`, and
+/// deliberately no walk up the parents. Measured on the reporting machine:
+///
+/// ```text
+/// /home/ayaz/Marktplaats satis        exists, empty, no .git
+/// git -C "/home/ayaz/Marktplaats satis" rev-parse --show-toplevel  →  /home/ayaz
+/// ```
+///
+/// `$HOME` is itself a git repository there. A climbing check would have called
+/// that module a repository and opened branches and worktrees in the home
+/// directory — over `~/.claude`, `~/.config` and every project in it. Only the
+/// directory the person named counts, and only if it is a root.
+///
+/// `.git` is tested with `exists()` rather than `is_dir()` because a linked
+/// worktree and a submodule both carry a `.git` FILE, and both are perfectly
+/// good places to branch from.
+pub(crate) fn is_git_repository_root(dir: &std::path::Path) -> bool {
+    dir.join(".git").exists()
+}
+
+/// TP-MOD-37: the four answers, in the order that keeps today's behaviour safe.
+pub(crate) fn module_branch_source(app: &AppState, module_key: &str) -> ModuleBranchSource {
+    if let Some(ws_idx) = worktree_source_for_module(app, module_key) {
+        return ModuleBranchSource::Workspace(ws_idx);
+    }
+    let Some(dir) = app.module_directory_for_key(module_key) else {
+        return ModuleBranchSource::NoDirectory;
+    };
+    // Checked here and not only when it was written: a directory can be removed
+    // afterwards — a worktree pruned, a disk unmounted — and TP-CHAT-MOVE-10
+    // (R3) already pays this exact toll on the chat side.
+    if !dir.is_dir() {
+        return ModuleBranchSource::NoDirectory;
+    }
+    if is_git_repository_root(&dir) {
+        ModuleBranchSource::Repository(dir)
+    } else {
+        ModuleBranchSource::UninitializedDirectory(dir)
+    }
+}
+
 pub(crate) fn worktree_source_for_module(app: &AppState, module_key: &str) -> Option<usize> {
     let chain_hits_module = |idx: usize, target: &str| -> bool {
         let Some(space) = effective_space(app, idx) else {
@@ -8044,6 +8111,107 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         );
     }
 
+    // P2.1 / TP-DAILY-19: the set the merge verb folds. Two or more unnamed
+    // workspaces standing in one directory are copies of that directory, and
+    // the verb exists to turn them back into one.
+    #[test]
+    fn every_unnamed_workspace_in_the_daily_directory_is_mergeable() {
+        let (app, _) = app_with_n_workspaces_in_the_daily_directory(3);
+
+        assert_eq!(
+            app.mergeable_daily_workspaces().len(),
+            3,
+            "all three stand in the same place and none of them is named"
+        );
+    }
+
+    // P2.2 / TP-DAILY-19: with one workspace there is nothing to fold, and a
+    // verb with no work to do is a button that does nothing. The menu must not
+    // promise what the section cannot keep.
+    #[test]
+    fn a_single_daily_workspace_is_not_a_merge() {
+        let (app, _) = app_with_n_workspaces_in_the_daily_directory(1);
+
+        assert!(
+            app.mergeable_daily_workspaces().len() < 2,
+            "one workspace is already the merged state"
+        );
+    }
+
+    // P2.4 / TP-DAILY-19: a named workspace is excluded for exactly the reason
+    // adoption excludes it (P1.2) — the name is a decision, and a tidy-up must
+    // not overrule it.
+    #[test]
+    fn a_named_workspace_is_never_merged_away() {
+        let (mut app, _) = app_with_n_workspaces_in_the_daily_directory(3);
+        if let Some(ws) = app.workspaces.last_mut() {
+            ws.custom_name = Some("log tail".to_string());
+        }
+
+        let mergeable = app.mergeable_daily_workspaces();
+        assert_eq!(mergeable.len(), 2, "the named one drops out of the set");
+        assert!(
+            !mergeable.contains(&(app.workspaces.len() - 1)),
+            "and it is specifically the named one that is spared"
+        );
+    }
+
+    // P2.6 / TP-DAILY-19: the target is the workspace the person is standing
+    // in, when that is one of them. A cleanup someone asked for must not carry
+    // them out of where they were working — the core-side counterpart of the
+    // row order the section already draws (TP-DAILY-18).
+    #[test]
+    fn the_merge_target_is_the_active_workspace_when_it_is_one_of_them() {
+        let (mut app, _) = app_with_n_workspaces_in_the_daily_directory(3);
+        let mergeable = app.mergeable_daily_workspaces();
+        let last = *mergeable.last().expect("three were pushed");
+        assert_ne!(
+            last, mergeable[0],
+            "precondition: the active one below is NOT the first, or this proves nothing"
+        );
+        app.active = Some(last);
+
+        assert_eq!(
+            app.daily_merge_target(),
+            Some(last),
+            "the person stays where they already were"
+        );
+    }
+
+    // P2.6b / TP-DAILY-19: standing somewhere else, the first is the target.
+    // Without this the verb would have no destination at all whenever the
+    // person pressed it from a repository workspace.
+    #[test]
+    fn the_merge_target_falls_back_to_the_first_when_the_active_is_elsewhere() {
+        let (mut app, _) = app_with_n_workspaces_in_the_daily_directory(3);
+        app.active = Some(0); // the fixture's own non-daily workspace
+
+        let mergeable = app.mergeable_daily_workspaces();
+        assert!(
+            !mergeable.contains(&0),
+            "precondition: workspace 0 is not one of the daily ones"
+        );
+        assert_eq!(app.daily_merge_target(), mergeable.first().copied());
+    }
+
+    // P2.9 / TP-DAILY-19: the rule is about ONE directory. A workspace standing
+    // in a repository is never in the set, so merging can never reach it —
+    // the same boundary P1.4 draws for adoption.
+    #[test]
+    fn workspaces_outside_the_daily_directory_are_never_mergeable() {
+        let (mut app, _) = app_with_n_workspaces_in_the_daily_directory(2);
+        let mut repo = Workspace::test_new("herdr");
+        repo.custom_name = None;
+        repo.identity_cwd = std::env::temp_dir().join("herdr-some-repo");
+        app.workspaces.push(repo);
+        let repo_idx = app.workspaces.len() - 1;
+
+        assert!(
+            !app.mergeable_daily_workspaces().contains(&repo_idx),
+            "an unnamed workspace in a repository is still that repository's, not the daily area's"
+        );
+    }
+
     // P3.2 / TP-DAILY-18: the reported defect, answered. Seven rows for one
     // place read as spam — "hepsinin içinde aynı chatler var, fark ne ki?" —
     // so the section shows ONE and offers the rest.
@@ -11672,5 +11840,262 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
                 },
             ]
         );
+    }
+}
+
+#[cfg(test)]
+mod module_gap_tests {
+    use super::{module_branch_source, ModuleBranchSource};
+    use crate::app::state::AppState;
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("herdr-modgap-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch directory");
+        dir
+    }
+
+    fn state_with_node(key: &str, dir: Option<std::path::PathBuf>) -> AppState {
+        let mut app = AppState::test_new();
+        app.space_nodes = vec![crate::spaces::SpaceNode {
+            key: key.to_string(),
+            name: key.to_string(),
+            icon: None,
+            parent: None,
+            dir,
+        }];
+        app
+    }
+
+    fn state_with_bucket(key: &str, repo_root: std::path::PathBuf) -> AppState {
+        let mut app = AppState::test_new();
+        app.space_split_rules = vec![crate::spaces::SpaceSplitRule {
+            repo_root,
+            patterns: vec!["*".to_string()],
+            key: key.to_string(),
+            label: format!("{key} label"),
+            icon: None,
+            parent: None,
+        }];
+        app
+    }
+
+    // M1.8 / TP-MOD-36: a node states its directory and that is the answer.
+    #[test]
+    fn a_node_with_a_directory_answers_with_it() {
+        let dir = scratch("node-dir");
+        let app = state_with_node("mod", Some(dir.clone()));
+
+        assert_eq!(app.module_directory_for_key("mod"), Some(dir));
+    }
+
+    // M1.9 / TP-MOD-36: a bucket's directory is its repo root — also a fact the
+    // person wrote down, in the rule itself. Twenty of the twenty-four modules
+    // on the reporting machine are buckets, so a definition that skipped them
+    // would answer "no directory" for most of that tree.
+    #[test]
+    fn a_bucket_answers_with_its_repository_root() {
+        let repo = scratch("bucket-repo");
+        let app = state_with_bucket("bucket", repo.clone());
+
+        assert_eq!(app.module_directory_for_key("bucket"), Some(repo));
+    }
+
+    // M1.10 / TP-MOD-36: nothing stated, nothing invented. #46 measured where
+    // guessed directories land.
+    #[test]
+    fn a_module_with_nothing_stated_has_no_directory() {
+        let app = state_with_node("mod", None);
+
+        assert_eq!(app.module_directory_for_key("mod"), None);
+        assert_eq!(app.module_directory_for_key("nobody"), None);
+    }
+
+    // M2.2 / TP-MOD-37: the module's own directory is a repository root, so it
+    // is somewhere to branch from.
+    #[test]
+    fn a_module_standing_in_a_repository_root_can_branch() {
+        let repo = scratch("repo-root");
+        std::fs::create_dir_all(repo.join(".git")).expect("repo marker");
+        let app = state_with_node("mod", Some(repo.clone()));
+
+        assert_eq!(
+            module_branch_source(&app, "mod"),
+            ModuleBranchSource::Repository(repo)
+        );
+    }
+
+    // M2.3 🔴 / TP-MOD-37: THE guard. Measured on the reporting machine:
+    //
+    //   /home/ayaz/Marktplaats satis          exists, empty, no .git
+    //   git -C "..." rev-parse --show-toplevel  →  /home/ayaz
+    //
+    // `$HOME` is itself a git repository there. If this answered `Repository`,
+    // "New branch..." on that module would open branches and worktrees over the
+    // whole home directory — `~/.claude`, `~/.config`, every project in it.
+    // This test failing is that defect.
+    #[test]
+    fn a_directory_inside_a_repository_is_not_itself_a_branch_source() {
+        let root = scratch("outer-repo");
+        std::fs::create_dir_all(root.join(".git")).expect("repo marker");
+        let inner = root.join("inner");
+        std::fs::create_dir_all(&inner).expect("inner directory");
+        let app = state_with_node("mod", Some(inner.clone()));
+
+        assert_eq!(
+            module_branch_source(&app, "mod"),
+            ModuleBranchSource::UninitializedDirectory(inner),
+            "only the directory the person named counts, and only if it is a root"
+        );
+    }
+
+    // M2.4 / TP-MOD-37: nothing stated — the menu needs to know so it can point
+    // at "Set directory..." instead of at a dead end.
+    #[test]
+    fn a_module_with_no_directory_has_no_branch_source() {
+        let app = state_with_node("mod", None);
+
+        assert_eq!(
+            module_branch_source(&app, "mod"),
+            ModuleBranchSource::NoDirectory
+        );
+    }
+
+    // M2.5 / TP-MOD-37: stated once, gone since. Re-measured at use, the same
+    // toll TP-CHAT-MOVE-10 (R3) already pays on the chat side.
+    #[test]
+    fn a_module_whose_directory_has_gone_has_no_branch_source() {
+        let gone = std::env::temp_dir().join("herdr-modgap-never-existed");
+        let app = state_with_node("mod", Some(gone));
+
+        assert_eq!(
+            module_branch_source(&app, "mod"),
+            ModuleBranchSource::NoDirectory
+        );
+    }
+
+    // M2.10 / TP-MOD-37: a bucket branches from the repository its rule names.
+    #[test]
+    fn a_bucket_branches_from_the_repository_its_rule_names() {
+        let repo = scratch("bucket-branch");
+        std::fs::create_dir_all(repo.join(".git")).expect("repo marker");
+        let app = state_with_bucket("bucket", repo.clone());
+
+        assert_eq!(
+            module_branch_source(&app, "bucket"),
+            ModuleBranchSource::Repository(repo)
+        );
+    }
+
+    // M1.1 + M1.2 / TP-CHAT-MOVE-11: nodes AND buckets are destinations, each
+    // keyed by `module:<key>`.
+    #[test]
+    fn nodes_and_buckets_are_both_module_destinations() {
+        let repo = scratch("targets-repo");
+        let dir = scratch("targets-node");
+        let mut app = state_with_node("node-mod", Some(dir));
+        app.space_split_rules = vec![crate::spaces::SpaceSplitRule {
+            repo_root: repo,
+            patterns: vec!["*".to_string()],
+            key: "bucket-mod".to_string(),
+            label: "Bucket Mod".to_string(),
+            icon: None,
+            parent: None,
+        }];
+
+        let keys: Vec<String> = app
+            .module_move_target_entries()
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect();
+
+        assert!(keys.contains(&"module:node-mod".to_string()));
+        assert!(
+            keys.contains(&"module:bucket-mod".to_string()),
+            "buckets are twenty of this person's twenty-four modules"
+        );
+    }
+
+    // M1.3 / TP-CHAT-MOVE-11: the module list holds modules only. Two verbs
+    // that offer the same list are one verb wearing two names.
+    #[test]
+    fn the_module_list_never_offers_a_workspace() {
+        let dir = scratch("modules-only");
+        let app = state_with_node("mod", Some(dir));
+
+        assert!(
+            app.module_move_target_entries()
+                .iter()
+                .all(|(key, _)| key.starts_with("module:")),
+            "every entry is a module identity, never a directory key"
+        );
+    }
+
+    // M1.4 / TP-CHAT-MOVE-11: a module with a directory can actually receive a
+    // chat and reopen it; one without cannot (TP-CHAT-MOVE-07). Offering the
+    // dead end first would point at the option that does not work.
+    #[test]
+    fn modules_with_a_directory_are_offered_first() {
+        let dir = scratch("ordered");
+        let mut app = AppState::test_new();
+        app.space_nodes = vec![
+            crate::spaces::SpaceNode {
+                key: "no-dir".to_string(),
+                name: "No Dir".to_string(),
+                icon: None,
+                parent: None,
+                dir: None,
+            },
+            crate::spaces::SpaceNode {
+                key: "has-dir".to_string(),
+                name: "Has Dir".to_string(),
+                icon: None,
+                parent: None,
+                dir: Some(dir),
+            },
+        ];
+
+        let keys: Vec<String> = app
+            .module_move_target_entries()
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect();
+
+        assert_eq!(
+            keys.first().map(String::as_str),
+            Some("module:has-dir"),
+            "the first option must be one that works"
+        );
+    }
+
+    // TP-CHAT-MOVE-11: one row per module, not per rule. The reporting config
+    // gives `herdr:web` two `[[spaces.split]]` rules; listing it twice would
+    // read as two modules with the same name.
+    #[test]
+    fn a_module_claimed_by_two_rules_is_listed_once() {
+        let repo = scratch("dup-rules");
+        let mut app = AppState::test_new();
+        app.space_nodes.clear();
+        app.space_split_rules = vec![
+            crate::spaces::SpaceSplitRule {
+                repo_root: repo.clone(),
+                patterns: vec!["a*".to_string()],
+                key: "same".to_string(),
+                label: "Same".to_string(),
+                icon: None,
+                parent: None,
+            },
+            crate::spaces::SpaceSplitRule {
+                repo_root: repo,
+                patterns: vec!["b*".to_string()],
+                key: "same".to_string(),
+                label: "Same".to_string(),
+                icon: None,
+                parent: None,
+            },
+        ];
+
+        let entries = app.module_move_target_entries();
+        assert_eq!(entries.len(), 1, "one module, one row");
     }
 }

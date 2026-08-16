@@ -2389,6 +2389,9 @@ pub enum ContextMenuKind {
         session_id: String,
         has_move: bool,
         has_live: bool,
+        /// Whether the tree declares any module at all, which is the whole
+        /// condition for offering "Move to module..." (TP-CHAT-MOVE-11).
+        has_modules: bool,
     },
     /// An agents-panel row's own menu. The row already stands for one pane,
     /// so the target rides in the menu rather than being re-derived from
@@ -2426,6 +2429,15 @@ pub enum ContextMenuKind {
         /// (TP-MOD-26). Resolved when the menu opens, so a reload underneath
         /// an open menu cannot turn the offer into a no-op.
         deletable: bool,
+        /// Whether this module points at a directory that exists but is not a
+        /// git repository root — the one state "Initialize git repository" can
+        /// fix, so the one state it is offered in (TP-MOD-38).
+        ///
+        /// Resolved when the menu opens, like `deletable`, and a flag rather
+        /// than a path: the handler re-measures before it acts, because a
+        /// directory can become a repository between the menu opening and the
+        /// item being picked.
+        needs_git_init: bool,
     },
     /// A repository/bucket header's menu. A split rule cannot parent a node,
     /// so offering "new sub-module" here would be a promise the tree cannot
@@ -2454,6 +2466,15 @@ pub enum ContextMenuKind {
     /// not a row, so nothing here can go stale under a refresh.
     DailyHeader {
         collapsed: bool,
+        /// Whether two or more interchangeable workspaces stand here, which is
+        /// the only condition under which "Merge workspaces here" is offered
+        /// (TP-DAILY-19).
+        ///
+        /// A flag, not an index — deliberately, the way `MoveWorkspace` carries
+        /// `has_targets`. It decides whether a verb is shown; the handler
+        /// recomputes the set when it runs, so a list that changes under an
+        /// open menu can never make this stale in the way an index would.
+        has_mergeable: bool,
     },
     /// Agent selector for a new chat in the daily directory (TP-DAILY-11).
     ///
@@ -2566,7 +2587,10 @@ impl ContextMenuState {
             // force — offering it otherwise would be a button that does
             // nothing.
             ContextMenuKind::WorkspaceChat {
-                has_move, has_live, ..
+                has_move,
+                has_live,
+                has_modules,
+                ..
             } => {
                 // TP-CHAT-NAME-01: naming comes first. A chat's row is the one
                 // place a conversation is addressed by name, and until now the
@@ -2575,6 +2599,16 @@ impl ContextMenuState {
                 // there is no resolvable title at all, which is how a row came
                 // to read `ayaz` with nothing to say who spawned it or why.
                 let mut items = vec!["Rename chat...", "Move to branch..."];
+                // TP-CHAT-MOVE-11: modules are a second kind of destination and
+                // they get their own verb. They were already reachable through
+                // "Move to branch...", which is exactly the problem: on the
+                // reporting machine that list is about thirty checkouts long,
+                // the twenty-four modules are scattered through it, and the
+                // verb's name says branch. A destination nobody can find is a
+                // feature that does not exist from where they are standing.
+                if *has_modules {
+                    items.push("Move to module...");
+                }
                 if *has_move {
                     items.push("Move back");
                 }
@@ -2609,6 +2643,7 @@ impl ContextMenuState {
             ContextMenuKind::NodeHeader {
                 collapsed,
                 deletable,
+                needs_git_init,
                 ..
             } => {
                 // TP-DOTS-13: the branch road leads — the point of a module
@@ -2631,6 +2666,17 @@ impl ContextMenuState {
                 // field on the same key, and the overlay merges after the
                 // user's rules rather than against them.
                 items.push("Set directory...");
+                // TP-MOD-38: offered ONLY while the module points at a real
+                // directory that is not a repository — the single state this
+                // verb can change. "New branch..." has sat on every module
+                // header since TP-DOTS-13 and answered a module like this with
+                // "move a branch under it first", which is a dead end: the
+                // person stated a directory precisely so the module would have
+                // somewhere of its own to branch from. This is the missing
+                // step between the two.
+                if *needs_git_init {
+                    items.push("Initialize git repository");
+                }
                 // TP-MOD-08/26: last, because it is the only item that takes
                 // something away — and only when there is something the
                 // machine can take back.
@@ -2675,11 +2721,19 @@ impl ContextMenuState {
             // TP-DAILY-12: the area's own verbs. No branch or sub-module
             // entries: the daily directory is not a repository and holds no
             // tree beneath it, so those would be offers it cannot keep.
-            ContextMenuKind::DailyHeader { collapsed } => {
-                vec![
-                    "New chat...",
-                    if *collapsed { "Expand" } else { "Collapse" },
-                ]
+            ContextMenuKind::DailyHeader {
+                collapsed,
+                has_mergeable,
+            } => {
+                let mut items = vec!["New chat..."];
+                // TP-DAILY-19: only when there is something to fold. A verb
+                // with no work to do is a button that does nothing, and the
+                // menu should not promise what the section cannot keep.
+                if *has_mergeable {
+                    items.push("Merge workspaces here");
+                }
+                items.push(if *collapsed { "Expand" } else { "Collapse" });
+                items
             }
             // TP-DAILY-11: agents only. The daily directory is not a checkout,
             // so a worktree verb here would be an offer the tree cannot keep.
@@ -3422,6 +3476,25 @@ pub struct AppState {
     /// The server's event loop checks this and handles client detach.
     pub detach_requested: bool,
     pub request_new_workspace: bool,
+    /// Set by the daily header's "Merge workspaces here" (TP-DAILY-19).
+    ///
+    /// A request flag rather than the work itself, because the two context-menu
+    /// bodies do not have the same reach: the `#[cfg(test)]` one is handed an
+    /// `AppState` and cannot dispatch API calls at all. Both bodies therefore
+    /// write this one line, and the App loop does the moving — which is what
+    /// makes it structurally impossible for the verb to work in tests and do
+    /// nothing in the product (the defect class behind constraint 31).
+    pub request_merge_daily_workspaces: bool,
+    /// A module whose stated directory should become a git repository
+    /// (TP-MOD-38). Carries the module key, not the path: the path is
+    /// re-resolved and re-measured when the request runs, so a directory that
+    /// became a repository in another terminal in the meantime is not
+    /// initialised twice.
+    pub request_module_git_init: Option<String>,
+    /// A module whose stated directory is already a repository but has no
+    /// workspace open on it yet (TP-MOD-37). The App loop opens one and then
+    /// walks the ordinary branch road from it.
+    pub request_module_branch_workspace: Option<String>,
     pub request_new_tab: bool,
     pub request_new_linked_worktree: Option<usize>,
     pub request_open_existing_worktree: Option<usize>,
@@ -4590,6 +4663,9 @@ impl AppState {
             detach_exits: false,
             detach_requested: false,
             request_new_workspace: false,
+            request_merge_daily_workspaces: false,
+            request_module_git_init: None,
+            request_module_branch_workspace: None,
             request_new_tab: false,
             request_new_linked_worktree: None,
             request_open_existing_worktree: None,
@@ -6361,6 +6437,7 @@ mod tests {
     fn the_chat_menu_offers_move_and_conditionally_back() {
         let plain = ContextMenuState {
             kind: ContextMenuKind::WorkspaceChat {
+                has_modules: false,
                 ws_idx: Some(0),
                 session_id: "s1".into(),
                 has_move: false,
@@ -6376,6 +6453,7 @@ mod tests {
 
         let moved = ContextMenuState {
             kind: ContextMenuKind::WorkspaceChat {
+                has_modules: false,
                 ws_idx: Some(0),
                 session_id: "s1".into(),
                 has_move: true,
