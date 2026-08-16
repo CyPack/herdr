@@ -107,6 +107,58 @@ impl App {
             return;
         }
 
+        self.tui_new_workspace(request_id);
+        self.state.mode = if self.state.active.is_some() {
+            Mode::Terminal
+        } else {
+            Mode::Navigate
+        };
+    }
+
+    /// The TUI's own "new workspace" intent — every road to it ends here.
+    ///
+    /// TP-DAILY-17: the rule that a second unnamed workspace in the daily
+    /// directory becomes a TAB rather than a workspace belongs to this layer
+    /// and NOT to `workspace.create`. A plugin or script that asks the API for
+    /// a workspace must get a workspace; handing it a tab back would break the
+    /// contract silently, and the response type says `workspace_created`. What
+    /// the person pressed, on the other hand, was "give me somewhere new to
+    /// work" — and in a directory that already has an unnamed workspace, a new
+    /// tab in it IS somewhere new to work.
+    ///
+    /// Both TUI roads (the mouse/key affordance and the `request_new_workspace`
+    /// loop) call this one function. Menu verbs with two bodies are how #91
+    /// shipped an affordance that worked in every test and did nothing in the
+    /// product; one body cannot drift from itself.
+    pub(crate) fn tui_new_workspace(&mut self, request_id: &'static str) {
+        // Only when the new workspace would have landed in the daily directory
+        // anyway. A "new workspace" pressed inside a repository must still make
+        // a workspace in that repository — breaking that would be a far larger
+        // defect than the one being fixed.
+        let target_cwd = self.resolve_new_terminal_cwd(
+            self.workspace_creation_source()
+                .and_then(|source| self.focused_pane_cwd_in_workspace(source)),
+        );
+        if let Some(ws_idx) = self.state.daily_adoption_target(&target_cwd) {
+            let workspace_id = self.state.workspaces.get(ws_idx).map(|ws| ws.id.clone());
+            if let Some(workspace_id) = workspace_id {
+                self.runtime_tab_create(
+                    request_id,
+                    crate::api::schema::TabCreateParams {
+                        workspace_id: Some(workspace_id),
+                        cwd: None,
+                        // Focused: the person asked for somewhere new to work,
+                        // so landing them nowhere is the one outcome worse than
+                        // the duplicate row this replaces.
+                        focus: true,
+                        label: None,
+                        env: Default::default(),
+                    },
+                );
+                return;
+            }
+        }
+
         self.runtime_workspace_create(
             request_id,
             crate::api::schema::WorkspaceCreateParams {
@@ -116,11 +168,6 @@ impl App {
                 env: Default::default(),
             },
         );
-        self.state.mode = if self.state.active.is_some() {
-            Mode::Terminal
-        } else {
-            Mode::Navigate
-        };
     }
 
     /// Create a workspace with a real PTY (needs event_tx).

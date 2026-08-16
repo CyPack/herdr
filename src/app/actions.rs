@@ -2071,6 +2071,72 @@ impl AppState {
         self.recent_move_targets.truncate(REMEMBERED);
     }
 
+    /// The workspaces standing in the daily directory, in list order.
+    ///
+    /// TP-DAILY-17: one definition, because there are now two callers who must
+    /// agree — the sidebar, which draws them, and the "new workspace" road,
+    /// which must not create another one. A second copy of this predicate is a
+    /// drift waiting to happen: the two would answer differently on exactly the
+    /// machines where it matters, and the symptom (a row that appears or a
+    /// workspace that is not adopted) gives no hint that they disagreed.
+    ///
+    /// Deliberately NOT gated on the section being visible. Whether the daily
+    /// area is drawn is a question about the sidebar; whether a workspace
+    /// stands in that directory is a question about the session. The sidebar
+    /// wraps this with its own visibility test.
+    pub(crate) fn workspaces_in_daily_directory(&self) -> Vec<usize> {
+        let Some(daily) = self.daily_chat_cwd.as_deref() else {
+            return Vec::new();
+        };
+        let daily_key = crate::persist::workspace_chats::ledger_key(daily);
+        self.workspaces
+            .iter()
+            .enumerate()
+            .filter(|(_, ws)| {
+                crate::persist::workspace_chats::ledger_key(ws.effective_cwd()) == daily_key
+            })
+            .map(|(ws_idx, _)| ws_idx)
+            .collect()
+    }
+
+    /// The workspace a new one would be folded into, if there is one.
+    ///
+    /// TP-DAILY-17: the daily directory is one place, and one place gets one
+    /// workspace. Measured on the reported machine: seven stood there, five of
+    /// them created within 32 minutes of each other, each one spawned from
+    /// inside the last — `new_cwd = "follow"` inherits the pane's directory, so
+    /// a `$HOME` workspace makes the next `$HOME` workspace, which makes the
+    /// next. Six of the seven held nothing but a shell and a plugin pane.
+    ///
+    /// A NAMED workspace is never adopted. A name is a deliberate identity: if
+    /// someone said "this one is the log tail", a second one standing in the
+    /// same directory is also deliberate, and folding into the first would
+    /// overrule a decision the machine has no business overruling.
+    pub(crate) fn adoptable_daily_workspace(&self) -> Option<usize> {
+        self.workspaces_in_daily_directory()
+            .into_iter()
+            .find(|ws_idx| {
+                self.workspaces
+                    .get(*ws_idx)
+                    .is_some_and(|ws| ws.custom_name.is_none())
+            })
+    }
+
+    /// Whether the TUI's "new workspace" intent would be folded into an
+    /// existing workspace rather than creating one, for a cwd it resolves to.
+    ///
+    /// Split out from the routing so the RULE is testable without a PTY, and
+    /// so the two TUI roads provably share it.
+    // TP-DAILY-17
+    pub(crate) fn daily_adoption_target(&self, target_cwd: &std::path::Path) -> Option<usize> {
+        let daily = self.daily_chat_cwd.as_deref()?;
+        let key = crate::persist::workspace_chats::ledger_key;
+        if key(target_cwd) != key(daily) {
+            return None;
+        }
+        self.adoptable_daily_workspace()
+    }
+
     /// What a chat's row currently reads, by session id.
     ///
     /// TP-CHAT-NAME-01: searched across every drawer rather than within one,

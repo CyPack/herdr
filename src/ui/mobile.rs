@@ -622,6 +622,21 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
                     },
                 });
             }
+            // TP-DAILY-18: the phone draws the same note. Two surfaces walking
+            // one tree is the point (TP-DAILY-08) — a row the desktop folds and
+            // the phone omits is a place reachable from one screen and not the
+            // other. It carries no target for the reason `ChatNote` never does:
+            // the cursor must not stop on a row that does nothing.
+            crate::ui::sidebar::WorkspaceListEntry::DailyMoreWorkspaces { hidden, .. } => {
+                rows.push(DrawerRow {
+                    height: 1,
+                    target: None,
+                    content: DrawerRowContent::ChatNote {
+                        depth: 1,
+                        label: format!("… {hidden} more here"),
+                    },
+                });
+            }
             crate::ui::sidebar::WorkspaceListEntry::GroupHeader { space_key } => {
                 let collapsed = app.collapsed_space_keys.contains(&space_key);
                 // Inside a project every level steps in one (TP-MOB-98).

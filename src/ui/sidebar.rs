@@ -961,6 +961,17 @@ pub(crate) enum WorkspaceListEntry {
     DailyMore {
         expanded: bool,
     },
+    /// The switch that reveals the other workspaces standing in the daily
+    /// directory.
+    ///
+    /// TP-DAILY-18: the same shape `DailyMore` uses for chats, for the same
+    /// reason — the section is a glance surface. Seven rows for one place read
+    /// as spam, which is exactly how it was reported; one row and a switch
+    /// reads as one place you can look inside.
+    DailyMoreWorkspaces {
+        hidden: usize,
+        expanded: bool,
+    },
 }
 
 /// How many chats a workspace's drawer lists before folding the rest into a
@@ -1247,22 +1258,15 @@ fn daily_section_visible(app: &AppState) -> bool {
 /// set feeds the client frame as well as the sidebar. Removing a workspace at
 /// the source removes it from every surface that reads it — the regression the
 /// first attempt at this shipped and had to take back.
+/// TP-DAILY-17: the membership test itself now lives on the state, because the
+/// "new workspace" road has to ask the same question and two copies of it would
+/// drift. This adds the one thing that is genuinely the sidebar's business —
+/// whether the section is drawn at all.
 fn daily_owned_workspaces(app: &AppState) -> Vec<usize> {
     if !daily_section_visible(app) {
         return Vec::new();
     }
-    let Some(daily) = app.daily_chat_cwd.as_deref() else {
-        return Vec::new();
-    };
-    let daily_key = crate::persist::workspace_chats::ledger_key(daily);
-    app.workspaces
-        .iter()
-        .enumerate()
-        .filter(|(_, ws)| {
-            crate::persist::workspace_chats::ledger_key(ws.effective_cwd()) == daily_key
-        })
-        .map(|(ws_idx, _)| ws_idx)
-        .collect()
+    app.workspaces_in_daily_directory()
 }
 
 /// The name each daily-area row wears, resolved for the whole set at once.
@@ -1342,12 +1346,48 @@ fn push_daily_section(app: &AppState, entries: &mut Vec<WorkspaceListEntry>, own
     // closing together because one shared key holds their fold state. The row
     // is here to reach the workspace and its panes; the chats are already
     // above it.
-    for ws_idx in owned {
+    //
+    // TP-DAILY-18: and only ONE of them at a glance. The daily directory is a
+    // single place — its chats are keyed by that directory, which is why these
+    // rows have no drawer of their own — so several rows for it say the same
+    // thing several times. Seven of them was the reported defect, and naming
+    // them apart (TP-DAILY-15/16) made the repetition legible without making it
+    // any less repetitive: "hepsinin içinde aynı chatler var, fark ne ki?".
+    //
+    // The rest fold behind a switch rather than disappearing. Those six held
+    // fifteen panes and one blocked agent on the machine this came from, and a
+    // row nobody can reach is the #88 failure, not a fix for it.
+    for (position, ws_idx) in daily_workspace_order(app, owned).into_iter().enumerate() {
+        if position > 0 && !app.daily_workspaces_expanded {
+            break;
+        }
         entries.push(WorkspaceListEntry::Workspace {
-            ws_idx: *ws_idx,
+            ws_idx,
             indented: true,
         });
     }
+    if owned.len() > 1 {
+        entries.push(WorkspaceListEntry::DailyMoreWorkspaces {
+            hidden: owned.len() - 1,
+            expanded: app.daily_workspaces_expanded,
+        });
+    }
+}
+
+/// The daily workspaces with the one that should always be visible first.
+///
+/// TP-DAILY-18: the workspace you are IN leads, when it is one of these.
+/// A fixed "always the first in list order" would hide the row you are working
+/// in behind the switch — the row most worth seeing, folded away by the rule
+/// meant to reduce noise.
+pub(crate) fn daily_workspace_order(app: &AppState, owned: &[usize]) -> Vec<usize> {
+    let mut order: Vec<usize> = owned.to_vec();
+    if let Some(active) = app.active {
+        if let Some(position) = order.iter().position(|ws_idx| *ws_idx == active) {
+            order.swap(0, position);
+        }
+    }
+    order
 }
 
 /// Append a workspace's chat drawer rows, if it is open.
@@ -2234,6 +2274,9 @@ fn entry_row_metrics(
         WorkspaceListEntry::DailyHeader => Some((1, 0)),
         WorkspaceListEntry::DailyChat { .. }
         | WorkspaceListEntry::DailyMore { .. }
+        // TP-DAILY-18: the workspace switch measures like the chat switch —
+        // it is the same kind of row in the same section.
+        | WorkspaceListEntry::DailyMoreWorkspaces { .. }
         // TP-CHAT-MOVE-06: a container's chat measures like every other
         // chat row; it is the same kind of thing in a different home.
         | WorkspaceListEntry::ModuleChat { .. } => {
@@ -2704,6 +2747,8 @@ pub(crate) struct DailySectionAreas {
     pub header: Option<Rect>,
     pub chats: Vec<crate::app::state::DailyChatRowArea>,
     pub more: Option<Rect>,
+    /// TP-DAILY-18: the workspace switch's own target.
+    pub more_workspaces: Option<Rect>,
 }
 
 pub(crate) fn compute_workspace_list_areas(app: &AppState, area: Rect) -> WorkspaceListAreas {
@@ -2811,6 +2856,13 @@ pub(crate) fn compute_workspace_list_areas(app: &AppState, area: Rect) -> Worksp
             }
             WorkspaceListEntry::DailyMore { .. } => {
                 daily.more = Some(rect);
+            }
+            // TP-DAILY-18: its own rect, not the chat switch's. Sharing one
+            // would make a press on either toggle both — two switches one
+            // column apart doing each other's job is the confusion TP-TREE-01
+            // split rows to prevent.
+            WorkspaceListEntry::DailyMoreWorkspaces { .. } => {
+                daily.more_workspaces = Some(rect);
             }
             // TP-MOD-25: laid out to be drawn, not to be pressed.
             WorkspaceListEntry::EmptyModule { node_key } => {
@@ -4072,6 +4124,26 @@ fn render_daily_section(app: &AppState, frame: &mut Frame, list_bottom: u16) {
                     "   … {} older",
                     chats.len().saturating_sub(WORKSPACE_CHAT_ROW_LIMIT)
                 )
+            };
+            frame.render_widget(
+                Paragraph::new(Span::styled(
+                    super::text::truncate_end(&label, rect.width as usize),
+                    Style::default().fg(p.overlay0),
+                )),
+                rect,
+            );
+        }
+    }
+
+    // TP-DAILY-18: the workspace switch, in the chat switch's dialect. One
+    // place, one row, and a way to look at the rest of what stands in it.
+    if let Some(rect) = app.view.daily_more_workspaces_area {
+        if rect.width > 0 && rect.y < list_bottom {
+            let hidden = daily_owned_workspaces(app).len().saturating_sub(1);
+            let label = if app.daily_workspaces_expanded {
+                "   … fewer workspaces".to_string()
+            } else {
+                format!("   … {hidden} more here")
             };
             frame.render_widget(
                 Paragraph::new(Span::styled(
@@ -7612,6 +7684,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
                 WorkspaceListEntry::DailyHeader => "daily-header",
                 WorkspaceListEntry::DailyChat { .. } => "daily-chat",
                 WorkspaceListEntry::DailyMore { .. } => "daily-more",
+                WorkspaceListEntry::DailyMoreWorkspaces { .. } => "daily-more-workspaces",
                 WorkspaceListEntry::ModuleChat { .. } => "module-chat",
             })
             .collect()
@@ -7904,6 +7977,153 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             "precondition: the measured workspaces carry no name of their own"
         );
         (app, daily)
+    }
+
+    // P1.1 / TP-DAILY-17: the root cause. `new_cwd = "follow"` means a new
+    // workspace inherits the pane's directory, so a `$HOME` workspace makes the
+    // next `$HOME` workspace — five of them within 32 minutes on the machine
+    // this was reported from. The second one becomes a TAB instead.
+    #[test]
+    fn a_second_workspace_in_the_daily_directory_is_adopted_instead() {
+        let (app, daily) = app_with_n_workspaces_in_the_daily_directory(1);
+        let owned = daily_owned_workspaces(&app);
+
+        assert_eq!(
+            app.daily_adoption_target(&daily),
+            owned.first().copied(),
+            "the place already has an unnamed workspace; a second one is the same place twice"
+        );
+    }
+
+    // P1.2 / TP-DAILY-17: a NAMED workspace is never adopted. A name is a
+    // deliberate identity — if someone said "this one is the log tail", a
+    // second one standing beside it is deliberate too, and folding into the
+    // first would overrule a decision the machine has no business overruling.
+    #[test]
+    fn a_named_workspace_in_the_daily_directory_is_not_adopted() {
+        let (mut app, daily) = app_with_n_workspaces_in_the_daily_directory(1);
+        if let Some(ws) = app.workspaces.last_mut() {
+            ws.custom_name = Some("log tail".to_string());
+        }
+
+        assert_eq!(
+            app.daily_adoption_target(&daily),
+            None,
+            "an explicit name outranks the tidy-up"
+        );
+    }
+
+    // P1.3 / TP-DAILY-17: the first one is legitimate. The rule says "no
+    // second", not "none".
+    #[test]
+    fn the_first_workspace_in_the_daily_directory_is_still_created() {
+        let (app, daily) = app_with_daily_chats(2);
+
+        assert_eq!(app.daily_adoption_target(&daily), None);
+    }
+
+    // P1.4 / TP-DAILY-17: the load-bearing guard. A "new workspace" pressed
+    // inside a repository must still make a workspace there — breaking that
+    // would be a far larger defect than the duplicate rows being removed.
+    #[test]
+    fn a_new_workspace_outside_the_daily_directory_is_untouched() {
+        let (app, _) = app_with_n_workspaces_in_the_daily_directory(3);
+        let elsewhere = std::env::temp_dir().join("herdr-some-repo");
+
+        assert_eq!(
+            app.daily_adoption_target(&elsewhere),
+            None,
+            "the rule is about one directory, not about new workspaces"
+        );
+    }
+
+    // P3.2 / TP-DAILY-18: the reported defect, answered. Seven rows for one
+    // place read as spam — "hepsinin içinde aynı chatler var, fark ne ki?" —
+    // so the section shows ONE and offers the rest.
+    #[test]
+    fn the_daily_area_shows_one_workspace_and_a_switch_for_the_rest() {
+        let (app, _) = app_with_n_workspaces_in_the_daily_directory(7);
+        let entries = workspace_list_entries(&app);
+
+        // Only the daily area's own rows: the fixture also has a workspace
+        // living elsewhere, and it is drawn in the tree where it belongs.
+        let owned = daily_owned_workspaces(&app);
+        let rows = entries
+            .iter()
+            .filter(|entry| {
+                matches!(entry, WorkspaceListEntry::Workspace { ws_idx, .. } if owned.contains(ws_idx))
+            })
+            .count();
+        let switch = entries
+            .iter()
+            .find_map(|entry| match entry {
+                WorkspaceListEntry::DailyMoreWorkspaces { hidden, expanded } => {
+                    Some((*hidden, *expanded))
+                }
+                _ => None,
+            })
+            .expect("seven workspaces in one place offer a switch");
+
+        assert_eq!(rows, 1, "one place, one row");
+        assert_eq!(switch, (6, false), "and six more, folded");
+    }
+
+    // P3.3 / TP-DAILY-18: the switch goes both ways. A fold with no way back
+    // is not a fold, it is a hiding place — and those six held fifteen panes.
+    #[test]
+    fn expanding_the_switch_reveals_every_workspace_standing_there() {
+        let (mut app, _) = app_with_n_workspaces_in_the_daily_directory(7);
+        app.daily_workspaces_expanded = true;
+
+        let owned = daily_owned_workspaces(&app);
+        let rows = workspace_list_entries(&app)
+            .iter()
+            .filter(|entry| {
+                matches!(entry, WorkspaceListEntry::Workspace { ws_idx, .. } if owned.contains(ws_idx))
+            })
+            .count();
+
+        assert_eq!(rows, 7, "every workspace is reachable once asked for");
+    }
+
+    // P3.1 / TP-DAILY-18: one workspace offers no switch. "More here" with
+    // nothing more here is a control that lies.
+    #[test]
+    fn a_single_daily_workspace_offers_no_switch() {
+        let (app, _) = app_with_n_workspaces_in_the_daily_directory(1);
+
+        assert!(
+            !workspace_list_entries(&app)
+                .iter()
+                .any(|entry| matches!(entry, WorkspaceListEntry::DailyMoreWorkspaces { .. })),
+            "a lone workspace has nothing folded behind it"
+        );
+    }
+
+    // P3.4 / TP-DAILY-18: the workspace you are IN leads. Folding the row you
+    // are working in behind the switch is the #88 failure wearing the costume
+    // of a tidy-up.
+    #[test]
+    fn the_workspace_you_are_in_is_the_one_left_visible() {
+        let (mut app, _) = app_with_n_workspaces_in_the_daily_directory(4);
+        let owned = daily_owned_workspaces(&app);
+        let last = *owned.last().expect("four workspaces");
+        app.active = Some(last);
+
+        let drawn = workspace_list_entries(&app)
+            .iter()
+            .find_map(|entry| match entry {
+                WorkspaceListEntry::Workspace { ws_idx, .. } if owned.contains(ws_idx) => {
+                    Some(*ws_idx)
+                }
+                _ => None,
+            })
+            .expect("one daily row is drawn");
+
+        assert_eq!(
+            drawn, last,
+            "the row you are working in must not be the one folded away"
+        );
     }
 
     // T1.3 / TP-DAILY-16: the defect end to end. Seven workspaces share one

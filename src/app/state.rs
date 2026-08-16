@@ -1715,6 +1715,9 @@ pub struct ViewState {
     /// TP-CHAT-MOVE-06: the laid-out chat rows of declared containers.
     pub module_chat_row_areas: Vec<ModuleChatRowArea>,
     pub daily_more_area: Option<Rect>,
+    /// TP-DAILY-18: where the "show the other workspaces here" switch
+    /// was laid out, if it was drawn at all.
+    pub daily_more_workspaces_area: Option<Rect>,
     /// Worktree-group header rows, kept apart for the same reason: a header is
     /// not a workspace, so it must never be resolvable through a ws_idx.
     pub workspace_group_header_areas: Vec<WorkspaceGroupHeaderArea>,
@@ -3557,6 +3560,9 @@ pub struct AppState {
     /// Whether this display asked the daily section for every chat it holds
     /// rather than the glance surface's five (TP-DAILY-04).
     pub daily_section_expanded: bool,
+    /// Whether the daily area shows every workspace standing in its
+    /// directory, or only the leading one (TP-DAILY-18).
+    pub daily_workspaces_expanded: bool,
     /// Whether this display shows only the tree it is working in: the active
     /// checkout and the ones running an agent, with the module chain above
     /// them. Per display for the same reason the folds are — focusing one
@@ -4623,6 +4629,7 @@ impl AppState {
             expanded_chat_workspaces: std::collections::HashSet::new(),
             daily_section_collapsed: false,
             daily_section_expanded: false,
+            daily_workspaces_expanded: false,
             suppressed_chat_drawers: std::collections::HashSet::new(),
             tab_branch_cache: std::collections::HashMap::new(),
             sessions_parse_cache: Default::default(),
@@ -4661,6 +4668,7 @@ impl AppState {
                 daily_chat_row_areas: Vec::new(),
                 module_chat_row_areas: Vec::new(),
                 daily_more_area: None,
+                daily_more_workspaces_area: None,
                 workspace_group_header_areas: Vec::new(),
                 workspace_project_header_areas: Vec::new(),
                 workspace_empty_module_areas: Vec::new(),
