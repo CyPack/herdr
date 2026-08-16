@@ -581,6 +581,63 @@ mod tests {
         }
     }
 
+    /// TP-SPEC-12: the bar keys the spec lists are the ones the config
+    /// reference documents, in both directions.
+    ///
+    /// The direction the check below cannot reach. Feeding every listed key
+    /// through the parser proves each one is real, but it says nothing about a
+    /// key that is real and was never listed — and a spec that quietly omits a
+    /// key is a feature nobody can find, which is the failure this whole
+    /// surface exists to remove.
+    ///
+    /// The reference is a separate artefact with a gate of its own, so these
+    /// two lists are drawn from different places. Two lists drawn from one
+    /// place agree by construction and prove nothing.
+    #[test]
+    fn the_bar_keys_the_spec_lists_are_the_ones_the_config_reference_documents() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("docs/next/website/src/data/config-reference.json");
+        let reference: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&path).expect("the config reference is readable"),
+        )
+        .expect("the config reference is JSON");
+
+        // Every documented key, out of whatever section it is filed under, then
+        // narrowed to one edge: all four carry the same vocabulary, so one of
+        // them is the whole of it and four would only repeat it.
+        let mut documented = reference["sections"]
+            .as_array()
+            .expect("the reference has sections")
+            .iter()
+            .flat_map(|section| {
+                section["keys"]
+                    .as_array()
+                    .map(Vec::as_slice)
+                    .unwrap_or_default()
+            })
+            .filter_map(|entry| entry["key"].as_str())
+            .filter_map(|key| key.strip_prefix("shell.bars.top."))
+            .collect::<Vec<_>>();
+        documented.sort_unstable();
+        assert!(
+            documented.len() >= 6,
+            "the reference stopped documenting the top bar, so this check reads nothing \
+             at all: {documented:?}"
+        );
+
+        let mut listed = shell_spec()
+            .bar_keys
+            .iter()
+            .map(|key| key.key)
+            .collect::<Vec<_>>();
+        listed.sort_unstable();
+
+        assert_eq!(
+            listed, documented,
+            "the spec and the config reference disagree about what `[shell.bars.<edge>]` takes"
+        );
+    }
+
     /// TP-SPEC-06: every bar key is one this build reads.
     ///
     /// There is no table behind `[shell.bars.<edge>]` — the keys are struct
