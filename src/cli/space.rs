@@ -260,6 +260,63 @@ pub(crate) fn upsert_managed_node(content: &str, node: &NodePlan) -> Result<Stri
     serialize_managed(&root)
 }
 
+/// Write a header's display name into the managed overlay.
+///
+/// TP-MOD-34: keyed by the rule's own key and upserted, so renaming twice
+/// replaces rather than stacks — the same shape every other managed write has.
+/// It never touches the rule itself, which is the entire point: the rules a
+/// person authored stay byte-for-byte theirs, and a rename can therefore be
+/// offered on modules the machine has no right to rewrite.
+pub(crate) fn upsert_managed_display_name(
+    content: &str,
+    key: &str,
+    name: &str,
+) -> Result<String, String> {
+    let key = key.trim();
+    let name = name.trim();
+    if key.is_empty() {
+        return Err("display rename needs a key".to_string());
+    }
+    if name.is_empty() {
+        return Err("display rename needs a name".to_string());
+    }
+    let mut root = parse_managed(content)?;
+    let mut entry = toml::map::Map::new();
+    entry.insert("key".into(), toml::Value::String(key.to_string()));
+    entry.insert("name".into(), toml::Value::String(name.to_string()));
+    upsert_by_key(
+        ensure_spaces_array(&mut root, "display")?,
+        key,
+        toml::Value::Table(entry),
+    );
+    serialize_managed(&root)
+}
+
+/// Drop a header's display name from the managed overlay.
+///
+/// Returns the document and how many entries went. Deleting a module has to
+/// call this too: a rename outlives the thing it renamed otherwise, and the
+/// next module to reuse that key would be born wearing a stranger's name.
+pub(crate) fn remove_managed_display_name(
+    content: &str,
+    key: &str,
+) -> Result<(String, usize), String> {
+    let mut root = parse_managed(content)?;
+    let Some(entries) = ensure_spaces_array(&mut root, "display").ok() else {
+        return Ok((content.to_string(), 0));
+    };
+    let before = entries.len();
+    entries.retain(|entry| {
+        entry
+            .get("key")
+            .and_then(toml::Value::as_str)
+            .map(str::trim)
+            != Some(key.trim())
+    });
+    let removed = before.saturating_sub(entries.len());
+    Ok((serialize_managed(&root)?, removed))
+}
+
 /// Upsert the plan into the managed overlay document. Replaces the rule (and
 /// project) that already carries the plan's key, so promoting twice updates in
 /// place instead of stacking duplicates (TP-RANK-03).

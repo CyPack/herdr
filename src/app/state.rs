@@ -2517,7 +2517,13 @@ impl ContextMenuState {
             ContextMenuKind::WorkspaceChat {
                 has_move, has_live, ..
             } => {
-                let mut items = vec!["Move to branch..."];
+                // TP-CHAT-NAME-01: naming comes first. A chat's row is the one
+                // place a conversation is addressed by name, and until now the
+                // only names available were the ones the transcript happened to
+                // yield — for a chat started outside a workspace's directory
+                // there is no resolvable title at all, which is how a row came
+                // to read `ayaz` with nothing to say who spawned it or why.
+                let mut items = vec!["Rename chat...", "Move to branch..."];
                 if *has_move {
                     items.push("Move back");
                 }
@@ -2562,19 +2568,17 @@ impl ContextMenuState {
                     "New parallel module...",
                 ];
                 items.push(if *collapsed { "Expand" } else { "Collapse" });
-                // TP-MOD-32: renaming rewrites the machine's own file, so it
-                // is offered on exactly the modules a delete is — a rename
-                // written into the overlay for a hand-written module loses
-                // to it at first-match and would do nothing at all.
-                if *deletable {
-                    items.push("Rename module...");
-                }
-                // TP-MOD-33: offered on every module, hand-written or not.
-                // Renaming is restricted to machine-owned modules because a
-                // rename written into the overlay loses to a hand-written rule
-                // at first-match; a directory does not collide that way — it
-                // is a new field on the same key, and the overlay merges after
-                // the user's rules rather than against them.
+                // TP-MOD-34: offered on every module now. It used to ride with
+                // the delete verb because renaming meant rewriting the rule,
+                // and the machine may only rewrite its own — which left the
+                // modules a person actually authored with no rename at all.
+                // A display entry is not a rule, so there is nothing left to
+                // lose at first-match and nothing left to restrict.
+                items.push("Rename module...");
+                // TP-MOD-33: offered on every module, hand-written or not. A
+                // directory does not collide at first-match — it is a new
+                // field on the same key, and the overlay merges after the
+                // user's rules rather than against them.
                 items.push("Set directory...");
                 // TP-MOD-08/26: last, because it is the only item that takes
                 // something away — and only when there is something the
@@ -2593,6 +2597,15 @@ impl ContextMenuState {
                     "New parallel module...",
                 ];
                 items.push(if *collapsed { "Expand" } else { "Collapse" });
+                // TP-MOD-34: a bucket had no rename at all — not because one
+                // would be wrong, but because the only implementation
+                // available would have been a second `[[spaces.split]]` rule
+                // carrying the same key, which loses at first-match to the one
+                // it was meant to rename. To the person using the tree these
+                // headers ARE modules (TP-DOTS-01/10), and every one of the
+                // buckets on the reported machine was hand-written, so this
+                // absence was the whole of "modüllerde rename göremiyorum".
+                items.push("Rename module...");
                 items
             }
             ContextMenuKind::Tab { .. } => vec!["New tab", "Rename", "Close"],
@@ -3381,6 +3394,11 @@ pub struct AppState {
     /// other tells an existing one where it stands. Sharing the field would
     /// make a submitted directory rename the module instead.
     pub pending_module_dir: Option<String>,
+    /// The chat whose name the open input is editing, by session id
+    /// (TP-CHAT-NAME-01). Its own field for the reason `pending_module_dir`
+    /// has one: these roads share a mode and a text box, and sharing the
+    /// pending too would make a submitted chat name rename a module.
+    pub pending_chat_rename: Option<String>,
     /// Read-only mirror of the chat ledger's re-homes (session id → target
     /// ledger key), refreshed by the same sync that projects the rows. The
     /// state layer needs it to build the chat menu; the ledger itself lives
@@ -3399,6 +3417,10 @@ pub struct AppState {
     /// ledger: `(session_id, Some(target))` moves, `(session_id, None)`
     /// withdraws (TP-CHAT-MOVE-04).
     pub request_chat_move: Option<(String, Option<String>)>,
+    /// A chat naming decision waiting for the App loop to fold into the
+    /// ledger: `(session_id, name)`. A blank name withdraws the name rather
+    /// than storing one (TP-CHAT-NAME-01).
+    pub request_chat_rename: Option<(String, String)>,
     pub request_new_workspace_cwd: Option<std::path::PathBuf>,
     pub request_remove_linked_worktree: Option<usize>,
     pub request_submit_worktree_create: bool,
@@ -4507,10 +4529,12 @@ impl AppState {
             pending_move_new_group: None,
             pending_new_module: None,
             pending_module_dir: None,
+            pending_chat_rename: None,
             pending_branch_module: None,
             chat_move_overrides: Default::default(),
             recent_move_targets: Vec::new(),
             request_chat_move: None,
+            request_chat_rename: None,
             request_new_workspace_cwd: None,
             request_remove_linked_worktree: None,
             request_submit_worktree_create: false,
@@ -6272,7 +6296,9 @@ mod tests {
             y: 0,
             list: MenuListState::new(0),
         };
-        assert_eq!(plain.items(), &["Move to branch..."]);
+        // TP-CHAT-NAME-01 put naming at the head of this list; the
+        // move rule this test is about is unchanged.
+        assert_eq!(plain.items(), &["Rename chat...", "Move to branch..."]);
 
         let moved = ContextMenuState {
             kind: ContextMenuKind::WorkspaceChat {
@@ -6285,7 +6311,10 @@ mod tests {
             y: 0,
             list: MenuListState::new(0),
         };
-        assert_eq!(moved.items(), &["Move to branch...", "Move back"]);
+        assert_eq!(
+            moved.items(),
+            &["Rename chat...", "Move to branch...", "Move back"]
+        );
 
         let picker = ContextMenuState {
             kind: ContextMenuKind::ChatMoveTarget {

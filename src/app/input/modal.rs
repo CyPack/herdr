@@ -411,8 +411,27 @@ fn open_rename_module_input(state: &mut AppState, node_key: String, parent: Opti
     open_module_name_input(state, parent, Some(node_key));
 }
 
+/// Open the text box on a chat's name, prefilled with what the row reads now.
+///
+/// TP-CHAT-NAME-01: prefilled and selected, like the directory road — the
+/// common edit is a correction, and a chat whose row already says something
+/// useful should not have to be retyped from nothing to be adjusted.
+fn open_chat_rename_input(state: &mut AppState, session_id: String, current: Option<String>) {
+    state.pending_chat_rename = Some(session_id);
+    state.pending_module_dir = None;
+    state.pending_new_module = None;
+    state.pending_move_new_group = None;
+    state.pending_workspace_create_cwd = None;
+    state.rename_pane_target = None;
+    state.name_input = current.unwrap_or_default();
+    state.name_input_replace_on_type = !state.name_input.is_empty();
+    state.context_menu = None;
+    state.enter_overlay_mode(Mode::RenameWorkspace);
+}
+
 fn open_module_dir_input(state: &mut AppState, node_key: String, current: Option<String>) {
     state.pending_module_dir = Some(node_key);
+    state.pending_chat_rename = None;
     state.pending_new_module = None;
     state.pending_move_new_group = None;
     state.pending_workspace_create_cwd = None;
@@ -432,6 +451,8 @@ fn open_module_name_input(
     rename_key: Option<String>,
 ) {
     state.pending_new_module = Some(crate::app::state::PendingNewModule { parent, rename_key });
+    state.pending_module_dir = None;
+    state.pending_chat_rename = None;
     state.pending_move_new_group = None;
     state.pending_workspace_create_cwd = None;
     state.rename_pane_target = None;
@@ -613,6 +634,14 @@ pub(super) fn apply_rename_action(state: &mut AppState, action: ModalAction) {
                     }
                 }
                 // The module-naming road (TP-DOTS-05), mirrored the same way.
+                // TP-CHAT-NAME-01: first, because its pending is only ever
+                // set by an opener that clears every other one — so if it is
+                // set, this is unambiguously the road being walked.
+                Mode::RenameWorkspace if state.pending_chat_rename.is_some() => {
+                    if let Some(session_id) = state.pending_chat_rename.take() {
+                        state.request_chat_rename = Some((session_id, new_name));
+                    }
+                }
                 Mode::RenameWorkspace if state.pending_module_dir.is_some() => {
                     if let Some(node_key) = state.pending_module_dir.take() {
                         state.submit_module_dir(node_key, &new_name);
@@ -1144,6 +1173,12 @@ pub(super) fn apply_context_menu_action(
             state.mark_session_dirty();
             leave_modal(state);
         }
+        // TP-MOD-34: the bucket's rename walks the same road the module's
+        // does, because it writes the same kind of thing — a name, keyed by
+        // the rule's key, taking no part in resolution.
+        (ContextMenuKind::SpaceHeader { space_key, .. }, Some("Rename module...")) => {
+            open_rename_module_input(state, space_key, None);
+        }
         (
             ContextMenuKind::MoveTarget {
                 ws_idx,
@@ -1184,6 +1219,10 @@ pub(super) fn apply_context_menu_action(
                 y: menu_y,
                 list: crate::app::state::MenuListState::new(0),
             });
+        }
+        (ContextMenuKind::WorkspaceChat { session_id, .. }, Some("Rename chat...")) => {
+            let current = state.chat_row_title(&session_id);
+            open_chat_rename_input(state, session_id, current);
         }
         (
             ContextMenuKind::WorkspaceChat {
@@ -1518,6 +1557,11 @@ impl App {
             }
             // TP-DOTS-05: a name collected for a new module becomes one
             // managed node entry; consumed here for the same reason.
+            Mode::RenameWorkspace if self.state.pending_chat_rename.is_some() => {
+                if let Some(session_id) = self.state.pending_chat_rename.take() {
+                    self.state.request_chat_rename = Some((session_id, new_name));
+                }
+            }
             Mode::RenameWorkspace if self.state.pending_module_dir.is_some() => {
                 if let Some(node_key) = self.state.pending_module_dir.take() {
                     self.state.submit_module_dir(node_key, &new_name);
@@ -1912,6 +1956,12 @@ impl App {
                 self.state.mark_session_dirty();
                 leave_modal(&mut self.state);
             }
+            // TP-MOD-34: the production twin of the bucket rename. Menu verbs
+            // have two bodies and a verb wired into only one of them is a menu
+            // item that works in tests and does nothing on screen.
+            (ContextMenuKind::SpaceHeader { space_key, .. }, Some("Rename module...")) => {
+                open_rename_module_input(&mut self.state, space_key, None);
+            }
             (
                 ContextMenuKind::MoveTarget {
                     ws_idx,
@@ -1951,6 +2001,10 @@ impl App {
                     y: menu_y,
                     list: crate::app::state::MenuListState::new(0),
                 });
+            }
+            (ContextMenuKind::WorkspaceChat { session_id, .. }, Some("Rename chat...")) => {
+                let current = self.state.chat_row_title(&session_id);
+                open_chat_rename_input(&mut self.state, session_id, current);
             }
             (
                 ContextMenuKind::WorkspaceChat {
@@ -3206,9 +3260,11 @@ mod tests {
     // keeps the module's key. Deriving a key from the new name — the way a
     // creation does — would write a second module and leave this one's
     // children and members pointing at a key nothing declares any more.
-    // Offered only on modules the machine owns, for the reason the delete
-    // verb is: a rename written into the overlay for a hand-written module
-    // loses to it at first-match and does nothing at all.
+    //
+    // TP-MOD-34 removed the ownership restriction this test used to assert.
+    // The key rule survives it unchanged, and matters more than before: the
+    // display entry IS keyed by the module's own key, so a derived one would
+    // rename a module nobody is looking at.
     #[test]
     fn renaming_a_module_keeps_its_key_and_its_parent() {
         let mut app = app_with_test_workspaces(&["main"]);
@@ -3259,8 +3315,10 @@ mod tests {
         );
         assert_eq!(app.state.mode, Mode::RenameWorkspace);
 
-        // TP-MOD-32: a hand-written module is not offered the verb — the
-        // overlay write would lose to the config at first-match.
+        // TP-MOD-34: a hand-written module walks the same road and carries the
+        // same key. This half used to assert the opposite — that the verb was
+        // withheld — which was true of the implementation and never of the
+        // module.
         let hand_written = ContextMenuState {
             kind: ContextMenuKind::NodeHeader {
                 node_key: "group:docs".into(),
@@ -3271,10 +3329,22 @@ mod tests {
             y: 0,
             list: crate::app::state::MenuListState::new(0),
         };
-        assert!(
-            !hand_written.items().contains(&"Rename module..."),
-            "no rename offered for a module the machine cannot rewrite: {:?}",
-            hand_written.items()
+        let items = hand_written.items();
+        let idx = items
+            .iter()
+            .position(|item| *item == "Rename module...")
+            .expect("a hand-written module can be renamed too");
+
+        app.state.pending_new_module = None;
+        app.apply_context_menu_action_via_api(hand_written, idx);
+
+        assert_eq!(
+            app.state
+                .pending_new_module
+                .as_ref()
+                .and_then(|pending| pending.rename_key.as_deref()),
+            Some("group:docs"),
+            "the key rule holds wherever the module was authored"
         );
     }
 
@@ -3646,6 +3716,7 @@ mod tests {
                 "New sub-module...",
                 "New parallel module...",
                 "Collapse",
+                "Rename module...",
                 "Set directory...",
             ]
         );
@@ -3656,6 +3727,7 @@ mod tests {
                 "New sub-module...",
                 "New parallel module...",
                 "Expand",
+                "Rename module...",
                 "Set directory...",
             ]
         );
@@ -3677,7 +3749,8 @@ mod tests {
                 "New branch...",
                 "New sub-module...",
                 "New parallel module...",
-                "Collapse"
+                "Collapse",
+                "Rename module...",
             ]
         );
     }
@@ -3709,9 +3782,10 @@ mod tests {
                 "New sub-module...",
                 "New parallel module...",
                 "Collapse",
-                // TP-MOD-32: renaming rides with the delete verb — both
-                // rewrite the file the machine owns, so both are offered on
-                // exactly the modules it can rewrite.
+                // TP-MOD-34: renaming used to ride with the delete verb,
+                // because both rewrote the file the machine owns. It no longer
+                // rewrites anything, so it no longer asks who owns what — but
+                // its position is unchanged, and this list is what says so.
                 "Rename module...",
                 "Set directory...",
                 "Delete module",
@@ -3750,7 +3824,8 @@ mod tests {
                 "New branch...",
                 "New sub-module...",
                 "New parallel module...",
-                "Expand"
+                "Expand",
+                "Rename module...",
             ],
             "a bucket is taken back by its own verb, not this one"
         );
@@ -3778,6 +3853,7 @@ mod tests {
                 "New sub-module...",
                 "New parallel module...",
                 "Collapse",
+                "Rename module...",
                 "Set directory...",
             ]
         );
@@ -3796,9 +3872,82 @@ mod tests {
                 "New branch...",
                 "New sub-module...",
                 "New parallel module...",
-                "Expand"
+                "Expand",
+                "Rename module...",
             ]
         );
+    }
+
+    // T3.3 / TP-CHAT-NAME-01: a chat row had no rename at all. The name it
+    // wore came from the transcript, and for a chat started outside a
+    // workspace's directory there is no title to derive — which is how a row
+    // came back reading `ayaz` with nothing to say what it was spawned for.
+    #[test]
+    fn a_chat_row_offers_to_be_renamed() {
+        let chat_menu = |ws_idx: Option<usize>| ContextMenuState {
+            kind: ContextMenuKind::WorkspaceChat {
+                ws_idx,
+                session_id: "s1".into(),
+                has_move: false,
+                has_live: false,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+
+        assert_eq!(
+            chat_menu(Some(0)).items().first(),
+            Some(&"Rename chat..."),
+            "naming comes first — it is what makes the row addressable at all"
+        );
+        assert!(
+            chat_menu(None).items().contains(&"Rename chat..."),
+            "a daily chat belongs to no workspace and needs the name most"
+        );
+    }
+
+    // T3.1 / TP-MOD-34: the bucket header had no rename at all. Every module
+    // on the reported machine was a hand-written bucket, so this one absence
+    // was the whole of "modüllerde rename göremiyorum".
+    #[test]
+    fn a_bucket_header_offers_to_be_renamed() {
+        let space_menu = ContextMenuState {
+            kind: ContextMenuKind::SpaceHeader {
+                space_key: "herdr-web:tabs".into(),
+                collapsed: false,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        assert!(
+            space_menu.items().contains(&"Rename module..."),
+            "to the person using the tree this header IS a module"
+        );
+    }
+
+    // T3.2 / TP-MOD-34: a hand-written module offers the rename too. The old
+    // restriction was a property of the implementation, not of the module.
+    #[test]
+    fn a_hand_written_module_offers_to_be_renamed() {
+        assert!(
+            a_node_menu("group:docs", false)
+                .items()
+                .contains(&"Rename module..."),
+            "a display entry is not a rule, so there is nothing to lose at first-match"
+        );
+    }
+
+    // TP-MOD-34: the delete verb keeps its old restriction. Renaming stopped
+    // rewriting the machine's file; deleting never did anything else, so the
+    // two verbs part company here and this is the test that says so.
+    #[test]
+    fn a_hand_written_module_still_does_not_offer_to_be_deleted() {
+        let menu = a_node_menu("group:docs", false);
+        let items = menu.items();
+        assert!(items.contains(&"Rename module..."));
+        assert!(!items.contains(&"Delete module"));
     }
 
     // TP-DOTS-14: "New branch..." resolves a source workspace under the
@@ -4412,7 +4561,13 @@ mod tests {
             y: 0,
             list: MenuListState::new(0),
         };
-        assert_eq!(live.items(), vec!["Move to branch...", "Close agent"]);
+        assert_eq!(
+            live.items(),
+            // TP-CHAT-NAME-01 put naming at the head of this list; the close
+            // verb's own rule — last, and only while something is running —
+            // is what this test is about and is unchanged.
+            vec!["Rename chat...", "Move to branch...", "Close agent"]
+        );
 
         let finished = ContextMenuState {
             kind: ContextMenuKind::WorkspaceChat {
@@ -4427,7 +4582,7 @@ mod tests {
         };
         assert_eq!(
             finished.items(),
-            vec!["Move to branch...", "Move back"],
+            vec!["Rename chat...", "Move to branch...", "Move back"],
             "a finished chat is never offered a close it cannot perform"
         );
     }

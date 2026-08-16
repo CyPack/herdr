@@ -2025,6 +2025,23 @@ impl AppState {
         self.recent_move_targets.truncate(REMEMBERED);
     }
 
+    /// What a chat's row currently reads, by session id.
+    ///
+    /// TP-CHAT-NAME-01: searched across every drawer rather than within one,
+    /// because the menu that asks does not always know which drawer the row was
+    /// pressed in — a daily row belongs to no workspace at all
+    /// (TP-CHAT-MOVE-08). `None` when the row carries no resolvable title,
+    /// which is exactly the chat most worth naming: for one started outside a
+    /// workspace's directory there is nothing to derive a title from, and its
+    /// row is the one that came back saying only `ayaz`.
+    pub(crate) fn chat_row_title(&self, session_id: &str) -> Option<String> {
+        self.workspace_chat_rows
+            .values()
+            .flatten()
+            .find(|row| row.session_id == session_id)
+            .and_then(|row| row.title.clone())
+    }
+
     /// `exclude_ws_idx` is the drawer the chat is shown in, when it is shown in
     /// one at all. A daily chat belongs to no workspace (TP-CHAT-MOVE-08), so
     /// it passes `None` and every workspace stays on offer — excluding an
@@ -2132,22 +2149,22 @@ impl AppState {
         if name.is_empty() {
             return;
         }
-        let key = rename_key
-            .unwrap_or_else(|| format!("group:{}", crate::cli::space::slug_for_branch(name)));
-        // TP-MOD-33: the overlay upsert replaces the whole entry by key, so a
-        // rename that did not carry the directory forward would quietly delete
-        // it — the module would keep its new name and lose the place it stands.
-        let dir = self
-            .space_nodes
-            .iter()
-            .find(|node| node.key == key)
-            .and_then(|node| node.dir.as_ref())
-            .map(|dir| dir.display().to_string());
+        // TP-MOD-34: a rename is a name and nothing else, so it goes to the
+        // display overlay rather than rewriting the rule. That is what lets the
+        // verb be offered on hand-written modules and buckets at all — and it
+        // retires TP-MOD-33's hazard outright: a rename that forgets to carry
+        // the directory forward can no longer delete it, because it never
+        // touches the entry holding it.
+        if let Some(key) = rename_key {
+            self.submit_module_display_name(key, name);
+            return;
+        }
+        let key = format!("group:{}", crate::cli::space::slug_for_branch(name));
         let node = crate::cli::space::NodePlan {
             key,
             name: name.to_string(),
             parent,
-            dir,
+            dir: None,
         };
         let path = crate::config::managed_spaces_path();
         let current = std::fs::read_to_string(&path).unwrap_or_default();
@@ -2231,6 +2248,32 @@ impl AppState {
         }
     }
 
+    /// Lay a name over whatever a header currently reads — module, bucket or
+    /// project alike.
+    ///
+    /// TP-MOD-34: this is the one rename road, and it works the same on every
+    /// header because it never asks who authored the rule underneath. A blank
+    /// name is refused rather than written: an empty header cannot be pointed
+    /// at, clicked, or spoken about, which is a worse state than any name.
+    pub(crate) fn submit_module_display_name(&mut self, key: String, name: &str) {
+        let name = name.trim();
+        if name.is_empty() || key.trim().is_empty() {
+            return;
+        }
+        let path = crate::config::managed_spaces_path();
+        let current = std::fs::read_to_string(&path).unwrap_or_default();
+        match crate::cli::space::upsert_managed_display_name(&current, &key, name) {
+            Ok(updated) => {
+                if let Err(err) = std::fs::write(&path, updated) {
+                    tracing::warn!(error = %err, "managed overlay write failed");
+                    return;
+                }
+                self.reload_space_rules_from_disk();
+            }
+            Err(err) => tracing::warn!(error = %err, "display rename failed"),
+        }
+    }
+
     /// Take back a module the machine wrote.
     ///
     /// TP-MOD-08: creating one is two clicks, so undoing one cannot be a hand
@@ -2247,6 +2290,12 @@ impl AppState {
     pub(crate) fn delete_managed_node(&mut self, node_key: &str) {
         let path = crate::config::managed_spaces_path();
         let current = std::fs::read_to_string(&path).unwrap_or_default();
+        // TP-MOD-34: the rename goes with the module. A display entry that
+        // outlives its module is a name waiting for a stranger — the next
+        // module to take that key would be born wearing it.
+        let current = crate::cli::space::remove_managed_display_name(&current, node_key)
+            .map(|(updated, _)| updated)
+            .unwrap_or(current);
         match crate::cli::space::remove_managed_node(&current, node_key) {
             Ok((_, 0)) => {
                 tracing::info!(

@@ -845,10 +845,12 @@ impl App {
             pending_move_new_group: None,
             pending_new_module: None,
             pending_module_dir: None,
+            pending_chat_rename: None,
             pending_branch_module: None,
             chat_move_overrides: Default::default(),
             recent_move_targets: Vec::new(),
             request_chat_move: None,
+            request_chat_rename: None,
             request_new_workspace_cwd: None,
             request_remove_linked_worktree: None,
             request_submit_worktree_create: false,
@@ -1472,6 +1474,14 @@ impl App {
 
             if let Some((session_id, target)) = self.state.request_chat_move.take() {
                 self.apply_chat_move(&session_id, target.as_deref());
+                needs_render = true;
+            }
+
+            // TP-CHAT-NAME-01: the naming decision travels the same road the
+            // move does — the input layer decides, the App loop is the only
+            // thing that touches the ledger.
+            if let Some((session_id, name)) = self.state.request_chat_rename.take() {
+                self.apply_chat_rename(&session_id, &name);
                 needs_render = true;
             }
 
