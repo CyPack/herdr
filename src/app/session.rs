@@ -128,6 +128,39 @@ impl App {
         }
     }
 
+    /// Write the graveyard out, right after a death was recorded.
+    ///
+    /// TP-AGPANEL-35: this rides the trigger, not a timer. The closed-agent
+    /// module is explicit that nothing periodic belongs to it — a record is
+    /// written when an agent closes and removed when it is revived or ages
+    /// out — and a save that waited for the next session snapshot would lose
+    /// the newest death to exactly the event that makes losing it likely: the
+    /// server being replaced.
+    ///
+    /// Measured 2026-08-16 03:10: two ghosts stood in the panel before a
+    /// delivery and zero after it, because the ledger lived only in memory.
+    ///
+    /// `--no-session` suppresses the write for the same reason it suppresses
+    /// the chat ledger's: that run leaves nothing on disk, and it is also what
+    /// keeps unit tests off a real config directory.
+    pub(crate) fn save_closed_agents(&mut self) {
+        if self.no_session {
+            return;
+        }
+        let path = crate::persist::closed_agents::default_store_path();
+        let store = crate::persist::closed_agents::ClosedAgentStore {
+            version: crate::persist::closed_agents::CLOSED_AGENTS_VERSION,
+            records: crate::persist::closed_agents::prune(
+                self.state.closed_agents.to_stored(),
+                crate::persist::workspace_chats::now_ms(),
+                crate::persist::closed_agents::RETENTION_MS,
+            ),
+        };
+        if let Err(err) = crate::persist::closed_agents::save_to_path(&path, &store) {
+            tracing::warn!(path = %path.display(), %err, "failed to save closed agent store");
+        }
+    }
+
     /// Project the ledger into the presentation rows the sidebar reads.
     ///
     /// Deliberately not a poll: the ledger only changes when a session save

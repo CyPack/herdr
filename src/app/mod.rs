@@ -522,6 +522,67 @@ impl App {
         })
     }
 
+    /// Read the transcript store into the drawer's rows.
+    ///
+    /// TP-DRAW-13 put this behind `no_session`, which was right for what that
+    /// flag means on a normal start and on a fixture: leave the machine's
+    /// history alone. It is wrong for a handoff, which passes the same flag to
+    /// mean something narrower — restore the session from a snapshot instead
+    /// of from disk — and lost the chat history with it.
+    ///
+    /// TP-DRAW-14: so it is a named step both roads call, rather than a line
+    /// inside a condition that answers two different questions with one word.
+    fn load_chat_history(state: &mut AppState) {
+        if let Some(dir) = crate::claude_sessions::default_claude_projects_dir() {
+            state.merge_workspace_chat_rows_in(dir.as_path());
+        }
+    }
+
+    /// Load the graveyard from disk and seed it from the transcript rows.
+    ///
+    /// TP-AGPANEL-40: extracted because this codebase has more than one
+    /// constructor and the live server normally comes from the other one.
+    /// `new_from_handoff` calls `new` with `no_session = true` — correctly, it
+    /// restores its session from a snapshot rather than from disk — and the
+    /// graveyard fell behind that flag with it. The store is not the session:
+    /// it outlives every handoff, and on this machine a handoff happens on
+    /// every delivery. Measured 2026-08-16 05:29: six chats in the ledger,
+    /// none of them live, and zero ghosts in the panel.
+    fn seed_closed_agents(state: &mut AppState) {
+        let stored = crate::persist::closed_agents::load_from_path(
+            &crate::persist::closed_agents::default_store_path(),
+        );
+        let now_ms = crate::persist::workspace_chats::now_ms();
+        let mut records = crate::persist::closed_agents::prune(
+            stored.records,
+            now_ms,
+            crate::persist::closed_agents::RETENTION_MS,
+        );
+        let live: Vec<String> = state
+            .workspaces
+            .iter()
+            .flat_map(|ws| ws.tabs.iter())
+            .filter_map(|tab| tab.resumed_session_id.clone())
+            .collect();
+        let derived: Vec<_> = state
+            .workspace_chat_rows
+            .iter()
+            .flat_map(|(key, rows)| {
+                crate::persist::closed_agents::derive_from_chat_rows(&records, key, rows, &|id| {
+                    live.iter().any(|open| open == id)
+                })
+            })
+            .collect();
+        records.extend(derived);
+        state
+            .closed_agents
+            .load_stored(crate::persist::closed_agents::prune(
+                records,
+                now_ms,
+                crate::persist::closed_agents::RETENTION_MS,
+            ));
+    }
+
     pub fn new(
         config: &Config,
         no_session: bool,
@@ -783,8 +844,10 @@ impl App {
             request_open_existing_worktree: None,
             pending_move_new_group: None,
             pending_new_module: None,
+            pending_module_dir: None,
             pending_branch_module: None,
             chat_move_overrides: Default::default(),
+            recent_move_targets: Vec::new(),
             request_chat_move: None,
             request_new_workspace_cwd: None,
             request_remove_linked_worktree: None,
@@ -872,6 +935,7 @@ impl App {
                 workspace_more_chats_areas: Vec::new(),
                 daily_header_area: None,
                 daily_chat_row_areas: Vec::new(),
+                module_chat_row_areas: Vec::new(),
                 daily_more_area: None,
                 workspace_group_header_areas: Vec::new(),
                 workspace_project_header_areas: Vec::new(),
@@ -1083,8 +1147,9 @@ impl App {
             )
         };
         state.workspace_chat_rows = crate::persist::workspace_chats::project_rows(&ledger);
-        if let Some(dir) = crate::claude_sessions::default_claude_projects_dir() {
-            state.merge_workspace_chat_rows_in(&dir);
+        if !no_session {
+            Self::load_chat_history(&mut state);
+            Self::seed_closed_agents(&mut state);
         }
 
         Self {
@@ -1248,6 +1313,22 @@ impl App {
                 .get(idx)
                 .and_then(|ws| ws.focused_pane_id().map(|pane_id| (idx, pane_id)))
         });
+        // TP-AGPANEL-40: the graveyard is not part of the session, so it is
+        // loaded here rather than behind the `no_session` flag this
+        // constructor correctly passes. Seeded AFTER the restore, because the
+        // live filter reads the tabs the handoff just brought back — before
+        // it, every restored chat would be given a headstone of its own.
+        // TP-DRAW-14: a handoff restores its SESSION from the snapshot, not the
+        // chat history — that lives in the ledger and the transcript store and
+        // outlives every handoff. Read here because `new` skipped it: the flag
+        // this constructor passes means "not the session file", and the drawer
+        // came back empty when it was read as "nothing at all".
+        let ledger = crate::persist::workspace_chats::load_from_path(
+            &crate::persist::workspace_chats::default_ledger_path(),
+        );
+        app.state.workspace_chat_rows = crate::persist::workspace_chats::project_rows(&ledger);
+        Self::load_chat_history(&mut app.state);
+        Self::seed_closed_agents(&mut app.state);
         Ok(app)
     }
 
@@ -2988,6 +3069,193 @@ mod tests {
         let app = App::new(&config, true, None, api_rx, crate::api::EventHub::default());
 
         assert!(!app.state.redraw_on_focus_gained);
+    }
+
+    // TP-DRAW-13: `--no-session` is a clean-start promise, and it covers two
+    // stores, not one. The ledger honoured it; the transcript store did not —
+    // `merge_workspace_chat_rows_in` ran unconditionally, and the daily
+    // directory (TP-DAILY-01) is read even when no workspace asks for it, so a
+    // sessionless start still loaded the machine's chat history.
+    //
+    // The cost was paid on two layers. In the product, `herdr --no-session`
+    // promised a clean start and delivered the user's past. In the tests, every
+    // fixture built on `App::new(.., true, ..)` — `test_app` and
+    // `test_headless_server` among them, several hundred tests — read the live
+    // `~/.claude/projects` directory; and because a chat row orders by its
+    // transcript's mtime, the measurement moved whenever the agent running it
+    // wrote to its own transcript. A headless render test failed exactly that
+    // way under load and refused a landing (gate, 2026-08-16 00:52).
+    #[test]
+    fn a_sessionless_start_reads_neither_the_ledger_nor_the_transcript_store() {
+        let home = unique_temp_path("no-session-home");
+        let slug = crate::claude_sessions::encode_project_path(&home.to_string_lossy());
+        let project_dir = home.join(".claude").join("projects").join(slug);
+        std::fs::create_dir_all(&project_dir).expect("fake transcript store");
+        std::fs::write(
+            project_dir.join("11111111-2222-4333-8444-555555555555.jsonl"),
+            "{\"type\":\"ai-title\",\"aiTitle\":\"an older conversation\"}\n",
+        )
+        .expect("fake transcript");
+
+        // nextest runs each test in its own process, so redirecting HOME here
+        // cannot reach a neighbouring test. It is restored immediately anyway,
+        // because the fixture is what the assertion is about.
+        let previous_home = std::env::var_os("HOME");
+        std::env::set_var("HOME", &home);
+        let app = test_app();
+        match previous_home {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&home);
+
+        assert!(
+            app.state.workspace_chat_rows.is_empty(),
+            "a clean start loads no history; it loaded: {:?}",
+            app.state.workspace_chat_rows.keys().collect::<Vec<_>>()
+        );
+    }
+
+    /// Point the config directory at a throwaway one and hand back the path
+    /// the store would live at, plus the guard that restores the environment.
+    ///
+    /// Goes through `config_dir()` rather than joining a literal name: the
+    /// directory is `herdr-dev` in a debug build and `herdr` in a release one,
+    /// and a test that hardcodes either would pass for the wrong reason on the
+    /// other.
+    fn with_temp_config_dir(
+        name: &str,
+    ) -> (
+        std::path::PathBuf,
+        std::path::PathBuf,
+        Option<std::ffi::OsString>,
+    ) {
+        let root = unique_temp_path(name);
+        let previous = std::env::var_os("XDG_CONFIG_HOME");
+        std::env::set_var("XDG_CONFIG_HOME", &root);
+        let store = crate::persist::closed_agents::default_store_path();
+        if let Some(parent) = store.parent() {
+            std::fs::create_dir_all(parent).expect("fake config dir");
+        }
+        (root, store, previous)
+    }
+
+    fn restore_config_dir(root: &std::path::Path, previous: Option<std::ffi::OsString>) {
+        match previous {
+            Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    // TP-AGPANEL-36: the graveyard is read on the same `--no-session` terms as
+    // the chat ledger and the transcript store. Without this, hundreds of
+    // fixtures would inherit whatever the machine's real graveyard happened to
+    // hold — the shape of defect TP-DRAW-13 was, one directory over.
+    #[test]
+    fn a_sessionless_start_does_not_read_the_graveyard() {
+        let (root, store, previous) = with_temp_config_dir("graveyard-read");
+        // Dated NOW, not at the epoch. Written as `closed_at: 1` this test
+        // passed even with the `no_session` guard removed, because retention
+        // dropped the record before the assertion could see it — the right
+        // answer for the wrong reason. Mutation caught that.
+        let fresh = crate::persist::workspace_chats::now_ms();
+        std::fs::write(
+            &store,
+            format!(
+                r#"{{"version":1,"records":[{{"agent_id":"ghost","label":"an older agent","closed_at":{fresh}}}]}}"#
+            ),
+        )
+        .expect("fake store");
+
+        let app = test_app();
+        let count = app.state.closed_agents.entries().count();
+        restore_config_dir(&root, previous);
+
+        assert_eq!(count, 0, "a clean start inherits no graveyard");
+    }
+
+    // TP-DRAW-14: a handed-off server keeps its chat history. The flag it
+    // passes means "not the session file", not "nothing at all" — and on this
+    // machine every delivery is a handoff, so this is the only path that
+    // matters for the drawer.
+    #[test]
+    fn a_handed_off_server_loads_the_chat_history() {
+        let home = unique_temp_path("handoff-chats-home");
+        let slug = crate::claude_sessions::encode_project_path(&home.to_string_lossy());
+        let project_dir = home.join(".claude").join("projects").join(slug);
+        std::fs::create_dir_all(&project_dir).expect("fake transcript store");
+        std::fs::write(
+            project_dir.join("22222222-3333-4444-8555-666666666666.jsonl"),
+            "{\"type\":\"ai-title\",\"aiTitle\":\"an earlier conversation\"}\n",
+        )
+        .expect("fake transcript");
+
+        let previous_home = std::env::var_os("HOME");
+        std::env::set_var("HOME", &home);
+        let mut state = AppState::test_new();
+        state.daily_chat_cwd = Some(home.clone());
+        App::load_chat_history(&mut state);
+        let loaded = !state.workspace_chat_rows.is_empty();
+        match previous_home {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&home);
+
+        assert!(loaded, "the handoff road reads the transcript store");
+    }
+
+    // TP-AGPANEL-40: a handed-off server loads the graveyard too. It calls
+    // `new` with `no_session = true` — correctly, it restores its session from
+    // a snapshot — and the graveyard fell behind that flag with it. On this
+    // machine every delivery is a handoff, so that was the only path that
+    // mattered and the panel was empty on it.
+    #[test]
+    fn a_handed_off_server_loads_the_graveyard() {
+        let (root, store, previous) = with_temp_config_dir("handoff-graveyard");
+        let fresh = crate::persist::workspace_chats::now_ms();
+        std::fs::write(
+            &store,
+            format!(
+                r#"{{"version":1,"records":[{{"agent_id":"ghost","label":"an earlier agent","closed_at":{fresh}}}]}}"#
+            ),
+        )
+        .expect("fake store");
+
+        let mut state = AppState::test_new();
+        App::seed_closed_agents(&mut state);
+        let count = state.closed_agents.entries().count();
+        restore_config_dir(&root, previous);
+
+        assert_eq!(count, 1, "the handoff road reads the store like any other");
+    }
+
+    // TP-AGPANEL-35: and it writes nothing either. A run that promises to
+    // leave nothing on disk must not leave the newest death behind — and this
+    // is also what keeps every fixture that closes a pane off the real config
+    // directory.
+    #[test]
+    fn a_sessionless_run_does_not_write_the_graveyard() {
+        let (root, store, previous) = with_temp_config_dir("graveyard-write");
+        let mut app = test_app();
+        app.state
+            .closed_agents
+            .record_closed(crate::app::closed_agents::ClosedAgentRecord {
+                agent_id: "ghost".into(),
+                label: "an agent that closed".into(),
+                cwd: None,
+                workspace_key: None,
+                session: None,
+                closed_at: 1,
+                revival: crate::app::closed_agents::RevivalState::Dormant,
+            });
+
+        app.save_closed_agents();
+        let written = store.exists();
+        restore_config_dir(&root, previous);
+
+        assert!(!written, "a sessionless run leaves the disk untouched");
     }
 
     #[test]

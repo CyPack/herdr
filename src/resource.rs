@@ -54,6 +54,14 @@ pub(crate) enum ResourceMetric {
 }
 
 impl ResourceMetric {
+    /// The names a refusal offers, in the order it offers them.
+    ///
+    /// It lives here rather than beside the message because the message is in another
+    /// module: a person adding a metric changes this file, and a list kept over there
+    /// would be the one thing they never think to open. `ram` is deliberately absent —
+    /// it is an alias `parse` honours, not a spelling to teach.
+    pub(crate) const ACCEPTED: &'static [&'static str] = &["cpu", "mem", "swap"];
+
     pub(crate) fn parse(name: &str) -> Option<Self> {
         match name {
             "cpu" => Some(Self::Cpu),
@@ -319,6 +327,27 @@ fn usage_text(label: &str, usage: Option<Usage>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // TP-CHROME-106: the list a refusal offers and the names `parse` takes are two halves
+    // of one closed set, and they sit in different modules. Nothing but this holds them
+    // together, so a metric added to the enum and forgotten here would be a feature
+    // the message never mentions.
+    #[test]
+    fn every_offered_metric_is_one_this_build_parses() {
+        assert!(!ResourceMetric::ACCEPTED.is_empty());
+        for name in ResourceMetric::ACCEPTED {
+            assert!(
+                ResourceMetric::parse(name).is_some(),
+                "the refusal offers {name:?} but parse does not take it"
+            );
+        }
+
+        // The other direction, for the one spelling that is honoured without being
+        // offered. Kept as a fact rather than a rule: see the shell-side test that
+        // characterises it.
+        assert_eq!(ResourceMetric::parse("ram"), Some(ResourceMetric::Mem));
+        assert!(!ResourceMetric::ACCEPTED.contains(&"ram"));
+    }
 
     // A real line from a running 6.x kernel, ten fields wide.
     const PROC_STAT: &str = "cpu  1000 20 300 8000 50 0 10 0 0 0\n\

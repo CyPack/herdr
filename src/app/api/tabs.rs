@@ -268,6 +268,9 @@ impl App {
         for pane_id in &pane_ids {
             self.state.note_agent_closed(ws_idx, *pane_id);
         }
+        // Once, after the loop: a tab can hold several agents and the store is
+        // written whole either way, so a write per pane would buy nothing.
+        self.save_closed_agents();
         let Some(ws) = self.state.workspaces.get_mut(ws_idx) else {
             return tab_not_found(id, &target.tab_id);
         };

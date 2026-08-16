@@ -192,6 +192,9 @@ pub(crate) struct NodePlan {
     pub key: String,
     pub name: String,
     pub parent: Option<String>,
+    /// The directory the module stands in; `None` leaves the field off the
+    /// written entry entirely rather than writing an empty string.
+    pub dir: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -243,6 +246,11 @@ pub(crate) fn upsert_managed_node(content: &str, node: &NodePlan) -> Result<Stri
     entry.insert("name".into(), toml::Value::String(node.name.clone()));
     if let Some(parent) = &node.parent {
         entry.insert("parent".into(), toml::Value::String(parent.clone()));
+    }
+    // TP-MOD-33: written only when there is one. An empty `dir = ""` would
+    // read back as a module that HAS a directory and then fail to open it.
+    if let Some(dir) = &node.dir {
+        entry.insert("dir".into(), toml::Value::String(dir.clone()));
     }
     upsert_by_key(
         ensure_spaces_array(&mut root, "node")?,
@@ -680,6 +688,7 @@ fn space_move(args: &[String]) -> std::io::Result<i32> {
                     key,
                     name,
                     parent: None,
+                    dir: None,
                 }),
             )
         }
@@ -1027,6 +1036,7 @@ name = "Only"
                 key: "group:docs".into(),
                 name: "Docs".into(),
                 parent: None,
+                dir: None,
             },
         )
         .expect("upsert the module");
@@ -1068,6 +1078,7 @@ name = "Only"
                 key: "group:docs".into(),
                 name: "Docs".into(),
                 parent: None,
+                dir: None,
             },
         )
         .expect("upsert the module");
@@ -1102,6 +1113,7 @@ name = "Only"
                 key: "group:docs".into(),
                 name: "Docs".into(),
                 parent: None,
+                dir: None,
             },
         )
         .expect("upsert");
@@ -1137,6 +1149,7 @@ name = "Only"
                 key: "group:docs".into(),
                 name: "Docs".into(),
                 parent: None,
+                dir: None,
             },
         )
         .expect("upsert");
@@ -1163,6 +1176,7 @@ name = "Only"
                 key: "group:docs".into(),
                 name: "Docs".into(),
                 parent: Some("project:herdr".into()),
+                dir: None,
             },
         )
         .expect("a clean overlay accepts the node");
@@ -1193,6 +1207,7 @@ name = "Only"
                 key: "group:docs".into(),
                 name: "Docs Render".into(),
                 parent: None,
+                dir: None,
             },
         )
         .expect("a re-write with the same key is an update");
@@ -1476,6 +1491,7 @@ name = "Only"
             key: "group:ops".into(),
             name: "Ops".into(),
             parent: None,
+            dir: None,
         });
         let updated = upsert_managed("", &moved).expect("upsert");
         let value: toml::Value = updated.parse().expect("managed file parses");

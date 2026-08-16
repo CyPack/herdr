@@ -1737,6 +1737,13 @@ impl AppState {
                 self.close_mobile_drawer();
                 self.open_daily_chat(chat_idx);
             }
+            // TP-MOB-100: same contract as the daily row — the drawer closes
+            // and the chat reopens rooted where it was filed, never at
+            // whatever workspace happened to be active.
+            crate::ui::MobileSwitcherTarget::ModuleChat { node_key, chat_idx } => {
+                self.close_mobile_drawer();
+                self.open_module_chat(&node_key, chat_idx);
+            }
             crate::ui::MobileSwitcherTarget::ToggleBranchChats { ws_idx } => {
                 // Looking at a branch's history is not travelling to it, so
                 // the drawer stays open (TP-MOB-84).
@@ -1995,14 +2002,42 @@ impl AppState {
             .collect()
     }
 
-    /// The open drawers a chat could move to, as `(ledger key, display
-    /// name)` — every workspace except the one the chat is shown in, keyed
-    /// the way the ledger keys them (TP-CHAT-MOVE-04).
-    pub(crate) fn chat_move_target_entries(&self, exclude_ws_idx: usize) -> Vec<(String, String)> {
-        self.workspaces
+    /// The places a chat could move to, as `(ledger key, display name)` —
+    /// every workspace except the one the chat is shown in, keyed the way the
+    /// ledger keys them (TP-CHAT-MOVE-04), followed by every declared
+    /// container (TP-CHAT-MOVE-05).
+    ///
+    /// The two groups are keyed from different spaces on purpose: a workspace
+    /// by its directory, a container by its identity, because a container may
+    /// have no directory at all and may never get one. Nothing downstream has
+    /// to tell them apart — `apply_chat_moves` treats the key as an opaque
+    /// map key — but a reader that does can ask
+    /// [`crate::persist::workspace_chats::is_module_key`] rather than guess
+    /// from the shape of the string.
+    /// Record where a chat was just filed, so the next picker opens on it.
+    ///
+    /// TP-CHAT-MOVE-09: newest first, no duplicates, and short. A history that
+    /// remembers everything is a second list to read rather than a shortcut.
+    pub(crate) fn remember_move_target(&mut self, key: &str) {
+        const REMEMBERED: usize = 3;
+        self.recent_move_targets.retain(|seen| seen != key);
+        self.recent_move_targets.insert(0, key.to_string());
+        self.recent_move_targets.truncate(REMEMBERED);
+    }
+
+    /// `exclude_ws_idx` is the drawer the chat is shown in, when it is shown in
+    /// one at all. A daily chat belongs to no workspace (TP-CHAT-MOVE-08), so
+    /// it passes `None` and every workspace stays on offer — excluding an
+    /// arbitrary one there would quietly remove a legitimate destination.
+    pub(crate) fn chat_move_target_entries(
+        &self,
+        exclude_ws_idx: Option<usize>,
+    ) -> Vec<(String, String)> {
+        let mut entries: Vec<(String, String)> = self
+            .workspaces
             .iter()
             .enumerate()
-            .filter(|(idx, _)| *idx != exclude_ws_idx)
+            .filter(|(idx, _)| Some(*idx) != exclude_ws_idx)
             .filter_map(|(_, workspace)| {
                 let key = crate::persist::workspace_chats::ledger_key(workspace.effective_cwd());
                 if key.is_empty() {
@@ -2017,7 +2052,41 @@ impl AppState {
                 });
                 Some((key, label))
             })
-            .collect()
+            .collect();
+
+        // TP-CHAT-MOVE-05: a declared container is a destination. It is listed
+        // whether or not anything has joined it and whether or not it has a
+        // directory — that is what makes "put this chat under Docs" possible
+        // before Docs is a place on disk.
+        entries.extend(self.space_nodes.iter().filter_map(|node| {
+            if node.key.is_empty() {
+                return None;
+            }
+            let label = if node.name.trim().is_empty() {
+                node.key.clone()
+            } else {
+                node.name.clone()
+            };
+            Some((
+                crate::persist::workspace_chats::module_ledger_key(&node.key),
+                label,
+            ))
+        }));
+
+        // TP-CHAT-MOVE-09: the places this hand filed something into recently
+        // come first, in the order they were used. Everything else keeps the
+        // order it had — workspaces as the tree lists them, then containers.
+        if !self.recent_move_targets.is_empty() {
+            let rank = |key: &str| {
+                self.recent_move_targets
+                    .iter()
+                    .position(|seen| seen == key)
+                    .unwrap_or(usize::MAX)
+            };
+            entries.sort_by_key(|(key, _)| rank(key));
+        }
+
+        entries
     }
 
     /// Finish a "move under a new group": the collected name becomes a
@@ -2033,6 +2102,7 @@ impl AppState {
             key: key.clone(),
             name: name.to_string(),
             parent: None,
+            dir: None,
         };
         self.move_workspace_space(ws_idx, Some(key), Some(node));
     }
@@ -2062,11 +2132,70 @@ impl AppState {
         if name.is_empty() {
             return;
         }
+        let key = rename_key
+            .unwrap_or_else(|| format!("group:{}", crate::cli::space::slug_for_branch(name)));
+        // TP-MOD-33: the overlay upsert replaces the whole entry by key, so a
+        // rename that did not carry the directory forward would quietly delete
+        // it — the module would keep its new name and lose the place it stands.
+        let dir = self
+            .space_nodes
+            .iter()
+            .find(|node| node.key == key)
+            .and_then(|node| node.dir.as_ref())
+            .map(|dir| dir.display().to_string());
         let node = crate::cli::space::NodePlan {
-            key: rename_key
-                .unwrap_or_else(|| format!("group:{}", crate::cli::space::slug_for_branch(name))),
+            key,
             name: name.to_string(),
             parent,
+            dir,
+        };
+        let path = crate::config::managed_spaces_path();
+        let current = std::fs::read_to_string(&path).unwrap_or_default();
+        match crate::cli::space::upsert_managed_node(&current, &node) {
+            Ok(updated) => {
+                if let Err(err) = std::fs::write(&path, updated) {
+                    tracing::warn!(error = %err, "managed overlay write failed");
+                    return;
+                }
+                self.reload_space_rules_from_disk();
+            }
+            Err(err) => tracing::warn!(error = %err, "managed overlay upsert failed"),
+        }
+    }
+
+    /// Give a module a directory, or take one away by submitting a blank.
+    ///
+    /// TP-MOD-33: the directory is validated before it is written. A module
+    /// pointing at a path that does not exist is worse than one pointing
+    /// nowhere: the chat filed into it would open a pane in a directory the
+    /// shell then fails to enter, and the person would read that as the move
+    /// having failed rather than the target being wrong.
+    ///
+    /// The node's name and parent are carried through unchanged — the overlay
+    /// upsert replaces the whole entry by key, so reading them back and
+    /// writing them again is what keeps this verb from silently renaming the
+    /// module or lifting it to the top level.
+    pub(crate) fn submit_module_dir(&mut self, node_key: String, dir: &str) {
+        let dir = dir.trim();
+        let Some(node) = self.space_nodes.iter().find(|node| node.key == node_key) else {
+            return;
+        };
+        let (name, parent) = (node.name.clone(), node.parent.clone());
+        let dir = if dir.is_empty() {
+            None
+        } else {
+            let expanded = crate::worktree::expand_tilde_path(dir);
+            if !expanded.is_dir() {
+                tracing::warn!(dir = %expanded.display(), "module directory does not exist");
+                return;
+            }
+            Some(expanded.display().to_string())
+        };
+        let node = crate::cli::space::NodePlan {
+            key: node_key,
+            name,
+            parent,
+            dir,
         };
         let path = crate::config::managed_spaces_path();
         let current = std::fs::read_to_string(&path).unwrap_or_default();
@@ -4558,6 +4687,144 @@ mod tests {
     use crate::detect::{Agent, AgentState};
     use crate::workspace::Workspace;
     use ratatui::layout::Direction;
+
+    /// An app with two workspaces and one declared container that has no
+    /// directory at all — the shape the decision was made for.
+    fn app_with_a_directoryless_module() -> AppState {
+        let mut state = app_with_workspaces(&["one", "two"]);
+        state.space_nodes = vec![crate::spaces::SpaceNode {
+            key: "docs".to_string(),
+            name: "Docs".to_string(),
+            icon: None,
+            parent: None,
+            dir: None,
+        }];
+        state
+    }
+
+    // TP-CHAT-MOVE-05 (M1): a container is a destination. Without this the
+    // feature does not exist from where the person is standing — the menu is
+    // the only way to say where a chat should go.
+    #[test]
+    fn a_module_is_offered_as_a_move_destination() {
+        let app = app_with_a_directoryless_module();
+        let targets = app.chat_move_target_entries(Some(0));
+        assert!(
+            targets
+                .iter()
+                .any(|(key, label)| key == "module:docs" && label == "Docs"),
+            "the declared container is offered by identity and by its own name; got {targets:?}"
+        );
+    }
+
+    // TP-CHAT-MOVE-05 (M2): the container has no directory and is offered
+    // anyway. This is the whole of the decision: a module is a label first,
+    // and a directory maybe never.
+    #[test]
+    fn a_module_with_no_directory_is_still_a_destination() {
+        let app = app_with_a_directoryless_module();
+        assert!(
+            app.space_nodes
+                .iter()
+                .all(|node| node.key == "docs" && node.parent.is_none()),
+            "precondition: the fixture's container is declared, not derived from a checkout"
+        );
+        assert!(
+            app.chat_move_target_entries(Some(0))
+                .iter()
+                .any(|(key, _)| key == "module:docs"),
+            "a container with nowhere on disk is still somewhere to put a chat"
+        );
+    }
+
+    // TP-CHAT-MOVE-09 (Q1+Q3): the place you just filed something into comes
+    // first next time, and appears once. The feature was asked for as "a few
+    // clicks" because the work develops spontaneously; a picker that lists
+    // every workspace and module in tree order answers that badly.
+    #[test]
+    fn the_place_a_chat_was_just_filed_into_comes_first_next_time() {
+        let mut app = app_with_a_directoryless_module();
+        let module = crate::persist::workspace_chats::module_ledger_key("docs");
+
+        app.remember_move_target(&module);
+        let first = app
+            .chat_move_target_entries(None)
+            .first()
+            .map(|(key, _)| key.clone())
+            .expect("the picker has entries");
+        assert_eq!(
+            first, module,
+            "the most recently used destination opens the list"
+        );
+
+        // Q3: using it twice does not list it twice.
+        app.remember_move_target(&module);
+        assert_eq!(
+            app.recent_move_targets.len(),
+            1,
+            "a destination is remembered once, however often it is used"
+        );
+        assert_eq!(
+            app.chat_move_target_entries(None)
+                .iter()
+                .filter(|(key, _)| *key == module)
+                .count(),
+            1,
+            "and it appears once in the picker"
+        );
+    }
+
+    // TP-CHAT-MOVE-09 (Q2): with no history the order is the one the tree
+    // gives. A convenience that changes what a person sees before they have
+    // used it is not a convenience.
+    #[test]
+    fn with_no_history_the_picker_keeps_the_order_the_tree_gives() {
+        let app = app_with_a_directoryless_module();
+        assert!(app.recent_move_targets.is_empty(), "precondition");
+        let keys: Vec<String> = app
+            .chat_move_target_entries(None)
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect();
+        let module = crate::persist::workspace_chats::module_ledger_key("docs");
+        assert_eq!(
+            keys.last(),
+            Some(&module),
+            "containers still follow the workspaces when nothing has been filed yet"
+        );
+    }
+
+    // TP-CHAT-MOVE-05 (M4): the two key spaces stay apart. If a container
+    // identity could be taken for a directory, it would end up looked up as
+    // one — no error, no crash, just a lookup that never matches. That is the
+    // #88 class of defect, and this test is the line that keeps the spaces
+    // from touching.
+    #[test]
+    fn a_module_key_is_never_mistaken_for_a_directory() {
+        use crate::persist::workspace_chats::{ledger_key, module_ledger_key, MODULE_KEY_PREFIX};
+        let module = module_ledger_key("docs");
+        let directory = ledger_key(std::path::Path::new("/tmp/herdr-somewhere"));
+
+        assert!(
+            module.starts_with(MODULE_KEY_PREFIX),
+            "a container identity carries the prefix that marks its space"
+        );
+        assert!(
+            !directory.starts_with(MODULE_KEY_PREFIX),
+            "a directory key must never carry it"
+        );
+        assert_ne!(module, directory, "the two spaces do not overlap");
+        assert!(
+            !module.starts_with('/'),
+            "a container identity is not a path and must not look like one"
+        );
+        // An absolute path can never collide with the prefix, so the spaces
+        // cannot meet by accident on any platform that roots paths.
+        assert!(
+            directory.starts_with('/'),
+            "precondition: directory keys are absolute paths here"
+        );
+    }
 
     fn app_with_workspaces(names: &[&str]) -> AppState {
         let mut state = AppState::test_new();

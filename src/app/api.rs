@@ -173,6 +173,7 @@ impl App {
                     .position(|ws| ws.tabs.iter().any(|tab| tab.panes.contains_key(pane_id)))
                 {
                     self.state.note_agent_closed(ws_idx, *pane_id);
+                    self.save_closed_agents();
                 }
                 self.sync_full_lifecycle_authority_detection_pauses();
                 self.refresh_new_herdr_toast_context_for_update(&update, &previous_toast);
