@@ -138,6 +138,38 @@ GHOSTTY_API GhosttyResult ghostty_formatter_terminal_new(
     GhosttyFormatterTerminalOptions options);
 
 /**
+ * Create a formatter for one specific screen of a terminal.
+ *
+ * Unlike ghostty_formatter_terminal_new(), which always formats the
+ * currently active screen, this formats the requested screen even while
+ * the other one is active — e.g. reading the primary screen's scrollback
+ * while a fullscreen application holds the alternate screen.
+ *
+ * Only the screen-scoped extras in options.extra.screen apply; the
+ * terminal-level extras (palette, modes, ...) are ignored. A NULL
+ * options.selection formats the whole screen.
+ *
+ * The terminal must outlive the formatter.
+ *
+ * @param allocator Pointer to allocator, or NULL to use the default allocator
+ * @param formatter Pointer to store the created formatter handle
+ * @param terminal The terminal to read (must not be NULL)
+ * @param screen Which screen to format
+ * @param options Formatting options
+ * @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if the terminal
+ *         is NULL or does not have the requested screen, or an error code
+ *         on failure
+ *
+ * @ingroup formatter
+ */
+GHOSTTY_API GhosttyResult ghostty_formatter_screen_new(
+    const GhosttyAllocator* allocator,
+    GhosttyFormatter* formatter,
+    GhosttyTerminal terminal,
+    GhosttyTerminalScreen screen,
+    GhosttyFormatterTerminalOptions options);
+
+/**
  * Run the formatter and produce output into the caller-provided buffer.
  *
  * Each call formats the current terminal state. Pass NULL for buf to

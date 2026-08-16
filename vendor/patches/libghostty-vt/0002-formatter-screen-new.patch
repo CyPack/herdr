@@ -1,0 +1,261 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: herdr maintainers <maintainers@herdr.dev>
+Date: Sun, 17 Aug 2026 00:00:00 +0000
+Subject: [PATCH] expose a screen-selectable formatter in the lib-vt C API
+
+TerminalFormatter always formats the currently active screen, so a pane
+sitting on the alternate screen hides its primary scrollback from every
+C-API read. Herdr's live handoff and pane dormancy both capture that
+scrollback; without a screen selector the capture of an alt-screen pane
+comes back empty and the history is lost. Add
+ghostty_formatter_screen_new, a ScreenFormatter constructor keyed by
+GhosttyTerminalScreen — the shape the core formatter's own docs suggest
+for reading a non-active screen.
+
+Vendored base: c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3
+---
+diff --git a/vendor/libghostty-vt/include/ghostty/vt/formatter.h b/vendor/libghostty-vt/include/ghostty/vt/formatter.h
+index 5cdcd11a..869ad9a4 100644
+--- a/vendor/libghostty-vt/include/ghostty/vt/formatter.h
++++ b/vendor/libghostty-vt/include/ghostty/vt/formatter.h
+@@ -137,6 +137,38 @@ GHOSTTY_API GhosttyResult ghostty_formatter_terminal_new(
+     GhosttyTerminal terminal,
+     GhosttyFormatterTerminalOptions options);
+ 
++/**
++ * Create a formatter for one specific screen of a terminal.
++ *
++ * Unlike ghostty_formatter_terminal_new(), which always formats the
++ * currently active screen, this formats the requested screen even while
++ * the other one is active — e.g. reading the primary screen's scrollback
++ * while a fullscreen application holds the alternate screen.
++ *
++ * Only the screen-scoped extras in options.extra.screen apply; the
++ * terminal-level extras (palette, modes, ...) are ignored. A NULL
++ * options.selection formats the whole screen.
++ *
++ * The terminal must outlive the formatter.
++ *
++ * @param allocator Pointer to allocator, or NULL to use the default allocator
++ * @param formatter Pointer to store the created formatter handle
++ * @param terminal The terminal to read (must not be NULL)
++ * @param screen Which screen to format
++ * @param options Formatting options
++ * @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if the terminal
++ *         is NULL or does not have the requested screen, or an error code
++ *         on failure
++ *
++ * @ingroup formatter
++ */
++GHOSTTY_API GhosttyResult ghostty_formatter_screen_new(
++    const GhosttyAllocator* allocator,
++    GhosttyFormatter* formatter,
++    GhosttyTerminal terminal,
++    GhosttyTerminalScreen screen,
++    GhosttyFormatterTerminalOptions options);
++
+ /**
+  * Run the formatter and produce output into the caller-provided buffer.
+  *
+diff --git a/vendor/libghostty-vt/src/lib_vt.zig b/vendor/libghostty-vt/src/lib_vt.zig
+index e01cdbb8..09a70fb5 100644
+--- a/vendor/libghostty-vt/src/lib_vt.zig
++++ b/vendor/libghostty-vt/src/lib_vt.zig
+@@ -228,6 +228,7 @@ comptime {
+         @export(&c.sgr_attribute_tag, .{ .name = "ghostty_sgr_attribute_tag" });
+         @export(&c.sgr_attribute_value, .{ .name = "ghostty_sgr_attribute_value" });
+         @export(&c.formatter_terminal_new, .{ .name = "ghostty_formatter_terminal_new" });
++        @export(&c.formatter_screen_new, .{ .name = "ghostty_formatter_screen_new" });
+         @export(&c.formatter_format_buf, .{ .name = "ghostty_formatter_format_buf" });
+         @export(&c.formatter_format_alloc, .{ .name = "ghostty_formatter_format_alloc" });
+         @export(&c.formatter_free, .{ .name = "ghostty_formatter_free" });
+diff --git a/vendor/libghostty-vt/src/terminal/c/formatter.zig b/vendor/libghostty-vt/src/terminal/c/formatter.zig
+index 5b4504c8..3b2cc2f4 100644
+--- a/vendor/libghostty-vt/src/terminal/c/formatter.zig
++++ b/vendor/libghostty-vt/src/terminal/c/formatter.zig
+@@ -16,6 +16,7 @@ const FormatterWrapper = struct {
+ 
+     const Kind = union(enum) {
+         terminal: formatterpkg.TerminalFormatter,
++        screen: formatterpkg.ScreenFormatter,
+     };
+ };
+ 
+@@ -160,6 +161,71 @@ fn terminal_new_(
+     return ptr;
+ }
+ 
++pub fn screen_new(
++    alloc_: ?*const CAllocator,
++    result: *Formatter,
++    terminal_: terminal_c.Terminal,
++    screen: terminal_c.TerminalScreen,
++    opts: TerminalOptions,
++) callconv(lib.calling_conv) Result {
++    result.* = screen_new_(
++        alloc_,
++        terminal_,
++        screen,
++        opts,
++    ) catch |err| {
++        result.* = null;
++        return switch (err) {
++            error.InvalidValue => .invalid_value,
++            error.OutOfMemory => .out_of_memory,
++        };
++    };
++
++    return .success;
++}
++
++fn screen_new_(
++    alloc_: ?*const CAllocator,
++    terminal_: terminal_c.Terminal,
++    screen: terminal_c.TerminalScreen,
++    opts: TerminalOptions,
++) error{
++    InvalidValue,
++    OutOfMemory,
++}!*FormatterWrapper {
++    const t: *ZigTerminal = (terminal_ orelse return error.InvalidValue).terminal;
++    const screen_obj = t.screens.get(screen) orelse return error.InvalidValue;
++
++    const alloc = lib.alloc.default(alloc_);
++    const ptr = alloc.create(FormatterWrapper) catch
++        return error.OutOfMemory;
++    errdefer alloc.destroy(ptr);
++
++    // Unlike TerminalFormatter, this formats the requested screen even when
++    // it is not the active one; TerminalFormatter always formats the active
++    // screen. Only the screen-scoped extras apply here, so the terminal-level
++    // extras in `opts.extra` (palette, modes, ...) are ignored.
++    var formatter: formatterpkg.ScreenFormatter = .init(screen_obj, .{
++        .emit = opts.emit,
++        .unwrap = opts.unwrap,
++        .trim = opts.trim,
++    });
++    formatter.extra = opts.extra.screen.toZig();
++
++    // Setup the content that we're formatting
++    if (opts.selection) |sel| formatter.content = .{
++        .selection = sel.toZig() orelse
++            return error.InvalidValue,
++    };
++
++    ptr.* = .{
++        .kind = .{ .screen = formatter },
++        .alloc = alloc,
++    };
++
++    return ptr;
++}
++
+ pub fn format_buf(
+     formatter_: Formatter,
+     out_: ?[*]u8,
+@@ -184,6 +250,14 @@ pub fn format_buf(
+                 return .out_of_space;
+             },
+         },
++        .screen => |*s| s.format(&writer) catch |err| switch (err) {
++            error.WriteFailed => {
++                var discarding: std.Io.Writer.Discarding = .init(&.{});
++                s.format(&discarding.writer) catch unreachable;
++                out_written.* = @intCast(discarding.count);
++                return .out_of_space;
++            },
++        },
+     }
+ 
+     out_written.* = writer.end;
+@@ -204,6 +278,7 @@ pub fn format_alloc(
+ 
+     switch (wrapper.kind) {
+         .terminal => |*t| t.format(&aw.writer) catch return .out_of_memory,
++        .screen => |*s| s.format(&aw.writer) catch return .out_of_memory,
+     }
+ 
+     const buf = aw.toOwnedSlice() catch return .out_of_memory;
+@@ -238,6 +313,70 @@ test "terminal_new/free" {
+     free(f);
+ }
+ 
++test "screen_new formats the primary screen while the alternate is active" {
++    var t: terminal_c.Terminal = null;
++    try testing.expectEqual(Result.success, terminal_c.new(
++        &lib.alloc.test_allocator,
++        &t,
++        .{ .cols = 80, .rows = 24, .max_scrollback = 10_000 },
++    ));
++    defer terminal_c.free(t);
++
++    // Write history to the primary screen, then switch to the alternate
++    // screen and draw something else, the way a TUI caught mid-handoff does.
++    const primary_text = "primary-history-line";
++    terminal_c.vt_write(t, primary_text, primary_text.len);
++    const enter_alt = "\x1b[?1049h";
++    terminal_c.vt_write(t, enter_alt, enter_alt.len);
++    const alt_text = "alternate-frame";
++    terminal_c.vt_write(t, alt_text, alt_text.len);
++
++    var f: Formatter = null;
++    try testing.expectEqual(Result.success, screen_new(
++        &lib.alloc.test_allocator,
++        &f,
++        t,
++        .primary,
++        .{ .emit = .plain, .unwrap = false, .trim = true, .extra = .{ .palette = false, .modes = false, .scrolling_region = false, .tabstops = false, .pwd = false, .keyboard = false, .screen = .{ .cursor = false, .style = false, .hyperlink = false, .protection = false, .kitty_keyboard = false, .charsets = false } } },
++    ));
++    defer free(f);
++
++    var out_ptr: ?[*]u8 = null;
++    var out_len: usize = 0;
++    try testing.expectEqual(Result.success, format_alloc(
++        f,
++        &lib.alloc.test_allocator,
++        &out_ptr,
++        &out_len,
++    ));
++    const out = out_ptr.?[0..out_len];
++    defer lib.alloc.default(&lib.alloc.test_allocator).free(out);
++
++    try testing.expect(std.mem.indexOf(u8, out, primary_text) != null);
++    try testing.expect(std.mem.indexOf(u8, out, alt_text) == null);
++}
++
++test "screen_new refuses a screen the terminal does not have" {
++    var t: terminal_c.Terminal = null;
++    try testing.expectEqual(Result.success, terminal_c.new(
++        &lib.alloc.test_allocator,
++        &t,
++        .{ .cols = 80, .rows = 24, .max_scrollback = 10_000 },
++    ));
++    defer terminal_c.free(t);
++
++    // A fresh terminal has no alternate screen yet.
++    var f: Formatter = null;
++    try testing.expectEqual(Result.invalid_value, screen_new(
++        &lib.alloc.test_allocator,
++        &f,
++        t,
++        .alternate,
++        .{ .emit = .plain, .unwrap = false, .trim = true, .extra = .{ .palette = false, .modes = false, .scrolling_region = false, .tabstops = false, .pwd = false, .keyboard = false, .screen = .{ .cursor = false, .style = false, .hyperlink = false, .protection = false, .kitty_keyboard = false, .charsets = false } } },
++    ));
++    try testing.expect(f == null);
++}
++
+ test "terminal_new invalid_value on null terminal" {
+     var f: Formatter = null;
+     try testing.expectEqual(Result.invalid_value, terminal_new(
+diff --git a/vendor/libghostty-vt/src/terminal/c/main.zig b/vendor/libghostty-vt/src/terminal/c/main.zig
+index 37dc5768..da89470d 100644
+--- a/vendor/libghostty-vt/src/terminal/c/main.zig
++++ b/vendor/libghostty-vt/src/terminal/c/main.zig
+@@ -76,6 +76,7 @@ pub const focus_encode = focus.encode;
+ pub const mode_report_encode = modes.report_encode;
+ 
+ pub const formatter_terminal_new = formatter.terminal_new;
++pub const formatter_screen_new = formatter.screen_new;
+ pub const formatter_format_buf = formatter.format_buf;
+ pub const formatter_format_alloc = formatter.format_alloc;
+ pub const formatter_free = formatter.free;

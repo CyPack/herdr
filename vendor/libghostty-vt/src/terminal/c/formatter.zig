@@ -16,6 +16,7 @@ const FormatterWrapper = struct {
 
     const Kind = union(enum) {
         terminal: formatterpkg.TerminalFormatter,
+        screen: formatterpkg.ScreenFormatter,
     };
 };
 
@@ -160,6 +161,71 @@ fn terminal_new_(
     return ptr;
 }
 
+pub fn screen_new(
+    alloc_: ?*const CAllocator,
+    result: *Formatter,
+    terminal_: terminal_c.Terminal,
+    screen: terminal_c.TerminalScreen,
+    opts: TerminalOptions,
+) callconv(lib.calling_conv) Result {
+    result.* = screen_new_(
+        alloc_,
+        terminal_,
+        screen,
+        opts,
+    ) catch |err| {
+        result.* = null;
+        return switch (err) {
+            error.InvalidValue => .invalid_value,
+            error.OutOfMemory => .out_of_memory,
+        };
+    };
+
+    return .success;
+}
+
+fn screen_new_(
+    alloc_: ?*const CAllocator,
+    terminal_: terminal_c.Terminal,
+    screen: terminal_c.TerminalScreen,
+    opts: TerminalOptions,
+) error{
+    InvalidValue,
+    OutOfMemory,
+}!*FormatterWrapper {
+    const t: *ZigTerminal = (terminal_ orelse return error.InvalidValue).terminal;
+    const screen_obj = t.screens.get(screen) orelse return error.InvalidValue;
+
+    const alloc = lib.alloc.default(alloc_);
+    const ptr = alloc.create(FormatterWrapper) catch
+        return error.OutOfMemory;
+    errdefer alloc.destroy(ptr);
+
+    // Unlike TerminalFormatter, this formats the requested screen even when
+    // it is not the active one; TerminalFormatter always formats the active
+    // screen. Only the screen-scoped extras apply here, so the terminal-level
+    // extras in `opts.extra` (palette, modes, ...) are ignored.
+    var formatter: formatterpkg.ScreenFormatter = .init(screen_obj, .{
+        .emit = opts.emit,
+        .unwrap = opts.unwrap,
+        .trim = opts.trim,
+    });
+    formatter.extra = opts.extra.screen.toZig();
+
+    // Setup the content that we're formatting
+    if (opts.selection) |sel| formatter.content = .{
+        .selection = sel.toZig() orelse
+            return error.InvalidValue,
+    };
+
+    ptr.* = .{
+        .kind = .{ .screen = formatter },
+        .alloc = alloc,
+    };
+
+    return ptr;
+}
+
 pub fn format_buf(
     formatter_: Formatter,
     out_: ?[*]u8,
@@ -184,6 +250,14 @@ pub fn format_buf(
                 return .out_of_space;
             },
         },
+        .screen => |*s| s.format(&writer) catch |err| switch (err) {
+            error.WriteFailed => {
+                var discarding: std.Io.Writer.Discarding = .init(&.{});
+                s.format(&discarding.writer) catch unreachable;
+                out_written.* = @intCast(discarding.count);
+                return .out_of_space;
+            },
+        },
     }
 
     out_written.* = writer.end;
@@ -204,6 +278,7 @@ pub fn format_alloc(
 
     switch (wrapper.kind) {
         .terminal => |*t| t.format(&aw.writer) catch return .out_of_memory,
+        .screen => |*s| s.format(&aw.writer) catch return .out_of_memory,
     }
 
     const buf = aw.toOwnedSlice() catch return .out_of_memory;
@@ -236,6 +311,70 @@ test "terminal_new/free" {
     ));
     try testing.expect(f != null);
     free(f);
+}
+
+test "screen_new formats the primary screen while the alternate is active" {
+    var t: terminal_c.Terminal = null;
+    try testing.expectEqual(Result.success, terminal_c.new(
+        &lib.alloc.test_allocator,
+        &t,
+        .{ .cols = 80, .rows = 24, .max_scrollback = 10_000 },
+    ));
+    defer terminal_c.free(t);
+
+    // Write history to the primary screen, then switch to the alternate
+    // screen and draw something else, the way a TUI caught mid-handoff does.
+    const primary_text = "primary-history-line";
+    terminal_c.vt_write(t, primary_text, primary_text.len);
+    const enter_alt = "\x1b[?1049h";
+    terminal_c.vt_write(t, enter_alt, enter_alt.len);
+    const alt_text = "alternate-frame";
+    terminal_c.vt_write(t, alt_text, alt_text.len);
+
+    var f: Formatter = null;
+    try testing.expectEqual(Result.success, screen_new(
+        &lib.alloc.test_allocator,
+        &f,
+        t,
+        .primary,
+        .{ .emit = .plain, .unwrap = false, .trim = true, .extra = .{ .palette = false, .modes = false, .scrolling_region = false, .tabstops = false, .pwd = false, .keyboard = false, .screen = .{ .cursor = false, .style = false, .hyperlink = false, .protection = false, .kitty_keyboard = false, .charsets = false } } },
+    ));
+    defer free(f);
+
+    var out_ptr: ?[*]u8 = null;
+    var out_len: usize = 0;
+    try testing.expectEqual(Result.success, format_alloc(
+        f,
+        &lib.alloc.test_allocator,
+        &out_ptr,
+        &out_len,
+    ));
+    const out = out_ptr.?[0..out_len];
+    defer lib.alloc.default(&lib.alloc.test_allocator).free(out);
+
+    try testing.expect(std.mem.indexOf(u8, out, primary_text) != null);
+    try testing.expect(std.mem.indexOf(u8, out, alt_text) == null);
+}
+
+test "screen_new refuses a screen the terminal does not have" {
+    var t: terminal_c.Terminal = null;
+    try testing.expectEqual(Result.success, terminal_c.new(
+        &lib.alloc.test_allocator,
+        &t,
+        .{ .cols = 80, .rows = 24, .max_scrollback = 10_000 },
+    ));
+    defer terminal_c.free(t);
+
+    // A fresh terminal has no alternate screen yet.
+    var f: Formatter = null;
+    try testing.expectEqual(Result.invalid_value, screen_new(
+        &lib.alloc.test_allocator,
+        &f,
+        t,
+        .alternate,
+        .{ .emit = .plain, .unwrap = false, .trim = true, .extra = .{ .palette = false, .modes = false, .scrolling_region = false, .tabstops = false, .pwd = false, .keyboard = false, .screen = .{ .cursor = false, .style = false, .hyperlink = false, .protection = false, .kitty_keyboard = false, .charsets = false } } },
+    ));
+    try testing.expect(f == null);
 }
 
 test "terminal_new invalid_value on null terminal" {

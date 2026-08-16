@@ -38,3 +38,55 @@ cargo nextest run --locked grapheme_cluster_mode_is_default_and_survives_full_re
 cargo nextest run --locked grapheme_cluster_mode_renders_flag_emoji_in_single_wide_cell
 cargo nextest run --locked grapheme_cluster_mode_renders_zwj_family_in_single_wide_cell
 ```
+
+## 0002 expose a screen-selectable formatter in the lib-vt C API
+
+status: active
+
+patch: `vendor/patches/libghostty-vt/0002-formatter-screen-new.patch`
+
+herdr issue: not opened; found while closing the alt-screen handoff/dormancy
+history loss (TP-HANDOFF-HIST-02, TP-DORMANT-10)
+
+upstream discussion: not opened; the core formatter's own docs point at this
+shape ("If you want to emit data for all screens, you should manually
+construct a no-content terminal formatter, followed by screen formatters")
+but the C API only exposes the terminal formatter, which always reads the
+active screen
+
+upstream pr: not opened
+
+vendored base: `c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3`
+
+local files:
+
+- `vendor/libghostty-vt/src/terminal/c/formatter.zig`
+- `vendor/libghostty-vt/src/terminal/c/main.zig`
+- `vendor/libghostty-vt/src/lib_vt.zig`
+- `vendor/libghostty-vt/include/ghostty/vt/formatter.h`
+
+reason: Herdr's live-handoff freight and pane dormancy capture a pane's full
+primary-screen scrollback. Every existing C-API read resolves through the
+active screen, so a pane caught inside a fullscreen application (alternate
+screen) captured nothing and lost its primary history. The new
+`ghostty_formatter_screen_new(allocator, formatter, terminal, screen,
+options)` constructs a ScreenFormatter for the requested
+`GhosttyTerminalScreen` regardless of which screen is active; a NULL
+selection formats the whole screen. The Rust extern lives in
+`src/ghostty/bindings_ext.rs` (hand-written; `bindings.rs` is generated
+offline by rust-bindgen and must stay pristine).
+
+remove when: libghostty-vt exposes a C API that can read a non-active
+screen's content (a screen-keyed formatter or grid-ref resolver), and the
+verification below passes without this patch after moving
+`bindings_ext.rs` to the upstream symbol.
+
+verification:
+
+```sh
+zig build test-lib-vt -Dtest-filter="screen_new"   # in vendor/libghostty-vt
+cargo nextest run --locked reading_the_primary_screen_while_the_alternate_is_active
+cargo nextest run --locked handoff_history_ansi_full_reads_the_primary_screen_from_the_alternate
+cargo nextest run --locked an_alt_screen_retired_pane_sleeps_with_its_primary_history
+cargo nextest run --locked live_handoff_preserves_primary_history_of_an_alt_screen_pane
+```
