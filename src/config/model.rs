@@ -378,8 +378,37 @@ pub struct SpacesConfig {
     /// `[[spaces.node]]` containers: named tree nodes that hang under each
     /// other by `parent`, giving the sidebar its N-level shape.
     pub node: Vec<SpaceNodeEntry>,
+    /// `[[spaces.display]]` renames: a name laid over whatever the rule above
+    /// resolved to, keyed by that rule's own key.
+    pub display: Vec<SpaceDisplayEntry>,
     /// `[spaces.icons]` row-kind icon defaults for the Spaces tree.
     pub icons: SpaceIconsConfig,
+}
+
+/// One authored `[[spaces.display]]` table: a rename that is only a name.
+///
+/// TP-MOD-34. Renaming used to be offered on machine-owned modules alone,
+/// because the obvious implementation — rewrite the rule — cannot work for the
+/// others. A second `[[spaces.node]]` carrying an existing key is dropped as a
+/// duplicate, and a second `[[spaces.split]]` carrying one loses at first-match
+/// to the hand-written rule it was meant to rename. So the modules a person
+/// actually authors, and every bucket without exception, had no rename at all.
+///
+/// A display entry sidesteps that by not being a rule. It takes no part in
+/// resolution — no repo, no patterns, no parent — so it cannot claim a
+/// checkout, cannot reorder first-match, and cannot silently steal a branch
+/// from the rule that owns it today. It is applied after resolution has already
+/// decided everything, and the only thing it can change is what the header
+/// reads.
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(default)]
+pub struct SpaceDisplayEntry {
+    /// The node or bucket key being renamed.
+    pub key: String,
+    /// The name its header wears. Blank is ignored: a nameless header is worse
+    /// than a badly named one, and it would also read as "reset", which is a
+    /// different verb than the one that wrote this.
+    pub name: String,
 }
 
 /// One authored `[[spaces.split]]` table, before validation.
@@ -476,11 +505,29 @@ impl Default for SpaceIconsConfig {
 impl SpacesConfig {
     /// Validated rules in config order, `~` expanded. Unusable entries are
     /// dropped (see [`Self::diagnostics`]).
+    /// The name laid over `key` by a `[[spaces.display]]` entry, if any.
+    ///
+    /// TP-MOD-34: the LAST entry wins, which is the opposite of the first-match
+    /// rule the split table follows — and deliberately so. First-match exists
+    /// because two rules may both want the same checkout and only one can have
+    /// it; renaming has no such contest. What it has instead is a history: the
+    /// managed overlay is appended after the user's own file, so the last entry
+    /// is simply the most recent decision, and reading it any other way would
+    /// pin a module to the first name it was ever given.
+    pub fn display_name_for(&self, key: &str) -> Option<&str> {
+        self.display
+            .iter()
+            .map(|entry| (entry.key.trim(), entry.name.trim()))
+            .rfind(|(entry_key, name)| *entry_key == key && !name.is_empty())
+            .map(|(_, name)| name)
+    }
+
     pub fn rules(&self) -> Vec<crate::spaces::SpaceSplitRule> {
         self.split
             .iter()
             .filter(|entry| space_split_entry_problem(entry).is_none())
             .map(|entry| {
+                let key = entry.key.trim();
                 let label = entry.label.trim();
                 let icon = entry.icon.trim();
                 crate::spaces::SpaceSplitRule {
@@ -491,9 +538,14 @@ impl SpacesConfig {
                         .map(|pattern| pattern.trim().to_string())
                         .filter(|pattern| !pattern.is_empty())
                         .collect(),
-                    key: entry.key.trim().to_string(),
-                    label: if label.is_empty() {
-                        entry.key.trim().to_string()
+                    key: key.to_string(),
+                    // TP-MOD-34: applied here, after the rule has resolved
+                    // everything else, so the rename cannot reach `patterns`,
+                    // `repo_root` or the rule's position in first-match.
+                    label: if let Some(name) = self.display_name_for(key) {
+                        name.to_string()
+                    } else if label.is_empty() {
+                        key.to_string()
                     } else {
                         label.to_string()
                     },
@@ -519,14 +571,21 @@ impl SpacesConfig {
             .iter()
             .filter(|entry| space_node_entry_problem(entry).is_none())
             .map(|entry| {
+                let key = entry.key.trim();
                 let name = entry.name.trim();
                 let icon = entry.icon.trim();
                 let parent = entry.parent.trim();
                 let dir = entry.dir.trim();
                 crate::spaces::SpaceNode {
-                    key: entry.key.trim().to_string(),
-                    name: if name.is_empty() {
-                        entry.key.trim().to_string()
+                    key: key.to_string(),
+                    // TP-MOD-34: a rename cannot reach `parent` or `dir`, so it
+                    // cannot lift a module to the top level or take away the
+                    // place it stands — the two things TP-MOD-33 had to guard
+                    // against when a rename rewrote the whole entry.
+                    name: if let Some(display) = self.display_name_for(key) {
+                        display.to_string()
+                    } else if name.is_empty() {
+                        key.to_string()
                     } else {
                         name.to_string()
                     },
@@ -542,13 +601,19 @@ impl SpacesConfig {
             .iter()
             .filter(|entry| space_project_entry_problem(entry).is_none())
             .map(|entry| {
+                let key = entry.key.trim();
                 let name = entry.name.trim();
                 let icon = entry.icon.trim();
                 let parent = entry.parent.trim();
                 crate::spaces::SpaceNode {
-                    key: entry.key.trim().to_string(),
-                    name: if name.is_empty() {
-                        entry.key.trim().to_string()
+                    key: key.to_string(),
+                    // TP-MOD-34: a project IS a node (TP-NODE-02), so it wears
+                    // the same rename. Leaving it out would make the one header
+                    // a person cannot rename the one at the top of their tree.
+                    name: if let Some(display) = self.display_name_for(key) {
+                        display.to_string()
+                    } else if name.is_empty() {
+                        key.to_string()
                     } else {
                         name.to_string()
                     },
@@ -2156,6 +2221,141 @@ chat_drawer_mode = "all-active"
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.ui.chat_drawer_mode, ChatDrawerModeConfig::AllActive);
+    }
+
+    /// A hand-written tree of the shape measured on the reported machine: two
+    /// buckets on one repository, a node, and a project.
+    fn hand_written_spaces() -> Config {
+        toml::from_str(
+            r#"
+[[spaces.split]]
+repo = "~/projects/herdr-web"
+match = ["*tabs*"]
+key = "herdr-web:tabs"
+label = "Tabs"
+
+[[spaces.split]]
+repo = "~/projects/herdr-web"
+match = ["*"]
+key = "herdr-web:rest"
+label = "Rest"
+
+[[spaces.node]]
+key = "docs-render"
+name = "Docs Render"
+
+[[spaces.project]]
+key = "project:herdr"
+name = "herdr"
+repos = ["~/projects/herdr"]
+"#,
+        )
+        .expect("the fixture parses")
+    }
+
+    // T3.4 / TP-MOD-34: the rename reaches every header kind — bucket, node
+    // and project alike. A rename that worked on one of the three would leave
+    // the person guessing which headers can be renamed and which cannot.
+    #[test]
+    fn a_display_entry_renames_a_bucket_a_node_and_a_project() {
+        let mut config = hand_written_spaces();
+        config.spaces.display = vec![
+            SpaceDisplayEntry {
+                key: "herdr-web:tabs".into(),
+                name: "Sekmeler".into(),
+            },
+            SpaceDisplayEntry {
+                key: "docs-render".into(),
+                name: "Belgeler".into(),
+            },
+            SpaceDisplayEntry {
+                key: "project:herdr".into(),
+                name: "Ana proje".into(),
+            },
+        ];
+
+        let rules = config.spaces.rules();
+        let nodes = config.spaces.nodes();
+        let name_of = |key: &str| {
+            nodes
+                .iter()
+                .find(|node| node.key == key)
+                .map(|node| node.name.clone())
+        };
+
+        assert_eq!(rules[0].label, "Sekmeler");
+        assert_eq!(
+            rules[1].label, "Rest",
+            "an unnamed rule keeps its own label"
+        );
+        assert_eq!(name_of("docs-render").as_deref(), Some("Belgeler"));
+        assert_eq!(name_of("project:herdr").as_deref(), Some("Ana proje"));
+    }
+
+    // T3.5 / TP-MOD-34: the load-bearing assertion. A rename must not disturb
+    // resolution — first-match order, patterns and repo roots are what decide
+    // which checkout lands in which bucket, and quietly moving a branch into
+    // another module is a far worse bug than a header with the wrong name.
+    #[test]
+    fn a_display_entry_changes_no_part_of_rule_resolution() {
+        let plain = hand_written_spaces();
+        let before: Vec<_> = plain
+            .spaces
+            .rules()
+            .into_iter()
+            .map(|rule| (rule.key, rule.repo_root, rule.patterns, rule.parent))
+            .collect();
+
+        let mut renamed = hand_written_spaces();
+        renamed.spaces.display = vec![SpaceDisplayEntry {
+            key: "herdr-web:tabs".into(),
+            name: "Sekmeler".into(),
+        }];
+        let after: Vec<_> = renamed
+            .spaces
+            .rules()
+            .into_iter()
+            .map(|rule| (rule.key, rule.repo_root, rule.patterns, rule.parent))
+            .collect();
+
+        assert_eq!(
+            before, after,
+            "a rename may change a name and nothing else — order included"
+        );
+    }
+
+    // T3.7 / TP-MOD-34: a blank name is ignored rather than applied. An empty
+    // header cannot be pointed at or clicked, and writing one would also read
+    // as "reset", which is a different verb than the one that wrote this.
+    #[test]
+    fn a_blank_display_name_leaves_the_header_alone() {
+        let mut config = hand_written_spaces();
+        config.spaces.display = vec![SpaceDisplayEntry {
+            key: "herdr-web:tabs".into(),
+            name: "   ".into(),
+        }];
+
+        assert_eq!(config.spaces.rules()[0].label, "Tabs");
+    }
+
+    // TP-MOD-34: the last entry wins, because the managed overlay is appended
+    // after the user's own file — so "last" means "most recent decision".
+    // Reading it first-wins would pin a module to the first name it ever had.
+    #[test]
+    fn the_most_recent_display_entry_is_the_one_that_shows() {
+        let mut config = hand_written_spaces();
+        config.spaces.display = vec![
+            SpaceDisplayEntry {
+                key: "herdr-web:tabs".into(),
+                name: "Eski".into(),
+            },
+            SpaceDisplayEntry {
+                key: "herdr-web:tabs".into(),
+                name: "Yeni".into(),
+            },
+        ];
+
+        assert_eq!(config.spaces.rules()[0].label, "Yeni");
     }
 
     // TP-NODE-01 (config half): no [[spaces.node]] table, no nodes — and the

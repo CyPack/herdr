@@ -76,6 +76,17 @@ pub struct WorkspaceChatLedger {
     /// the moves if it saves — the observed history itself is never at risk.
     #[serde(default)]
     pub moves: BTreeMap<String, String>,
+    /// User-chosen names: session id → the name that chat's row wears
+    /// (TP-CHAT-NAME-01). Additive on the version-1 schema for the same reason
+    /// `moves` is: an older binary still reads the file and only loses the
+    /// names if it saves, while the observed history itself is never at risk.
+    ///
+    /// Kept beside the observations rather than inside `ChatRecord` because a
+    /// name belongs to the conversation, not to the workspace that happened to
+    /// see it — the same session observed in two directories must not be able
+    /// to wear two different names.
+    #[serde(default)]
+    pub names: BTreeMap<String, String>,
 }
 
 impl Default for WorkspaceChatLedger {
@@ -84,6 +95,7 @@ impl Default for WorkspaceChatLedger {
             version: LEDGER_VERSION,
             workspaces: BTreeMap::new(),
             moves: BTreeMap::new(),
+            names: BTreeMap::new(),
         }
     }
 }
@@ -225,6 +237,54 @@ impl WorkspaceChatLedger {
     /// (TP-CHAT-MOVE-03).
     pub fn clear_move(&mut self, session_id: &str) -> bool {
         self.moves.remove(session_id).is_some()
+    }
+
+    /// Name a chat. Returns whether the ledger changed, so re-submitting the
+    /// name already on screen never schedules a write.
+    ///
+    /// TP-CHAT-NAME-01: a blank name is not stored as a blank — it withdraws
+    /// the name instead, which is the only sensible reading of "clear the box
+    /// and press enter" and leaves the row with the title it would have had.
+    pub fn set_name(&mut self, session_id: &str, name: &str) -> bool {
+        let name = name.trim();
+        if session_id.is_empty() {
+            return false;
+        }
+        if name.is_empty() {
+            return self.clear_name(session_id);
+        }
+        if self.names.get(session_id).map(String::as_str) == Some(name) {
+            return false;
+        }
+        self.names.insert(session_id.to_string(), name.to_string());
+        true
+    }
+
+    /// Withdraw a name: the row goes back to whatever the transcript says.
+    pub fn clear_name(&mut self, session_id: &str) -> bool {
+        self.names.remove(session_id).is_some()
+    }
+}
+
+/// Lay the user's chat names over the assembled presentation rows.
+///
+/// TP-CHAT-NAME-01: this runs LAST, beside `apply_chat_moves` and for the
+/// identical reason. The agent's own store re-answers every refresh with the
+/// title it derived from the transcript, so a name written any earlier is
+/// overwritten within one sync — the chat would appear to rename itself back.
+pub fn apply_chat_names(
+    rows: &mut std::collections::HashMap<String, Vec<crate::app::state::WorkspaceChatRow>>,
+    names: &BTreeMap<String, String>,
+) {
+    if names.is_empty() {
+        return;
+    }
+    for chats in rows.values_mut() {
+        for chat in chats.iter_mut() {
+            if let Some(name) = names.get(&chat.session_id) {
+                chat.title = Some(name.clone());
+            }
+        }
     }
 }
 
@@ -669,6 +729,65 @@ mod tests {
             last_seen_ms,
             last_modified: None,
         }
+    }
+
+    // T3.6 / TP-CHAT-NAME-01: the name the user typed is what the row reads,
+    // wherever that row was assembled from.
+    #[test]
+    fn a_named_chat_wears_its_name_in_every_drawer_it_appears_in() {
+        let mut rows = std::collections::HashMap::from([
+            ("/repo/main".to_string(), vec![row("s1", 5_000)]),
+            // The agent-store merge attributed the same chat here too, with
+            // whatever title it derived from the transcript.
+            ("/repo/other".to_string(), vec![row("s1", 3_000)]),
+        ]);
+        let names = BTreeMap::from([("s1".to_string(), "gece nöbeti".to_string())]);
+
+        apply_chat_names(&mut rows, &names);
+
+        assert_eq!(rows["/repo/main"][0].title.as_deref(), Some("gece nöbeti"));
+        assert_eq!(rows["/repo/other"][0].title.as_deref(), Some("gece nöbeti"));
+    }
+
+    // TP-CHAT-NAME-01: an unnamed chat is left exactly as the sources built
+    // it. The overlay names what it was told to and nothing else.
+    #[test]
+    fn an_unnamed_chat_keeps_whatever_title_it_had() {
+        let mut rows =
+            std::collections::HashMap::from([("/repo/main".to_string(), vec![row("s1", 5_000)])]);
+        let before = rows["/repo/main"][0].title.clone();
+
+        apply_chat_names(&mut rows, &BTreeMap::new());
+
+        assert_eq!(rows["/repo/main"][0].title, before);
+    }
+
+    // TP-CHAT-NAME-01: a name is stored once, re-submitting it changes
+    // nothing, and clearing the box withdraws the name rather than storing an
+    // empty one — a blank row would be worse than the title it replaced.
+    #[test]
+    fn naming_a_chat_is_idempotent_and_a_blank_withdraws_it() {
+        let mut ledger = WorkspaceChatLedger::default();
+
+        assert!(ledger.set_name("s1", "gece nöbeti"));
+        assert!(
+            !ledger.set_name("s1", "  gece nöbeti  "),
+            "the same decision must not schedule a second write"
+        );
+        assert_eq!(
+            ledger.names.get("s1").map(String::as_str),
+            Some("gece nöbeti")
+        );
+
+        assert!(ledger.set_name("s1", "   "));
+        assert!(
+            !ledger.names.contains_key("s1"),
+            "a cleared box withdraws the name instead of storing a blank"
+        );
+        assert!(
+            !ledger.set_name("s1", ""),
+            "withdrawing twice changes nothing"
+        );
     }
 
     // TP-CHAT-MOVE-01: a re-home wins over every source — the ledger's own
