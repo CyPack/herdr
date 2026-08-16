@@ -2534,6 +2534,21 @@ impl AppState {
         true
     }
 
+    /// TP-MOB-101: whether the host may claim the vertical wheel from a pane
+    /// that asked for mouse reporting. This answers *policy* only — whether
+    /// the host can actually honour the claim is a separate question the
+    /// caller still asks of the pane's scrollback (TP-MOB-97), and no mode
+    /// here overrides that.
+    fn host_scroll_claims_wheel(&self) -> bool {
+        match self.mouse_wheel_host_scroll {
+            crate::config::MouseWheelHostScrollConfig::Never => false,
+            crate::config::MouseWheelHostScrollConfig::Mobile => {
+                self.view.layout == ViewLayout::Mobile
+            }
+            crate::config::MouseWheelHostScrollConfig::Scrollable => true,
+        }
+    }
+
     pub(super) fn forward_pane_wheel(
         &self,
         terminal_runtimes: &TerminalRuntimeRegistry,
@@ -2550,7 +2565,7 @@ impl AppState {
         match rt.wheel_routing() {
             Some(crate::pane::WheelRouting::HostScroll) | None => false,
             Some(crate::pane::WheelRouting::MouseReport)
-                if self.view.layout == ViewLayout::Mobile
+                if self.host_scroll_claims_wheel()
                     && matches!(
                         mouse.kind,
                         MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
@@ -2559,17 +2574,22 @@ impl AppState {
                         .scroll_metrics()
                         .is_some_and(|metrics| metrics.max_offset_from_bottom > 0) =>
             {
-                // A touch client reports a swipe as a wheel event, and an agent
-                // that asked for mouse reporting typically does nothing with
-                // it. On a phone that spends the only scroll gesture there is:
-                // no wheel, no keyboard shortcut in reach, and a scrollbar too
-                // thin for a finger. The phone shell keeps the vertical wheel
-                // for its own viewport and leaves the rest of the reporting
-                // contract alone (TP-MOB-56). Alternate-scroll panes are not
+                // An agent that asked for mouse reporting typically does
+                // nothing with the wheel, so the gesture lands nowhere and the
+                // content area looks frozen. On a phone that spends the only
+                // scroll gesture there is: no wheel, no keyboard shortcut in
+                // reach, and a scrollbar too thin for a finger (TP-MOB-56), so
+                // the phone shell claims it by default. On a desktop the same
+                // dead gesture is opt-in (`scrollable`) rather than automatic,
+                // because a pane there may genuinely act on the wheel without
+                // an alternate screen — and unlike the phone, the desktop has
+                // the pane edge, the scrollbar and copy mode to fall back on.
+                // Which surfaces claim it is policy (TP-MOB-101); whether the
+                // claim can be honoured is not. Alternate-scroll panes are not
                 // covered because their arrow keys already scroll on touch —
                 // and the claim only holds while the host has scrollback to
-                // give: an alternate-screen program has none, and a swipe
-                // spent on an empty scrollback is a swipe that does nothing
+                // give: an alternate-screen program has none, and a gesture
+                // spent on an empty scrollback is a gesture that does nothing
                 // at all (TP-MOB-97), so it falls through to the program.
                 false
             }
@@ -3073,9 +3093,12 @@ mod tests {
         );
     }
 
-    /// TP-MOB-57: the override is scoped to the phone shell. On a desktop
-    /// layout the wheel still belongs to the program in the pane, which is
-    /// what makes scroll work inside its own lists and viewers.
+    /// TP-MOB-57: out of the box the override is scoped to the phone shell. On
+    /// a desktop layout the wheel still belongs to the program in the pane,
+    /// which is what makes scroll work inside its own lists and viewers.
+    /// TP-MOB-101 made that scope configurable; this test pins the default, so
+    /// it asserts the setting explicitly rather than inheriting it — a default
+    /// that drifts must fail here, not in a reader's session.
     #[tokio::test]
     async fn desktop_shell_vertical_wheel_still_reports_to_the_pane() {
         let mut app = app_for_mouse_test();
@@ -3093,6 +3116,11 @@ mod tests {
         app.state.view.pane_infos = pane_infos;
         app.state.mouse_scroll_lines = 3;
         assert_ne!(app.state.view.layout, ViewLayout::Mobile);
+        assert_eq!(
+            app.state.mouse_wheel_host_scroll,
+            crate::config::MouseWheelHostScrollConfig::Mobile,
+            "this test describes the shipped default; state it instead of assuming it"
+        );
 
         app.handle_mouse(mouse(
             MouseEventKind::ScrollUp,
@@ -3112,6 +3140,178 @@ mod tests {
         assert_eq!(
             metrics.offset_from_bottom, 0,
             "reporting the wheel must not also move Herdr's viewport"
+        );
+    }
+
+    /// TP-MOB-101: the phone shell's claim is a policy, not a shape of the
+    /// screen. Reported live on a desktop: the wheel over an agent pane did
+    /// nothing at all, because the agent asks for mouse reporting and then
+    /// discards the wheel, and the desktop had no way to say otherwise —
+    /// the modifier route is not available either, since the host terminal
+    /// captures shift+wheel for itself before Herdr ever sees it. Under
+    /// `scrollable` the same claim the phone makes applies here.
+    #[tokio::test]
+    async fn scrollable_mode_gives_the_desktop_wheel_to_host_scrollback() {
+        let mut app = app_for_mouse_test();
+        let mut ws = Workspace::test_new("test");
+        let pane_id = ws.tabs[0].root_pane;
+        let pane_infos = ws.tabs[0].layout.panes(Rect::new(26, 2, 80, 18));
+        let info = pane_infos[0].clone();
+        let (runtime, mut input_rx) = mouse_reporting_pane_with_scrollback(&info);
+        ws.insert_test_runtime(pane_id, runtime);
+
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.view.pane_infos = pane_infos;
+        app.state.mouse_scroll_lines = 3;
+        assert_ne!(app.state.view.layout, ViewLayout::Mobile);
+        app.state.mouse_wheel_host_scroll = crate::config::MouseWheelHostScrollConfig::Scrollable;
+
+        app.handle_mouse(mouse(
+            MouseEventKind::ScrollUp,
+            info.inner_rect.x + 1,
+            info.inner_rect.y + 1,
+        ));
+
+        let metrics = app
+            .state
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
+            .expect("scroll metrics after wheel");
+        assert_eq!(
+            metrics.offset_from_bottom, 3,
+            "under scrollable the desktop wheel moves Herdr's viewport"
+        );
+        // Both halves are asserted on purpose: a wheel that scrolls the host
+        // *and* reaches the program would satisfy the first assert alone while
+        // leaving the pane's own list scrolled out from under the reader.
+        assert!(
+            input_rx.try_recv().is_err(),
+            "a wheel the host claimed must not also be spent on the pane"
+        );
+    }
+
+    /// TP-MOB-101: `scrollable` widens who may claim the wheel, never what the
+    /// host is able to honour. An alternate-screen program has no scrollback
+    /// behind it, so the claim does not apply and the wheel stays the
+    /// program's — the same guard TP-MOB-97 put on the phone shell, measured
+    /// again: entering the alternate screen reports max_offset 0, leaving it
+    /// restores the previous scrollback intact.
+    #[tokio::test]
+    async fn scrollable_mode_still_leaves_an_alt_screen_program_its_wheel() {
+        let mut app = app_for_mouse_test();
+        let mut ws = Workspace::test_new("test");
+        let pane_id = ws.tabs[0].root_pane;
+        let pane_infos = ws.tabs[0].layout.panes(Rect::new(26, 2, 80, 18));
+        let info = pane_infos[0].clone();
+        let bytes = b"\x1b[?1000h\x1b[?1006h\x1b[?1049hAGENT".to_vec();
+        let (runtime, mut input_rx) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                info.inner_rect.width,
+                info.inner_rect.height,
+                16 * 1024,
+                &bytes,
+                4,
+            );
+        ws.insert_test_runtime(pane_id, runtime);
+
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.view.pane_infos = pane_infos;
+        app.state.mouse_scroll_lines = 3;
+        app.state.mouse_wheel_host_scroll = crate::config::MouseWheelHostScrollConfig::Scrollable;
+
+        app.handle_mouse(mouse(
+            MouseEventKind::ScrollUp,
+            info.inner_rect.x + 1,
+            info.inner_rect.y + 1,
+        ));
+
+        assert!(
+            input_rx.try_recv().is_ok(),
+            "with nothing for the host to scroll, the wheel reaches the program"
+        );
+    }
+
+    /// TP-MOB-101: `never` is the reverse direction of the same setting, and
+    /// it is the only way a phone user has ever been able to opt out of
+    /// TP-MOB-56. Without it the mobile claim would be the one policy in this
+    /// setting with no off switch.
+    #[tokio::test]
+    async fn never_mode_takes_the_wheel_back_from_the_phone_shell() {
+        let mut app = app_for_mouse_test();
+        let mut ws = Workspace::test_new("test");
+        let pane_id = ws.tabs[0].root_pane;
+        let pane_infos = ws.tabs[0].layout.panes(Rect::new(0, 2, 40, 18));
+        let info = pane_infos[0].clone();
+        let (runtime, mut input_rx) = mouse_reporting_pane_with_scrollback(&info);
+        ws.insert_test_runtime(pane_id, runtime);
+
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.view.layout = ViewLayout::Mobile;
+        app.state.view.sidebar_rect = Rect::default();
+        app.state.view.pane_infos = pane_infos;
+        app.state.mouse_scroll_lines = 3;
+        app.state.mouse_wheel_host_scroll = crate::config::MouseWheelHostScrollConfig::Never;
+
+        app.handle_mouse(mouse(
+            MouseEventKind::ScrollUp,
+            info.inner_rect.x + 1,
+            info.inner_rect.y + 1,
+        ));
+
+        assert!(
+            input_rx.try_recv().is_ok(),
+            "never hands the wheel to the pane even where the phone would claim it"
+        );
+        let metrics = app
+            .state
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
+            .expect("scroll metrics after wheel");
+        assert_eq!(
+            metrics.offset_from_bottom, 0,
+            "never must not move Herdr's viewport"
+        );
+    }
+
+    /// TP-MOB-101: the setting is about the vertical wheel only. A horizontal
+    /// wheel carries no scrollback meaning for the host, so claiming it would
+    /// take a gesture away from panes that do use it and give nothing back.
+    #[tokio::test]
+    async fn scrollable_mode_does_not_claim_the_horizontal_wheel() {
+        let mut app = app_for_mouse_test();
+        let mut ws = Workspace::test_new("test");
+        let pane_id = ws.tabs[0].root_pane;
+        let pane_infos = ws.tabs[0].layout.panes(Rect::new(26, 2, 80, 18));
+        let info = pane_infos[0].clone();
+        let (runtime, mut input_rx) = mouse_reporting_pane_with_scrollback(&info);
+        ws.insert_test_runtime(pane_id, runtime);
+
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.view.pane_infos = pane_infos;
+        app.state.mouse_scroll_lines = 3;
+        app.state.mouse_wheel_host_scroll = crate::config::MouseWheelHostScrollConfig::Scrollable;
+
+        app.handle_mouse(mouse(
+            MouseEventKind::ScrollLeft,
+            info.inner_rect.x + 1,
+            info.inner_rect.y + 1,
+        ));
+
+        assert!(
+            input_rx.try_recv().is_ok(),
+            "the horizontal wheel stays the pane's under every mode"
         );
     }
 

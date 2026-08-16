@@ -640,6 +640,17 @@
           "description": "Lines to scroll per mouse wheel notch."
         },
         {
+          "key": "ui.mouse_wheel_host_scroll",
+          "type": "enum",
+          "default": "\"mobile\"",
+          "description": "Which surfaces let the vertical wheel scroll Herdr's own scrollback over a pane that asked for mouse reporting. \"mobile\" is the phone shell only, where a swipe is the only scroll gesture there is. \"scrollable\" extends it to every surface, so an agent that reports the wheel and then ignores it no longer leaves the content area looking frozen — at the cost of panes that do act on the wheel without an alternate screen, which stop receiving it. \"never\" always hands the wheel to the pane. No value overrides the scrollback guard: a pane Herdr has no scrollback for, such as any full-screen program, keeps its wheel in every mode.",
+          "values": [
+            "mobile",
+            "scrollable",
+            "never"
+          ]
+        },
+        {
           "key": "ui.pane_borders",
           "type": "boolean",
           "default": "true",
