@@ -783,6 +783,7 @@ impl App {
             request_open_existing_worktree: None,
             pending_move_new_group: None,
             pending_new_module: None,
+            pending_module_dir: None,
             pending_branch_module: None,
             chat_move_overrides: Default::default(),
             recent_move_targets: Vec::new(),

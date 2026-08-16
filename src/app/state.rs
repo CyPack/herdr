@@ -2569,6 +2569,13 @@ impl ContextMenuState {
                 if *deletable {
                     items.push("Rename module...");
                 }
+                // TP-MOD-33: offered on every module, hand-written or not.
+                // Renaming is restricted to machine-owned modules because a
+                // rename written into the overlay loses to a hand-written rule
+                // at first-match; a directory does not collide that way — it
+                // is a new field on the same key, and the overlay merges after
+                // the user's rules rather than against them.
+                items.push("Set directory...");
                 // TP-MOD-08/26: last, because it is the only item that takes
                 // something away — and only when there is something the
                 // machine can take back.
@@ -3367,6 +3374,13 @@ pub struct AppState {
     /// inner parent is where the new node hangs (`None` = top level).
     /// Client-local for the same reason as `pending_move_new_group`.
     pub pending_new_module: Option<PendingNewModule>,
+    /// The module whose directory is being typed, if any.
+    ///
+    /// TP-MOD-33: kept apart from `pending_new_module` because the two answer
+    /// different questions with the same overlay — one names a module, the
+    /// other tells an existing one where it stands. Sharing the field would
+    /// make a submitted directory rename the module instead.
+    pub pending_module_dir: Option<String>,
     /// Read-only mirror of the chat ledger's re-homes (session id → target
     /// ledger key), refreshed by the same sync that projects the rows. The
     /// state layer needs it to build the chat menu; the ledger itself lives
@@ -4492,6 +4506,7 @@ impl AppState {
             request_open_existing_worktree: None,
             pending_move_new_group: None,
             pending_new_module: None,
+            pending_module_dir: None,
             pending_branch_module: None,
             chat_move_overrides: Default::default(),
             recent_move_targets: Vec::new(),
@@ -6185,6 +6200,7 @@ mod tests {
             key: "group:ops".into(),
             name: "Ops".into(),
             parent: None,
+            dir: None,
         };
         let plan = state
             .move_plan_for_workspace(0, Some("group:ops".into()), Some(node.clone()))

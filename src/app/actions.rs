@@ -2095,6 +2095,7 @@ impl AppState {
             key: key.clone(),
             name: name.to_string(),
             parent: None,
+            dir: None,
         };
         self.move_workspace_space(ws_idx, Some(key), Some(node));
     }
@@ -2124,11 +2125,70 @@ impl AppState {
         if name.is_empty() {
             return;
         }
+        let key = rename_key
+            .unwrap_or_else(|| format!("group:{}", crate::cli::space::slug_for_branch(name)));
+        // TP-MOD-33: the overlay upsert replaces the whole entry by key, so a
+        // rename that did not carry the directory forward would quietly delete
+        // it — the module would keep its new name and lose the place it stands.
+        let dir = self
+            .space_nodes
+            .iter()
+            .find(|node| node.key == key)
+            .and_then(|node| node.dir.as_ref())
+            .map(|dir| dir.display().to_string());
         let node = crate::cli::space::NodePlan {
-            key: rename_key
-                .unwrap_or_else(|| format!("group:{}", crate::cli::space::slug_for_branch(name))),
+            key,
             name: name.to_string(),
             parent,
+            dir,
+        };
+        let path = crate::config::managed_spaces_path();
+        let current = std::fs::read_to_string(&path).unwrap_or_default();
+        match crate::cli::space::upsert_managed_node(&current, &node) {
+            Ok(updated) => {
+                if let Err(err) = std::fs::write(&path, updated) {
+                    tracing::warn!(error = %err, "managed overlay write failed");
+                    return;
+                }
+                self.reload_space_rules_from_disk();
+            }
+            Err(err) => tracing::warn!(error = %err, "managed overlay upsert failed"),
+        }
+    }
+
+    /// Give a module a directory, or take one away by submitting a blank.
+    ///
+    /// TP-MOD-33: the directory is validated before it is written. A module
+    /// pointing at a path that does not exist is worse than one pointing
+    /// nowhere: the chat filed into it would open a pane in a directory the
+    /// shell then fails to enter, and the person would read that as the move
+    /// having failed rather than the target being wrong.
+    ///
+    /// The node's name and parent are carried through unchanged — the overlay
+    /// upsert replaces the whole entry by key, so reading them back and
+    /// writing them again is what keeps this verb from silently renaming the
+    /// module or lifting it to the top level.
+    pub(crate) fn submit_module_dir(&mut self, node_key: String, dir: &str) {
+        let dir = dir.trim();
+        let Some(node) = self.space_nodes.iter().find(|node| node.key == node_key) else {
+            return;
+        };
+        let (name, parent) = (node.name.clone(), node.parent.clone());
+        let dir = if dir.is_empty() {
+            None
+        } else {
+            let expanded = crate::worktree::expand_tilde_path(dir);
+            if !expanded.is_dir() {
+                tracing::warn!(dir = %expanded.display(), "module directory does not exist");
+                return;
+            }
+            Some(expanded.display().to_string())
+        };
+        let node = crate::cli::space::NodePlan {
+            key: node_key,
+            name,
+            parent,
+            dir,
         };
         let path = crate::config::managed_spaces_path();
         let current = std::fs::read_to_string(&path).unwrap_or_default();
@@ -4630,6 +4690,7 @@ mod tests {
             name: "Docs".to_string(),
             icon: None,
             parent: None,
+            dir: None,
         }];
         state
     }

@@ -434,6 +434,15 @@ pub struct SpaceNodeEntry {
     pub icon: String,
     /// Node key this node hangs under. Blank means top level.
     pub parent: String,
+    /// Working directory this module stands in. Blank means it has none.
+    ///
+    /// TP-MOD-33: a container is a place in the tree, not a checkout, so it
+    /// carries no directory of its own — and a chat filed into one had nowhere
+    /// to reopen. The alternative was to invent a directory at revival time,
+    /// which is precisely how #46 ended up spawning agents in `$HOME`. Naming
+    /// the directory here makes it a fact the person stated rather than one
+    /// the machine guessed.
+    pub dir: String,
 }
 
 /// Row-kind icons for the Spaces tree. Every field carries a working default,
@@ -513,6 +522,7 @@ impl SpacesConfig {
                 let name = entry.name.trim();
                 let icon = entry.icon.trim();
                 let parent = entry.parent.trim();
+                let dir = entry.dir.trim();
                 crate::spaces::SpaceNode {
                     key: entry.key.trim().to_string(),
                     name: if name.is_empty() {
@@ -522,6 +532,9 @@ impl SpacesConfig {
                     },
                     icon: (!icon.is_empty()).then(|| icon.to_string()),
                     parent: (!parent.is_empty()).then(|| parent.to_string()),
+                    // TP-MOD-33: `~` is expanded here, at the edge, so every
+                    // reader downstream holds a path it can actually open.
+                    dir: (!dir.is_empty()).then(|| crate::worktree::expand_tilde_path(dir)),
                 }
             });
         let from_projects = self
@@ -541,6 +554,9 @@ impl SpacesConfig {
                     },
                     icon: (!icon.is_empty()).then(|| icon.to_string()),
                     parent: (!parent.is_empty()).then(|| parent.to_string()),
+                    // A project is an umbrella, not a place; it never stands
+                    // in a directory of its own.
+                    dir: None,
                 }
             });
         own.chain(from_projects).collect()

@@ -411,6 +411,21 @@ fn open_rename_module_input(state: &mut AppState, node_key: String, parent: Opti
     open_module_name_input(state, parent, Some(node_key));
 }
 
+fn open_module_dir_input(state: &mut AppState, node_key: String, current: Option<String>) {
+    state.pending_module_dir = Some(node_key);
+    state.pending_new_module = None;
+    state.pending_move_new_group = None;
+    state.pending_workspace_create_cwd = None;
+    state.rename_pane_target = None;
+    // Prefilled with what the module already points at, and selected: the
+    // common edit is a correction, and retyping a path by hand is where typos
+    // come from.
+    state.name_input = current.unwrap_or_default();
+    state.name_input_replace_on_type = !state.name_input.is_empty();
+    state.context_menu = None;
+    state.enter_overlay_mode(Mode::RenameWorkspace);
+}
+
 fn open_module_name_input(
     state: &mut AppState,
     parent: Option<String>,
@@ -598,6 +613,11 @@ pub(super) fn apply_rename_action(state: &mut AppState, action: ModalAction) {
                     }
                 }
                 // The module-naming road (TP-DOTS-05), mirrored the same way.
+                Mode::RenameWorkspace if state.pending_module_dir.is_some() => {
+                    if let Some(node_key) = state.pending_module_dir.take() {
+                        state.submit_module_dir(node_key, &new_name);
+                    }
+                }
                 Mode::RenameWorkspace if state.pending_new_module.is_some() => {
                     if let Some(pending) = state.pending_new_module.take() {
                         state.submit_module_name(pending.rename_key, pending.parent, &new_name);
@@ -1082,6 +1102,15 @@ pub(super) fn apply_context_menu_action(
             state.unfold_node(&node_key);
             leave_modal(state);
         }
+        (ContextMenuKind::NodeHeader { node_key, .. }, Some("Set directory...")) => {
+            let current = state
+                .space_nodes
+                .iter()
+                .find(|node| node.key == node_key)
+                .and_then(|node| node.dir.as_ref())
+                .map(|dir| dir.display().to_string());
+            open_module_dir_input(state, node_key, current);
+        }
         (ContextMenuKind::NodeHeader { node_key, .. }, Some("Rename module...")) => {
             let parent = state
                 .space_nodes
@@ -1489,6 +1518,11 @@ impl App {
             }
             // TP-DOTS-05: a name collected for a new module becomes one
             // managed node entry; consumed here for the same reason.
+            Mode::RenameWorkspace if self.state.pending_module_dir.is_some() => {
+                if let Some(node_key) = self.state.pending_module_dir.take() {
+                    self.state.submit_module_dir(node_key, &new_name);
+                }
+            }
             Mode::RenameWorkspace if self.state.pending_new_module.is_some() => {
                 if let Some(pending) = self.state.pending_new_module.take() {
                     self.state
@@ -1832,6 +1866,19 @@ impl App {
             // own parent — only the name is up for change. Resolved from the
             // live node list rather than from the menu, because the menu
             // carries no parent and guessing one would re-seat the module.
+            // TP-MOD-33: on the production body too. #91 was a menu item whose
+            // arm lived only in the `#[cfg(test)]` sibling — green tests, dead
+            // affordance.
+            (ContextMenuKind::NodeHeader { node_key, .. }, Some("Set directory...")) => {
+                let current = self
+                    .state
+                    .space_nodes
+                    .iter()
+                    .find(|node| node.key == node_key)
+                    .and_then(|node| node.dir.as_ref())
+                    .map(|dir| dir.display().to_string());
+                open_module_dir_input(&mut self.state, node_key, current);
+            }
             (ContextMenuKind::NodeHeader { node_key, .. }, Some("Rename module...")) => {
                 let parent = self
                     .state
@@ -3170,6 +3217,7 @@ mod tests {
             name: "Docs".into(),
             icon: None,
             parent: Some("project:herdr".into()),
+            dir: None,
         }];
 
         let managed = ContextMenuState {
@@ -3375,12 +3423,14 @@ mod tests {
                 name: "UI".into(),
                 icon: None,
                 parent: None,
+                dir: None,
             },
             crate::spaces::SpaceNode {
                 key: "group:ops".into(),
                 name: "Ops".into(),
                 icon: None,
                 parent: Some("group:ui".into()),
+                dir: None,
             },
         ];
         app
@@ -3715,13 +3765,17 @@ mod tests {
             y: 0,
             list: MenuListState::new(0),
         };
+        // "Set directory..." trails the shape verbs and precedes nothing:
+        // it changes where a module stands, not what the tree looks like, so
+        // it sits after the verbs that build the tree (TP-MOD-33).
         assert_eq!(
             node_menu.items(),
             vec![
                 "New branch...",
                 "New sub-module...",
                 "New parallel module...",
-                "Collapse"
+                "Collapse",
+                "Set directory...",
             ]
         );
         let space_menu = ContextMenuState {
@@ -3877,12 +3931,14 @@ mod tests {
                 name: "Ops".into(),
                 icon: None,
                 parent: None,
+                dir: None,
             },
             crate::spaces::SpaceNode {
                 key: "group:ui".into(),
                 name: "UI".into(),
                 icon: None,
                 parent: Some("group:ops".into()),
+                dir: None,
             },
         ];
         let menu_for = |key: &str| ContextMenuState {
@@ -4059,6 +4115,108 @@ mod tests {
     // already has. The move verb is the one exception, and it appears only
     // when there is an identity to move (see the sibling test below) — an
     // offer that cannot be honoured is worse than no offer.
+    fn node_menu(node_key: &str, deletable: bool) -> ContextMenuState {
+        ContextMenuState {
+            kind: ContextMenuKind::NodeHeader {
+                node_key: node_key.into(),
+                collapsed: false,
+                deletable,
+            },
+            x: 0,
+            y: 0,
+            list: crate::app::state::MenuListState::new(0),
+        }
+    }
+
+    fn app_with_module(key: &str, dir: Option<&str>) -> crate::app::App {
+        let mut app = app_with_test_workspaces(&["main"]);
+        app.state.space_nodes = vec![crate::spaces::SpaceNode {
+            key: key.into(),
+            name: "Docs Render".into(),
+            icon: None,
+            parent: None,
+            dir: dir.map(std::path::PathBuf::from),
+        }];
+        app
+    }
+
+    // TP-MOD-33 (D2): the verb the user went looking for and did not find.
+    // Offered on every module, hand-written or machine-owned: unlike a rename,
+    // a directory is a new field on the same key rather than a value that
+    // loses to a hand-written rule at first-match.
+    #[test]
+    fn a_module_menu_offers_to_set_its_directory() {
+        for deletable in [true, false] {
+            let menu = node_menu("docs", deletable);
+            let items = menu.items();
+            assert!(
+                items.contains(&"Set directory..."),
+                "deletable={deletable}: {items:?}"
+            );
+        }
+    }
+
+    // TP-MOD-33 (D3): on the PRODUCTION body. #91 was a menu item whose arm
+    // lived only in the `#[cfg(test)]` sibling — every test green, the
+    // affordance dead in the product. This asserts the road the mouse and the
+    // keyboard actually take.
+    #[test]
+    fn setting_a_module_directory_opens_the_input_on_the_production_road() {
+        let mut app = app_with_module("docs", None);
+        let menu = node_menu("docs", true);
+        let idx = menu
+            .items()
+            .iter()
+            .position(|item| *item == "Set directory...")
+            .expect("the verb is on the menu");
+
+        app.apply_context_menu_action_via_api(menu, idx);
+
+        assert_eq!(
+            app.state.pending_module_dir.as_deref(),
+            Some("docs"),
+            "the production road opens the directory input for this module"
+        );
+        assert!(
+            app.state.pending_new_module.is_none(),
+            "and not the name input — the two verbs share an overlay, not a meaning"
+        );
+    }
+
+    // TP-MOD-33: an existing directory is prefilled, because the common edit
+    // is a correction and retyping a path by hand is where typos come from.
+    #[test]
+    fn the_directory_input_starts_from_what_the_module_already_points_at() {
+        let mut app = app_with_module("docs", Some("/tmp"));
+        let menu = node_menu("docs", true);
+        let idx = menu
+            .items()
+            .iter()
+            .position(|item| *item == "Set directory...")
+            .expect("the verb is on the menu");
+
+        app.apply_context_menu_action_via_api(menu, idx);
+
+        assert_eq!(app.state.name_input, "/tmp");
+        assert!(app.state.name_input_replace_on_type);
+    }
+
+    // TP-MOD-33 (D7): a directory that does not exist is refused rather than
+    // written. A module pointing at a missing path is worse than one pointing
+    // nowhere — the chat filed into it would open a pane the shell cannot
+    // enter, and the person would read that as the move having failed.
+    #[test]
+    fn a_directory_that_does_not_exist_is_refused() {
+        let mut app = app_with_module("docs", None);
+        app.state
+            .submit_module_dir("docs".into(), "/definitely/not/a/real/path");
+
+        assert!(
+            app.state.space_nodes.iter().all(|node| node.dir.is_none()),
+            "nothing was written for a path that cannot be opened"
+        );
+    }
+
     #[test]
     fn the_agent_row_menu_offers_exactly_the_close_verb() {
         let workspace = Workspace::test_new("one");

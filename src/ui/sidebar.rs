@@ -6473,6 +6473,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             name: "UZAKTANSES".into(),
             icon: None,
             parent: Some("project:herdr".into()),
+            dir: None,
         }];
         app.ensure_test_terminals();
         app.active = Some(0);
@@ -6530,6 +6531,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             name: "UZAKTANSES".into(),
             icon: None,
             parent: Some("project:herdr".into()),
+            dir: None,
         }];
         app.ensure_test_terminals();
         app.active = Some(0);
@@ -6628,6 +6630,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             name: "ALTMODUL".into(),
             icon: None,
             parent: Some("group:remote-audio".into()),
+            dir: None,
         });
 
         let screen = spaces_screen(&mut app, 40, 20);
@@ -6798,6 +6801,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
                 name: "PARALEL".into(),
                 icon: None,
                 parent: Some("project:herdr".into()),
+                dir: None,
             },
             // A sub-module of the one above.
             crate::spaces::SpaceNode {
@@ -6805,6 +6809,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
                 name: "ALTMODUL".into(),
                 icon: None,
                 parent: Some("group:paralel".into()),
+                dir: None,
             },
         ];
         app.ensure_test_terminals();
@@ -6848,6 +6853,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             name: "KAPALI".into(),
             icon: None,
             parent: Some("project:herdr".into()),
+            dir: None,
         }];
         app.fold_node("group:kapali".to_string());
         app.ensure_test_terminals();
@@ -7089,6 +7095,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             name: "Docs".to_string(),
             icon: None,
             parent: None,
+            dir: None,
         }];
         let key = crate::persist::workspace_chats::module_ledger_key("docs");
         let rows = (0..chat_count)
@@ -8530,6 +8537,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             name: "UZAKTAN SES".into(),
             icon: None,
             parent: None,
+            dir: None,
         }];
 
         let rows = tree_rows(&app);
@@ -8550,6 +8558,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             name: "UZAKTAN SES".into(),
             icon: None,
             parent: None,
+            dir: None,
         }];
 
         let rows = tree_rows(&app);
@@ -8580,6 +8589,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             name: "ALTINDA".into(),
             icon: None,
             parent: Some("herdr:bos".into()),
+            dir: None,
         }];
 
         let rows = tree_rows(&app);
@@ -8603,6 +8613,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             name: key.into(),
             icon: None,
             parent: parent.map(str::to_string),
+            dir: None,
         };
         app.space_nodes = vec![
             node("group:a", None),
@@ -8632,6 +8643,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             name: "UZAKTAN SES".into(),
             icon: None,
             parent: Some("project:herdr".into()),
+            dir: None,
         }];
 
         let rows = tree_rows(&app);
@@ -8684,12 +8696,14 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
                 name: "UST".into(),
                 icon: None,
                 parent: None,
+                dir: None,
             },
             crate::spaces::SpaceNode {
                 key: "group:alt".into(),
                 name: "ALT".into(),
                 icon: None,
                 parent: Some("group:ust".into()),
+                dir: None,
             },
         ];
         app.fold_node("group:ust".to_string());
@@ -8732,12 +8746,14 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
                 name: "UZAKTAN SES".into(),
                 icon: None,
                 parent: Some("project:herdr".into()),
+                dir: None,
             },
             crate::spaces::SpaceNode {
                 key: "group:remote-video".into(),
                 name: "UZAKTAN FILM".into(),
                 icon: None,
                 parent: Some("project:herdr".into()),
+                dir: None,
             },
         ];
 
@@ -8906,6 +8922,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             name: "Inner".into(),
             icon: None,
             parent: Some("herdr:t4f".into()),
+            dir: None,
         }];
 
         let entries: Vec<String> = workspace_list_entries(&app)
@@ -8952,6 +8969,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             name: "Inner".into(),
             icon: None,
             parent: Some("herdr:t4f".into()),
+            dir: None,
         }];
         app.collapsed_space_keys.insert("herdr:t4f".into());
 
@@ -8986,12 +9004,14 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
                 name: "Top".into(),
                 icon: None,
                 parent: None,
+                dir: None,
             },
             crate::spaces::SpaceNode {
                 key: "group:leaf".into(),
                 name: "Leaf".into(),
                 icon: None,
                 parent: Some("bucket:mid".into()),
+                dir: None,
             },
         ];
 
@@ -9523,6 +9543,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             name: key.to_string(),
             icon: None,
             parent: parent.map(str::to_string),
+            dir: None,
         }
     }
 
