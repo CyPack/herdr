@@ -120,6 +120,27 @@ pub enum ChatDrawerModeConfig {
     Manual,
 }
 
+/// When the vertical wheel claims host scrollback over a pane that asked for
+/// mouse reporting.
+///
+/// `mobile` is the phone shell only, where a swipe is the sole scroll gesture
+/// there is. `scrollable` extends the same claim to every surface, so an agent
+/// that reports the wheel and then discards it no longer leaves the content
+/// area looking frozen — at the cost of panes that genuinely act on the wheel
+/// without an alternate screen. `never` hands the wheel to the pane
+/// everywhere, honouring the reporting contract without exception.
+///
+/// No mode overrides the scrollback guard: a pane the host cannot scroll for
+/// keeps its wheel in every mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MouseWheelHostScrollConfig {
+    #[default]
+    Mobile,
+    Scrollable,
+    Never,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum HostCursorModeConfig {
@@ -1701,6 +1722,10 @@ pub struct UiConfig {
     pub redraw_on_focus_gained: bool,
     /// Lines to scroll per mouse wheel notch. Default: 3.
     pub mouse_scroll_lines: Option<NonZeroUsize>,
+    /// Where the vertical wheel scrolls Herdr's own viewport instead of being
+    /// reported to a pane that asked for mouse reporting. Saved values are
+    /// "mobile", "scrollable", or "never". Default: "mobile".
+    pub mouse_wheel_host_scroll: MouseWheelHostScrollConfig,
     /// Ask for confirmation before closing a workspace. Default: true.
     pub confirm_close: bool,
     /// Ask for a tab name before creating a new tab. Default: true.
@@ -1928,6 +1953,7 @@ impl Default for UiConfig {
             right_click_passthrough_modifier: RightClickPassthroughModifierConfig::default(),
             redraw_on_focus_gained: true,
             mouse_scroll_lines: None,
+            mouse_wheel_host_scroll: MouseWheelHostScrollConfig::Mobile,
             confirm_close: true,
             prompt_new_tab_name: true,
             prompt_new_workspace_name: false,
@@ -2267,6 +2293,49 @@ chat_drawer_mode = "all-active"
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.ui.chat_drawer_mode, ChatDrawerModeConfig::AllActive);
+    }
+
+    /// TP-MOB-101 (V1/V2): the default is the pre-existing behaviour, and every
+    /// documented value round-trips. A value that silently falls back to the
+    /// default is the worst outcome here — the reader turns the key on, the
+    /// wheel keeps doing nothing, and nothing anywhere says why.
+    #[test]
+    fn mouse_wheel_host_scroll_parses_and_defaults_to_mobile() {
+        assert_eq!(
+            Config::default().ui.mouse_wheel_host_scroll,
+            MouseWheelHostScrollConfig::Mobile,
+            "the default must stay the shipped behaviour: only the phone shell claims the wheel"
+        );
+
+        let toml = r#"
+[ui]
+mouse_wheel_host_scroll = "scrollable"
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(
+            config.ui.mouse_wheel_host_scroll,
+            MouseWheelHostScrollConfig::Scrollable
+        );
+
+        let toml = r#"
+[ui]
+mouse_wheel_host_scroll = "never"
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(
+            config.ui.mouse_wheel_host_scroll,
+            MouseWheelHostScrollConfig::Never
+        );
+
+        let toml = r#"
+[ui]
+mouse_wheel_host_scroll = "mobile"
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(
+            config.ui.mouse_wheel_host_scroll,
+            MouseWheelHostScrollConfig::Mobile
+        );
     }
 
     /// A hand-written tree of the shape measured on the reported machine: two
