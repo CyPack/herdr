@@ -22,8 +22,12 @@ const HANDOFF_VERSION: u32 = 1;
 const READY_TIMEOUT: Duration = Duration::from_secs(30);
 #[cfg(unix)]
 const OWNED_ACK_TIMEOUT: Duration = Duration::from_millis(500);
+// One SCM_RIGHTS message carries at most 253 fds (kernel SCM_MAX_FD, measured
+// on Linux 7.1). 128 clears a measured 59-pane session with 2x headroom while
+// staying under half the kernel ceiling, where low net.core.optmem_max settings
+// can start refusing the control buffer. TP-HANDOFF-FD-01
 #[cfg(unix)]
-pub(crate) const MAX_FDS_PER_HANDOFF: usize = 64;
+pub(crate) const MAX_FDS_PER_HANDOFF: usize = 128;
 #[cfg(unix)]
 pub(crate) const MAX_REPLAY_BYTES_PER_PANE: usize = 8 * 1024;
 #[cfg(unix)]
@@ -537,5 +541,49 @@ mod tests {
         // those in waiting language would describe the wrong failure.
         assert_eq!(passed.kind(), io::ErrorKind::PermissionDenied);
         assert_eq!(passed.to_string(), "handoff import token mismatch");
+    }
+
+    #[test]
+    fn a_sixty_five_pane_session_fits_through_one_handoff() {
+        // TP-HANDOFF-FD-01: the fd budget stays ahead of real sessions. A live
+        // session was measured at 59 panes while the cap sat at 64 — six more
+        // panes and `herdr update --handoff` would refuse the whole session.
+        // The kernel takes 253 fds per SCM_RIGHTS message (measured on this
+        // machine; SCM_MAX_FD in the kernel source), so the cap is policy, not
+        // physics — it just has to clear sessions that actually exist.
+        let panes = 65usize;
+        assert!(
+            panes <= MAX_FDS_PER_HANDOFF,
+            "a measured 59-pane session leaves the 64-fd cap six panes of headroom; \
+             the cap has to clear at least {panes} (got {MAX_FDS_PER_HANDOFF})"
+        );
+
+        // And the cap has to be real: that many fds must survive the same
+        // sendmsg/recvmsg pair the live handoff uses, not just the comparison.
+        let devnull = std::fs::File::open("/dev/null").expect("open /dev/null");
+        let fds: Vec<RawFd> = (0..panes)
+            .map(|_| {
+                let fd = unsafe { libc::dup(devnull.as_raw_fd()) };
+                assert!(fd >= 0, "dup(/dev/null) failed");
+                fd
+            })
+            .collect();
+        let (sender, receiver) = UnixStream::pair().expect("socketpair");
+
+        send_fds(&sender, &fds).expect("send_fds refused a payload under the cap");
+        let received = recv_fds(&receiver, panes).expect("recv_fds lost part of the payload");
+
+        assert_eq!(received.len(), panes);
+        for fd in received.iter().chain(fds.iter()) {
+            let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+            assert_eq!(
+                unsafe { libc::fstat(*fd, &mut stat) },
+                0,
+                "a handed-off fd arrived unusable"
+            );
+        }
+        for fd in received.into_iter().chain(fds) {
+            let _ = unsafe { libc::close(fd) };
+        }
     }
 }
