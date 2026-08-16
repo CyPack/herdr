@@ -357,7 +357,17 @@ mod tests {
             "the secondary presentations emptied out"
         );
         assert!(spec.metrics.names.len() >= 3, "a metric went missing");
-        assert!(!spec.icon_art.is_empty(), "the art catalogue emptied out");
+        // Two, not "some". Deleting a bundled picture was measured to break
+        // nothing at all: every other check walks the catalogue, so a name
+        // removed from it is simply a name nothing looks for any more. A
+        // catalogue may grow freely; shrinking is a config somebody already
+        // wrote quietly ceasing to work, and it should arrive as a decision.
+        assert!(
+            spec.icon_art.len() >= 2,
+            "the art catalogue shrank; a picture that ships is a config somebody may \
+             already have written: {:?}",
+            spec.icon_art
+        );
         assert!(!spec.switches.is_empty(), "the switches emptied out");
     }
 

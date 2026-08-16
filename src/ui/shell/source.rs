@@ -2697,21 +2697,34 @@ mod tests {
 
     /// The `toml` blocks of the guide's "Edge bars" section, in the order they
     /// are written.
-    fn documented_bar_examples() -> Vec<String> {
+    /// The guide, as one string.
+    fn configuration_guide() -> String {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("docs/next/website/src/content/docs/configuration.mdx");
-        let guide = std::fs::read_to_string(&path)
-            .unwrap_or_else(|err| panic!("the configuration guide at {path:?} is readable: {err}"));
+        std::fs::read_to_string(&path)
+            .unwrap_or_else(|err| panic!("the configuration guide at {path:?} is readable: {err}"))
+    }
 
+    /// Just the part of the guide that documents bars.
+    ///
+    /// Scoped rather than whole, for the checks that read the guide's own words
+    /// back: `kind` is a key several unrelated things could use, and a test that
+    /// held the whole file to the bar grammar would turn red the day somebody
+    /// documented one of them.
+    fn edge_bars_section() -> String {
+        let guide = configuration_guide();
         let after_heading = guide
             .split_once("\n## Edge bars\n")
             .unwrap_or_else(|| panic!("the guide still has an \"Edge bars\" section"))
             .1;
-        let section = after_heading
+        after_heading
             .split_once("\n## ")
-            .map_or(after_heading, |(before, _)| before);
+            .map_or(after_heading, |(before, _)| before)
+            .to_string()
+    }
 
-        section
+    fn documented_bar_examples() -> Vec<String> {
+        edge_bars_section()
             .split("```toml\n")
             .skip(1)
             .filter_map(|rest| rest.split_once("```"))
@@ -2831,6 +2844,56 @@ mod tests {
             assert!(
                 guide.contains(metric),
                 "the guide never names the metric {metric:?}"
+            );
+        }
+
+        // The other direction, which this row has always claimed and never
+        // actually checked. Everything above walks the tables and looks each
+        // name up in the guide, so a name the guide invents — or one it keeps
+        // showing after the build stopped accepting it — passes silently. That
+        // was measured: deleting a bundled picture from its table broke nothing
+        // at all, because a loop over the table simply stopped looking for it.
+        //
+        // So the guide is read the other way round: every kind and every
+        // picture it writes out has to be one this build takes. Only the bar
+        // section, because `kind` is a key other things could use one day.
+        let bars = edge_bars_section()
+            .split('\n')
+            .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let written = |assignment: &str| {
+            bars.match_indices(&format!("{assignment} = \""))
+                .filter_map(|(at, matched)| {
+                    let rest = &bars[at + matched.len()..];
+                    rest.find('"').map(|end| rest[..end].to_string())
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let known_kinds = SectionKind::offered(SIZING_KINDS)
+            .into_iter()
+            .chain(SectionKind::offered(WIDGET_KINDS))
+            .chain(SectionKind::offered(ACTION_KINDS))
+            .collect::<Vec<_>>();
+        let shown_kinds = written("kind");
+        assert!(
+            shown_kinds.len() >= known_kinds.len(),
+            "the guide stopped showing kinds at all, so the check below reads nothing: \
+             {shown_kinds:?}"
+        );
+        for kind in &shown_kinds {
+            assert!(
+                known_kinds.contains(&kind.as_str()),
+                "the guide writes kind {kind:?}, which this build does not accept"
+            );
+        }
+
+        let bundled = crate::icon::builtin_names();
+        for art in written("art") {
+            assert!(
+                bundled.contains(&art.as_str()),
+                "the guide writes art {art:?}, which this build does not bundle"
             );
         }
     }
