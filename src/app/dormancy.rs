@@ -187,6 +187,34 @@ impl App {
             return false;
         };
 
+        // The click protocol's second half: a pane that carried an agent
+        // session wakes into the cold-restore resume machinery instead of a
+        // bare shell — only the plan is queued here, the machinery owns the
+        // launch (theme wait, spawn, cleanup). The saved scrollback is
+        // deleted unreplayed, faithful to cold restore: the resumed agent
+        // repaints its own transcript, and a replay would double it. An
+        // agent the resume table does not know falls through to the shell
+        // path below, history intact. TP-DORMANT-12
+        if let Some(plan) = self
+            .state
+            .terminals
+            .get(&terminal_id)
+            .and_then(|terminal| terminal.persisted_agent_session.as_ref())
+            .and_then(|session| {
+                crate::agent_resume::plan(&session.source, &session.agent, &session.session_ref)
+            })
+        {
+            if let Some(terminal) = self.state.terminals.get_mut(&terminal_id) {
+                terminal.dormant = None;
+                terminal.pending_agent_resume_plan = Some(plan);
+            }
+            if let Some(path) = dormant.history_path.as_deref() {
+                let _ = std::fs::remove_file(path);
+            }
+            tracing::info!(terminal = %terminal_id, "dormant agent pane woke into a resume");
+            return true;
+        }
+
         let history = dormant
             .history_path
             .as_deref()
@@ -866,6 +894,175 @@ mod tests {
                    full avg10=0.00 avg60=0.00 avg300=0.00 total=0\n";
         assert_eq!(parse_psi_some_avg60(psi), Some(12.5));
         assert_eq!(parse_psi_some_avg60(""), None);
+    }
+
+    fn persisted_claude_session() -> crate::agent_resume::PersistedAgentSession {
+        crate::agent_resume::PersistedAgentSession {
+            source: "herdr:claude".into(),
+            agent: "claude".into(),
+            session_ref: crate::agent_resume::AgentSessionRef::id(
+                "f6774263-51c5-460c-9c0d-b6fc9c38c756",
+            )
+            .expect("valid session id"),
+        }
+    }
+
+    #[tokio::test]
+    async fn waking_a_dormant_agent_pane_queues_its_resume_and_drops_the_replay() {
+        // TP-DORMANT-12: the click protocol's second half. A pane that carried
+        // an agent session wakes into the cold-restore resume machinery — the
+        // plan is queued, no bare shell is spawned here — and the saved
+        // scrollback is deleted unreplayed, faithful to cold restore: the
+        // resumed agent repaints its own transcript, and a replay would
+        // double it.
+        let (mut app, pane_id) = app_with_scrollback_pane(b"agent transcript\r\n", true);
+        let terminal_id = terminal_id_of(&app, pane_id);
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .persisted_agent_session = Some(persisted_claude_session());
+        app.make_pane_dormant(pane_id).expect("dormancy accepted");
+        let history_path = app
+            .state
+            .terminals
+            .get(&terminal_id)
+            .unwrap()
+            .dormant
+            .clone()
+            .unwrap()
+            .history_path
+            .expect("history written at sleep");
+
+        assert!(app.wake_dormant_pane(pane_id), "the pane wakes");
+
+        let terminal = app.state.terminals.get(&terminal_id).unwrap();
+        assert!(terminal.dormant.is_none(), "waking clears the recipe");
+        let plan = terminal
+            .pending_agent_resume_plan
+            .clone()
+            .expect("the resume plan is queued for the restore machinery");
+        assert_eq!(
+            plan.argv,
+            vec![
+                "claude".to_string(),
+                "--resume".to_string(),
+                "f6774263-51c5-460c-9c0d-b6fc9c38c756".to_string()
+            ]
+        );
+        assert!(
+            app.terminal_runtimes.get(&terminal_id).is_none(),
+            "the resume path spawns nothing itself; the resume machinery owns the launch"
+        );
+        assert!(
+            !history_path.exists(),
+            "the resume path deletes the saved scrollback unreplayed"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_agent_session_without_a_resume_plan_wakes_into_the_shell_path() {
+        // Fail-safe: an agent source the resume table does not know cannot be
+        // relaunched, so the pane falls back to the shell path with its
+        // history replayed — neither the process class nor the scrollback is
+        // silently dropped.
+        let (mut app, pane_id) = app_with_scrollback_pane(b"unknown-agent-history\r\n", true);
+        let terminal_id = terminal_id_of(&app, pane_id);
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .persisted_agent_session = Some(crate::agent_resume::PersistedAgentSession {
+            source: "herdr:claude".into(),
+            // The source/agent pair does not match any resume recipe.
+            agent: "mystery".into(),
+            session_ref: crate::agent_resume::AgentSessionRef::id(
+                "f6774263-51c5-460c-9c0d-b6fc9c38c756",
+            )
+            .expect("valid session id"),
+        });
+        app.make_pane_dormant(pane_id).expect("dormancy accepted");
+
+        assert!(app.wake_dormant_pane(pane_id), "the pane wakes");
+
+        let runtime = app
+            .terminal_runtimes
+            .get(&terminal_id)
+            .expect("the shell path rebuilds the runtime");
+        let replayed = runtime.recent_unwrapped_ansi_snapshot(10_000).text;
+        assert!(replayed.contains("unknown-agent-history"));
+        assert!(app
+            .state
+            .terminals
+            .get(&terminal_id)
+            .unwrap()
+            .pending_agent_resume_plan
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn a_watched_tab_wake_uses_the_resume_path_for_an_agent_pane() {
+        // The two wake funnels must not diverge: looking at a tab and
+        // clicking a pane are the same touch protocol, so both end in the
+        // resume path for an agent pane. TP-DORMANT-12
+        let (mut app, pane_id) = app_with_scrollback_pane(b"agent transcript\r\n", true);
+        let terminal_id = terminal_id_of(&app, pane_id);
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .persisted_agent_session = Some(persisted_claude_session());
+        app.make_pane_dormant(pane_id).expect("dormancy accepted");
+        app.state.workspaces[0].active_tab_by_client.insert(7, 0);
+
+        assert!(app.wake_dormant_panes_on_watched_tabs());
+
+        let terminal = app.state.terminals.get(&terminal_id).unwrap();
+        assert!(terminal.dormant.is_none());
+        assert!(terminal.pending_agent_resume_plan.is_some());
+        assert!(app.terminal_runtimes.get(&terminal_id).is_none());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_alt_screen_agent_pane_sleeps_with_history_and_wakes_into_a_resume() {
+        // The intersection of the two sleep paths, owned by name: an agent
+        // pane caught on the alternate screen sleeps carrying its primary
+        // history (TP-DORMANT-10), and its wake still takes the resume path —
+        // the file is deleted unreplayed like every resume wake, faithful to
+        // cold restore, which drops even the pre-agent scrollback.
+        // TP-DORMANT-12
+        let (mut app, pane_id) =
+            app_with_scrollback_pane(b"pre-agent output\r\n\x1b[?1049halt-frame", true);
+        let terminal_id = terminal_id_of(&app, pane_id);
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .persisted_agent_session = Some(persisted_claude_session());
+        app.make_pane_dormant(pane_id)
+            .expect("an alt-screen pane sleeps with its primary history");
+        let history_path = app
+            .state
+            .terminals
+            .get(&terminal_id)
+            .unwrap()
+            .dormant
+            .clone()
+            .unwrap()
+            .history_path
+            .expect("primary history written at sleep");
+        assert!(history_path.exists());
+
+        assert!(app.wake_dormant_pane(pane_id), "the pane wakes");
+
+        let terminal = app.state.terminals.get(&terminal_id).unwrap();
+        assert!(terminal.pending_agent_resume_plan.is_some());
+        assert!(app.terminal_runtimes.get(&terminal_id).is_none());
+        assert!(
+            !history_path.exists(),
+            "the resume wake deletes the file unreplayed"
+        );
     }
 
     #[cfg(unix)]
