@@ -862,6 +862,7 @@ impl App {
             detach_exits: no_session,
             detach_requested: false,
             request_new_workspace: false,
+            request_merge_daily_workspaces: false,
             request_new_tab: false,
             request_new_linked_worktree: None,
             request_open_existing_worktree: None,
@@ -1455,6 +1456,14 @@ impl App {
             if self.state.request_complete_onboarding {
                 self.state.request_complete_onboarding = false;
                 self.open_settings_from_onboarding();
+                needs_render = true;
+            }
+
+            if self.state.request_merge_daily_workspaces {
+                self.state.request_merge_daily_workspaces = false;
+                // TP-DAILY-19: both context-menu bodies set the flag and the
+                // work happens here, where the API dispatch actually exists.
+                self.merge_daily_workspaces("tui.daily.merge");
                 needs_render = true;
             }
 

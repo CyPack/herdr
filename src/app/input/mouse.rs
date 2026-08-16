@@ -3649,7 +3649,10 @@ mod tests {
         assert!(
             matches!(
                 app.state.context_menu.as_ref().map(|menu| &menu.kind),
-                Some(crate::app::state::ContextMenuKind::DailyHeader { collapsed: false })
+                Some(crate::app::state::ContextMenuKind::DailyHeader {
+                    collapsed: false,
+                    ..
+                })
             ),
             "the right-click opens the area menu; got {:?}",
             app.state.context_menu.as_ref().map(|menu| &menu.kind)

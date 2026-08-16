@@ -8044,6 +8044,107 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         );
     }
 
+    // P2.1 / TP-DAILY-19: the set the merge verb folds. Two or more unnamed
+    // workspaces standing in one directory are copies of that directory, and
+    // the verb exists to turn them back into one.
+    #[test]
+    fn every_unnamed_workspace_in_the_daily_directory_is_mergeable() {
+        let (app, _) = app_with_n_workspaces_in_the_daily_directory(3);
+
+        assert_eq!(
+            app.mergeable_daily_workspaces().len(),
+            3,
+            "all three stand in the same place and none of them is named"
+        );
+    }
+
+    // P2.2 / TP-DAILY-19: with one workspace there is nothing to fold, and a
+    // verb with no work to do is a button that does nothing. The menu must not
+    // promise what the section cannot keep.
+    #[test]
+    fn a_single_daily_workspace_is_not_a_merge() {
+        let (app, _) = app_with_n_workspaces_in_the_daily_directory(1);
+
+        assert!(
+            app.mergeable_daily_workspaces().len() < 2,
+            "one workspace is already the merged state"
+        );
+    }
+
+    // P2.4 / TP-DAILY-19: a named workspace is excluded for exactly the reason
+    // adoption excludes it (P1.2) — the name is a decision, and a tidy-up must
+    // not overrule it.
+    #[test]
+    fn a_named_workspace_is_never_merged_away() {
+        let (mut app, _) = app_with_n_workspaces_in_the_daily_directory(3);
+        if let Some(ws) = app.workspaces.last_mut() {
+            ws.custom_name = Some("log tail".to_string());
+        }
+
+        let mergeable = app.mergeable_daily_workspaces();
+        assert_eq!(mergeable.len(), 2, "the named one drops out of the set");
+        assert!(
+            !mergeable.contains(&(app.workspaces.len() - 1)),
+            "and it is specifically the named one that is spared"
+        );
+    }
+
+    // P2.6 / TP-DAILY-19: the target is the workspace the person is standing
+    // in, when that is one of them. A cleanup someone asked for must not carry
+    // them out of where they were working — the core-side counterpart of the
+    // row order the section already draws (TP-DAILY-18).
+    #[test]
+    fn the_merge_target_is_the_active_workspace_when_it_is_one_of_them() {
+        let (mut app, _) = app_with_n_workspaces_in_the_daily_directory(3);
+        let mergeable = app.mergeable_daily_workspaces();
+        let last = *mergeable.last().expect("three were pushed");
+        assert_ne!(
+            last, mergeable[0],
+            "precondition: the active one below is NOT the first, or this proves nothing"
+        );
+        app.active = Some(last);
+
+        assert_eq!(
+            app.daily_merge_target(),
+            Some(last),
+            "the person stays where they already were"
+        );
+    }
+
+    // P2.6b / TP-DAILY-19: standing somewhere else, the first is the target.
+    // Without this the verb would have no destination at all whenever the
+    // person pressed it from a repository workspace.
+    #[test]
+    fn the_merge_target_falls_back_to_the_first_when_the_active_is_elsewhere() {
+        let (mut app, _) = app_with_n_workspaces_in_the_daily_directory(3);
+        app.active = Some(0); // the fixture's own non-daily workspace
+
+        let mergeable = app.mergeable_daily_workspaces();
+        assert!(
+            !mergeable.contains(&0),
+            "precondition: workspace 0 is not one of the daily ones"
+        );
+        assert_eq!(app.daily_merge_target(), mergeable.first().copied());
+    }
+
+    // P2.9 / TP-DAILY-19: the rule is about ONE directory. A workspace standing
+    // in a repository is never in the set, so merging can never reach it —
+    // the same boundary P1.4 draws for adoption.
+    #[test]
+    fn workspaces_outside_the_daily_directory_are_never_mergeable() {
+        let (mut app, _) = app_with_n_workspaces_in_the_daily_directory(2);
+        let mut repo = Workspace::test_new("herdr");
+        repo.custom_name = None;
+        repo.identity_cwd = std::env::temp_dir().join("herdr-some-repo");
+        app.workspaces.push(repo);
+        let repo_idx = app.workspaces.len() - 1;
+
+        assert!(
+            !app.mergeable_daily_workspaces().contains(&repo_idx),
+            "an unnamed workspace in a repository is still that repository's, not the daily area's"
+        );
+    }
+
     // P3.2 / TP-DAILY-18: the reported defect, answered. Seven rows for one
     // place read as spam — "hepsinin içinde aynı chatler var, fark ne ki?" —
     // so the section shows ONE and offers the rest.

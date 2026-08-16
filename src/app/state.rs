@@ -2454,6 +2454,15 @@ pub enum ContextMenuKind {
     /// not a row, so nothing here can go stale under a refresh.
     DailyHeader {
         collapsed: bool,
+        /// Whether two or more interchangeable workspaces stand here, which is
+        /// the only condition under which "Merge workspaces here" is offered
+        /// (TP-DAILY-19).
+        ///
+        /// A flag, not an index — deliberately, the way `MoveWorkspace` carries
+        /// `has_targets`. It decides whether a verb is shown; the handler
+        /// recomputes the set when it runs, so a list that changes under an
+        /// open menu can never make this stale in the way an index would.
+        has_mergeable: bool,
     },
     /// Agent selector for a new chat in the daily directory (TP-DAILY-11).
     ///
@@ -2675,11 +2684,19 @@ impl ContextMenuState {
             // TP-DAILY-12: the area's own verbs. No branch or sub-module
             // entries: the daily directory is not a repository and holds no
             // tree beneath it, so those would be offers it cannot keep.
-            ContextMenuKind::DailyHeader { collapsed } => {
-                vec![
-                    "New chat...",
-                    if *collapsed { "Expand" } else { "Collapse" },
-                ]
+            ContextMenuKind::DailyHeader {
+                collapsed,
+                has_mergeable,
+            } => {
+                let mut items = vec!["New chat..."];
+                // TP-DAILY-19: only when there is something to fold. A verb
+                // with no work to do is a button that does nothing, and the
+                // menu should not promise what the section cannot keep.
+                if *has_mergeable {
+                    items.push("Merge workspaces here");
+                }
+                items.push(if *collapsed { "Expand" } else { "Collapse" });
+                items
             }
             // TP-DAILY-11: agents only. The daily directory is not a checkout,
             // so a worktree verb here would be an offer the tree cannot keep.
@@ -3422,6 +3439,15 @@ pub struct AppState {
     /// The server's event loop checks this and handles client detach.
     pub detach_requested: bool,
     pub request_new_workspace: bool,
+    /// Set by the daily header's "Merge workspaces here" (TP-DAILY-19).
+    ///
+    /// A request flag rather than the work itself, because the two context-menu
+    /// bodies do not have the same reach: the `#[cfg(test)]` one is handed an
+    /// `AppState` and cannot dispatch API calls at all. Both bodies therefore
+    /// write this one line, and the App loop does the moving — which is what
+    /// makes it structurally impossible for the verb to work in tests and do
+    /// nothing in the product (the defect class behind constraint 31).
+    pub request_merge_daily_workspaces: bool,
     pub request_new_tab: bool,
     pub request_new_linked_worktree: Option<usize>,
     pub request_open_existing_worktree: Option<usize>,
@@ -4590,6 +4616,7 @@ impl AppState {
             detach_exits: false,
             detach_requested: false,
             request_new_workspace: false,
+            request_merge_daily_workspaces: false,
             request_new_tab: false,
             request_new_linked_worktree: None,
             request_open_existing_worktree: None,

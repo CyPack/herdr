@@ -489,9 +489,15 @@ impl AppState {
     /// Open the daily area's header menu (TP-DAILY-12) — the one door both
     /// the "⋯" and the right-click walk, so they can never drift apart.
     pub(crate) fn open_daily_header_menu(&mut self, x: u16, y: u16) {
+        // TP-DAILY-19: two or more interchangeable workspaces is the whole
+        // condition for offering the merge. Computed here, at open time, from
+        // the core set rather than from the drawn rows — the verb has to be
+        // offered on the same grounds whether the section is folded or not.
+        let has_mergeable = self.mergeable_daily_workspaces().len() >= 2;
         self.context_menu = Some(crate::app::state::ContextMenuState {
             kind: crate::app::state::ContextMenuKind::DailyHeader {
                 collapsed: self.daily_section_collapsed,
+                has_mergeable,
             },
             x,
             y,

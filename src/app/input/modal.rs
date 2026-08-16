@@ -1023,6 +1023,14 @@ pub(super) fn apply_context_menu_action(
         (ContextMenuKind::DailyHeader { .. }, Some("New chat...")) => {
             state.open_daily_new_chat_menu(menu_x, menu_y);
         }
+        // TP-DAILY-19: one line, and the sibling body below writes the same
+        // one. The work happens in the App loop, which is the only place that
+        // can dispatch the pane moves — writing it out here instead would give
+        // the verb two implementations and one of them would rot.
+        (ContextMenuKind::DailyHeader { .. }, Some("Merge workspaces here")) => {
+            state.request_merge_daily_workspaces = true;
+            leave_modal(state);
+        }
         (ContextMenuKind::DailyHeader { .. }, Some("Collapse" | "Expand")) => {
             state.toggle_daily_section();
             leave_modal(state);
@@ -2232,6 +2240,11 @@ impl App {
             (ContextMenuKind::DailyHeader { .. }, Some("New chat...")) => {
                 self.state.open_daily_new_chat_menu(menu_x, menu_y);
             }
+            // TP-DAILY-19: the same one line as the `#[cfg(test)]` body above.
+            (ContextMenuKind::DailyHeader { .. }, Some("Merge workspaces here")) => {
+                self.state.request_merge_daily_workspaces = true;
+                leave_modal(&mut self.state);
+            }
             (ContextMenuKind::DailyHeader { .. }, Some("Collapse" | "Expand")) => {
                 self.state.toggle_daily_section();
                 leave_modal(&mut self.state);
@@ -3366,7 +3379,13 @@ mod tests {
         app.state.daily_chat_cwd = Some(std::path::PathBuf::from("/home/tester"));
 
         let fold = ContextMenuState {
-            kind: ContextMenuKind::DailyHeader { collapsed: false },
+            kind: ContextMenuKind::DailyHeader {
+                collapsed: false,
+                // TP-DAILY-19: nothing to fold here, so the exact-list
+                // assertions below also pin that the merge verb stays off
+                // the menu when it would have no work.
+                has_mergeable: false,
+            },
             x: 0,
             y: 0,
             list: crate::app::state::MenuListState::new(0),
@@ -3382,7 +3401,10 @@ mod tests {
 
         // Folded, the verb reads the other way round.
         let unfold = ContextMenuState {
-            kind: ContextMenuKind::DailyHeader { collapsed: true },
+            kind: ContextMenuKind::DailyHeader {
+                collapsed: true,
+                has_mergeable: false,
+            },
             x: 0,
             y: 0,
             list: crate::app::state::MenuListState::new(0),
@@ -3391,7 +3413,10 @@ mod tests {
 
         // "New chat..." opens the agent menu — the same one the "+" opens.
         let start = ContextMenuState {
-            kind: ContextMenuKind::DailyHeader { collapsed: true },
+            kind: ContextMenuKind::DailyHeader {
+                collapsed: true,
+                has_mergeable: false,
+            },
             x: 4,
             y: 2,
             list: crate::app::state::MenuListState::new(0),
@@ -3404,6 +3429,70 @@ mod tests {
             ),
             "the verb hands off to the agent menu; got {:?}",
             app.state.context_menu.as_ref().map(|menu| &menu.kind)
+        );
+    }
+
+    // P2.1 / TP-DAILY-19: the verb appears exactly when there is something to
+    // fold. Its absence is pinned by the exact-list assertions in
+    // `the_daily_header_menu_folds_and_starts_chats`, which build the same menu
+    // with `has_mergeable: false`.
+    #[test]
+    fn the_daily_header_offers_the_merge_only_when_there_is_something_to_fold() {
+        let offered = ContextMenuState {
+            kind: ContextMenuKind::DailyHeader {
+                collapsed: false,
+                has_mergeable: true,
+            },
+            x: 0,
+            y: 0,
+            list: crate::app::state::MenuListState::new(0),
+        };
+
+        assert_eq!(
+            offered.items(),
+            vec!["New chat...", "Merge workspaces here", "Collapse"],
+            "the verb sits between starting something new and folding the area"
+        );
+    }
+
+    // P2.7 / TP-DAILY-19 / constraint 31: BOTH bodies answer the verb, and they
+    // answer it with the same single line. #91 shipped a menu entry that worked
+    // in every test and did nothing in the product because only the
+    // `#[cfg(test)]` body had been taught it; this test is the guard against
+    // that class, and the reason the verb sets a flag instead of doing the work
+    // in place — one line cannot drift from itself.
+    #[test]
+    fn both_context_menu_bodies_request_the_daily_merge() {
+        let mut app = app_with_test_workspaces(&["main"]);
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::DailyHeader {
+                collapsed: false,
+                has_mergeable: true,
+            },
+            x: 0,
+            y: 0,
+            list: crate::app::state::MenuListState::new(0),
+        };
+        let idx = menu
+            .items()
+            .iter()
+            .position(|item| *item == "Merge workspaces here")
+            .expect("the verb is on the menu when there is something to fold");
+
+        // The production road.
+        app.apply_context_menu_action_via_api(menu.clone(), idx);
+        assert!(
+            app.state.request_merge_daily_workspaces,
+            "the production body must request the merge"
+        );
+
+        // The `#[cfg(test)]` sibling, from the same menu.
+        app.state.request_merge_daily_workspaces = false;
+        let mut terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
+        apply_context_menu_action(&mut app.state, &mut terminal_runtimes, menu, idx);
+        assert!(
+            app.state.request_merge_daily_workspaces,
+            "the test body must request the very same thing"
         );
     }
 
