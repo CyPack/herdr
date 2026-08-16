@@ -40,7 +40,7 @@ pub(crate) use model::{
     ShellNode, TrackPolicy,
 };
 pub(crate) use source::{
-    bar_color, derive_desktop_shell_layout, shell_bar_config_problems, BarColors, BarTint,
+    bar_color, derive_desktop_shell_layout, shell_config_problems, BarColors, BarTint,
     SecondaryPresentation, SectionAction, SectionWidget, ShellBarChrome, ShellBars, SidebarChrome,
 };
 pub(crate) use spec::{render_text as render_shell_spec_text, shell_spec};

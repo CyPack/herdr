@@ -457,6 +457,26 @@ fn resolve_effective_theme(
     )
 }
 
+/// The interval a `resource` section is sampled at, or the default when the
+/// config asks for one this build will not honour.
+///
+/// Refused rather than clamped, and the refusal is reported by
+/// `shell_config_problems` — but a number outside the range must not stop the
+/// meter, only leave it at the pace it had. Silently drawing nothing would
+/// answer a bad number with a broken bar, which is a worse answer than a
+/// working bar and a sentence explaining the number.
+fn resource_sample_interval(shell: &crate::config::ShellConfig) -> std::time::Duration {
+    let millis = shell.resource_interval_ms;
+    let accepted = crate::config::ShellConfig::RESOURCE_INTERVAL_MS_MIN
+        ..=crate::config::ShellConfig::RESOURCE_INTERVAL_MS_MAX;
+    let honoured = if accepted.contains(&millis) {
+        millis
+    } else {
+        crate::config::ShellConfig::resource_interval_ms_default()
+    };
+    std::time::Duration::from_millis(honoured)
+}
+
 impl App {
     /// Drops the workers a departed display was being served by.
     ///
@@ -1047,6 +1067,7 @@ impl App {
             shell_mode: config.terminal.shell_mode,
             new_terminal_cwd: config.terminal.new_cwd.clone(),
             pane_scrollback_limit_bytes: config.advanced.scrollback_limit_bytes,
+            resource_sample_interval: resource_sample_interval(&config.shell),
             accent: crate::config::parse_color(&config.ui.accent),
             sound: config.ui.sound.clone(),
             local_sound_playback: true,
@@ -2004,6 +2025,7 @@ impl App {
 
         if !invalid_section("advanced") {
             self.state.pane_scrollback_limit_bytes = config.advanced.scrollback_limit_bytes;
+            self.state.resource_sample_interval = resource_sample_interval(&config.shell);
         }
 
         if !invalid_section("update") {
