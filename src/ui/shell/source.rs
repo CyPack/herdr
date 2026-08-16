@@ -2796,6 +2796,67 @@ mod tests {
             .collect()
     }
 
+    /// The guide's table of bundled pictures: name, then the four numbers its
+    /// `Size` column writes out.
+    ///
+    /// Hand-written on purpose, and that is the whole point. Everything else
+    /// about the catalogue is derived from `BUILTIN_ART`, so a check that reads
+    /// the catalogue and looks each name up in a guide the catalogue also
+    /// produced would be two readings of one source — green, and measuring
+    /// nothing. This column is typed by a person, so it can disagree, and a
+    /// gate is only a gate where disagreement is possible.
+    fn documented_bundled_art() -> Vec<(String, [u16; 4])> {
+        const ANCHOR: &str = "Bundled `art` names available today:";
+        let section = edge_bars_section();
+        let after = section
+            .split_once(ANCHOR)
+            .unwrap_or_else(|| {
+                panic!("the guide still introduces its bundled pictures with {ANCHOR:?}")
+            })
+            .1;
+
+        after
+            .lines()
+            .map(str::trim)
+            // The table is the first run of `|` lines after the anchor, so the
+            // walk stops at the first line that is not one rather than reading
+            // on into whatever table comes next.
+            .skip_while(|line| !line.starts_with('|'))
+            .take_while(|line| line.starts_with('|'))
+            .filter_map(|line| {
+                let columns = line
+                    .trim_matches('|')
+                    .split('|')
+                    .map(str::trim)
+                    .collect::<Vec<_>>();
+                let [name, size, ..] = columns.as_slice() else {
+                    return None;
+                };
+                let name = name.trim_matches('`');
+                // The header row and the `|---|` rule are skipped by what they
+                // are rather than by counting: a row whose first cell is not a
+                // backticked name is not a picture.
+                if name.is_empty() || name == "art" || name.starts_with('-') {
+                    return None;
+                }
+                // Every run of digits in the Size cell, in the order it wrote
+                // them: pixels wide, pixels tall, cells wide, cell rows.
+                let numbers = size
+                    .split(|character: char| !character.is_ascii_digit())
+                    .filter(|run| !run.is_empty())
+                    .map(|run| run.parse::<u16>().expect("a size in the guide is a number"))
+                    .collect::<Vec<_>>();
+                let numbers: [u16; 4] = numbers.as_slice().try_into().unwrap_or_else(|_| {
+                    panic!(
+                        "the Size column for {name:?} reads {size:?}; it must write four numbers, \
+                         as in \"10 × 6 pixels (10 cells × 3 rows)\""
+                    )
+                });
+                Some((name.to_string(), numbers))
+            })
+            .collect()
+    }
+
     /// Every example in the guide is a config this build accepts.
     ///
     /// A documented example is the first thing anyone copies, an agent most of
@@ -2887,12 +2948,12 @@ mod tests {
                 );
             }
         }
-        for art in crate::icon::builtin_names() {
-            assert!(
-                guide.contains(art),
-                "the guide never names the bundled art {art:?}"
-            );
-        }
+        // Pictures are not checked here. They used to be, by asking whether the
+        // guide contained each bundled name anywhere at all, which for names
+        // like `bar` or `line` is a question a configuration manual answers yes
+        // to by accident. They are held to the guide's own table instead, by
+        // name and by size, in `the_guide_lists_exactly_the_bundled_pictures_at_the_sizes_they_draw`.
+        //
         // Aliases as well as names: `ram` works, and a guide that omits it
         // leaves the one spelling a refusal will never teach undocumented
         // anywhere at all.
@@ -2958,6 +3019,73 @@ mod tests {
             assert!(
                 bundled.contains(&art.as_str()),
                 "the guide writes art {art:?}, which this build does not bundle"
+            );
+        }
+    }
+
+    /// The guide's table of pictures is the catalogue, exactly, at the sizes it
+    /// claims they draw.
+    ///
+    /// This replaces a substring search that could not fail. The check above
+    /// used to ask only whether each bundled name appeared *anywhere* in the
+    /// guide, and the guide is a configuration manual: measured on this file,
+    /// `bar` occurs 81 times, `star` 18, `ring` 14, `line` 11. Nine of fifteen
+    /// plausible names for a picture were already present as ordinary English,
+    /// so adding a picture called any of them would have shipped it with no
+    /// documentation at all and left this gate green.
+    ///
+    /// Sizes as well as names, because a name in the table is not yet a useful
+    /// entry. The `Size` column is what somebody reads to choose `cells`, and a
+    /// wrong number there sends them to a section that clips or sits half
+    /// empty — on screen, and never in a test.
+    #[test]
+    fn the_guide_lists_exactly_the_bundled_pictures_at_the_sizes_they_draw() {
+        // TP-ART-06: the guide's picture table and the catalogue are one set,
+        // and every size the table writes is the size that picture draws at.
+        let documented = documented_bundled_art();
+
+        // Guard the harvest first. A renamed anchor or a reworked table would
+        // leave every assertion below iterating over nothing, which is the one
+        // failure a documentation gate is least likely to notice about itself.
+        assert!(
+            documented.len() >= 2,
+            "the guide's bundled picture table stopped parsing; found {documented:?}"
+        );
+
+        let documented_names = documented
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        let bundled_names = crate::icon::builtin_names()
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            documented_names, bundled_names,
+            "the guide's picture table and the bundled catalogue name different sets; \
+             a picture in the catalogue and not the table is one nobody can find, and one \
+             in the table and not the catalogue is a config Herdr refuses"
+        );
+
+        let catalogue = crate::icon::builtin_catalogue()
+            .into_iter()
+            .map(|(name, cells, rows)| (name, (cells, rows)))
+            .collect::<std::collections::BTreeMap<_, _>>();
+
+        for (name, [pixels_wide, pixels_tall, cells, rows]) in documented {
+            let (drawn, _) = crate::icon::builtin(&name).expect("the sets matched above");
+            let actual_wide = u16::try_from(drawn[0].chars().count()).unwrap_or(u16::MAX);
+            let actual_tall = u16::try_from(drawn.len()).unwrap_or(u16::MAX);
+            let (actual_cells, actual_rows) = catalogue
+                .get(name.as_str())
+                .copied()
+                .unwrap_or_else(|| panic!("{name} is bundled but draws at no size"));
+
+            assert_eq!(
+                [pixels_wide, pixels_tall, cells, rows],
+                [actual_wide, actual_tall, actual_cells, actual_rows],
+                "the guide says {name} is {pixels_wide} × {pixels_tall} pixels \
+                 ({cells} cells × {rows} rows); it is {actual_wide} × {actual_tall} pixels \
+                 ({actual_cells} cells × {actual_rows} rows)"
             );
         }
     }
