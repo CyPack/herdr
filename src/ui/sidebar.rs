@@ -726,6 +726,26 @@ pub(crate) fn strip_branch_prefix(branch: &str) -> &str {
     branch
 }
 
+/// The label an indented row wears.
+///
+/// TP-DAILY-14: `indented` says a row is drawn one level in, and it was
+/// carrying a second meaning it never earned — "this row is a checkout under a
+/// repository header", which is what makes a branch name the right label
+/// there. The daily area's own rows share the flag and nothing else: they have
+/// no checkout, so the branch they showed came from whatever repository
+/// happened to contain the daily directory.
+pub(crate) fn indented_row_label(
+    label: &str,
+    branch: Option<&str>,
+    has_custom_name: bool,
+    is_daily_area: bool,
+) -> String {
+    if is_daily_area {
+        return label.to_string();
+    }
+    grouped_child_display_label(label, branch, has_custom_name)
+}
+
 pub(crate) fn grouped_child_display_label(
     label: &str,
     branch: Option<&str>,
@@ -3010,6 +3030,10 @@ fn render_workspace_list(
     let metrics = workspace_list_scroll_metrics(app, area);
     let scrollbar_rect = workspace_list_scrollbar_rect(app, area);
     let cards = &app.view.workspace_card_areas;
+    // TP-DAILY-14: computed once, outside the loop. The answer is needed per
+    // card but the question is about the whole list, and asking it per card
+    // would walk every workspace for every row.
+    let daily_owned = daily_owned_workspaces(app);
 
     for card in cards {
         let i = card.ws_idx;
@@ -3067,7 +3091,25 @@ fn render_workspace_list(
 
         let label = ws.display_name_from(&app.terminals, terminal_runtimes);
         let display_label = if card.indented {
-            grouped_child_display_label(&label, ws.branch().as_deref(), ws.custom_name.is_some())
+            // TP-DAILY-14: `indented` says a row is drawn one level in, and it
+            // was carrying a second meaning it never earned — "this row is a
+            // checkout under a repository header", which is what makes a
+            // branch name the right label there. The daily area's own rows
+            // share the flag and nothing else: they have no checkout, so the
+            // branch they showed came from whatever repository happened to
+            // contain the daily directory. On the machine this was reported
+            // from that was `$HOME`, and seven rows all read `main`.
+            //
+            // #94 moved those rows under the daily header and, without meaning
+            // to, moved their labels too — before it they read `ayaz`, after it
+            // `main`. Withholding the branch here restores the name the row
+            // would have had, without touching the tree's own rows.
+            indented_row_label(
+                &label,
+                ws.branch().as_deref(),
+                ws.custom_name.is_some(),
+                daily_owned.contains(&i),
+            )
         } else {
             space_header_display_label(app, i, label)
         };
@@ -8171,6 +8213,30 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         assert_eq!(
             grouped_child_display_label("renamed issue", Some("worktree/issue-137"), true),
             "renamed issue"
+        );
+    }
+
+    // TP-DAILY-14 (H1): the daily area's own row wears its own name. It has no
+    // checkout, so the branch it used to show came from whatever repository
+    // contained the daily directory — on the machine this was reported from,
+    // `$HOME`, and seven rows all read `main`.
+    #[test]
+    fn a_daily_area_row_keeps_its_own_name_instead_of_a_branch() {
+        assert_eq!(
+            indented_row_label("ayaz", Some("main"), false, true),
+            "ayaz",
+            "the branch belongs to the directory, not to this row"
+        );
+    }
+
+    // TP-DAILY-14 (H2): a checkout under a repository header still reads as
+    // its branch. That is what tells sibling checkouts apart, and the fix must
+    // not reach it.
+    #[test]
+    fn a_group_child_row_still_reads_as_its_branch() {
+        assert_eq!(
+            indented_row_label("herdr", Some("worktree/issue-137"), false, false),
+            "issue-137"
         );
     }
 
