@@ -293,6 +293,7 @@ impl App {
         });
         self.sync_animation_timer(now);
         changed |= self.sync_pane_dormancy_sweep(now);
+        self.sync_dormant_history_removals();
         changed |= self.wake_dormant_panes_on_watched_tabs();
         changed |= self.refresh_projects_if_due(now);
         changed |= self.refresh_tab_branches_if_due(now);

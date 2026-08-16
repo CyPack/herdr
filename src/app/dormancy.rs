@@ -38,6 +38,9 @@ pub(crate) enum DormancyRefusal {
     /// The scrollback could not be written; the runtime was kept rather than
     /// releasing history that only existed in memory.
     HistoryWriteFailed,
+    /// The pane is on the alternate screen, where the bindings cannot reach
+    /// the primary scrollback; sleeping it would silently discard history.
+    HistoryUnavailable,
 }
 
 impl App {
@@ -93,6 +96,18 @@ impl App {
             return Err(DormancyRefusal::Watched);
         }
 
+        // The alternate screen hides the primary scrollback from the bindings:
+        // capture would come back empty and the pane would sleep into exactly
+        // the deferred data loss TP-DORMANT-03 names. Same situation as a
+        // failed write — the runtime is the only holder — same answer: keep
+        // it. TP-DORMANT-10
+        if runtime
+            .input_state()
+            .is_some_and(|input_state| input_state.alternate_screen)
+        {
+            return Err(DormancyRefusal::HistoryUnavailable);
+        }
+
         // Capture before releasing anything: the runtime is the only holder
         // of this history until the file exists.
         #[cfg(unix)]
@@ -103,9 +118,18 @@ impl App {
             Some(history) if !history.is_empty() => {
                 let dir = self.dormant_history_dir();
                 let path = dir.join(format!("{terminal_id}.ansi"));
-                let written = std::fs::create_dir_all(&dir)
-                    .and_then(|()| std::fs::write(&path, history.as_bytes()));
+                // tmp + fsync + rename: fs::write starts with truncate, so a
+                // crash mid-write would leave a torn file the wake replays as
+                // garbage. The freight writer uses the same shape. TP-DORMANT-09
+                let tmp = dir.join(format!("{terminal_id}.ansi.tmp"));
+                let written = std::fs::create_dir_all(&dir).and_then(|()| {
+                    let mut file = std::fs::File::create(&tmp)?;
+                    std::io::Write::write_all(&mut file, history.as_bytes())?;
+                    file.sync_all()?;
+                    std::fs::rename(&tmp, &path)
+                });
                 if let Err(err) = written {
+                    let _ = std::fs::remove_file(&tmp);
                     tracing::warn!(
                         terminal = %terminal_id,
                         err = %err,
@@ -232,6 +256,21 @@ impl App {
             woke |= self.wake_dormant_pane(pane_id);
         }
         woke
+    }
+
+    /// Delete history files whose dormant terminals were closed.
+    ///
+    /// `AppState` stays pure data: the close path only queues the orphaned
+    /// paths, and this drain — running every scheduled-task pass in both
+    /// loops, flag or no flag — does the file IO. TP-DORMANT-08
+    pub(crate) fn sync_dormant_history_removals(&mut self) -> bool {
+        if self.state.pending_dormant_history_removals.is_empty() {
+            return false;
+        }
+        for path in std::mem::take(&mut self.state.pending_dormant_history_removals) {
+            let _ = std::fs::remove_file(path);
+        }
+        false
     }
 
     /// The periodic dormancy sweep: retire-quiet panes go to sleep.
@@ -515,6 +554,156 @@ mod tests {
 
         assert_eq!(refused, Err(DormancyRefusal::Watched));
         assert!(app.terminal_runtimes.get(&terminal_id).is_some());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn closing_a_dormant_pane_deletes_its_history_file() {
+        // TP-DORMANT-08 (GAP-A): the wake path and the restore path both
+        // consume the file; the close path used to drop the TerminalState and
+        // leave the file forever. A days-open laptop accumulates exactly these.
+        // Two panes: a workspace refuses to close its last pane, so the
+        // dormant one under test is the second.
+        let (mut app, _root) = app_with_scrollback_pane(b"root\r\n", false);
+        let pane_id = app.state.workspaces[0].test_split(ratatui::layout::Direction::Horizontal);
+        let terminal_id = terminal_id_of(&app, pane_id);
+        app.state.ensure_test_terminals();
+        let mut runtime = crate::terminal::TerminalRuntime::test_with_scrollback_bytes(
+            80,
+            24,
+            1 << 20,
+            b"leak-check\r\n",
+        );
+        runtime.test_mark_child_exited();
+        app.terminal_runtimes.insert(terminal_id.clone(), runtime);
+        app.make_pane_dormant(pane_id).expect("dormancy accepted");
+        let history_path = app
+            .state
+            .terminals
+            .get(&terminal_id)
+            .unwrap()
+            .dormant
+            .clone()
+            .unwrap()
+            .history_path
+            .unwrap();
+        assert!(history_path.exists());
+
+        app.state.workspaces[0].close_pane(pane_id);
+        app.state
+            .remove_unattached_terminal_ids([terminal_id.clone()]);
+        app.sync_dormant_history_removals();
+
+        assert!(
+            !app.state.terminals.contains_key(&terminal_id),
+            "the terminal state is gone with the pane"
+        );
+        assert!(
+            !history_path.exists(),
+            "a closed dormant pane's history file has to go with it"
+        );
+        let _ = std::fs::remove_dir_all(app.dormant_history_dir());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_failed_dormant_write_leaves_no_partial_file() {
+        // TP-DORMANT-09 (GAP-B): fs::write starts with truncate, so a crash
+        // mid-write leaves a torn file the wake replays as garbage. The write
+        // goes through tmp + fsync + rename; a failure leaves the target
+        // untouched and the refusal keeps the runtime.
+        let (mut app, pane_id) = app_with_scrollback_pane(b"atomic\r\n", true);
+        let terminal_id = terminal_id_of(&app, pane_id);
+        let dir = app.dormant_history_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut perms = std::fs::metadata(&dir).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o555);
+        std::fs::set_permissions(&dir, perms.clone()).unwrap();
+
+        let refused = app.make_pane_dormant(pane_id);
+
+        assert_eq!(refused, Err(DormancyRefusal::HistoryWriteFailed));
+        assert!(
+            app.terminal_runtimes.get(&terminal_id).is_some(),
+            "a refused pane keeps its runtime"
+        );
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+        std::fs::set_permissions(&dir, perms).unwrap();
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .map(|entries| entries.flatten().map(|e| e.file_name()).collect())
+            .unwrap_or_default();
+        assert!(
+            leftovers.is_empty(),
+            "no partial or temp file may survive a failed write, got {leftovers:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_alt_screen_retired_pane_is_refused_dormancy() {
+        // TP-DORMANT-10 (GAP-C): "history could not be captured" and "history
+        // could not be written" are the same situation — the runtime is the
+        // only holder — and they get the same answer: keep the runtime.
+        // Sleeping the pane anyway would be exactly the deferred data loss
+        // TP-DORMANT-03 names.
+        let (mut app, pane_id) =
+            app_with_scrollback_pane(b"primary-history\r\n\x1b[?1049halt-screen", true);
+        let terminal_id = terminal_id_of(&app, pane_id);
+
+        let refused = app.make_pane_dormant(pane_id);
+
+        assert_eq!(refused, Err(DormancyRefusal::HistoryUnavailable));
+        assert!(app.terminal_runtimes.get(&terminal_id).is_some());
+        assert!(app
+            .state
+            .terminals
+            .get(&terminal_id)
+            .unwrap()
+            .dormant
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn an_empty_retired_pane_still_sleeps_without_a_file() {
+        // The alt-screen refusal must not catch the empty pane: nothing to
+        // lose means fileless sleep stays allowed — this is the whole
+        // empty-pane goal.
+        let (mut app, pane_id) = app_with_scrollback_pane(b"", true);
+        let terminal_id = terminal_id_of(&app, pane_id);
+
+        app.make_pane_dormant(pane_id).expect("empty pane sleeps");
+
+        let dormant = app
+            .state
+            .terminals
+            .get(&terminal_id)
+            .unwrap()
+            .dormant
+            .clone()
+            .expect("dormant marker set");
+        assert!(dormant.history_path.is_none(), "nothing to write, no file");
+        assert!(app.terminal_runtimes.get(&terminal_id).is_none());
+    }
+
+    #[tokio::test]
+    async fn a_popup_pane_cannot_become_dormant() {
+        // GAP-A's popup half, resolved by test: popup panes live outside the
+        // workspaces, so find_pane never resolves them and no popup can carry
+        // a dormant marker — there is no popup file to leak.
+        let (mut app, _pane_id) = app_with_scrollback_pane(b"popup\r\n", true);
+        let popup_pane = crate::layout::PaneId::from_raw(999_999);
+        app.state.popup_pane = Some(crate::app::state::PopupPaneState {
+            pane_id: popup_pane,
+            terminal_id: crate::terminal::TerminalId::alloc(),
+            width: None,
+            height: None,
+        });
+
+        assert_eq!(
+            app.make_pane_dormant(popup_pane),
+            Err(DormancyRefusal::NoSuchPane)
+        );
     }
 
     #[tokio::test]

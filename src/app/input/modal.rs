@@ -488,18 +488,26 @@ pub(super) fn start_branch_from_module(state: &mut AppState, module_key: String)
         // TP-MOD-38: a real directory that is not a repository yet. Saying so
         // and naming the verb that fixes it is the difference between an
         // explanation and a dead end.
+        //
+        // TP-MOD-40: broken across lines because the panel truncates and does
+        // not wrap. Written as one sentence the verb sat at column 105 of a
+        // 158-character line and was cut off the screen — the dead end this
+        // message exists to prevent, dressed as an explanation. The path goes
+        // last: it is the one part that can be any length, so it is the only
+        // part that can afford to lose its tail.
         ModuleBranchSource::UninitializedDirectory(dir) => {
             state.config_diagnostic = Some(format!(
-                "module {module_key:?} points at {} which is not a git repository yet — \
-                 use \"Initialize git repository\" on the module to set one up",
+                "module {module_key:?} is not a git repository yet\n\
+                 use \"Initialize git repository\" on the module to set one up\n\
+                 {}",
                 dir.display()
             ));
             state.context_menu = None;
         }
         ModuleBranchSource::NoDirectory => {
             state.config_diagnostic = Some(format!(
-                "module {module_key:?} has no directory yet — use \"Set directory...\" \
-                 to point it at one, or move a branch under it"
+                "module {module_key:?} has no directory yet\n\
+                 use \"Set directory...\" to point it at one, or move a branch under it"
             ));
             state.context_menu = None;
         }
@@ -3693,6 +3701,64 @@ mod tests {
             diagnostic.contains("Initialize git repository"),
             "the refusal must name the verb that fixes it; got {diagnostic:?}"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // TP-MOD-40: a refusal the screen cannot show is a refusal that did not
+    // happen. `render_config_diagnostic` draws one line per newline and cuts
+    // each to the panel width — it does not wrap — so everything past the cut
+    // is gone, and the verb was written at the end of a single long line.
+    #[test]
+    fn a_module_branch_refusal_shows_its_verb_on_a_line_that_fits() {
+        // The product proof drives an 130-column terminal and the notice is
+        // drawn inside a frame narrower than that, so the actionable line has
+        // to be comfortably shorter than the screen.
+        const LINE_BUDGET: usize = 100;
+
+        let dir =
+            std::env::temp_dir().join(format!("herdr-modgap-diag-fit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch directory");
+
+        let refusal = |directory: Option<std::path::PathBuf>| {
+            let mut app = app_with_test_workspaces(&["main"]);
+            app.state.space_nodes = vec![crate::spaces::SpaceNode {
+                key: "docs".to_string(),
+                name: "Docs".to_string(),
+                icon: None,
+                parent: None,
+                dir: directory,
+            }];
+            start_branch_from_module(&mut app.state, "docs".to_string());
+            app.state
+                .config_diagnostic
+                .clone()
+                .expect("the refusal says something")
+        };
+
+        for (label, verb, diagnostic) in [
+            (
+                "a directory that is not a repository",
+                "Initialize git repository",
+                refusal(Some(dir.clone())),
+            ),
+            ("no directory at all", "Set directory...", refusal(None)),
+        ] {
+            let carrying = diagnostic
+                .lines()
+                .find(|line| line.contains(verb))
+                .unwrap_or_else(|| {
+                    panic!("{label}: the refusal must still name {verb:?}; got {diagnostic:?}")
+                });
+            assert!(
+                carrying.chars().count() <= LINE_BUDGET,
+                "{label}: the line carrying {verb:?} is {} characters, past the {LINE_BUDGET} \
+                 the panel can draw — render_config_diagnostic truncates it and the reader \
+                 never sees the verb; got {carrying:?}",
+                carrying.chars().count()
+            );
+        }
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 

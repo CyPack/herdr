@@ -3206,11 +3206,20 @@ impl AppState {
                         .any(|pane| pane.attached_terminal_id == terminal_id)
                 })
             });
-            if !still_attached
-                && self.terminals.remove(&terminal_id).is_some()
-                && !self.terminal_runtime_shutdowns.contains(&terminal_id)
-            {
-                self.terminal_runtime_shutdowns.push(terminal_id);
+            if !still_attached {
+                let Some(terminal) = self.terminals.remove(&terminal_id) else {
+                    continue;
+                };
+                // A closed dormant pane's history file has exactly one other
+                // consumer (the wake), and the wake can never come now — the
+                // path is queued and a scheduled-task drain deletes it.
+                // TP-DORMANT-08
+                if let Some(path) = terminal.dormant.and_then(|d| d.history_path) {
+                    self.pending_dormant_history_removals.push(path);
+                }
+                if !self.terminal_runtime_shutdowns.contains(&terminal_id) {
+                    self.terminal_runtime_shutdowns.push(terminal_id);
+                }
             }
         }
     }
