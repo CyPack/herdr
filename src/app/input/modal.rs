@@ -468,27 +468,6 @@ fn open_module_name_input(
 /// source workspace under the module (ancestors included, TP-DOTS-14),
 /// arm the module and request the proven worktree dialog — or report the
 /// missing repository instead of silently doing nothing.
-/// TP-AGPANEL-45: the graveyard verbs, in one body both context-menu bodies
-/// call. `Forget` is pure state so it happens here; `Revive` parks a request
-/// because the API call lives on `App`, which the `#[cfg(test)]` body does not
-/// have. Writing either one out twice is how a verb comes to mean two different
-/// things depending on which door was used.
-pub(super) fn apply_closed_agent_action(state: &mut AppState, agent_id: String, item: &str) {
-    match item {
-        "Revive" => {
-            state.request_revive_closed_agent = Some(agent_id);
-        }
-        "Forget" => {
-            // A row that a refresh already took away is not an error: the menu
-            // can outlive the list it was opened from.
-            if state.closed_agents.forget(&agent_id) {
-                state.mark_session_dirty();
-            }
-        }
-        _ => {}
-    }
-}
-
 pub(super) fn start_branch_from_module(state: &mut AppState, module_key: String) {
     use crate::ui::ModuleBranchSource;
 
@@ -524,6 +503,34 @@ pub(super) fn start_branch_from_module(state: &mut AppState, module_key: String)
             ));
             state.context_menu = None;
         }
+    }
+}
+
+/// TP-AGPANEL-45: the graveyard verbs, in one body both context-menu bodies
+/// call. `Forget` is pure state so it happens here; `Revive` parks a request
+/// because the API call lives on `App`, which the `#[cfg(test)]` body does not
+/// have. Writing either one out twice is how a verb comes to mean two different
+/// things depending on which door was used.
+pub(super) fn apply_closed_agent_action(state: &mut AppState, agent_id: String, item: &str) {
+    match item {
+        "Revive" => {
+            state.request_revive_closed_agent = Some(agent_id);
+        }
+        "Forget" => {
+            // A row that a refresh already took away is not an error: the menu
+            // can outlive the list it was opened from — so the removal is
+            // measured, and only a real one dirties the session.
+            //
+            // Kept as a binding rather than folded into the match arm: clippy
+            // would rather see `"Forget" if state.closed_agents.forget(..)`,
+            // which hides a mutation inside a pattern guard, where a reader
+            // scanning the arms would never look for one.
+            let removed = state.closed_agents.forget(&agent_id);
+            if removed {
+                state.mark_session_dirty();
+            }
+        }
+        _ => {}
     }
 }
 
