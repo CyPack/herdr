@@ -625,6 +625,7 @@ An `icon` names its picture exactly one way. Writing two is refused rather than 
 [shell.bars.top]
 enabled = true
 size    = 3
+border  = false   # a border takes a cell from each side, and these pictures are three rows tall
 
 # a grapheme the font already has
 [[shell.bars.top.sections]]
@@ -666,9 +667,11 @@ Bundled `art` names available today:
 | `ring` | 4 × 4 pixels (4 cells × 2 rows) | `dot` with the middle taken out — the two are a pair, filled for a thing that is happening and hollow for one that is waiting |
 | `level` | 5 × 4 pixels (5 cells × 2 rows) | Three ascending bars, to sit beside a `resource`, `meter` or `sparkline` section. One colour, because a compiled-in picture never sees the machine and a graded one would be showing a reading it does not have |
 
-A bar is three rows unless it is told otherwise, so `herd` fits a default bar and the two-row pictures fit `size = 2`. A picture is drawn from the top of the section it is given, and one taller than the bar is clipped rather than shrunk — half blocks have no half of a half.
+A bar is three cells and bordered unless it is told otherwise, and a border takes one cell from each side — so a default bar has **one row** inside it, which fits `dot` and nothing else here. Turn the border off, or raise `size` by two, to make room: `border = false` with `size = 3` holds `herd`, and `size = 2` holds the two-row pictures.
 
-A picture too wide or too tall for a section that declared its own `cells` is refused where it is written. A section sized by the terminal — `fill`, `content` — is not, because its width is not known until the terminal has one, and refusing then would mean a config that loads on one screen and not on another; there, a picture that does not fit is clipped like any other content.
+A picture is refused where it is written when it cannot fit a number somebody wrote down, and two numbers govern it, one per axis: `cells`, which runs along the bar, and `size` less the border, which runs across it. On a top or bottom bar those are the width and the height; on a left or right bar they are the other way round, because `size` counts cells along the edge's own axis.
+
+A section sized by the terminal — `fill`, `content` — declares no `cells`, so along the bar nothing is refused: its extent is not known until the terminal has one, and refusing then would mean a config that loads on one screen and not on another. There, a picture that does not fit is clipped like any other content. Across the bar there is no such excuse — `size` is a number in the file — so that axis is checked whatever kind the section is.
 
 #### Icons on a machine whose font may not have them
 

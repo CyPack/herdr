@@ -502,6 +502,16 @@ pub(crate) enum BarConfigProblem {
         needs: u16,
         has: u16,
     },
+    /// Too big for the axis the bar's own `size` governs, rather than the one
+    /// the section declared. Its own cause because the setting to change is a
+    /// different one, on a different table, and a message naming `cells` would
+    /// send somebody to edit a number that was already right.
+    IconDoesNotFitAcrossTheBar {
+        edge: &'static str,
+        index: usize,
+        needs: u16,
+        has: u16,
+    },
     WidgetTextWithoutWidget {
         edge: &'static str,
         index: usize,
@@ -727,6 +737,23 @@ impl std::fmt::Display for BarConfigProblem {
                 "shell.bars.{edge}.sections[{index}].widget needs {needs} cells but the section \
                  declares {has}; a clipped picture is the wrong picture"
             ),
+            Self::IconDoesNotFitAcrossTheBar {
+                edge,
+                index,
+                needs,
+                has,
+            } => {
+                let (unit, remedy) = if edge_is_horizontal(edge) {
+                    ("rows", "a shorter picture")
+                } else {
+                    ("columns", "a narrower picture")
+                };
+                write!(
+                    formatter,
+                    "shell.bars.{edge}.sections[{index}].widget needs {needs} {unit} but the bar \
+                     leaves {has}; raise shell.bars.{edge}.size or use {remedy}"
+                )
+            }
             Self::WidgetTextWithoutWidget { edge, index } => write!(
                 formatter,
                 "shell.bars.{edge}.sections[{index}].widget sets text but names no widget to \
@@ -737,6 +764,28 @@ impl std::fmt::Display for BarConfigProblem {
 }
 
 /// Why this edge's size cannot be drawn, if it cannot.
+/// How many cells a bar leaves across its short axis, after its border.
+///
+/// Rows for a top or bottom bar, columns for a left or right one. `size` counts
+/// cells along the edge's own axis, and the border takes one cell on each side
+/// of it, which is the same arithmetic `BarTrack::inner` does at draw time.
+fn bar_across(config: &ShellBarConfig) -> u16 {
+    config
+        .size
+        .saturating_sub(if config.border { 2 } else { 0 })
+}
+
+/// Whether this edge runs left to right.
+///
+/// `size` and `cells` swap meaning between the two orientations — `cells` runs
+/// along the bar, so it is a width on a top bar and a height on a left one —
+/// and a check that forgets this compares one axis against the other. That is
+/// not hypothetical: it is what the picture fit check did, and it refused a
+/// picture that fitted a side bar exactly.
+fn edge_is_horizontal(edge: &str) -> bool {
+    matches!(edge, "top" | "bottom")
+}
+
 fn bar_size_problem(config: &ShellBarConfig, edge: &'static str) -> Option<BarConfigProblem> {
     if config.size == 0 || config.size > MAX_BAR_CELLS {
         return Some(BarConfigProblem::SizeOutOfRange {
@@ -866,7 +915,8 @@ pub(crate) fn shell_bar_config_problems(
             // guess that the other was also refused. The widget is asked before
             // the action so a section's complaints read in the order the table
             // is written.
-            if let Err(problem) = section_widget(section, edge, index, glyph_icons) {
+            if let Err(problem) = section_widget(section, edge, index, glyph_icons, bar_across(bar))
+            {
                 problems.push(problem);
             }
             if let Err(problem) = section_action(section, edge, index) {
@@ -970,6 +1020,16 @@ struct SectionAt<'a> {
     edge: &'static str,
     index: usize,
     glyph_icons: bool,
+    /// How many cells the bar leaves across its short axis — rows for a top or
+    /// bottom bar, columns for a left or right one — after its border.
+    ///
+    /// The one extent of a section that does not depend on the terminal. What
+    /// runs *along* the bar is shared out at draw time and a section can only
+    /// declare it; what runs *across* comes from `size`, which somebody wrote
+    /// down, so it can be checked in the same breath and for the same reason.
+    ///
+    /// `None` where nothing asked: sizing and actions have no geometry.
+    across: Option<u16>,
 }
 
 impl<'a> SectionAt<'a> {
@@ -984,6 +1044,7 @@ impl<'a> SectionAt<'a> {
             edge,
             index,
             glyph_icons: true,
+            across: None,
         }
     }
 }
@@ -1441,7 +1502,7 @@ fn bar_section_chrome(
         .iter()
         .enumerate()
         .map(|(index, section)| SectionChrome {
-            widget: match section_widget(section, edge, index, glyph_icons) {
+            widget: match section_widget(section, edge, index, glyph_icons, bar_across(config)) {
                 Ok(widget) => widget,
                 Err(problem) => {
                     tracing::warn!(%problem, "the section is drawn with nothing in it");
@@ -1469,6 +1530,7 @@ fn section_widget(
     edge: &'static str,
     index: usize,
     glyph_icons: bool,
+    across: u16,
 ) -> Result<SectionWidget, BarConfigProblem> {
     // Naming nothing is not one of the choices below; it is the absence of a
     // choice, and the only question left is whether anything was written for a
@@ -1488,6 +1550,7 @@ fn section_widget(
         edge,
         index,
         glyph_icons,
+        across: Some(across),
     };
     match SectionKind::find(WIDGET_KINDS, config.widget.kind.as_str()) {
         Some(entry) => (entry.build)(at),
@@ -1525,7 +1588,13 @@ const WIDGET_KINDS: &[SectionKind<SectionWidget>] = &[
         // something to say.
         keys: &["glyph", "art", "pixels", "text"],
         refuses: &[],
-        example: "[shell.bars.top]\nenabled = true\n\n\
+        // The only example here that has to say anything about the bar itself.
+        // A bar is three cells and bordered unless told otherwise, and a border
+        // takes one from each side, so the default bar has a single row inside
+        // it — enough for every other widget and not for a picture three rows
+        // tall. Leaving that out shipped an example that parsed and drew a
+        // clipped mark.
+        example: "[shell.bars.top]\nenabled = true\nsize = 3\nborder = false\n\n\
                   [[shell.bars.top.sections]]\nkind = \"content\"\n\
                   widget = { kind = \"icon\", art = \"herd\" }\n",
         build: section_icon,
@@ -1602,6 +1671,7 @@ fn section_icon(at: SectionAt<'_>) -> Result<SectionWidget, BarConfigProblem> {
         edge,
         index,
         glyph_icons,
+        across,
     } = at;
     let widget = &config.widget;
     let named = usize::from(!widget.glyph.trim().is_empty())
@@ -1613,16 +1683,41 @@ fn section_icon(at: SectionAt<'_>) -> Result<SectionWidget, BarConfigProblem> {
         _ => return Err(BarConfigProblem::IconWithTwoPictures { edge, index }),
     }
 
-    // A section only knows its own width when it declared one.
+    // A section only knows its extent along the bar when it declared one.
     let declared = (config.kind.trim().eq_ignore_ascii_case("fixed")).then_some(config.cells);
-    let refuse_unless_fits = |needs: u16| match declared {
-        Some(has) if has < needs => Err(BarConfigProblem::IconDoesNotFit {
-            edge,
-            index,
-            needs,
-            has,
-        }),
-        _ => Ok(()),
+    let horizontal = edge_is_horizontal(edge);
+
+    // Both axes, each against the number that actually governs it. `cells` runs
+    // along the bar and `size` across it, so on a side bar `cells` is a height —
+    // which is why comparing a picture's width against it refused pictures that
+    // fitted, and why nothing ever refused one that was simply too tall.
+    let refuse_unless_fits = |columns: u16, rows: u16| {
+        let (along, across_needs) = if horizontal {
+            (columns, rows)
+        } else {
+            (rows, columns)
+        };
+        if let Some(has) = declared {
+            if has < along {
+                return Err(BarConfigProblem::IconDoesNotFit {
+                    edge,
+                    index,
+                    needs: along,
+                    has,
+                });
+            }
+        }
+        if let Some(has) = across {
+            if has < across_needs {
+                return Err(BarConfigProblem::IconDoesNotFitAcrossTheBar {
+                    edge,
+                    index,
+                    needs: across_needs,
+                    has,
+                });
+            }
+        }
+        Ok(())
     };
 
     if !widget.glyph.trim().is_empty() {
@@ -1644,7 +1739,8 @@ fn section_icon(at: SectionAt<'_>) -> Result<SectionWidget, BarConfigProblem> {
         let glyph = widget.glyph.clone();
         let needs = u16::try_from(unicode_width::UnicodeWidthStr::width(glyph.as_str()))
             .unwrap_or(u16::MAX);
-        refuse_unless_fits(needs)?;
+        // A glyph is one row tall whatever else it is.
+        refuse_unless_fits(needs, 1)?;
         return Ok(SectionWidget::Icon { glyph });
     }
 
@@ -1665,7 +1761,7 @@ fn section_icon(at: SectionAt<'_>) -> Result<SectionWidget, BarConfigProblem> {
             problem,
         }
     })?;
-    refuse_unless_fits(art.width())?;
+    refuse_unless_fits(art.width(), art.height())?;
     Ok(SectionWidget::Art { art })
 }
 
@@ -3342,8 +3438,14 @@ mod tests {
         section.widget.kind = "icon".to_string();
         section.widget.art = "herd".to_string();
 
+        // Tall enough to hold `herd`: this test is about the glyph switch, and
+        // a bar that refused the picture for its height would be answering a
+        // different question.
         let config = ShellBarsConfig {
-            top: bar_with_sections(vec![section]),
+            top: ShellBarConfig {
+                size: 3,
+                ..bar_with_sections(vec![section])
+            },
             ..Default::default()
         };
 
@@ -3531,8 +3633,15 @@ mod tests {
         section.widget.kind = "icon".to_string();
         section.widget.art = "herd".to_string();
 
+        // Three rows, because `herd` is three cell rows tall. This test is about
+        // the axis the terminal shares out; a bar too short to hold the picture
+        // would refuse it across the other axis, which is a number somebody
+        // wrote down and a different rule entirely.
         let config = ShellBarsConfig {
-            top: bar_with_sections(vec![section]),
+            top: ShellBarConfig {
+                size: 3,
+                ..bar_with_sections(vec![section])
+            },
             ..Default::default()
         };
 
@@ -3544,6 +3653,170 @@ mod tests {
         assert!(
             matches!(widget, SectionWidget::Art { art } if art.width() == 10),
             "a fill section keeps the picture: {widget:?}"
+        );
+    }
+
+    /// A picture is measured against the axis each number actually governs.
+    ///
+    /// `cells` runs along the bar and `size` across it, so on a left or right
+    /// bar `cells` is a height and `size` is a width. The fit check compared a
+    /// picture's width against `cells` whichever edge it was, which is two
+    /// separate faults in one line and both were measured against the built
+    /// binary: a left bar twelve columns wide, with a section three rows tall,
+    /// turned `herd` down for "needing 10 cells" — of which it had twelve; and
+    /// a one-row top bar accepted the same three-row picture and clipped it,
+    /// while the guide said a picture too tall is refused.
+    ///
+    /// The axis a section declares and the axis the bar declares are both
+    /// numbers somebody wrote down, so both are refusable for the same reason.
+    /// Neither is the terminal's, which is the line TP-ART-05 draws.
+    // TP-ART-09: each axis is checked against the number that governs it, and
+    // the two have separate causes because they send a person to different
+    // settings.
+    #[test]
+    fn a_picture_is_measured_against_the_axis_each_number_governs() {
+        let picture = |kind: &str, cells: u16| {
+            let mut section = plain_section(kind);
+            section.cells = cells;
+            section.widget.kind = "icon".to_string();
+            section.widget.art = "herd".to_string();
+            section
+        };
+        let side_bar = |size: u16, sections| ShellBarConfig {
+            size,
+            border: false,
+            ..bar_with_sections(sections)
+        };
+
+        // `herd` is ten columns by three rows. A side bar twelve columns wide
+        // with a three-row section holds it exactly.
+        let fitting = ShellBarsConfig {
+            left: side_bar(12, vec![picture("fixed", 3)]),
+            ..Default::default()
+        };
+        assert!(
+            shell_bar_config_problems(&fitting, true).is_empty(),
+            "a picture that fits a side bar exactly was refused: {:?}",
+            shell_bar_config_problems(&fitting, true)
+        );
+
+        // The same picture on a side bar too narrow for it: the width comes
+        // from `size` here, so the message has to say so.
+        let narrow = ShellBarsConfig {
+            left: side_bar(8, vec![picture("fixed", 3)]),
+            ..Default::default()
+        };
+        let reported = shell_bar_config_problems(&narrow, true)
+            .into_iter()
+            .map(|problem| problem.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(reported.len(), 1, "{reported:?}");
+        assert!(
+            reported[0].contains("needs 10 columns but the bar leaves 8")
+                && reported[0].contains("shell.bars.left.size"),
+            "a side bar's width comes from its size, and the message has to send \
+             somebody there: {reported:?}"
+        );
+
+        // And the section's own axis is still its own: three rows declared, two
+        // asked for, on a bar wide enough for the picture.
+        let short_section = ShellBarsConfig {
+            left: side_bar(12, vec![picture("fixed", 2)]),
+            ..Default::default()
+        };
+        let reported = shell_bar_config_problems(&short_section, true)
+            .into_iter()
+            .map(|problem| problem.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(reported.len(), 1, "{reported:?}");
+        assert!(
+            reported[0].contains("needs 3 cells but the section declares 2"),
+            "the axis the section declares keeps its own message: {reported:?}"
+        );
+    }
+
+    /// A picture taller than the bar is refused, and says which setting to raise.
+    ///
+    /// The bar's own height is not the terminal's business — `size` is a number
+    /// somebody wrote down — so the reason TP-ART-05 leaves a terminal-sized
+    /// width alone does not apply here. Before this, a three-row picture in a
+    /// one-row bar was accepted and silently clipped, which is the outcome the
+    /// width refusal exists to prevent, and the guide already promised it was
+    /// refused.
+    // TP-ART-09: too tall for the bar is its own cause, naming `size`.
+    #[test]
+    fn a_picture_taller_than_the_bar_is_refused_rather_than_clipped() {
+        let mut section = plain_section("fill");
+        section.widget.kind = "icon".to_string();
+        section.widget.art = "herd".to_string();
+
+        let config = ShellBarsConfig {
+            top: bar_with_sections(vec![section]),
+            ..Default::default()
+        };
+        let reported = shell_bar_config_problems(&config, true)
+            .into_iter()
+            .map(|problem| problem.to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(reported.len(), 1, "{reported:?}");
+        assert!(
+            reported[0].contains("needs 3 rows but the bar leaves 1")
+                && reported[0].contains("shell.bars.top.size"),
+            "the refusal has to name both numbers and the setting that changes \
+             one of them: {reported:?}"
+        );
+        assert_eq!(
+            ShellBarChrome::from_config(&config, true).widget_for(RegionId::TopBar, 0),
+            Some(&SectionWidget::None),
+            "a picture the checker refused must not be carried either"
+        );
+    }
+
+    /// A border eats a cell from each side, and the picture has to fit what is left.
+    ///
+    /// This is where the arithmetic is easiest to get wrong by hand: a bar of
+    /// three rows with a border has one row inside it, and every published
+    /// example that showed a three-row picture on a `size = 3` bar was drawing
+    /// a clipped mark. Two of them shipped — the guide's and the spec's — and
+    /// the check that found them is the one below.
+    // TP-ART-09: the bar's usable extent is its size less its border.
+    #[test]
+    fn the_border_is_taken_out_of_what_the_bar_leaves_a_picture() {
+        let picture = || {
+            let mut section = plain_section("fill");
+            section.widget.kind = "icon".to_string();
+            section.widget.art = "herd".to_string();
+            section
+        };
+        let bar = |size: u16, border: bool| ShellBarConfig {
+            size,
+            border,
+            ..bar_with_sections(vec![picture()])
+        };
+
+        let bordered = ShellBarsConfig {
+            top: bar(5, true),
+            ..Default::default()
+        };
+        assert!(
+            shell_bar_config_problems(&bordered, true).is_empty(),
+            "five rows less two of border is three, which is what the picture needs: {:?}",
+            shell_bar_config_problems(&bordered, true)
+        );
+
+        let one_short = ShellBarsConfig {
+            top: bar(4, true),
+            ..Default::default()
+        };
+        let reported = shell_bar_config_problems(&one_short, true)
+            .into_iter()
+            .map(|problem| problem.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(reported.len(), 1, "{reported:?}");
+        assert!(
+            reported[0].contains("needs 3 rows but the bar leaves 2"),
+            "the border has to come out of what is offered: {reported:?}"
         );
     }
 
