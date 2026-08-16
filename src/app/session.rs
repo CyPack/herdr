@@ -128,6 +128,39 @@ impl App {
         }
     }
 
+    /// Write the graveyard out, right after a death was recorded.
+    ///
+    /// TP-AGPANEL-35: this rides the trigger, not a timer. The closed-agent
+    /// module is explicit that nothing periodic belongs to it — a record is
+    /// written when an agent closes and removed when it is revived or ages
+    /// out — and a save that waited for the next session snapshot would lose
+    /// the newest death to exactly the event that makes losing it likely: the
+    /// server being replaced.
+    ///
+    /// Measured 2026-08-16 03:10: two ghosts stood in the panel before a
+    /// delivery and zero after it, because the ledger lived only in memory.
+    ///
+    /// `--no-session` suppresses the write for the same reason it suppresses
+    /// the chat ledger's: that run leaves nothing on disk, and it is also what
+    /// keeps unit tests off a real config directory.
+    pub(crate) fn save_closed_agents(&mut self) {
+        if self.no_session {
+            return;
+        }
+        let path = crate::persist::closed_agents::default_store_path();
+        let store = crate::persist::closed_agents::ClosedAgentStore {
+            version: crate::persist::closed_agents::CLOSED_AGENTS_VERSION,
+            records: crate::persist::closed_agents::prune(
+                self.state.closed_agents.to_stored(),
+                crate::persist::workspace_chats::now_ms(),
+                crate::persist::closed_agents::RETENTION_MS,
+            ),
+        };
+        if let Err(err) = crate::persist::closed_agents::save_to_path(&path, &store) {
+            tracing::warn!(path = %path.display(), %err, "failed to save closed agent store");
+        }
+    }
+
     /// Project the ledger into the presentation rows the sidebar reads.
     ///
     /// Deliberately not a poll: the ledger only changes when a session save
@@ -151,7 +184,36 @@ impl App {
             &mut self.state.workspace_chat_rows,
             &self.workspace_chat_ledger.moves,
         );
+        // TP-CHAT-NAME-01: and the names after them, for the same reason. The
+        // agent store answers every refresh with the title it derived from the
+        // transcript, so a name applied any earlier is overwritten within one
+        // sync and the chat appears to rename itself back.
+        crate::persist::workspace_chats::apply_chat_names(
+            &mut self.state.workspace_chat_rows,
+            &self.workspace_chat_ledger.names,
+        );
         self.state.chat_move_overrides = self.workspace_chat_ledger.moves.clone();
+    }
+
+    /// Write a chat's chosen name into the ledger and refresh the rows — the
+    /// App loop's answer to `request_chat_rename` (TP-CHAT-NAME-01).
+    ///
+    /// Shaped exactly like `apply_chat_move`, `no_session` guard included: a
+    /// fixture that renames a chat must not reach the machine's real ledger.
+    pub(crate) fn apply_chat_rename(&mut self, session_id: &str, name: &str) {
+        if !self.workspace_chat_ledger.set_name(session_id, name) {
+            return;
+        }
+        self.sync_workspace_chat_rows();
+        if self.no_session {
+            return;
+        }
+        let path = crate::persist::workspace_chats::default_ledger_path();
+        if let Err(err) =
+            crate::persist::workspace_chats::save_to_path(&path, &self.workspace_chat_ledger)
+        {
+            tracing::warn!(path = %path.display(), %err, "failed to save workspace chat ledger");
+        }
     }
 
     /// Write a chat re-home decision into the ledger and refresh the rows —

@@ -1251,6 +1251,18 @@
           "description": "Persist pane screen history to session-history.json."
         },
         {
+          "key": "experimental.pane_dormancy",
+          "type": "boolean",
+          "default": "false",
+          "description": "Automatically put retired panes to sleep: a pane whose child process has exited and that no display is watching gets its scrollback written to disk and its runtime released after a quiet period. Touching the pane wakes it with its history replayed. Panes with a running process are never touched."
+        },
+        {
+          "key": "experimental.idle_server_exit",
+          "type": "boolean",
+          "default": "false",
+          "description": "Let an idle server exit: when no client is attached and no pane has a running process for a grace period, the server writes every retired pane's scrollback to disk, saves the session, and stops. The next `herdr` start restores the session with that history."
+        },
+        {
           "key": "experimental.reveal_hidden_cursor_for_cjk_ime",
           "type": "boolean",
           "default": "false",
@@ -1449,6 +1461,12 @@
           "type": "boolean",
           "default": "true",
           "description": "Let bar sections draw their glyph icons. Off, a section that names a glyph draws its text instead, and one that names no text is reported rather than left blank. Pictures made of cells (art, pixels) are unaffected. Turn this off for a terminal whose font has no icon glyphs, where they would otherwise render as tofu."
+        },
+        {
+          "key": "shell.resource_interval_ms",
+          "type": "integer",
+          "default": "2000",
+          "description": "How often a resource or meter section re-reads the machine, in milliseconds. Nothing is read at all unless a section asks for it, so a bar without one costs nothing whatever this says. Accepted between 250 and 60000: below 250 a CPU percentage starts reporting the kernel counter's resolution rather than the machine's load, because the counter ticks a hundred times a second. A value outside the range is reported and the default pace is kept."
         }
       ]
     }

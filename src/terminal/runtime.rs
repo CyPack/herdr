@@ -52,9 +52,12 @@ impl TerminalRuntime {
         self.0.handoff_runtime_state(pane_id)
     }
 
+    /// See [`crate::pane::PaneRuntime::handoff_history_ansi_full`]. The
+    /// export site cuts the inline replay from this itself, so the truncated
+    /// form has no delegation here.
     #[cfg(unix)]
-    pub fn handoff_history_ansi(&self) -> Option<String> {
-        self.0.handoff_history_ansi()
+    pub fn handoff_history_ansi_full(&self) -> Option<String> {
+        self.0.handoff_history_ansi_full()
     }
 
     #[cfg(unix)]
@@ -483,6 +486,12 @@ impl TerminalRuntime {
     pub(crate) fn current_size(&self) -> (u16, u16) {
         self.0.current_size()
     }
+
+    /// Whether this terminal's child process has been reaped — see
+    /// [`crate::pane::PaneRuntime::child_exited`].
+    pub(crate) fn child_exited(&self) -> bool {
+        self.0.child_exited()
+    }
 }
 
 #[cfg(test)]
@@ -491,6 +500,14 @@ impl TerminalRuntime {
     /// `PaneRuntime::applied_resizes_for_test`.
     pub(crate) fn applied_resizes_for_test(&self) -> u32 {
         self.0.applied_resizes_for_test()
+    }
+
+    pub(crate) fn test_mark_child_exited(&mut self) {
+        self.0.test_mark_child_exited();
+    }
+
+    pub(crate) fn test_set_child_pid(&self, pid: u32) {
+        self.0.test_set_child_pid(pid);
     }
 
     pub(crate) fn test_with_channel(cols: u16, rows: u16) -> (Self, mpsc::Receiver<Bytes>) {

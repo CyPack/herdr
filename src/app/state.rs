@@ -709,6 +709,19 @@ pub struct DailyChatRowArea {
     pub chat_idx: usize,
 }
 
+/// One laid-out chat row under a declared container.
+///
+/// TP-CHAT-MOVE-06: it names its container and its position in that
+/// container's list, and carries no `ws_idx` for the same reason the daily row
+/// carries none — a container is not a workspace and may have no directory at
+/// all, so a workspace index here would be invented.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModuleChatRowArea {
+    pub rect: Rect,
+    pub node_key: String,
+    pub chat_idx: usize,
+}
+
 /// The laid-out "… N older" / "… fewer" row of one drawer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceMoreChatsArea {
@@ -1613,7 +1626,55 @@ pub struct AgentAttachmentTarget {
 #[derive(Debug, Clone)]
 pub struct AgentAttachmentPickerState {
     pub file_manager: crate::fm::FmState,
-    pub target: AgentAttachmentTarget,
+    pub purpose: PickerPurpose,
+}
+
+/// What the file picker is being used to choose.
+///
+/// TP-MOD-35: the module directory used to be typed into a text box, and the
+/// user asked for the file manager instead — "our file manager, the one with
+/// Miller columns". Herdr already has it, already in a popup, already wired to
+/// keys and mouse: the attachment picker. Giving that one popup a second
+/// purpose is the whole feature; building a second directory browser beside it
+/// would be two pickers to keep in step, and CLAUDE.md asks for the opposite.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PickerPurpose {
+    /// Hand a file to the agent in a pane.
+    AttachToAgent(AgentAttachmentTarget),
+    /// Give a module the directory it stands in.
+    SetModuleDirectory { node_key: String },
+}
+
+impl AgentAttachmentPickerState {
+    pub fn attachment_target(&self) -> Option<&AgentAttachmentTarget> {
+        match &self.purpose {
+            PickerPurpose::AttachToAgent(target) => Some(target),
+            PickerPurpose::SetModuleDirectory { .. } => None,
+        }
+    }
+
+    pub fn module_key(&self) -> Option<&str> {
+        match &self.purpose {
+            PickerPurpose::SetModuleDirectory { node_key } => Some(node_key.as_str()),
+            PickerPurpose::AttachToAgent(_) => None,
+        }
+    }
+
+    /// The directory a "Set" would commit: the highlighted row when it is a
+    /// directory, otherwise the one being browsed.
+    ///
+    /// TP-MOD-35: a file under the cursor does not disqualify the choice —
+    /// the person is standing in a directory and pressing Set means "this
+    /// one". Refusing because the cursor happens to rest on a README would be
+    /// a button that looks pressable and is not.
+    pub fn chosen_directory(&self) -> std::path::PathBuf {
+        self.file_manager
+            .entries
+            .get(self.file_manager.cursor)
+            .filter(|entry| entry.is_dir())
+            .map(|entry| entry.path.clone())
+            .unwrap_or_else(|| self.file_manager.cwd.clone())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1651,7 +1712,12 @@ pub struct ViewState {
     /// switch answer three different gestures and so keep three vectors.
     pub daily_header_area: Option<Rect>,
     pub daily_chat_row_areas: Vec<DailyChatRowArea>,
+    /// TP-CHAT-MOVE-06: the laid-out chat rows of declared containers.
+    pub module_chat_row_areas: Vec<ModuleChatRowArea>,
     pub daily_more_area: Option<Rect>,
+    /// TP-DAILY-18: where the "show the other workspaces here" switch
+    /// was laid out, if it was drawn at all.
+    pub daily_more_workspaces_area: Option<Rect>,
     /// Worktree-group header rows, kept apart for the same reason: a header is
     /// not a workspace, so it must never be resolvable through a ws_idx.
     pub workspace_group_header_areas: Vec<WorkspaceGroupHeaderArea>,
@@ -2313,10 +2379,19 @@ pub enum ContextMenuKind {
     /// (TP-CHAT-MOVE-04); `has_move` decides whether "Move back" shows and
     /// `has_live` whether the chat has a running tab to close (TP-AGPANEL-05).
     WorkspaceChat {
-        ws_idx: usize,
+        /// The drawer this row was pressed in, or `None` for a daily row.
+        ///
+        /// TP-CHAT-MOVE-08: the daily section is not a workspace and its chats
+        /// belong to no drawer, so there is nothing to exclude from the move
+        /// picker. Naming an arbitrary workspace here would silently drop a
+        /// legitimate destination from the list.
+        ws_idx: Option<usize>,
         session_id: String,
         has_move: bool,
         has_live: bool,
+        /// Whether the tree declares any module at all, which is the whole
+        /// condition for offering "Move to module..." (TP-CHAT-MOVE-11).
+        has_modules: bool,
     },
     /// An agents-panel row's own menu. The row already stands for one pane,
     /// so the target rides in the menu rather than being re-derived from
@@ -2326,6 +2401,23 @@ pub enum ContextMenuKind {
         ws_idx: usize,
         tab_idx: usize,
         pane_id: crate::layout::PaneId,
+        /// The chat this row is running, when the ledger knows it.
+        ///
+        /// TP-AGPANEL-28: carried in the menu rather than looked up when the
+        /// verb fires, for the reason TP-AGPANEL-06 already states — a menu
+        /// can outlive the panel it was opened from, and a late lookup would
+        /// answer for whatever moved into that slot. `None` when the tab was
+        /// never opened to resume a known session; such a chat has no identity
+        /// the ledger can file, so it cannot be moved.
+        session_id: Option<String>,
+    },
+    /// A graveyard row's own menu (TP-AGPANEL-45).
+    ///
+    /// Carries the ghost's id, resolved when the menu opens, for the reason
+    /// `AgentEntry` carries its session id: the panel can refresh under an open
+    /// menu, and a late lookup would answer for whatever moved into that slot.
+    ClosedAgent {
+        agent_id: String,
     },
     /// The drawer picker a chat move opens: open workspaces as
     /// `(ledger key, display name)`, resolved by index like MoveTarget.
@@ -2345,6 +2437,15 @@ pub enum ContextMenuKind {
         /// (TP-MOD-26). Resolved when the menu opens, so a reload underneath
         /// an open menu cannot turn the offer into a no-op.
         deletable: bool,
+        /// Whether this module points at a directory that exists but is not a
+        /// git repository root — the one state "Initialize git repository" can
+        /// fix, so the one state it is offered in (TP-MOD-38).
+        ///
+        /// Resolved when the menu opens, like `deletable`, and a flag rather
+        /// than a path: the handler re-measures before it acts, because a
+        /// directory can become a repository between the menu opening and the
+        /// item being picked.
+        needs_git_init: bool,
     },
     /// A repository/bucket header's menu. A split rule cannot parent a node,
     /// so offering "new sub-module" here would be a promise the tree cannot
@@ -2373,6 +2474,15 @@ pub enum ContextMenuKind {
     /// not a row, so nothing here can go stale under a refresh.
     DailyHeader {
         collapsed: bool,
+        /// Whether two or more interchangeable workspaces stand here, which is
+        /// the only condition under which "Merge workspaces here" is offered
+        /// (TP-DAILY-19).
+        ///
+        /// A flag, not an index — deliberately, the way `MoveWorkspace` carries
+        /// `has_targets`. It decides whether a verb is shown; the handler
+        /// recomputes the set when it runs, so a list that changes under an
+        /// open menu can never make this stale in the way an index would.
+        has_mergeable: bool,
     },
     /// Agent selector for a new chat in the daily directory (TP-DAILY-11).
     ///
@@ -2485,9 +2595,28 @@ impl ContextMenuState {
             // force — offering it otherwise would be a button that does
             // nothing.
             ContextMenuKind::WorkspaceChat {
-                has_move, has_live, ..
+                has_move,
+                has_live,
+                has_modules,
+                ..
             } => {
-                let mut items = vec!["Move to branch..."];
+                // TP-CHAT-NAME-01: naming comes first. A chat's row is the one
+                // place a conversation is addressed by name, and until now the
+                // only names available were the ones the transcript happened to
+                // yield — for a chat started outside a workspace's directory
+                // there is no resolvable title at all, which is how a row came
+                // to read `ayaz` with nothing to say who spawned it or why.
+                let mut items = vec!["Rename chat...", "Move to branch..."];
+                // TP-CHAT-MOVE-11: modules are a second kind of destination and
+                // they get their own verb. They were already reachable through
+                // "Move to branch...", which is exactly the problem: on the
+                // reporting machine that list is about thirty checkouts long,
+                // the twenty-four modules are scattered through it, and the
+                // verb's name says branch. A destination nobody can find is a
+                // feature that does not exist from where they are standing.
+                if *has_modules {
+                    items.push("Move to module...");
+                }
                 if *has_move {
                     items.push("Move back");
                 }
@@ -2501,7 +2630,22 @@ impl ContextMenuState {
             }
             // TP-AGPANEL-03: the agents panel lists what is running, so the
             // single verb it owns is ending one.
-            ContextMenuKind::AgentEntry { .. } => vec!["Close agent"],
+            // TP-AGPANEL-28: the panel row can send its chat somewhere, when
+            // the ledger knows which chat it is. The move verb comes first and
+            // the close verb stays last — the one item here that cannot be
+            // undone belongs at the end (TP-AGPANEL-05's ordering).
+            // TP-AGPANEL-45: a headstone's two verbs. "Move to..." is
+            // deliberately absent — a ghost has no running tab to move, and
+            // filing its conversation somewhere is the chat row's job, which
+            // already has a verb for it.
+            ContextMenuKind::ClosedAgent { .. } => vec!["Revive", "Forget"],
+            ContextMenuKind::AgentEntry { session_id, .. } => {
+                if session_id.is_some() {
+                    vec!["Move to...", "Close agent"]
+                } else {
+                    vec!["Close agent"]
+                }
+            }
             ContextMenuKind::ChatMoveTarget { targets, .. } => {
                 targets.iter().map(|(_, label)| label.as_str()).collect()
             }
@@ -2512,6 +2656,7 @@ impl ContextMenuState {
             ContextMenuKind::NodeHeader {
                 collapsed,
                 deletable,
+                needs_git_init,
                 ..
             } => {
                 // TP-DOTS-13: the branch road leads — the point of a module
@@ -2522,12 +2667,28 @@ impl ContextMenuState {
                     "New parallel module...",
                 ];
                 items.push(if *collapsed { "Expand" } else { "Collapse" });
-                // TP-MOD-32: renaming rewrites the machine's own file, so it
-                // is offered on exactly the modules a delete is — a rename
-                // written into the overlay for a hand-written module loses
-                // to it at first-match and would do nothing at all.
-                if *deletable {
-                    items.push("Rename module...");
+                // TP-MOD-34: offered on every module now. It used to ride with
+                // the delete verb because renaming meant rewriting the rule,
+                // and the machine may only rewrite its own — which left the
+                // modules a person actually authored with no rename at all.
+                // A display entry is not a rule, so there is nothing left to
+                // lose at first-match and nothing left to restrict.
+                items.push("Rename module...");
+                // TP-MOD-33: offered on every module, hand-written or not. A
+                // directory does not collide at first-match — it is a new
+                // field on the same key, and the overlay merges after the
+                // user's rules rather than against them.
+                items.push("Set directory...");
+                // TP-MOD-38: offered ONLY while the module points at a real
+                // directory that is not a repository — the single state this
+                // verb can change. "New branch..." has sat on every module
+                // header since TP-DOTS-13 and answered a module like this with
+                // "move a branch under it first", which is a dead end: the
+                // person stated a directory precisely so the module would have
+                // somewhere of its own to branch from. This is the missing
+                // step between the two.
+                if *needs_git_init {
+                    items.push("Initialize git repository");
                 }
                 // TP-MOD-08/26: last, because it is the only item that takes
                 // something away — and only when there is something the
@@ -2546,6 +2707,15 @@ impl ContextMenuState {
                     "New parallel module...",
                 ];
                 items.push(if *collapsed { "Expand" } else { "Collapse" });
+                // TP-MOD-34: a bucket had no rename at all — not because one
+                // would be wrong, but because the only implementation
+                // available would have been a second `[[spaces.split]]` rule
+                // carrying the same key, which loses at first-match to the one
+                // it was meant to rename. To the person using the tree these
+                // headers ARE modules (TP-DOTS-01/10), and every one of the
+                // buckets on the reported machine was hand-written, so this
+                // absence was the whole of "modüllerde rename göremiyorum".
+                items.push("Rename module...");
                 items
             }
             ContextMenuKind::Tab { .. } => vec!["New tab", "Rename", "Close"],
@@ -2564,11 +2734,19 @@ impl ContextMenuState {
             // TP-DAILY-12: the area's own verbs. No branch or sub-module
             // entries: the daily directory is not a repository and holds no
             // tree beneath it, so those would be offers it cannot keep.
-            ContextMenuKind::DailyHeader { collapsed } => {
-                vec![
-                    "New chat...",
-                    if *collapsed { "Expand" } else { "Collapse" },
-                ]
+            ContextMenuKind::DailyHeader {
+                collapsed,
+                has_mergeable,
+            } => {
+                let mut items = vec!["New chat..."];
+                // TP-DAILY-19: only when there is something to fold. A verb
+                // with no work to do is a button that does nothing, and the
+                // menu should not promise what the section cannot keep.
+                if *has_mergeable {
+                    items.push("Merge workspaces here");
+                }
+                items.push(if *collapsed { "Expand" } else { "Collapse" });
+                items
             }
             // TP-DAILY-11: agents only. The daily directory is not a checkout,
             // so a worktree verb here would be an offer the tree cannot keep.
@@ -3311,6 +3489,32 @@ pub struct AppState {
     /// The server's event loop checks this and handles client detach.
     pub detach_requested: bool,
     pub request_new_workspace: bool,
+    /// A ghost the graveyard menu asked to bring back (TP-AGPANEL-45).
+    ///
+    /// A request rather than the call itself: the `#[cfg(test)]` context-menu
+    /// body is handed an `AppState` and cannot reach the API at all, so writing
+    /// the revival inline would give the verb two implementations — the defect
+    /// class where a menu entry works in tests and does nothing in the product.
+    pub request_revive_closed_agent: Option<String>,
+    /// Set by the daily header's "Merge workspaces here" (TP-DAILY-19).
+    ///
+    /// A request flag rather than the work itself, because the two context-menu
+    /// bodies do not have the same reach: the `#[cfg(test)]` one is handed an
+    /// `AppState` and cannot dispatch API calls at all. Both bodies therefore
+    /// write this one line, and the App loop does the moving — which is what
+    /// makes it structurally impossible for the verb to work in tests and do
+    /// nothing in the product (the defect class behind constraint 31).
+    pub request_merge_daily_workspaces: bool,
+    /// A module whose stated directory should become a git repository
+    /// (TP-MOD-38). Carries the module key, not the path: the path is
+    /// re-resolved and re-measured when the request runs, so a directory that
+    /// became a repository in another terminal in the meantime is not
+    /// initialised twice.
+    pub request_module_git_init: Option<String>,
+    /// A module whose stated directory is already a repository but has no
+    /// workspace open on it yet (TP-MOD-37). The App loop opens one and then
+    /// walks the ordinary branch road from it.
+    pub request_module_branch_workspace: Option<String>,
     pub request_new_tab: bool,
     pub request_new_linked_worktree: Option<usize>,
     pub request_open_existing_worktree: Option<usize>,
@@ -3327,15 +3531,40 @@ pub struct AppState {
     /// inner parent is where the new node hangs (`None` = top level).
     /// Client-local for the same reason as `pending_move_new_group`.
     pub pending_new_module: Option<PendingNewModule>,
+    /// The module whose directory is being typed, if any.
+    ///
+    /// TP-MOD-33: kept apart from `pending_new_module` because the two answer
+    /// different questions with the same overlay — one names a module, the
+    /// other tells an existing one where it stands. Sharing the field would
+    /// make a submitted directory rename the module instead.
+    pub pending_module_dir: Option<String>,
+    /// The chat whose name the open input is editing, by session id
+    /// (TP-CHAT-NAME-01). Its own field for the reason `pending_module_dir`
+    /// has one: these roads share a mode and a text box, and sharing the
+    /// pending too would make a submitted chat name rename a module.
+    pub pending_chat_rename: Option<String>,
     /// Read-only mirror of the chat ledger's re-homes (session id → target
     /// ledger key), refreshed by the same sync that projects the rows. The
     /// state layer needs it to build the chat menu; the ledger itself lives
     /// on the App and is the only writer.
     pub chat_move_overrides: std::collections::BTreeMap<String, String>,
+    /// Ledger keys this display filed a chat into, most recent first.
+    ///
+    /// TP-CHAT-MOVE-09: the request that started this feature said it should
+    /// take "a few clicks" because the work develops spontaneously. A list
+    /// that grows with every workspace and module answers that badly — the
+    /// place you filed something into a minute ago is overwhelmingly the place
+    /// you mean next. Client-local and not persisted: it is a convenience of
+    /// this session's hand, not a fact about the tree.
+    pub recent_move_targets: Vec<String>,
     /// A chat re-home decision waiting for the App loop, which owns the
     /// ledger: `(session_id, Some(target))` moves, `(session_id, None)`
     /// withdraws (TP-CHAT-MOVE-04).
     pub request_chat_move: Option<(String, Option<String>)>,
+    /// A chat naming decision waiting for the App loop to fold into the
+    /// ledger: `(session_id, name)`. A blank name withdraws the name rather
+    /// than storing one (TP-CHAT-NAME-01).
+    pub request_chat_rename: Option<(String, String)>,
     pub request_new_workspace_cwd: Option<std::path::PathBuf>,
     pub request_remove_linked_worktree: Option<usize>,
     pub request_submit_worktree_create: bool,
@@ -3424,6 +3653,9 @@ pub struct AppState {
     /// Whether this display asked the daily section for every chat it holds
     /// rather than the glance surface's five (TP-DAILY-04).
     pub daily_section_expanded: bool,
+    /// Whether the daily area shows every workspace standing in its
+    /// directory, or only the leading one (TP-DAILY-18).
+    pub daily_workspaces_expanded: bool,
     /// Whether this display shows only the tree it is working in: the active
     /// checkout and the ones running an agent, with the module chain above
     /// them. Per display for the same reason the folds are — focusing one
@@ -3538,6 +3770,13 @@ pub struct AppState {
     /// a draw that could sample would sample once per frame, which is the cost
     /// this whole seam exists to avoid.
     pub(crate) resources: crate::resource::ResourceSample,
+    /// What each metric has recently been, for a section that draws a shape
+    /// rather than a number.
+    ///
+    /// Beside the current sample rather than inside it: a `ResourceSample` is
+    /// one reading and is copied freely, and giving it a growing tail would make
+    /// every copy of a reading carry the history of every other.
+    pub(crate) resource_history: crate::resource::ResourceHistory,
     pub(crate) drag: Option<DragState>,
     pub(crate) workspace_press: Option<WorkspacePressState>,
     pub(crate) tab_press: Option<TabPressState>,
@@ -3628,6 +3867,12 @@ pub struct AppState {
     pub shell_mode: crate::config::ShellModeConfig,
     pub new_terminal_cwd: NewTerminalCwdConfig,
     pub pane_scrollback_limit_bytes: usize,
+    /// How often a resource section re-reads the machine.
+    ///
+    /// Held as a `Duration` rather than the config's milliseconds because every
+    /// reader compares it against an `Instant`, and converting at each of them
+    /// is three chances to convert differently.
+    pub resource_sample_interval: std::time::Duration,
     #[allow(dead_code)] // kept for backward compat; palette.accent is the source of truth
     pub accent: Color,
     pub sound: SoundConfig,
@@ -4438,14 +4683,22 @@ impl AppState {
             detach_exits: false,
             detach_requested: false,
             request_new_workspace: false,
+            request_revive_closed_agent: None,
+            request_merge_daily_workspaces: false,
+            request_module_git_init: None,
+            request_module_branch_workspace: None,
             request_new_tab: false,
             request_new_linked_worktree: None,
             request_open_existing_worktree: None,
             pending_move_new_group: None,
             pending_new_module: None,
+            pending_module_dir: None,
+            pending_chat_rename: None,
             pending_branch_module: None,
             chat_move_overrides: Default::default(),
+            recent_move_targets: Vec::new(),
             request_chat_move: None,
+            request_chat_rename: None,
             request_new_workspace_cwd: None,
             request_remove_linked_worktree: None,
             request_submit_worktree_create: false,
@@ -4486,6 +4739,7 @@ impl AppState {
             expanded_chat_workspaces: std::collections::HashSet::new(),
             daily_section_collapsed: false,
             daily_section_expanded: false,
+            daily_workspaces_expanded: false,
             suppressed_chat_drawers: std::collections::HashSet::new(),
             tab_branch_cache: std::collections::HashMap::new(),
             sessions_parse_cache: Default::default(),
@@ -4522,7 +4776,9 @@ impl AppState {
                 workspace_more_chats_areas: Vec::new(),
                 daily_header_area: None,
                 daily_chat_row_areas: Vec::new(),
+                module_chat_row_areas: Vec::new(),
                 daily_more_area: None,
+                daily_more_workspaces_area: None,
                 workspace_group_header_areas: Vec::new(),
                 workspace_project_header_areas: Vec::new(),
                 workspace_empty_module_areas: Vec::new(),
@@ -4557,6 +4813,7 @@ impl AppState {
             shell_presentation: crate::ui::shell::ShellPresentationState::new(26),
             shell_bar_chrome: crate::ui::shell::ShellBarChrome::default(),
             resources: crate::resource::ResourceSample::default(),
+            resource_history: crate::resource::ResourceHistory::default(),
             drag: None,
             workspace_press: None,
             tab_press: None,
@@ -4616,6 +4873,9 @@ impl AppState {
             shell_mode: crate::config::ShellModeConfig::Auto,
             new_terminal_cwd: NewTerminalCwdConfig::Follow,
             pane_scrollback_limit_bytes: crate::config::DEFAULT_SCROLLBACK_LIMIT_BYTES,
+            resource_sample_interval: std::time::Duration::from_millis(
+                crate::config::ShellConfig::resource_interval_ms_default(),
+            ),
             accent: Color::Cyan,
             sound: SoundConfig {
                 enabled: false,
@@ -4966,9 +5226,16 @@ impl AppState {
                 ContextMenuKind::Workspace { ws_idx }
                 | ContextMenuKind::GitWorkspace { ws_idx, .. }
                 | ContextMenuKind::MoveWorkspace { ws_idx, .. }
-                | ContextMenuKind::MoveTarget { ws_idx, .. }
-                | ContextMenuKind::WorkspaceChat { ws_idx, .. } => {
+                | ContextMenuKind::MoveTarget { ws_idx, .. } => {
                     assert_workspace_index(ws_idx, "context menu workspace")
+                }
+                // TP-CHAT-MOVE-08: a chat row names a drawer only when it was
+                // pressed in one; a daily row was not, and there is no index
+                // to check.
+                ContextMenuKind::WorkspaceChat { ws_idx, .. } => {
+                    if let Some(ws_idx) = ws_idx {
+                        assert_workspace_index(ws_idx, "context menu chat workspace");
+                    }
                 }
                 ContextMenuKind::ChatMoveTarget { .. } => {
                     // Carries a session id and pre-resolved ledger keys; no
@@ -4988,7 +5255,11 @@ impl AppState {
                 // TP-DAILY-11/12 / TP-MOD-31: nothing index-shaped to
                 // validate — these name a directory, a fold state, or no row
                 // at all, and a refresh cannot invalidate any of them.
-                ContextMenuKind::DailyNewChat
+                // TP-AGPANEL-45: an agent id, not an index — a refresh
+                // cannot invalidate it, it can only stop matching, and the
+                // handler answers that with nothing.
+                ContextMenuKind::ClosedAgent { .. }
+                | ContextMenuKind::DailyNewChat
                 | ContextMenuKind::SidebarBlank
                 | ContextMenuKind::DailyHeader { .. } => {}
                 ContextMenuKind::ProjectNewChat { proj_idx, .. } => {
@@ -5034,6 +5305,7 @@ impl AppState {
                     ws_idx,
                     tab_idx,
                     pane_id,
+                    ..
                 } => {
                     // TP-AGPANEL-03: the row's target is the menu's identity —
                     // it must still name a live pane, or the close would fire
@@ -5143,9 +5415,10 @@ mod tests {
             .as_ref()
             .expect("picker state");
         assert_eq!(picker.file_manager.cwd, root.0);
-        assert_eq!(picker.target.workspace_id, workspace_id);
-        assert_eq!(picker.target.pane_id, pane_id);
-        assert_eq!(picker.target.terminal_id, terminal_id);
+        let target = picker.attachment_target().expect("an attachment purpose");
+        assert_eq!(target.workspace_id, workspace_id);
+        assert_eq!(target.pane_id, pane_id);
+        assert_eq!(target.terminal_id, terminal_id);
         assert_eq!(state.mode, Mode::AttachFile);
         assert_eq!(state.view.agent_attachment_action_area, None);
     }
@@ -6126,6 +6399,7 @@ mod tests {
             key: "group:ops".into(),
             name: "Ops".into(),
             parent: None,
+            dir: None,
         };
         let plan = state
             .move_plan_for_workspace(0, Some("group:ops".into()), Some(node.clone()))
@@ -6188,7 +6462,8 @@ mod tests {
     fn the_chat_menu_offers_move_and_conditionally_back() {
         let plain = ContextMenuState {
             kind: ContextMenuKind::WorkspaceChat {
-                ws_idx: 0,
+                has_modules: false,
+                ws_idx: Some(0),
                 session_id: "s1".into(),
                 has_move: false,
                 has_live: false,
@@ -6197,11 +6472,14 @@ mod tests {
             y: 0,
             list: MenuListState::new(0),
         };
-        assert_eq!(plain.items(), &["Move to branch..."]);
+        // TP-CHAT-NAME-01 put naming at the head of this list; the
+        // move rule this test is about is unchanged.
+        assert_eq!(plain.items(), &["Rename chat...", "Move to branch..."]);
 
         let moved = ContextMenuState {
             kind: ContextMenuKind::WorkspaceChat {
-                ws_idx: 0,
+                has_modules: false,
+                ws_idx: Some(0),
                 session_id: "s1".into(),
                 has_move: true,
                 has_live: false,
@@ -6210,7 +6488,10 @@ mod tests {
             y: 0,
             list: MenuListState::new(0),
         };
-        assert_eq!(moved.items(), &["Move to branch...", "Move back"]);
+        assert_eq!(
+            moved.items(),
+            &["Rename chat...", "Move to branch...", "Move back"]
+        );
 
         let picker = ContextMenuState {
             kind: ContextMenuKind::ChatMoveTarget {

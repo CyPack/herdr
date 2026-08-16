@@ -111,6 +111,16 @@ struct RecentAgentProcessExit {
     observed_at: Instant,
 }
 
+/// The recipe a dormant terminal keeps for waking up.
+///
+/// The cwd already lives on [`TerminalState`]; the shell and size are decided
+/// at wake time like any fresh spawn. Only the scrollback needs carrying.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DormantTerminal {
+    /// Where the captured scrollback ANSI sits, when the pane had any.
+    pub history_path: Option<PathBuf>,
+}
+
 /// Pure state for a server-owned terminal.
 ///
 /// During the migration this is still one-to-one with a pane-backed PTY, but
@@ -140,6 +150,11 @@ pub struct TerminalState {
     metadata_token_sequence_sources: std::collections::HashSet<String>,
     pub state: AgentState,
     pub last_agent_state_change_seq: Option<u64>,
+    /// Set while the terminal's runtime has been released to dormancy: the
+    /// child had already exited, the scrollback went to disk, and touching the
+    /// pane rebuilds a runtime from this recipe. Server-owned fact — dormancy
+    /// is about the runtime's resources, not any client's presentation.
+    pub dormant: Option<DormantTerminal>,
     pub revision: u64,
     pub launch_argv: Option<Vec<String>>,
     pub respawn_shell_on_exit: bool,
@@ -178,6 +193,7 @@ impl TerminalState {
             respawn_shell_on_exit: false,
             recent_agent_process_exit: None,
             pending_agent_resume_plan: None,
+            dormant: None,
         }
     }
 

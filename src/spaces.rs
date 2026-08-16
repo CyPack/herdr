@@ -144,6 +144,13 @@ pub struct SpaceNode {
     pub icon: Option<String>,
     /// The node this one hangs under, or `None` for top level.
     pub parent: Option<String>,
+    /// The directory this module stands in, when it was given one.
+    ///
+    /// TP-MOD-33: `None` is the normal state — a container is a place in the
+    /// tree, not a checkout. What it unlocks is the chat filed into it: with a
+    /// directory the chat reopens there, without one the revival refuses
+    /// rather than guessing (TP-CHAT-MOVE-07).
+    pub dir: Option<std::path::PathBuf>,
 }
 
 /// One edge reader for the whole tree the sidebar walks: a node's configured
@@ -420,6 +427,7 @@ mod tests {
             name: key.into(),
             icon: None,
             parent: parent.map(str::to_string),
+            dir: None,
         };
         // "group:gone" is not in the list: this is the tree one moment after
         // the delete wrote the overlay back.
@@ -629,6 +637,7 @@ mod tests {
             name: key.to_string(),
             icon: None,
             parent: parent.map(str::to_string),
+            dir: None,
         }
     }
 
@@ -764,6 +773,7 @@ mod tests {
                     name: "impostor".to_string(),
                     icon: None,
                     parent: None,
+                    dir: None,
                 },
             ],
             &Default::default(),

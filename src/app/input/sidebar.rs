@@ -383,6 +383,65 @@ impl AppState {
     /// at whatever workspace happens to be active — that substitution is
     /// exactly how #46 opened an agent in `$HOME` instead of the checkout,
     /// with the roles reversed.
+    /// Take a press on a container's chat row where it can actually go.
+    ///
+    /// TP-CHAT-MOVE-07: a live chat is switched to, exactly as every other
+    /// chat row does. A chat that is *not* running does nothing here, and that
+    /// is deliberate rather than unfinished: a declared container has no
+    /// directory, and the ledger records where a chat was moved *to*, never
+    /// where it came from — so there is no honest cwd to resume it into.
+    /// Guessing one would resume the conversation in whatever checkout
+    /// happened to be active, which is #46 with the roles reversed. Giving a
+    /// container a directory is what unlocks the rest, and that is its own
+    /// piece of work.
+    pub(crate) fn open_module_chat(&mut self, node_key: &str, chat_idx: usize) {
+        let key = crate::persist::workspace_chats::module_ledger_key(node_key);
+        // A stale index is a race, not a bug — same contract as the daily row.
+        let Some(session_id) = self
+            .workspace_chat_rows
+            .get(&key)
+            .and_then(|rows| rows.get(chat_idx))
+            .map(|row| row.session_id.clone())
+        else {
+            return;
+        };
+        if let Some((live_ws, live_tab)) = self.find_resumed_chat_tab(&session_id) {
+            self.switch_workspace_tab(live_ws, live_tab);
+            self.mode = crate::app::Mode::Terminal;
+            return;
+        }
+        // TP-CHAT-MOVE-10: a dead chat filed into a module reopens in that
+        // module's own directory — the boundary TP-CHAT-MOVE-07 drew, opened
+        // from the side it was always meant to open from.
+        //
+        // A container without a directory still refuses. That refusal is the
+        // whole point: the ledger records which module a chat belongs to, not
+        // where it came from, so resuming without a stated directory would
+        // mean inventing one — and #46 measured exactly where invented
+        // directories land ($HOME). The directory is now a fact the person
+        // stated (TP-MOD-33), which is what makes reopening safe.
+        // TP-MOD-36: resolved through the one definition, so a chat filed into
+        // a BUCKET reopens too. Reading `space_nodes` directly answered "no
+        // directory" for every bucket, and buckets are twenty of the
+        // twenty-four modules on the machine this was reported from — the move
+        // would have succeeded and the chat would then have been unreachable.
+        let Some(dir) = self.module_directory_for_key(node_key) else {
+            return;
+        };
+        // Checked again here, not just when it was written: a directory can be
+        // removed after the fact (a worktree pruned, a disk unmounted), and
+        // opening a pane the shell cannot enter reads as the chat being broken
+        // rather than the target being gone.
+        if !dir.is_dir() {
+            tracing::warn!(dir = %dir.display(), "module directory is gone; refusing to resume");
+            return;
+        }
+        self.request_project_chat_tab = Some(crate::app::state::ProjectChatTabRequest {
+            project_path: dir,
+            session_id: Some(session_id),
+        });
+    }
+
     pub(crate) fn open_daily_chat(&mut self, chat_idx: usize) {
         let Some(project_path) = self.daily_chat_cwd.clone() else {
             return;
@@ -430,9 +489,15 @@ impl AppState {
     /// Open the daily area's header menu (TP-DAILY-12) — the one door both
     /// the "⋯" and the right-click walk, so they can never drift apart.
     pub(crate) fn open_daily_header_menu(&mut self, x: u16, y: u16) {
+        // TP-DAILY-19: two or more interchangeable workspaces is the whole
+        // condition for offering the merge. Computed here, at open time, from
+        // the core set rather than from the drawn rows — the verb has to be
+        // offered on the same grounds whether the section is folded or not.
+        let has_mergeable = self.mergeable_daily_workspaces().len() >= 2;
         self.context_menu = Some(crate::app::state::ContextMenuState {
             kind: crate::app::state::ContextMenuKind::DailyHeader {
                 collapsed: self.daily_section_collapsed,
+                has_mergeable,
             },
             x,
             y,
@@ -856,8 +921,11 @@ impl AppState {
         if self.sidebar_collapsed {
             return None;
         }
-        let (_, ghost_rows) = crate::ui::closed_agent_row_slots(self, self.agent_panel_rect())?;
-        let hit = ghost_rows.iter().position(|y| *y == row)?;
+        // TP-AGPANEL-43: resolved from the same placement walk the painter
+        // uses, and across the ghost's whole card rather than only its first
+        // row — a headstone is a card now, and a press on its lower half must
+        // not fall through.
+        let hit = crate::ui::closed_agent_index_at(self, self.agent_panel_rect(), row)?;
         self.closed_agents
             .entries()
             .nth(hit)
@@ -4052,6 +4120,126 @@ mod tests {
         );
         assert_eq!(state.workspaces[0].active_tab_index(), second);
         assert_eq!(state.mode, crate::app::Mode::Terminal);
+    }
+
+    /// A module holding one filed chat, with or without a directory.
+    fn state_with_module_chat(dir: Option<std::path::PathBuf>) -> crate::app::state::AppState {
+        let mut state = crate::app::state::AppState::test_new();
+        state.space_nodes = vec![crate::spaces::SpaceNode {
+            key: "docs".into(),
+            name: "Docs".into(),
+            icon: None,
+            parent: None,
+            dir,
+        }];
+        state.workspace_chat_rows.insert(
+            crate::persist::workspace_chats::module_ledger_key("docs"),
+            vec![crate::app::state::WorkspaceChatRow {
+                session_id: "filed-session".into(),
+                agent: "claude".into(),
+                title: Some("a filed conversation".into()),
+                last_seen_ms: 1,
+                last_modified: None,
+            }],
+        );
+        state
+    }
+
+    /// The same fixture, but the module is a BUCKET rather than a node.
+    ///
+    /// M1.11: buckets are twenty of the twenty-four modules on the machine this
+    /// was reported from, so this is the shape the feature is actually used in.
+    fn state_with_bucket_chat(repo_root: std::path::PathBuf) -> crate::app::state::AppState {
+        let mut state = crate::app::state::AppState::test_new();
+        state.space_nodes.clear();
+        state.space_split_rules = vec![crate::spaces::SpaceSplitRule {
+            repo_root,
+            patterns: vec!["*".to_string()],
+            key: "bucket".to_string(),
+            label: "Bucket".to_string(),
+            icon: None,
+            parent: None,
+        }];
+        state.workspace_chat_rows.insert(
+            crate::persist::workspace_chats::module_ledger_key("bucket"),
+            vec![crate::app::state::WorkspaceChatRow {
+                session_id: "filed-session".into(),
+                agent: "claude".into(),
+                title: Some("a filed conversation".into()),
+                last_seen_ms: 1,
+                last_modified: None,
+            }],
+        );
+        state
+    }
+
+    // M1.11 / TP-MOD-36: a chat filed into a BUCKET reopens too, in the
+    // repository its rule names. Resolving through `space_nodes` alone answered
+    // "no directory" for every bucket, so the move would have succeeded and the
+    // chat would then have been unreachable — moved into a place that could
+    // never open it.
+    #[test]
+    fn a_filed_chat_in_a_bucket_resumes_in_its_repository() {
+        let dir = std::env::temp_dir();
+        let mut state = state_with_bucket_chat(dir.clone());
+
+        state.open_module_chat("bucket", 0);
+
+        let request = state
+            .request_project_chat_tab
+            .as_ref()
+            .expect("the chat is queued to reopen");
+        assert_eq!(request.project_path, dir);
+        assert_eq!(request.session_id.as_deref(), Some("filed-session"));
+    }
+
+    // TP-CHAT-MOVE-10 (R1): a dead chat filed into a module reopens in that
+    // module's directory. This is the boundary TP-CHAT-MOVE-07 drew, opened
+    // from the side it was meant to open from — the directory is a fact the
+    // person stated (TP-MOD-33), not one the machine guessed.
+    #[test]
+    fn a_filed_chat_resumes_in_the_modules_directory() {
+        let dir = std::env::temp_dir();
+        let mut state = state_with_module_chat(Some(dir.clone()));
+
+        state.open_module_chat("docs", 0);
+
+        let request = state
+            .request_project_chat_tab
+            .as_ref()
+            .expect("the chat is queued to reopen");
+        assert_eq!(request.project_path, dir);
+        assert_eq!(request.session_id.as_deref(), Some("filed-session"));
+    }
+
+    // TP-CHAT-MOVE-10 (R2): a module with no directory still refuses. The
+    // ledger records which module a chat belongs to, never where it came
+    // from, so resuming without a stated directory would mean inventing one —
+    // and #46 measured where invented directories land ($HOME).
+    #[test]
+    fn a_filed_chat_in_a_module_without_a_directory_stays_put() {
+        let mut state = state_with_module_chat(None);
+
+        state.open_module_chat("docs", 0);
+
+        assert_eq!(
+            state.request_project_chat_tab, None,
+            "refusing beats guessing a working directory"
+        );
+    }
+
+    // TP-CHAT-MOVE-10 (R3): the directory is checked again at open time. It
+    // was validated when it was written, but a worktree can be pruned and a
+    // disk unmounted afterwards — and a pane the shell cannot enter reads as
+    // the chat being broken rather than the target being gone.
+    #[test]
+    fn a_filed_chat_refuses_a_directory_that_has_since_gone() {
+        let gone = std::env::temp_dir().join("herdr-module-dir-that-never-existed");
+        let mut state = state_with_module_chat(Some(gone));
+
+        state.open_module_chat("docs", 0);
+
+        assert_eq!(state.request_project_chat_tab, None);
     }
 
     // TP-DAILY-07: a stale index is a race — the list can refresh between the

@@ -814,6 +814,18 @@ impl AppState {
                             return None;
                         }
                     }
+                    // TP-DAILY-18: its own hit test, beside the chat switch's.
+                    // Two switches sharing one rect would each fire the other's
+                    // verb — the confusion TP-TREE-01 split rows to prevent.
+                    if let Some(rect) = self.view.daily_more_workspaces_area {
+                        if mouse.row == rect.y
+                            && mouse.column >= rect.x
+                            && mouse.column < rect.x + rect.width
+                        {
+                            self.daily_workspaces_expanded = !self.daily_workspaces_expanded;
+                            return None;
+                        }
+                    }
                     if let Some(hit) = self
                         .view
                         .daily_chat_row_areas
@@ -826,6 +838,23 @@ impl AppState {
                         .cloned()
                     {
                         self.open_daily_chat(hit.chat_idx);
+                        return None;
+                    }
+                    // TP-CHAT-MOVE-07: a container's chat row is pressable
+                    // like any other, matched from its own vector because it
+                    // carries a container key rather than a workspace index.
+                    if let Some(hit) = self
+                        .view
+                        .module_chat_row_areas
+                        .iter()
+                        .find(|row| {
+                            mouse.row == row.rect.y
+                                && mouse.column >= row.rect.x
+                                && mouse.column < row.rect.x + row.rect.width
+                        })
+                        .cloned()
+                    {
+                        self.open_module_chat(&hit.node_key, hit.chat_idx);
                         return None;
                     }
                     // TP-DRAW-11: the "older chats" row opens the rest of
@@ -931,11 +960,18 @@ impl AppState {
                         let dots = crate::ui::header_menu_cell(head.rect);
                         if self.mouse_capture && dots.width > 0 && mouse.column == dots.x {
                             let collapsed = self.node_folded(&head.project_key);
+                            // TP-MOD-38: measured when the menu opens, like
+                            // `deletable` beside it.
+                            let needs_git_init = matches!(
+                                crate::ui::module_branch_source(self, &head.project_key),
+                                crate::ui::ModuleBranchSource::UninitializedDirectory(_)
+                            );
                             self.context_menu = Some(ContextMenuState {
                                 kind: ContextMenuKind::NodeHeader {
                                     deletable: self.managed_node_keys.contains(&head.project_key),
                                     node_key: head.project_key,
                                     collapsed,
+                                    needs_git_init,
                                 },
                                 x: mouse.column,
                                 y: mouse.row,
@@ -1471,12 +1507,35 @@ impl AppState {
                 // roads below — and matched through their own resolver, which
                 // is bounded to the panel body and cannot claim a row that
                 // belongs to the list above it.
+                // TP-AGPANEL-45: a headstone answers a right-click with its
+                // own menu. Matched before the living rows below for the same
+                // reason the living rows are matched before the tree: one
+                // vector may own a row, and the graveyard's resolver is the
+                // only one bounded to the ghost cards.
+                if let Some(agent_id) = self.closed_agent_target_at(mouse.row) {
+                    self.context_menu = Some(ContextMenuState {
+                        kind: ContextMenuKind::ClosedAgent { agent_id },
+                        x: mouse.column,
+                        y: mouse.row,
+                        list: MenuListState::new(0),
+                    });
+                    self.enter_overlay_mode(Mode::ContextMenu);
+                    return None;
+                }
                 if let Some((ws_idx, tab_idx, pane_id)) = self.agent_detail_target_at(mouse.row) {
+                    // TP-AGPANEL-28: the chat identity is read HERE, while the
+                    // row under the cursor is still the row the menu is for.
+                    let session_id = self
+                        .workspaces
+                        .get(ws_idx)
+                        .and_then(|ws| ws.tabs.get(tab_idx))
+                        .and_then(|tab| tab.resumed_session_id.clone());
                     self.context_menu = Some(ContextMenuState {
                         kind: ContextMenuKind::AgentEntry {
                             ws_idx,
                             tab_idx,
                             pane_id,
+                            session_id,
                         },
                         x: mouse.column,
                         y: mouse.row,
@@ -1509,6 +1568,49 @@ impl AppState {
                         return None;
                     }
                 }
+                // TP-CHAT-MOVE-08: a daily row owns a menu too, matched from
+                // its own vector and before the drawer rows — the same
+                // one-vector-owns-the-row rule the left press already keeps.
+                // Without this the daily section is the one place a chat can
+                // be seen and not filed, which is backwards: those are exactly
+                // the chats that belong to no checkout yet.
+                if let Some(hit) = self
+                    .view
+                    .daily_chat_row_areas
+                    .iter()
+                    .find(|row| {
+                        mouse.row == row.rect.y
+                            && mouse.column >= row.rect.x
+                            && mouse.column < row.rect.x + row.rect.width
+                    })
+                    .cloned()
+                {
+                    if let Some(session_id) = crate::ui::daily_chat_rows(self)
+                        .get(hit.chat_idx)
+                        .map(|row| row.session_id.clone())
+                    {
+                        let has_move = self.chat_move_overrides.contains_key(&session_id);
+                        let has_live = self.find_resumed_chat_tab(&session_id).is_some();
+                        // TP-CHAT-MOVE-11: resolved when the menu opens, like
+                        // its siblings, so a config reload underneath an open
+                        // menu cannot turn the offer into a no-op.
+                        let has_modules = !self.module_move_target_entries().is_empty();
+                        self.context_menu = Some(ContextMenuState {
+                            kind: ContextMenuKind::WorkspaceChat {
+                                ws_idx: None,
+                                session_id,
+                                has_move,
+                                has_live,
+                                has_modules,
+                            },
+                            x: mouse.column,
+                            y: mouse.row,
+                            list: MenuListState::new(0),
+                        });
+                        self.enter_overlay_mode(Mode::ContextMenu);
+                    }
+                    return None;
+                }
                 // TP-CHAT-MOVE-04: a chat row owns its own menu — checked
                 // before the workspace cards for the same reason the click
                 // road is: only one vector may own the row.
@@ -1531,12 +1633,15 @@ impl AppState {
                         // TP-AGPANEL-05: the close verb is offered only when
                         // this chat still has a tab running behind it.
                         let has_live = self.find_resumed_chat_tab(&session_id).is_some();
+                        // TP-CHAT-MOVE-11
+                        let has_modules = !self.module_move_target_entries().is_empty();
                         self.context_menu = Some(ContextMenuState {
                             kind: ContextMenuKind::WorkspaceChat {
-                                ws_idx: hit.ws_idx,
+                                ws_idx: Some(hit.ws_idx),
                                 session_id,
                                 has_move,
                                 has_live,
+                                has_modules,
                             },
                             x: mouse.column,
                             y: mouse.row,
@@ -1599,11 +1704,17 @@ impl AppState {
                     .cloned()
                 {
                     let collapsed = self.node_folded(&head.project_key);
+                    // TP-MOD-38
+                    let needs_git_init = matches!(
+                        crate::ui::module_branch_source(self, &head.project_key),
+                        crate::ui::ModuleBranchSource::UninitializedDirectory(_)
+                    );
                     self.context_menu = Some(ContextMenuState {
                         kind: ContextMenuKind::NodeHeader {
                             deletable: self.managed_node_keys.contains(&head.project_key),
                             node_key: head.project_key,
                             collapsed,
+                            needs_git_init,
                         },
                         x: mouse.column,
                         y: mouse.row,
@@ -1803,6 +1914,10 @@ impl AppState {
             Some(crate::ui::MobileSwitcherTarget::DailyChat { chat_idx }) => {
                 self.close_mobile_drawer();
                 self.open_daily_chat(chat_idx);
+            }
+            Some(crate::ui::MobileSwitcherTarget::ModuleChat { node_key, chat_idx }) => {
+                self.close_mobile_drawer();
+                self.open_module_chat(&node_key, chat_idx);
             }
             Some(crate::ui::MobileSwitcherTarget::ToggleBranchChats { ws_idx }) => {
                 self.toggle_mobile_branch_chats(ws_idx);
@@ -3403,6 +3518,66 @@ mod tests {
     // nothing, because there is no agent there to act on. Before this road
     // existed the press fell through to the workspace list's resolver, which
     // reads by row and answers for a different section entirely.
+    // TP-CHAT-MOVE-08 (P1+P2): a daily row owns a menu, and that menu carries
+    // THAT row's chat. The daily section was the one place a chat could be
+    // seen and not filed — backwards, because those are exactly the chats that
+    // belong to no checkout yet and most need somewhere to go.
+    #[test]
+    fn right_click_on_a_daily_row_opens_a_menu_carrying_that_chat() {
+        let mut app = app_for_mouse_test();
+        let workspace = crate::workspace::Workspace::test_new("one");
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mobile_width_threshold = 0;
+
+        let daily = std::env::temp_dir().join("herdr-daily-menu-fixture");
+        app.state.daily_chat_cwd = Some(daily.clone());
+        let key = crate::persist::workspace_chats::ledger_key(&daily);
+        app.state.workspace_chat_rows.insert(
+            key,
+            vec![
+                crate::app::state::WorkspaceChatRow {
+                    session_id: "daily-a".to_string(),
+                    agent: "claude".to_string(),
+                    title: Some("first".to_string()),
+                    last_seen_ms: 2_000,
+                    last_modified: None,
+                },
+                crate::app::state::WorkspaceChatRow {
+                    session_id: "daily-b".to_string(),
+                    agent: "claude".to_string(),
+                    title: Some("second".to_string()),
+                    last_seen_ms: 1_000,
+                    last_modified: None,
+                },
+            ],
+        );
+        // The row the press will land on — laid out the way render lays it out.
+        app.state.view.daily_chat_row_areas = vec![crate::app::state::DailyChatRowArea {
+            rect: ratatui::layout::Rect::new(0, 7, 20, 1),
+            chat_idx: 1,
+        }];
+
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 3, 7));
+
+        match app.state.context_menu.as_ref().map(|menu| &menu.kind) {
+            Some(crate::app::state::ContextMenuKind::WorkspaceChat {
+                ws_idx, session_id, ..
+            }) => {
+                assert_eq!(
+                    session_id, "daily-b",
+                    "the menu carries the row that was pressed, not the first in the list"
+                );
+                assert_eq!(
+                    *ws_idx, None,
+                    "a daily chat belongs to no drawer, so it names none"
+                );
+            }
+            other => panic!("a daily row opens its own menu; got {other:?}"),
+        }
+    }
+
     #[test]
     fn right_click_on_an_agent_row_opens_its_menu_and_the_panel_gap_stays_inert() {
         let mut app = app_for_mouse_test();
@@ -3439,7 +3614,7 @@ mod tests {
         assert!(
             matches!(
                 app.state.context_menu.as_ref().map(|menu| &menu.kind),
-                Some(crate::app::state::ContextMenuKind::AgentEntry { ws_idx: 0, tab_idx: 0, pane_id })
+                Some(crate::app::state::ContextMenuKind::AgentEntry { ws_idx: 0, tab_idx: 0, pane_id, .. })
                     if *pane_id == root
             ),
             "the agent row owns a menu carrying its own pane; got {:?}",
@@ -3510,7 +3685,10 @@ mod tests {
         assert!(
             matches!(
                 app.state.context_menu.as_ref().map(|menu| &menu.kind),
-                Some(crate::app::state::ContextMenuKind::DailyHeader { collapsed: false })
+                Some(crate::app::state::ContextMenuKind::DailyHeader {
+                    collapsed: false,
+                    ..
+                })
             ),
             "the right-click opens the area menu; got {:?}",
             app.state.context_menu.as_ref().map(|menu| &menu.kind)

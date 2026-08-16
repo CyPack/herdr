@@ -1481,6 +1481,9 @@ impl App {
         let Some((ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
             return pane_not_found(id, &params.pane_id);
         };
+        // Input is intent: a dormant pane addressed by the API wakes first,
+        // so the bytes land in a real terminal instead of a not-found error.
+        self.wake_dormant_pane(pane_id);
         let Some(runtime) = self.lookup_runtime_sender(ws_idx, pane_id) else {
             return pane_not_found(id, &params.pane_id);
         };
@@ -1499,6 +1502,7 @@ impl App {
         let Some((ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
             return pane_not_found(id, &params.pane_id);
         };
+        self.wake_dormant_pane(pane_id);
         let Some(runtime) = self.lookup_runtime_sender(ws_idx, pane_id) else {
             return pane_not_found(id, &params.pane_id);
         };
@@ -1546,6 +1550,7 @@ impl App {
         // TP-AGPANEL-12: the ghost is born BEFORE removal — this is the last
         // moment the terminal, the tab and the resume key are all still alive.
         self.state.note_agent_closed(ws_idx, pane_id);
+        self.save_closed_agents();
         let workspace_snapshot = self.workspace_info(ws_idx);
         let terminal_id = self.state.terminal_id_for_pane(ws_idx, pane_id);
         let should_close_workspace = {

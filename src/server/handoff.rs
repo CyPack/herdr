@@ -22,8 +22,12 @@ const HANDOFF_VERSION: u32 = 1;
 const READY_TIMEOUT: Duration = Duration::from_secs(30);
 #[cfg(unix)]
 const OWNED_ACK_TIMEOUT: Duration = Duration::from_millis(500);
+// One SCM_RIGHTS message carries at most 253 fds (kernel SCM_MAX_FD, measured
+// on Linux 7.1). 128 clears a measured 59-pane session with 2x headroom while
+// staying under half the kernel ceiling, where low net.core.optmem_max settings
+// can start refusing the control buffer. TP-HANDOFF-FD-01
 #[cfg(unix)]
-pub(crate) const MAX_FDS_PER_HANDOFF: usize = 64;
+pub(crate) const MAX_FDS_PER_HANDOFF: usize = 128;
 #[cfg(unix)]
 pub(crate) const MAX_REPLAY_BYTES_PER_PANE: usize = 8 * 1024;
 #[cfg(unix)]
@@ -74,6 +78,114 @@ pub(crate) struct ReceivedHandoff {
 #[cfg(unix)]
 pub(crate) fn handoff_socket_path() -> PathBuf {
     crate::session::data_dir().join(format!("herdr-handoff-{}.sock", std::process::id()))
+}
+
+#[cfg(unix)]
+const FREIGHT_VERSION: u32 = 1;
+
+/// Full pane histories, carried on disk beside the handoff socket.
+///
+/// The manifest line is read one byte per syscall (measured at 0.77 MiB/s —
+/// the fd passing shares the stream, so it cannot be buffered), and its inline
+/// replay is cut to [`MAX_REPLAY_BYTES_PER_PANE`] to keep that read short. A
+/// session's real scrollback does not fit through that pipe, so it travels in
+/// this file instead: the exporter writes it, the importer consumes it, and an
+/// importer that predates it still gets the inline replay unchanged.
+#[cfg(unix)]
+#[derive(Serialize, Deserialize)]
+pub(crate) struct HandoffHistoryFreight {
+    pub version: u32,
+    /// Keyed by the same `pane_id` the manifest's runtime states carry.
+    pub panes: std::collections::HashMap<u32, String>,
+}
+
+/// Where the freight for a given handoff socket lives.
+///
+/// Derived from the socket path so the importer needs no new argument and the
+/// manifest needs no new field — both sides already hold the socket path.
+#[cfg(unix)]
+pub(crate) fn handoff_history_freight_path(socket_path: &Path) -> PathBuf {
+    socket_path.with_extension("history.json")
+}
+
+/// Write the freight beside the socket. Failure is not a handoff failure —
+/// the inline replay still flows — so the caller only gets a warning signal.
+#[cfg(unix)]
+pub(crate) fn write_history_freight(
+    socket_path: &Path,
+    panes: std::collections::HashMap<u32, String>,
+) -> io::Result<()> {
+    let path = handoff_history_freight_path(socket_path);
+    let tmp = path.with_extension("history.json.tmp");
+    let file = std::fs::File::create(&tmp)?;
+    let mut writer = std::io::BufWriter::new(file);
+    let freight = HandoffHistoryFreight {
+        version: FREIGHT_VERSION,
+        panes,
+    };
+    // to_writer streams the escaping: peak memory stays at the captured
+    // histories themselves, which the exporting server already held.
+    serde_json::to_writer(&mut writer, &freight).map_err(io::Error::other)?;
+    writer.flush()?;
+    std::fs::rename(&tmp, &path)?;
+    Ok(())
+}
+
+/// Read and delete the freight. One shot: whether the parse succeeds or not,
+/// the file is gone afterwards — freight is transfer luggage, not persistence.
+#[cfg(unix)]
+pub(crate) fn take_history_freight(
+    socket_path: &Path,
+) -> Option<std::collections::HashMap<u32, String>> {
+    let path = handoff_history_freight_path(socket_path);
+    let content = std::fs::read_to_string(&path).ok()?;
+    let _ = std::fs::remove_file(&path);
+    match serde_json::from_str::<HandoffHistoryFreight>(&content) {
+        Ok(freight) if freight.version <= FREIGHT_VERSION => Some(freight.panes),
+        Ok(freight) => {
+            warn!(
+                version = freight.version,
+                "handoff history freight is newer than this server; using inline replay"
+            );
+            None
+        }
+        Err(err) => {
+            warn!(err = %err, "handoff history freight did not parse; using inline replay");
+            None
+        }
+    }
+}
+
+/// Remove the freight for a handoff that will not be imported.
+#[cfg(unix)]
+pub(crate) fn discard_history_freight(socket_path: &Path) {
+    let _ = std::fs::remove_file(handoff_history_freight_path(socket_path));
+}
+
+/// Sweep freight files whose exporter is gone.
+///
+/// Normal lifecycles delete the freight (importer consumes it; a failed
+/// handoff discards it). Only a crash of both sides leaves one behind, and
+/// its filename carries the dead exporter's pid — the next export cleans up.
+#[cfg(unix)]
+pub(crate) fn sweep_dead_history_freight(data_dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(data_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let Some(pid) = name
+            .strip_prefix("herdr-handoff-")
+            .and_then(|rest| rest.strip_suffix(".history.json"))
+            .and_then(|pid| pid.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        if !crate::platform::process_exists(pid) {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -537,5 +649,141 @@ mod tests {
         // those in waiting language would describe the wrong failure.
         assert_eq!(passed.kind(), io::ErrorKind::PermissionDenied);
         assert_eq!(passed.to_string(), "handoff import token mismatch");
+    }
+
+    fn freight_test_dir(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "herdr-freight-{label}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create freight test dir");
+        dir
+    }
+
+    #[test]
+    fn handoff_history_freight_path_derives_from_the_socket_path() {
+        // TP-HANDOFF-HIST-01 plumbing: the importer holds only the socket path,
+        // so the freight has to be findable from it alone — no new manifest
+        // field, no new argument, no protocol bump.
+        let socket = PathBuf::from("/some/data/dir/herdr-handoff-4242.sock");
+
+        let freight = handoff_history_freight_path(&socket);
+
+        assert_eq!(
+            freight,
+            PathBuf::from("/some/data/dir/herdr-handoff-4242.history.json")
+        );
+    }
+
+    #[test]
+    fn handoff_history_freight_roundtrips_full_pane_history() {
+        let dir = freight_test_dir("roundtrip");
+        let socket = dir.join("herdr-handoff-4242.sock");
+        let mut panes = std::collections::HashMap::new();
+        panes.insert(7u32, "x".repeat(64 * 1024));
+        panes.insert(
+            9u32,
+            "short\r\nwith \u{1b}[31mansi\u{1b}[0m\r\n".to_string(),
+        );
+
+        write_history_freight(&socket, panes.clone()).expect("write freight");
+        let taken = take_history_freight(&socket).expect("freight present");
+
+        assert_eq!(taken, panes);
+        // Consume semantics: the freight is transfer luggage, and luggage left
+        // at the platform is a 64 KiB-per-pane disk leak on every update.
+        assert!(
+            !handoff_history_freight_path(&socket).exists(),
+            "taking the freight has to delete the file"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_missing_or_corrupt_freight_file_degrades_to_inline_replay() {
+        let dir = freight_test_dir("degrade");
+        let socket = dir.join("herdr-handoff-4242.sock");
+
+        // Missing: an old exporter never wrote one.
+        assert!(take_history_freight(&socket).is_none());
+
+        // Corrupt: freight is an enhancement, never a reason to fail the
+        // import — and the broken file must not linger for the next attempt.
+        std::fs::write(handoff_history_freight_path(&socket), b"{not json").unwrap();
+        assert!(take_history_freight(&socket).is_none());
+        assert!(
+            !handoff_history_freight_path(&socket).exists(),
+            "a corrupt freight file has to be deleted, not retried forever"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stale_freight_files_from_dead_exporters_are_swept() {
+        let dir = freight_test_dir("sweep");
+        // A pid nothing on this machine holds: pid_max on Linux caps below
+        // 2^22 by default, and even a raised pid_max stays under u32::MAX.
+        let dead = dir.join(format!("herdr-handoff-{}.history.json", u32::MAX - 1));
+        let alive = dir.join(format!("herdr-handoff-{}.history.json", std::process::id()));
+        let unrelated = dir.join("herdr-handoff-1234.sock");
+        std::fs::write(&dead, b"{}").unwrap();
+        std::fs::write(&alive, b"{}").unwrap();
+        std::fs::write(&unrelated, b"").unwrap();
+
+        sweep_dead_history_freight(&dir);
+
+        assert!(!dead.exists(), "a dead exporter's freight has to be swept");
+        assert!(
+            alive.exists(),
+            "a live exporter's freight is an in-flight handoff, not garbage"
+        );
+        assert!(unrelated.exists(), "the sweep only touches freight files");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_sixty_five_pane_session_fits_through_one_handoff() {
+        // TP-HANDOFF-FD-01: the fd budget stays ahead of real sessions. A live
+        // session was measured at 59 panes while the cap sat at 64 — six more
+        // panes and `herdr update --handoff` would refuse the whole session.
+        // The kernel takes 253 fds per SCM_RIGHTS message (measured on this
+        // machine; SCM_MAX_FD in the kernel source), so the cap is policy, not
+        // physics — it just has to clear sessions that actually exist.
+        let panes = 65usize;
+        assert!(
+            panes <= MAX_FDS_PER_HANDOFF,
+            "a measured 59-pane session leaves the 64-fd cap six panes of headroom; \
+             the cap has to clear at least {panes} (got {MAX_FDS_PER_HANDOFF})"
+        );
+
+        // And the cap has to be real: that many fds must survive the same
+        // sendmsg/recvmsg pair the live handoff uses, not just the comparison.
+        let devnull = std::fs::File::open("/dev/null").expect("open /dev/null");
+        let fds: Vec<RawFd> = (0..panes)
+            .map(|_| {
+                let fd = unsafe { libc::dup(devnull.as_raw_fd()) };
+                assert!(fd >= 0, "dup(/dev/null) failed");
+                fd
+            })
+            .collect();
+        let (sender, receiver) = UnixStream::pair().expect("socketpair");
+
+        send_fds(&sender, &fds).expect("send_fds refused a payload under the cap");
+        let received = recv_fds(&receiver, panes).expect("recv_fds lost part of the payload");
+
+        assert_eq!(received.len(), panes);
+        for fd in received.iter().chain(fds.iter()) {
+            let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+            assert_eq!(
+                unsafe { libc::fstat(*fd, &mut stat) },
+                0,
+                "a handed-off fd arrived unusable"
+            );
+        }
+        for fd in received.into_iter().chain(fds) {
+            let _ = unsafe { libc::close(fd) };
+        }
     }
 }

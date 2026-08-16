@@ -1906,3 +1906,236 @@ fn live_handoff_import_failure_rolls_back_old_server_at(failure_point: &str) {
 fn live_handoff_after_restored_failure_rolls_back_old_server() {
     live_handoff_import_failure_rolls_back_old_server_at("after_restored");
 }
+
+/// The pid of the process answering on the API socket, via SO_PEERCRED.
+///
+/// A rolled-back handoff leaves the OLD server on the socket with its full
+/// history, which would satisfy any content assertion vacuously. The peer
+/// credential is the one observable that cannot lie about which process is
+/// answering.
+fn api_server_pid(socket_path: &Path) -> Option<u32> {
+    use std::os::fd::AsRawFd;
+    let stream = UnixStream::connect(socket_path).ok()?;
+    let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
+    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    let rc = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            std::ptr::addr_of_mut!(cred).cast(),
+            &mut len,
+        )
+    };
+    (rc == 0).then_some(cred.pid as u32)
+}
+
+fn wait_for_new_server_on_socket(socket_path: &Path, old_pid: u32, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        match api_server_pid(socket_path) {
+            Some(pid) if pid != old_pid => return,
+            _ => thread::sleep(Duration::from_millis(50)),
+        }
+    }
+    panic!(
+        "the api socket is still answered by the old server pid {old_pid}; a \
+         rolled-back handoff would let this test pass vacuously, so it fails \
+         loudly instead"
+    );
+}
+
+fn read_recent_text(socket_path: &Path, pane_id: &str, lines: u32) -> String {
+    let response = request(
+        socket_path,
+        serde_json::json!({
+            "id": "test:pane:read-recent",
+            "method": "pane.read",
+            "params": {
+                "pane_id": pane_id,
+                "source": "recent",
+                "lines": lines,
+                "format": "text",
+                "strip_ansi": true
+            }
+        }),
+    );
+    response["result"]["read"]["text"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn emit_numbered_markers(api_socket: &Path, pane_id: &str) {
+    // ~16 KiB of numbered lines: twice the inline replay budget, so the early
+    // markers only survive a handoff if the freight file carried them.
+    //
+    // The sentinel is spelled DONE-''MARKER so the shell's echo of the command
+    // line itself cannot satisfy the wait — only the loop actually finishing
+    // prints the joined form. Without that, the wait returns while the loop is
+    // still running and every later read races it.
+    let command = "i=0; while [ $i -lt 600 ]; do echo marker-$(printf %04d $i)-padpadpadpad; i=$((i+1)); done; echo DONE-''MARKER";
+    assert_ok(request(
+        api_socket,
+        serde_json::json!({
+            "id": "test:pane:emit-markers",
+            "method": "pane.send_input",
+            "params": {"pane_id": pane_id, "text": command, "keys": ["Enter"]}
+        }),
+    ));
+    wait_for_output(api_socket, pane_id, "DONE-MARKER");
+}
+
+#[test]
+fn live_handoff_preserves_scrollback_beyond_the_inline_replay_budget() {
+    // TP-HANDOFF-HIST-03: history longer than the 8 KiB inline manifest replay
+    // survives a live handoff through the freight file. Measured on a live
+    // session: panes quiet since the morning's `herdr update --handoff` were
+    // left with a single line of scrollback.
+    let _lock = test_lock();
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    let api_socket = runtime_dir.join("herdr.sock");
+
+    let spawned = spawn_server(&config_home, &runtime_dir, &api_socket);
+    wait_for_socket(&api_socket, Duration::from_secs(10));
+    register_runtime_dir(&runtime_dir);
+
+    let created = request(
+        &api_socket,
+        serde_json::json!({
+            "id": "test:workspace:create",
+            "method": "workspace.create",
+            "params": {"cwd": "/tmp", "focus": true}
+        }),
+    );
+    let pane_id = created["result"]["root_pane"]["pane_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    emit_numbered_markers(&api_socket, &pane_id);
+    let before = read_recent_text(&api_socket, &pane_id, 5000);
+    assert!(
+        before.contains("marker-0000"),
+        "the pane has to hold the full history before the handoff proves anything"
+    );
+
+    let old_server_pid = api_server_pid(&api_socket).expect("old server answers pre-handoff");
+    assert_ok(request(
+        &api_socket,
+        serde_json::json!({"id":"test:handoff","method":"server.live_handoff","params":{}}),
+    ));
+    wait_for_new_server_on_socket(&api_socket, old_server_pid, Duration::from_secs(10));
+    drop(spawned);
+    wait_for_api(&api_socket, Duration::from_secs(10));
+
+    let after = read_recent_text(&api_socket, &pane_id, 5000);
+    assert!(
+        after.contains("marker-0000") && after.contains("marker-0599"),
+        "history beyond the inline replay budget has to survive the handoff; \
+         the freight file is the only carrier wide enough"
+    );
+
+    let _ = request(
+        &api_socket,
+        serde_json::json!({"id":"test:stop","method":"server.stop","params":{}}),
+    );
+    cleanup_test_base(&base);
+}
+
+#[test]
+fn live_handoff_preserves_agent_pane_scrollback() {
+    // TP-HANDOFF-HIST-01: a pane with a persisted agent session keeps its
+    // scrollback across a live handoff. The export used to suppress history
+    // for agent panes entirely — a rule copied from cold restore, where the
+    // re-launched agent repaints its own transcript. A handed-off agent is the
+    // same process on the same PTY: it repaints nothing, and the suppression
+    // erased the user's whole conversation view. Measured live: two agent
+    // panes reduced to one line of scrollback by a morning update.
+    use std::os::unix::fs::PermissionsExt;
+
+    let _lock = test_lock();
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    let api_socket = runtime_dir.join("herdr.sock");
+    let session_path = base.join("agent-session.jsonl");
+    let started_marker = base.join("agent-started");
+    let fake_pi = base.join("pi");
+    fs::create_dir_all(&base).unwrap();
+    fs::write(
+        &fake_pi,
+        format!(
+            "#!/bin/sh\nexport HERDR_AGENT=pi\necho started > {}\nexec /bin/sleep 30\n",
+            started_marker.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&fake_pi, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let spawned = spawn_server(&config_home, &runtime_dir, &api_socket);
+    wait_for_socket(&api_socket, Duration::from_secs(10));
+    register_runtime_dir(&runtime_dir);
+
+    let created = request(
+        &api_socket,
+        serde_json::json!({
+            "id": "test:workspace:create",
+            "method": "workspace.create",
+            "params": {"cwd": "/tmp", "focus": true}
+        }),
+    );
+    let pane_id = created["result"]["root_pane"]["pane_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    emit_numbered_markers(&api_socket, &pane_id);
+    assert_ok(request(
+        &api_socket,
+        serde_json::json!({
+            "id": "test:pane:start-agent",
+            "method": "pane.send_input",
+            "params": {"pane_id": pane_id, "text": fake_pi.display().to_string(), "keys": ["Enter"]}
+        }),
+    ));
+    support::wait_for_file(&started_marker, Duration::from_secs(5));
+    assert_ok(request(
+        &api_socket,
+        serde_json::json!({
+            "id": "test:agent:session",
+            "method": "pane.report_agent_session",
+            "params": {
+                "pane_id": pane_id,
+                "source": "herdr:pi",
+                "agent": "pi",
+                "seq": 1,
+                "agent_session_path": session_path,
+                "session_start_source": "startup"
+            }
+        }),
+    ));
+
+    let old_server_pid = api_server_pid(&api_socket).expect("old server answers pre-handoff");
+    assert_ok(request(
+        &api_socket,
+        serde_json::json!({"id":"test:handoff","method":"server.live_handoff","params":{}}),
+    ));
+    wait_for_new_server_on_socket(&api_socket, old_server_pid, Duration::from_secs(10));
+    drop(spawned);
+    wait_for_api(&api_socket, Duration::from_secs(10));
+
+    let after = read_recent_text(&api_socket, &pane_id, 5000);
+    assert!(
+        after.contains("marker-0000") && after.contains("marker-0599"),
+        "an agent pane's scrollback has to survive the handoff; suppressing it \
+         erases the conversation the user was in the middle of"
+    );
+
+    let _ = request(
+        &api_socket,
+        serde_json::json!({"id":"test:stop","method":"server.stop","params":{}}),
+    );
+    cleanup_test_base(&base);
+}

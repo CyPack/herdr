@@ -406,6 +406,15 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # kitty_graphics = false
 # Save recent pane screen history across full server restarts.
 pane_history = false
+# Put retired panes to sleep: a pane whose process has exited and that no
+# display is watching gets its scrollback written to disk and its runtime
+# released after a day of quiet (sooner under memory pressure). Touching
+# the pane wakes it with its history. Running processes are never touched.
+# pane_dormancy = false
+# Let an idle server exit: no client attached and no running pane process
+# for 30 minutes -> retired panes' scrollback goes to disk, the session is
+# saved, and the server stops. The next start restores it.
+# idle_server_exit = false
 # While prefix mode is active, temporarily switch the macOS host input
 # source to an ASCII-capable keyboard layout so prefix commands register
 # even when a CJK IME is active, then restore the previous input source

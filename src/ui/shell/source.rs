@@ -367,6 +367,14 @@ impl BarTrack {
 /// rather than a seat in this enum.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum BarConfigProblem {
+    /// The one member that is not about a bar. It sits here because it is
+    /// reported through the same path and read by the same person: a number
+    /// outside `[shell.bars]` that decides what a section inside one can show.
+    ResourceIntervalOutOfRange {
+        millis: u64,
+        min: u64,
+        max: u64,
+    },
     SizeOutOfRange {
         edge: &'static str,
         size: u16,
@@ -494,10 +502,46 @@ pub(crate) enum BarConfigProblem {
         needs: u16,
         has: u16,
     },
+    /// Too big for the axis the bar's own `size` governs, rather than the one
+    /// the section declared. Its own cause because the setting to change is a
+    /// different one, on a different table, and a message naming `cells` would
+    /// send somebody to edit a number that was already right.
+    IconDoesNotFitAcrossTheBar {
+        edge: &'static str,
+        index: usize,
+        needs: u16,
+        has: u16,
+    },
     WidgetTextWithoutWidget {
         edge: &'static str,
         index: usize,
     },
+}
+
+/// The accepted names of a closed set, phrased the way the refusals below already
+/// phrase them: quoted, separated by commas, and joined by `or` before the last.
+///
+/// Six refusals carry such a list and each one is written out by hand beside the
+/// match that decides. Writing the phrase once is the first half of holding the two
+/// together; the second half is that the list itself comes from the same place the
+/// match does, which is what the tables are for.
+///
+/// The wording is not a matter of taste here. It is what the guide quotes, what the
+/// tests read and what people have learned to expect, so this reproduces today's
+/// sentence exactly rather than improving on it.
+fn accepted_names(names: &[&str]) -> String {
+    match names {
+        [] => String::new(),
+        [only] => format!("{only:?}"),
+        [rest @ .., last] => {
+            let listed = rest
+                .iter()
+                .map(|name| format!("{name:?}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{listed} or {last:?}")
+        }
+    }
 }
 
 impl std::fmt::Display for BarConfigProblem {
@@ -506,6 +550,12 @@ impl std::fmt::Display for BarConfigProblem {
         // too: telling somebody that "a section is wrong" when a bar may hold
         // eight of them sends them looking through all eight.
         match self {
+            Self::ResourceIntervalOutOfRange { millis, min, max } => write!(
+                formatter,
+                "shell.resource_interval_ms is {millis}; it must be between {min} and {max}, \
+                 so readings keep their {default}ms default",
+                default = crate::config::ShellConfig::resource_interval_ms_default()
+            ),
             Self::SizeOutOfRange { edge, size, max } => write!(
                 formatter,
                 "shell.bars.{edge}.size is {size}; a bar must be between 1 and {max} cells, \
@@ -532,8 +582,9 @@ impl std::fmt::Display for BarConfigProblem {
             ),
             Self::UnknownSectionKind { edge, index, kind } => write!(
                 formatter,
-                "shell.bars.{edge}.sections[{index}].kind is \"{kind}\"; expected \"fixed\", \
-                 \"fill\" or \"content\", so this bar is drawn undivided"
+                "shell.bars.{edge}.sections[{index}].kind is \"{kind}\"; expected {offered}, \
+                 so this bar is drawn undivided",
+                offered = accepted_names(&SectionKind::offered(SIZING_KINDS))
             ),
             Self::FixedSectionWithoutCells { edge, index } => write!(
                 formatter,
@@ -561,7 +612,8 @@ impl std::fmt::Display for BarConfigProblem {
             Self::UnknownSectionActionKind { edge, index, kind } => write!(
                 formatter,
                 "shell.bars.{edge}.sections[{index}].action.kind is \"{kind}\"; expected \
-                 \"popup\" or \"plugin\", so this section does nothing when clicked"
+                 {offered}, so this section does nothing when clicked",
+                offered = accepted_names(&SectionKind::offered(ACTION_KINDS))
             ),
             Self::PopupActionWithoutCommand { edge, index } => write!(
                 formatter,
@@ -580,7 +632,13 @@ impl std::fmt::Display for BarConfigProblem {
             } => write!(
                 formatter,
                 "shell.bars.{edge}.sections[{index}].action.secondary is \"{presentation}\"; \
-                 expected \"tab\", so a right press on this section does nothing"
+                 expected {offered}, so a right press on this section does nothing",
+                offered = accepted_names(
+                    &SECONDARY_PRESENTATIONS
+                        .iter()
+                        .map(|(name, _)| *name)
+                        .collect::<Vec<_>>()
+                )
             ),
             Self::SecondaryWithoutAction { edge, index } => write!(
                 formatter,
@@ -626,7 +684,8 @@ impl std::fmt::Display for BarConfigProblem {
             Self::UnknownSectionWidgetKind { edge, index, kind } => write!(
                 formatter,
                 "shell.bars.{edge}.sections[{index}].widget.kind is \"{kind}\"; expected \
-                 \"label\", \"resource\", \"icon\" or \"meter\", so this section shows nothing"
+                 {offered}, so this section shows nothing",
+                offered = accepted_names(&SectionKind::offered(WIDGET_KINDS))
             ),
             Self::UnknownSectionWidgetMetric {
                 edge,
@@ -635,7 +694,8 @@ impl std::fmt::Display for BarConfigProblem {
             } => write!(
                 formatter,
                 "shell.bars.{edge}.sections[{index}].widget.metric is \"{metric}\"; expected \
-                 \"cpu\", \"mem\" or \"swap\", so this section shows nothing"
+                 {offered}, so this section shows nothing",
+                offered = accepted_names(crate::resource::ResourceMetric::ACCEPTED)
             ),
             Self::IconWithoutPicture { edge, index } => write!(
                 formatter,
@@ -656,7 +716,8 @@ impl std::fmt::Display for BarConfigProblem {
             Self::UnknownIconArt { edge, index, name } => write!(
                 formatter,
                 "shell.bars.{edge}.sections[{index}].widget.art is \"{name}\", which this build \
-                 does not bundle, so this section shows nothing"
+                 does not bundle; expected {offered}, so this section shows nothing",
+                offered = accepted_names(&crate::icon::builtin_names())
             ),
             Self::UnreadableIconArt {
                 edge,
@@ -676,6 +737,23 @@ impl std::fmt::Display for BarConfigProblem {
                 "shell.bars.{edge}.sections[{index}].widget needs {needs} cells but the section \
                  declares {has}; a clipped picture is the wrong picture"
             ),
+            Self::IconDoesNotFitAcrossTheBar {
+                edge,
+                index,
+                needs,
+                has,
+            } => {
+                let (unit, remedy) = if edge_is_horizontal(edge) {
+                    ("rows", "a shorter picture")
+                } else {
+                    ("columns", "a narrower picture")
+                };
+                write!(
+                    formatter,
+                    "shell.bars.{edge}.sections[{index}].widget needs {needs} {unit} but the bar \
+                     leaves {has}; raise shell.bars.{edge}.size or use {remedy}"
+                )
+            }
             Self::WidgetTextWithoutWidget { edge, index } => write!(
                 formatter,
                 "shell.bars.{edge}.sections[{index}].widget sets text but names no widget to \
@@ -686,6 +764,28 @@ impl std::fmt::Display for BarConfigProblem {
 }
 
 /// Why this edge's size cannot be drawn, if it cannot.
+/// How many cells a bar leaves across its short axis, after its border.
+///
+/// Rows for a top or bottom bar, columns for a left or right one. `size` counts
+/// cells along the edge's own axis, and the border takes one cell on each side
+/// of it, which is the same arithmetic `BarTrack::inner` does at draw time.
+fn bar_across(config: &ShellBarConfig) -> u16 {
+    config
+        .size
+        .saturating_sub(if config.border { 2 } else { 0 })
+}
+
+/// Whether this edge runs left to right.
+///
+/// `size` and `cells` swap meaning between the two orientations — `cells` runs
+/// along the bar, so it is a width on a top bar and a height on a left one —
+/// and a check that forgets this compares one axis against the other. That is
+/// not hypothetical: it is what the picture fit check did, and it refused a
+/// picture that fitted a side bar exactly.
+fn edge_is_horizontal(edge: &str) -> bool {
+    matches!(edge, "top" | "bottom")
+}
+
 fn bar_size_problem(config: &ShellBarConfig, edge: &'static str) -> Option<BarConfigProblem> {
     if config.size == 0 || config.size > MAX_BAR_CELLS {
         return Some(BarConfigProblem::SizeOutOfRange {
@@ -735,6 +835,33 @@ fn section_count_problem(
         sections,
         max: budget,
     })
+}
+
+/// Everything under `[shell]` this build will refuse, bars and switches alike.
+///
+/// One call rather than two. A second collector that a caller had to remember
+/// to also invoke would be a refusal that disappears the day somebody forgets,
+/// and a refusal nobody sees is the same as no refusal at all.
+// TP-RES-15: a switch outside the bars is refused through the same path a bar
+// is, so `herdr config check` sees it without being told to look.
+pub(crate) fn shell_config_problems(config: &crate::config::ShellConfig) -> Vec<BarConfigProblem> {
+    let mut problems = shell_switch_problems(config);
+    problems.extend(shell_bar_config_problems(&config.bars, config.glyph_icons));
+    problems
+}
+
+/// What is wrong with the switches that sit outside `[shell.bars]`.
+fn shell_switch_problems(config: &crate::config::ShellConfig) -> Vec<BarConfigProblem> {
+    let min = crate::config::ShellConfig::RESOURCE_INTERVAL_MS_MIN;
+    let max = crate::config::ShellConfig::RESOURCE_INTERVAL_MS_MAX;
+    if (min..=max).contains(&config.resource_interval_ms) {
+        return Vec::new();
+    }
+    vec![BarConfigProblem::ResourceIntervalOutOfRange {
+        millis: config.resource_interval_ms,
+        min,
+        max,
+    }]
 }
 
 // TP-CHROME-35/36: the checker and the deriver read one predicate, so a
@@ -788,7 +915,8 @@ pub(crate) fn shell_bar_config_problems(
             // guess that the other was also refused. The widget is asked before
             // the action so a section's complaints read in the order the table
             // is written.
-            if let Err(problem) = section_widget(section, edge, index, glyph_icons) {
+            if let Err(problem) = section_widget(section, edge, index, glyph_icons, bar_across(bar))
+            {
                 problems.push(problem);
             }
             if let Err(problem) = section_action(section, edge, index) {
@@ -851,6 +979,201 @@ fn section_policies(
         .collect()
 }
 
+/// One accepted name and the thing it builds.
+///
+/// `build` is a function pointer rather than data, and that is the whole point:
+/// adding a name to a table forces somebody to write the code that builds it, and
+/// deleting the code breaks the table at compile time. The state this file kept
+/// drifting into — a list that offers a name nothing builds, or a match arm no list
+/// mentions — stops being expressible.
+struct SectionKind<T> {
+    name: &'static str,
+    /// The keys this kind reads.
+    ///
+    /// Written here rather than beside the builder so that adding a key nobody
+    /// lists is a diff somebody has to look at.
+    keys: &'static [&'static str],
+    /// The keys this kind refuses to be handed.
+    ///
+    /// A refusal is as much a part of the grammar as an acceptance, and it is
+    /// the half a reader has no way to discover except by being turned down.
+    refuses: &'static [&'static str],
+    /// A whole config this build accepts, showing the kind in use.
+    ///
+    /// Standalone on purpose: it is published verbatim by `herdr shell spec`, so
+    /// the gate that checks it can parse exactly the bytes a reader receives
+    /// rather than a reconstruction assembled in a test.
+    example: &'static str,
+    build: fn(SectionAt<'_>) -> Result<T, BarConfigProblem>,
+}
+
+/// A section, where it sits, and the switches that reach it.
+///
+/// The three surfaces do not all want the same inputs — sizing never asks about
+/// glyphs and widgets always do — and giving every builder the union of them as
+/// loose arguments would put a parameter in front of `fixed` that means nothing
+/// there. One shape carries them instead, so the tables stay one type and the
+/// functions that surround them keep the signatures their callers already use.
+#[derive(Clone, Copy)]
+struct SectionAt<'a> {
+    config: &'a ShellBarSectionConfig,
+    edge: &'static str,
+    index: usize,
+    glyph_icons: bool,
+    /// How many cells the bar leaves across its short axis — rows for a top or
+    /// bottom bar, columns for a left or right one — after its border.
+    ///
+    /// The one extent of a section that does not depend on the terminal. What
+    /// runs *along* the bar is shared out at draw time and a section can only
+    /// declare it; what runs *across* comes from `size`, which somebody wrote
+    /// down, so it can be checked in the same breath and for the same reason.
+    ///
+    /// `None` where nothing asked: sizing and actions have no geometry.
+    across: Option<u16>,
+}
+
+impl<'a> SectionAt<'a> {
+    /// For the surfaces that never ask about glyphs.
+    ///
+    /// Sizing and actions do not read the switch, and spelling that out once here is
+    /// better than each of them choosing a value and the next reader wondering which
+    /// choice mattered.
+    fn plain(config: &'a ShellBarSectionConfig, edge: &'static str, index: usize) -> Self {
+        Self {
+            config,
+            edge,
+            index,
+            glyph_icons: true,
+            across: None,
+        }
+    }
+}
+
+impl<T> SectionKind<T> {
+    /// The names, in the order the refusal offers them.
+    ///
+    /// Order is the table's, not the dispatch's: lookup is by name, so the sequence
+    /// exists only to be read aloud in a message somebody has already learned.
+    fn offered(table: &'static [Self]) -> Vec<&'static str> {
+        table.iter().map(|entry| entry.name).collect()
+    }
+
+    fn find(table: &'static [Self], name: &str) -> Option<&'static Self> {
+        table.iter().find(|entry| entry.name == name)
+    }
+
+    /// The table with its builders left behind.
+    fn facts(table: &'static [Self]) -> Vec<KindFacts> {
+        table
+            .iter()
+            .map(|entry| KindFacts {
+                name: entry.name,
+                keys: entry.keys,
+                refuses: entry.refuses,
+                example: entry.example,
+            })
+            .collect()
+    }
+}
+
+/// One accepted name, described rather than built.
+///
+/// The tables themselves cannot cross a module boundary: each is typed by what
+/// its builders make, and no two of them make the same thing. What a reader
+/// needs is the half that is the same everywhere, so that is what leaves.
+pub(crate) struct KindFacts {
+    pub name: &'static str,
+    pub keys: &'static [&'static str],
+    pub refuses: &'static [&'static str],
+    pub example: &'static str,
+}
+
+/// The ways a section can ask for space.
+pub(crate) fn sizing_kind_facts() -> Vec<KindFacts> {
+    SectionKind::facts(SIZING_KINDS)
+}
+
+/// The things a section can show.
+pub(crate) fn widget_kind_facts() -> Vec<KindFacts> {
+    SectionKind::facts(WIDGET_KINDS)
+}
+
+/// The things a press can do.
+pub(crate) fn action_kind_facts() -> Vec<KindFacts> {
+    SectionKind::facts(ACTION_KINDS)
+}
+
+/// The presentations a second gesture can ask for.
+pub(crate) fn secondary_presentation_names() -> Vec<&'static str> {
+    SECONDARY_PRESENTATIONS
+        .iter()
+        .map(|(name, _)| *name)
+        .collect()
+}
+
+/// The three ways a section can ask for space.
+const SIZING_KINDS: &[SectionKind<TrackPolicy>] = &[
+    SectionKind {
+        name: "fixed",
+        keys: &["cells"],
+        refuses: &[],
+        example: "[shell.bars.top]\nenabled = true\n\n\
+                  [[shell.bars.top.sections]]\nkind = \"fixed\"\ncells = 12\n",
+        build: fixed_policy,
+    },
+    SectionKind {
+        name: "fill",
+        keys: &["weight"],
+        refuses: &[],
+        example: "[shell.bars.top]\nenabled = true\n\n\
+                  [[shell.bars.top.sections]]\nkind = \"fill\"\nweight = 2\n",
+        build: fill_policy,
+    },
+    SectionKind {
+        name: "content",
+        keys: &["min", "max"],
+        refuses: &[],
+        example: "[shell.bars.top]\nenabled = true\n\n\
+                  [[shell.bars.top.sections]]\nkind = \"content\"\nmin = 4\nmax = 24\n",
+        build: content_policy,
+    },
+];
+
+fn fixed_policy(at: SectionAt<'_>) -> Result<TrackPolicy, BarConfigProblem> {
+    if at.config.cells == 0 {
+        return Err(BarConfigProblem::FixedSectionWithoutCells {
+            edge: at.edge,
+            index: at.index,
+        });
+    }
+    Ok(TrackPolicy::Fixed {
+        cells: at.config.cells,
+    })
+}
+
+/// A fill with no weight is the common shape of "just take the rest", and refusing
+/// it would make the simplest section the one that needs the most typing.
+fn fill_policy(at: SectionAt<'_>) -> Result<TrackPolicy, BarConfigProblem> {
+    Ok(TrackPolicy::Fill {
+        weight: at.config.weight.max(1),
+    })
+}
+
+fn content_policy(at: SectionAt<'_>) -> Result<TrackPolicy, BarConfigProblem> {
+    if at.config.max < at.config.min {
+        return Err(BarConfigProblem::ContentSectionMaxBelowMin {
+            edge: at.edge,
+            index: at.index,
+            min: at.config.min,
+            max: at.config.max,
+        });
+    }
+    Ok(TrackPolicy::ContentBounded {
+        min: at.config.min,
+        max: at.config.max,
+    })
+}
+
 /// One section's table as a sizing policy, or what is wrong with it.
 ///
 /// Returning the problem rather than swallowing it is what lets `herdr config
@@ -860,39 +1183,12 @@ fn section_policy(
     edge: &'static str,
     index: usize,
 ) -> Result<TrackPolicy, BarConfigProblem> {
-    match config.kind.as_str() {
-        "fixed" => {
-            if config.cells == 0 {
-                return Err(BarConfigProblem::FixedSectionWithoutCells { edge, index });
-            }
-            Ok(TrackPolicy::Fixed {
-                cells: config.cells,
-            })
-        }
-        // A fill with no weight is the common shape of "just take the rest",
-        // and refusing it would make the simplest section the one that needs
-        // the most typing.
-        "fill" => Ok(TrackPolicy::Fill {
-            weight: config.weight.max(1),
-        }),
-        "content" => {
-            if config.max < config.min {
-                return Err(BarConfigProblem::ContentSectionMaxBelowMin {
-                    edge,
-                    index,
-                    min: config.min,
-                    max: config.max,
-                });
-            }
-            Ok(TrackPolicy::ContentBounded {
-                min: config.min,
-                max: config.max,
-            })
-        }
-        other => Err(BarConfigProblem::UnknownSectionKind {
+    match SectionKind::find(SIZING_KINDS, config.kind.as_str()) {
+        Some(entry) => (entry.build)(SectionAt::plain(config, edge, index)),
+        None => Err(BarConfigProblem::UnknownSectionKind {
             edge,
             index,
-            kind: other.to_string(),
+            kind: config.kind.clone(),
         }),
     }
 }
@@ -1039,6 +1335,16 @@ pub(crate) enum SectionWidget {
     /// sampled. Unlike it, the value is drawn rather than written, which is the
     /// difference between reading a bar and reading a figure.
     Meter {
+        metric: crate::resource::ResourceMetric,
+    },
+    /// The same metric over time: one column per reading, newest on the right.
+    ///
+    /// A meter answers "how full is it now"; this answers "what has it been
+    /// doing", which is usually the question somebody glancing at a bar
+    /// actually has — did the build start, has it finished, was that a spike or
+    /// is it sustained. It names only the metric, like its two siblings; the
+    /// readings arrive already sampled and already recorded.
+    Sparkline {
         metric: crate::resource::ResourceMetric,
     },
     /// One grapheme the font already knows how to draw.
@@ -1196,7 +1502,7 @@ fn bar_section_chrome(
         .iter()
         .enumerate()
         .map(|(index, section)| SectionChrome {
-            widget: match section_widget(section, edge, index, glyph_icons) {
+            widget: match section_widget(section, edge, index, glyph_icons, bar_across(config)) {
                 Ok(widget) => widget,
                 Err(problem) => {
                     tracing::warn!(%problem, "the section is drawn with nothing in it");
@@ -1224,44 +1530,125 @@ fn section_widget(
     edge: &'static str,
     index: usize,
     glyph_icons: bool,
+    across: u16,
 ) -> Result<SectionWidget, BarConfigProblem> {
-    match config.widget.kind.as_str() {
-        // Text with no widget to put it in is the same half-finished shape a
-        // leftover popup size is: it will never appear, and a person reading
-        // the file back would believe it does.
-        "" if !config.widget.text.is_empty() => {
+    // Naming nothing is not one of the choices below; it is the absence of a
+    // choice, and the only question left is whether anything was written for a
+    // widget that is not there. Text with nothing to put it in is the same
+    // half-finished shape a leftover popup size is: it will never appear, and a
+    // person reading the file back would believe it does.
+    if config.widget.kind.is_empty() {
+        return if config.widget.text.is_empty() {
+            Ok(SectionWidget::None)
+        } else {
             Err(BarConfigProblem::WidgetTextWithoutWidget { edge, index })
-        }
-        "" => Ok(SectionWidget::None),
-        "label" => Ok(SectionWidget::Label {
-            text: config.widget.text.clone(),
-        }),
-        // A resource section names its metric, and a metric this build does
-        // not know is refused here rather than drawn as an empty section. The
-        // same reasoning as an unknown widget kind: a typo that renders as
-        // blank is indistinguishable from one that renders as nothing on
-        // purpose.
-        "icon" => section_icon(config, edge, index, glyph_icons),
-        "meter" => crate::resource::ResourceMetric::parse(&config.widget.metric)
-            .map(|metric| SectionWidget::Meter { metric })
-            .ok_or(BarConfigProblem::UnknownSectionWidgetMetric {
-                edge,
-                index,
-                metric: config.widget.metric.clone(),
-            }),
-        "resource" => crate::resource::ResourceMetric::parse(&config.widget.metric)
-            .map(|metric| SectionWidget::Resource { metric })
-            .ok_or(BarConfigProblem::UnknownSectionWidgetMetric {
-                edge,
-                index,
-                metric: config.widget.metric.clone(),
-            }),
-        other => Err(BarConfigProblem::UnknownSectionWidgetKind {
+        };
+    }
+
+    let at = SectionAt {
+        config,
+        edge,
+        index,
+        glyph_icons,
+        across: Some(across),
+    };
+    match SectionKind::find(WIDGET_KINDS, config.widget.kind.as_str()) {
+        Some(entry) => (entry.build)(at),
+        None => Err(BarConfigProblem::UnknownSectionWidgetKind {
             edge,
             index,
-            kind: other.to_string(),
+            kind: config.widget.kind.clone(),
         }),
     }
+}
+
+/// The four things a section can show, in the order a refusal offers them.
+const WIDGET_KINDS: &[SectionKind<SectionWidget>] = &[
+    SectionKind {
+        name: "label",
+        keys: &["text"],
+        refuses: &[],
+        example: "[shell.bars.top]\nenabled = true\n\n\
+                  [[shell.bars.top.sections]]\nkind = \"content\"\n\
+                  widget = { kind = \"label\", text = \"herdr\" }\n",
+        build: label_widget,
+    },
+    SectionKind {
+        name: "resource",
+        keys: &["metric"],
+        refuses: &[],
+        example: "[shell.bars.top]\nenabled = true\n\n\
+                  [[shell.bars.top.sections]]\nkind = \"content\"\n\
+                  widget = { kind = \"resource\", metric = \"cpu\" }\n",
+        build: resource_widget,
+    },
+    SectionKind {
+        name: "icon",
+        // Exactly one picture, and `text` only so a switched-off glyph still has
+        // something to say.
+        keys: &["glyph", "art", "pixels", "text"],
+        refuses: &[],
+        // The only example here that has to say anything about the bar itself.
+        // A bar is three cells and bordered unless told otherwise, and a border
+        // takes one from each side, so the default bar has a single row inside
+        // it — enough for every other widget and not for a picture three rows
+        // tall. Leaving that out shipped an example that parsed and drew a
+        // clipped mark.
+        example: "[shell.bars.top]\nenabled = true\nsize = 3\nborder = false\n\n\
+                  [[shell.bars.top.sections]]\nkind = \"content\"\n\
+                  widget = { kind = \"icon\", art = \"herd\" }\n",
+        build: section_icon,
+    },
+    SectionKind {
+        name: "meter",
+        keys: &["metric"],
+        refuses: &[],
+        example: "[shell.bars.top]\nenabled = true\n\n\
+                  [[shell.bars.top.sections]]\nkind = \"content\"\n\
+                  widget = { kind = \"meter\", metric = \"mem\" }\n",
+        build: meter_widget,
+    },
+    SectionKind {
+        name: "sparkline",
+        keys: &["metric"],
+        refuses: &[],
+        example: "[shell.bars.top]\nenabled = true\n\n\
+                  [[shell.bars.top.sections]]\nkind = \"fixed\"\ncells = 24\n\
+                  widget = { kind = \"sparkline\", metric = \"cpu\" }\n",
+        build: sparkline_widget,
+    },
+];
+
+fn label_widget(at: SectionAt<'_>) -> Result<SectionWidget, BarConfigProblem> {
+    Ok(SectionWidget::Label {
+        text: at.config.widget.text.clone(),
+    })
+}
+
+fn resource_widget(at: SectionAt<'_>) -> Result<SectionWidget, BarConfigProblem> {
+    named_metric(at).map(|metric| SectionWidget::Resource { metric })
+}
+
+fn sparkline_widget(at: SectionAt<'_>) -> Result<SectionWidget, BarConfigProblem> {
+    named_metric(at).map(|metric| SectionWidget::Sparkline { metric })
+}
+
+fn meter_widget(at: SectionAt<'_>) -> Result<SectionWidget, BarConfigProblem> {
+    named_metric(at).map(|metric| SectionWidget::Meter { metric })
+}
+
+/// A section that shows a number names its metric, and a metric this build does not
+/// know is refused here rather than drawn as an empty section. The same reasoning as
+/// an unknown widget kind: a typo that renders as blank is indistinguishable from one
+/// that renders as nothing on purpose.
+fn named_metric(at: SectionAt<'_>) -> Result<crate::resource::ResourceMetric, BarConfigProblem> {
+    crate::resource::ResourceMetric::parse(&at.config.widget.metric).ok_or(
+        BarConfigProblem::UnknownSectionWidgetMetric {
+            edge: at.edge,
+            index: at.index,
+            metric: at.config.widget.metric.clone(),
+        },
+    )
 }
 
 /// One section's picture, or what is wrong with it.
@@ -1278,12 +1665,14 @@ fn section_widget(
 /// label already does when the window narrows.
 // TP-ART-03/05: one picture per icon; a declared width that cannot hold it is
 // refused where it is written, and a section sized by the terminal is not.
-fn section_icon(
-    config: &ShellBarSectionConfig,
-    edge: &'static str,
-    index: usize,
-    glyph_icons: bool,
-) -> Result<SectionWidget, BarConfigProblem> {
+fn section_icon(at: SectionAt<'_>) -> Result<SectionWidget, BarConfigProblem> {
+    let SectionAt {
+        config,
+        edge,
+        index,
+        glyph_icons,
+        across,
+    } = at;
     let widget = &config.widget;
     let named = usize::from(!widget.glyph.trim().is_empty())
         + usize::from(!widget.art.trim().is_empty())
@@ -1294,16 +1683,41 @@ fn section_icon(
         _ => return Err(BarConfigProblem::IconWithTwoPictures { edge, index }),
     }
 
-    // A section only knows its own width when it declared one.
+    // A section only knows its extent along the bar when it declared one.
     let declared = (config.kind.trim().eq_ignore_ascii_case("fixed")).then_some(config.cells);
-    let refuse_unless_fits = |needs: u16| match declared {
-        Some(has) if has < needs => Err(BarConfigProblem::IconDoesNotFit {
-            edge,
-            index,
-            needs,
-            has,
-        }),
-        _ => Ok(()),
+    let horizontal = edge_is_horizontal(edge);
+
+    // Both axes, each against the number that actually governs it. `cells` runs
+    // along the bar and `size` across it, so on a side bar `cells` is a height —
+    // which is why comparing a picture's width against it refused pictures that
+    // fitted, and why nothing ever refused one that was simply too tall.
+    let refuse_unless_fits = |columns: u16, rows: u16| {
+        let (along, across_needs) = if horizontal {
+            (columns, rows)
+        } else {
+            (rows, columns)
+        };
+        if let Some(has) = declared {
+            if has < along {
+                return Err(BarConfigProblem::IconDoesNotFit {
+                    edge,
+                    index,
+                    needs: along,
+                    has,
+                });
+            }
+        }
+        if let Some(has) = across {
+            if has < across_needs {
+                return Err(BarConfigProblem::IconDoesNotFitAcrossTheBar {
+                    edge,
+                    index,
+                    needs: across_needs,
+                    has,
+                });
+            }
+        }
+        Ok(())
     };
 
     if !widget.glyph.trim().is_empty() {
@@ -1325,7 +1739,8 @@ fn section_icon(
         let glyph = widget.glyph.clone();
         let needs = u16::try_from(unicode_width::UnicodeWidthStr::width(glyph.as_str()))
             .unwrap_or(u16::MAX);
-        refuse_unless_fits(needs)?;
+        // A glyph is one row tall whatever else it is.
+        refuse_unless_fits(needs, 1)?;
         return Ok(SectionWidget::Icon { glyph });
     }
 
@@ -1346,7 +1761,7 @@ fn section_icon(
             problem,
         }
     })?;
-    refuse_unless_fits(art.width())?;
+    refuse_unless_fits(art.width(), art.height())?;
     Ok(SectionWidget::Art { art })
 }
 
@@ -1356,86 +1771,138 @@ fn section_action(
     edge: &'static str,
     index: usize,
 ) -> Result<SectionAction, BarConfigProblem> {
-    match config.action.kind.as_str() {
-        // A size with nothing to size is the shape a half-finished edit leaves
-        // behind: the command was removed and the geometry stayed. Saying so is
-        // cheap; leaving it silent means the next person reads a popup size that
-        // has never once been used and believes it.
-        //
-        // Only asked on this arm. An unreadable action kind already reports its
-        // own cause, and a second complaint about the size it also carries would
-        // send somebody to fix the wrong line.
-        "" if config.action.width.is_some() || config.action.height.is_some() => {
-            Err(BarConfigProblem::PopupSizeWithoutPopup { edge, index })
-        }
-        // A presentation with nothing to present is the same half-finished
-        // shape, one gesture along: the command was removed and the second
-        // answer stayed behind. Refused here, where the line that is wrong can
-        // still be found, rather than discovered by somebody pressing.
-        "" if !config.action.secondary.is_empty() => {
-            Err(BarConfigProblem::SecondaryWithoutAction { edge, index })
-        }
-        // The third shape of the same half-finished edit: the plugin action was
-        // removed and the id it named stayed behind. Silence here would leave a
-        // file that reads as though this section still launches something.
-        "" if !config.action.command.trim().is_empty() => {
-            Err(BarConfigProblem::PluginCommandWithoutAction { edge, index })
-        }
-        "" => Ok(SectionAction::None),
-        "popup" => {
-            // The mirror of the arm below. Without both directions, one of the
-            // two ways to leave a plugin id somewhere it can never be read
-            // stays silent — and a silent leftover is precisely the kind the
-            // next reader trusts.
-            if !config.action.command.trim().is_empty() {
-                return Err(BarConfigProblem::PopupActionWithPluginCommand { edge, index });
-            }
-            // An empty argv, or one made only of blanks, would ask the runtime
-            // to execute nothing. Disk is untrusted input (CL1): refuse it here
-            // rather than discovering it at the moment somebody clicks.
-            if config
-                .action
-                .argv
-                .iter()
-                .all(|argument| argument.trim().is_empty())
-            {
-                return Err(BarConfigProblem::PopupActionWithoutCommand { edge, index });
-            }
-            Ok(SectionAction::OpenPopup {
-                argv: config.action.argv.clone(),
-                width: config.action.width,
-                height: config.action.height,
-                secondary: secondary_presentation(&config.action.secondary, edge, index)?,
-            })
-        }
-        "plugin" => {
-            // The leftover popup fields are asked about first. When both a
-            // leftover and a missing id are present the leftover is the better
-            // complaint: it names a line that exists and is wrong, while the
-            // missing id names a line that is not there to look at.
-            if let Some(field) = plugin_action_popup_field(config) {
-                return Err(BarConfigProblem::PluginActionWithPopupField { edge, index, field });
-            }
-            if !config.action.secondary.is_empty() {
-                return Err(BarConfigProblem::PluginActionWithSecondary { edge, index });
-            }
-            // Trimmed only to decide whether anything was named. The stored id
-            // stays verbatim: the resolver trims for itself, and reshaping a
-            // value here to make a check convenient is how a config comes to
-            // mean something other than what it says.
-            if config.action.command.trim().is_empty() {
-                return Err(BarConfigProblem::PluginActionWithoutId { edge, index });
-            }
-            Ok(SectionAction::InvokePlugin {
-                action: config.action.command.clone(),
-            })
-        }
-        other => Err(BarConfigProblem::UnknownSectionActionKind {
+    // Naming no action is not one of the choices below; it is the absence of a
+    // choice, and what is left to ask is whether a deleted action left anything
+    // behind. That question belongs before the table rather than in it: it has no
+    // action to build and no name a person could write.
+    if config.action.kind.is_empty() {
+        return no_action(config, edge, index);
+    }
+
+    match SectionKind::find(ACTION_KINDS, config.action.kind.as_str()) {
+        Some(entry) => (entry.build)(SectionAt::plain(config, edge, index)),
+        None => Err(BarConfigProblem::UnknownSectionActionKind {
             edge,
             index,
-            kind: other.to_string(),
+            kind: config.action.kind.clone(),
         }),
     }
+}
+
+/// A section that opens nothing, and the three ways a removed action leaves
+/// something behind.
+///
+/// Each is the same half-finished edit seen from a different field: the command was
+/// deleted and the geometry, the second gesture or the plugin id stayed. Saying so is
+/// cheap; leaving it silent means the next person reads a setting that has never once
+/// been used and believes it.
+///
+/// Asked only here. An unreadable action kind already reports its own cause, and a
+/// second complaint about a field it also carries would send somebody to fix the
+/// wrong line.
+fn no_action(
+    config: &ShellBarSectionConfig,
+    edge: &'static str,
+    index: usize,
+) -> Result<SectionAction, BarConfigProblem> {
+    if config.action.width.is_some() || config.action.height.is_some() {
+        return Err(BarConfigProblem::PopupSizeWithoutPopup { edge, index });
+    }
+    if !config.action.secondary.is_empty() {
+        return Err(BarConfigProblem::SecondaryWithoutAction { edge, index });
+    }
+    if !config.action.command.trim().is_empty() {
+        return Err(BarConfigProblem::PluginCommandWithoutAction { edge, index });
+    }
+    Ok(SectionAction::None)
+}
+
+/// The two things a press can do, in the order a refusal offers them.
+const ACTION_KINDS: &[SectionKind<SectionAction>] = &[
+    SectionKind {
+        name: "popup",
+        keys: &["argv", "width", "height", "secondary"],
+        // A popup runs what the file says; a plugin id here would be read by
+        // nothing.
+        refuses: &["command"],
+        example: "[shell.bars.top]\nenabled = true\n\n\
+                  [[shell.bars.top.sections]]\nkind = \"content\"\n\
+                  widget = { kind = \"label\", text = \"status\" }\n\
+                  action = { kind = \"popup\", argv = [\"herdr\", \"status\"] }\n",
+        build: popup_action,
+    },
+    SectionKind {
+        name: "plugin",
+        keys: &["command"],
+        // Command line, geometry and the second gesture all come from the
+        // plugin's manifest, so every one of these is a setting nothing reads.
+        refuses: &["argv", "width", "height", "secondary"],
+        example: "[shell.bars.top]\nenabled = true\n\n\
+                  [[shell.bars.top.sections]]\nkind = \"content\"\n\
+                  widget = { kind = \"label\", text = \"files\" }\n\
+                  action = { kind = \"plugin\", command = \"files.open\" }\n",
+        build: plugin_action,
+    },
+];
+
+fn popup_action(at: SectionAt<'_>) -> Result<SectionAction, BarConfigProblem> {
+    let SectionAt {
+        config,
+        edge,
+        index,
+        ..
+    } = at;
+    // The mirror of the builder below. Without both directions, one of the two ways
+    // to leave a plugin id somewhere it can never be read stays silent — and a silent
+    // leftover is precisely the kind the next reader trusts.
+    if !config.action.command.trim().is_empty() {
+        return Err(BarConfigProblem::PopupActionWithPluginCommand { edge, index });
+    }
+    // An empty argv, or one made only of blanks, would ask the runtime to execute
+    // nothing. Disk is untrusted input (CL1): refuse it here rather than discovering
+    // it at the moment somebody clicks.
+    if config
+        .action
+        .argv
+        .iter()
+        .all(|argument| argument.trim().is_empty())
+    {
+        return Err(BarConfigProblem::PopupActionWithoutCommand { edge, index });
+    }
+    Ok(SectionAction::OpenPopup {
+        argv: config.action.argv.clone(),
+        width: config.action.width,
+        height: config.action.height,
+        secondary: secondary_presentation(&config.action.secondary, edge, index)?,
+    })
+}
+
+fn plugin_action(at: SectionAt<'_>) -> Result<SectionAction, BarConfigProblem> {
+    let SectionAt {
+        config,
+        edge,
+        index,
+        ..
+    } = at;
+    // The leftover popup fields are asked about first. When both a leftover and a
+    // missing id are present the leftover is the better complaint: it names a line
+    // that exists and is wrong, while the missing id names a line that is not there
+    // to look at.
+    if let Some(field) = plugin_action_popup_field(config) {
+        return Err(BarConfigProblem::PluginActionWithPopupField { edge, index, field });
+    }
+    if !config.action.secondary.is_empty() {
+        return Err(BarConfigProblem::PluginActionWithSecondary { edge, index });
+    }
+    // Trimmed only to decide whether anything was named. The stored id stays verbatim:
+    // the resolver trims for itself, and reshaping a value here to make a check
+    // convenient is how a config comes to mean something other than what it says.
+    if config.action.command.trim().is_empty() {
+        return Err(BarConfigProblem::PluginActionWithoutId { edge, index });
+    }
+    Ok(SectionAction::InvokePlugin {
+        action: config.action.command.clone(),
+    })
 }
 
 /// The first popup-only field a plugin action left behind, if it left one.
@@ -1474,16 +1941,32 @@ fn secondary_presentation(
     edge: &'static str,
     index: usize,
 ) -> Result<Option<SecondaryPresentation>, BarConfigProblem> {
-    match raw {
-        "" => Ok(None),
-        "tab" => Ok(Some(SecondaryPresentation::Tab)),
-        other => Err(BarConfigProblem::UnknownSecondaryPresentation {
+    // Naming nothing is the absence of a second gesture rather than one of the
+    // choices below, and unlike the other surfaces there is no leftover to ask
+    // about: whatever a deleted presentation left behind belongs to the action
+    // that carried it.
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    SECONDARY_PRESENTATIONS
+        .iter()
+        .find(|(name, _)| *name == raw)
+        .map(|(_, presentation)| Some(*presentation))
+        .ok_or_else(|| BarConfigProblem::UnknownSecondaryPresentation {
             edge,
             index,
-            presentation: other.to_string(),
-        }),
-    }
+            presentation: raw.to_string(),
+        })
 }
+
+/// The presentations a second gesture can ask for, in the order a refusal offers
+/// them.
+///
+/// A pair rather than a builder: nothing is constructed here beyond the variant
+/// itself, and a function pointer that only returns a constant would be ceremony
+/// around a lookup.
+const SECONDARY_PRESENTATIONS: &[(&str, SecondaryPresentation)] =
+    &[("tab", SecondaryPresentation::Tab)];
 
 /// The four edges, as the tree builder sees them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -1674,27 +2157,109 @@ fn tint_from_parts(
     }
 }
 
+/// One colour name the bar grammar knows, and what it reads from the palette.
+pub(crate) struct BarColorToken {
+    pub name: &'static str,
+    /// What this name resolves to against a live palette. A function rather
+    /// than a stored `Color` for the same reason `IconArt` keeps its specs
+    /// unresolved: the palette changes with the theme, and a colour decided
+    /// once would be the one surface that kept the old one.
+    pub read: fn(&Palette) -> Color,
+}
+
+/// The colour names a bar config may write, in the order a reader meets them.
+///
+/// A table rather than a `match`, for the third time in this grammar and for
+/// the same reason as the first two: a `match` can be asked whether it knows a
+/// name but never asked what names it knows. The section kinds became a table
+/// so a refusal could say what it would have accepted, and the bundled
+/// pictures became one so an unknown name could offer the known ones. This set
+/// had the same shape and a worse ending — an unrecognised colour is not
+/// refused at all. It falls through to `parse_color`, which warns into the log
+/// and returns cyan, so a name nobody could look up anywhere becomes a colour
+/// nobody asked for, on screen, silently.
+///
+/// `peach`/`orange` and `surface`/`dim` are spellings of one colour rather
+/// than a name and an alias. Nothing here refuses an unknown colour, so unlike
+/// the metric aliases there is no refusal message for a second spelling to
+/// contradict: both are simply names, and both are published.
+pub(crate) const BAR_COLOR_TOKENS: &[BarColorToken] = &[
+    BarColorToken {
+        name: "accent",
+        read: |palette| palette.accent,
+    },
+    BarColorToken {
+        name: "text",
+        read: |palette| palette.text,
+    },
+    BarColorToken {
+        name: "mauve",
+        read: |palette| palette.mauve,
+    },
+    BarColorToken {
+        name: "green",
+        read: |palette| palette.green,
+    },
+    BarColorToken {
+        name: "yellow",
+        read: |palette| palette.yellow,
+    },
+    BarColorToken {
+        name: "red",
+        read: |palette| palette.red,
+    },
+    BarColorToken {
+        name: "blue",
+        read: |palette| palette.blue,
+    },
+    BarColorToken {
+        name: "teal",
+        read: |palette| palette.teal,
+    },
+    BarColorToken {
+        name: "peach",
+        read: |palette| palette.peach,
+    },
+    BarColorToken {
+        name: "orange",
+        read: |palette| palette.peach,
+    },
+    BarColorToken {
+        name: "surface",
+        read: |palette| palette.surface_dim,
+    },
+    BarColorToken {
+        name: "dim",
+        read: |palette| palette.surface_dim,
+    },
+];
+
+/// The colour names this build resolves against the palette.
+pub(crate) fn bar_color_tokens() -> Vec<&'static str> {
+    BAR_COLOR_TOKENS.iter().map(|token| token.name).collect()
+}
+
 /// A palette token first, a literal colour second.
 ///
 /// Writing `accent` should follow the theme the way every other herdr surface
 /// does; writing `#fab387` should mean exactly that. An empty setting is the
 /// warm default, which is what makes an unconfigured bar look deliberate
 /// rather than like a rendering fault.
+///
+/// An unreadable colour still answers. Refusing one would mean a config that
+/// loads today and not tomorrow, and this function is called from the
+/// renderer, which has no one to refuse to.
 pub(crate) fn bar_color(spec: &str, palette: &Palette) -> Color {
-    match spec.trim().to_lowercase().as_str() {
-        "" => palette.peach,
-        "accent" => palette.accent,
-        "text" => palette.text,
-        "mauve" => palette.mauve,
-        "green" => palette.green,
-        "yellow" => palette.yellow,
-        "red" => palette.red,
-        "blue" => palette.blue,
-        "teal" => palette.teal,
-        "peach" | "orange" => palette.peach,
-        "surface" | "dim" => palette.surface_dim,
-        other => parse_color(other),
+    let name = spec.trim().to_lowercase();
+    // Empty is the warm default rather than a name: nobody writes it, and
+    // offering it as one would put a blank in the list a reader learns from.
+    if name.is_empty() {
+        return palette.peach;
     }
+    BAR_COLOR_TOKENS
+        .iter()
+        .find(|token| token.name == name)
+        .map_or_else(|| parse_color(&name), |token| (token.read)(palette))
 }
 
 /// Whether each half of the left panel wears a frame, and in what tone.
@@ -2025,6 +2590,344 @@ mod tests {
         }
     }
 
+    // A type in a bar config lives in six closed sets, and each one lives in two
+    // places: the match that builds it, and the message that lists what it accepts.
+    //
+    //   surface      built by                       listed by                       refusal costs
+    //   sizing       section_policy                 UnknownSectionKind              the whole bar
+    //   widget       section_widget                 UnknownSectionWidgetKind        one blank section
+    //   action       section_action                 UnknownSectionActionKind        one inert section
+    //   secondary    secondary_presentation         UnknownSecondaryPresentation    one inert right press
+    //   metric       resource::ResourceMetric       UnknownSectionWidgetMetric      one blank section
+    //   icon art     icon::builtin                  UnknownIconArt                  one blank section
+    //
+    // Nothing holds the two halves together, so they drift in either direction and
+    // both are silent: a name the parser takes but the message never mentions is a
+    // feature nobody can find, and a name the message offers but the parser refuses
+    // is a config somebody writes on the message's word.
+    //
+    // These pin today's answers before a type table moves them. The shape is the one
+    // the documentation gate already uses: harvest the list out of the text, then ask
+    // the product about every name in it. What differs is the source — a message the
+    // product writes about itself rather than a guide somebody else maintains.
+
+    /// The quoted names on the "expected" side of a refusal.
+    ///
+    /// The message carries the offending name in quotes too (`… is "gauge"; expected
+    /// …`), so the harvest starts after `expected`. Losing that split would let the
+    /// refused name count as an accepted one, and the check would agree with itself.
+    fn expected_names(message: &str) -> Vec<String> {
+        let tail = match message.split_once("expected ") {
+            Some((_, tail)) => tail,
+            None => return Vec::new(),
+        };
+        tail.split('"')
+            .skip(1)
+            .step_by(2)
+            .map(|name| name.to_string())
+            .collect()
+    }
+
+    /// One section in one bar, and whatever it is reported for.
+    fn problems_for(section: ShellBarSectionConfig) -> Vec<String> {
+        let config = ShellBarsConfig {
+            top: bar_with_sections(vec![section]),
+            ..Default::default()
+        };
+        shell_bar_config_problems(&config, true)
+            .into_iter()
+            .map(|problem| problem.to_string())
+            .collect()
+    }
+
+    /// The refusal a surface writes when it is handed a name it does not know.
+    fn message_naming(section: ShellBarSectionConfig, needle: &str) -> String {
+        problems_for(section)
+            .into_iter()
+            .find(|text| text.contains(needle))
+            .unwrap_or_else(|| panic!("no problem mentioned {needle:?}"))
+    }
+
+    /// Every name a message lists is a name its surface takes.
+    ///
+    /// The claim is not that nothing is reported — a resource still wants a metric, an
+    /// icon still wants a picture, a fixed section still wants cells. It is that the
+    /// name itself was recognised, which is the half a type table is about to own.
+    fn assert_every_listed_name_is_accepted(
+        message: &str,
+        at_least: usize,
+        refusal_shape: impl Fn(&str) -> String,
+        apply: impl Fn(&str) -> ShellBarSectionConfig,
+    ) {
+        let listed = expected_names(message);
+
+        // The harvest is pinned as well. Reword the message and it would find nothing,
+        // the loop below would never run, and the check would pass in silence — which
+        // is the failure mode this whole shape exists to prevent.
+        assert!(
+            listed.len() >= at_least,
+            "the message no longer lists what it accepts: {message}"
+        );
+
+        for name in &listed {
+            let refused = problems_for(apply(name))
+                .into_iter()
+                .any(|problem| problem.contains(&refusal_shape(name)));
+            assert!(
+                !refused,
+                "the message lists {name:?} but the parser refuses it"
+            );
+        }
+    }
+
+    // TP-CHROME-99: the sizing surface, whose refusal costs the whole bar rather than
+    // one section, so a message that offers a kind the parser will not take is the
+    // most expensive of the six to get wrong.
+    #[test]
+    fn the_section_kinds_the_message_lists_are_exactly_the_ones_accepted() {
+        let message = message_naming(plain_section("stretch"), "sections[0].kind is \"stretch\"");
+
+        // The anchor carries `sections[0].` because a bare `kind is "…"` is a substring
+        // of `widget.kind is "…"` and `action.kind is "…"` as well. Three surfaces share
+        // one sentence and only the prefix tells them apart.
+        assert_every_listed_name_is_accepted(
+            &message,
+            3,
+            |name| format!("sections[0].kind is \"{name}\""),
+            plain_section,
+        );
+
+        assert!(
+            !expected_names(&message)
+                .iter()
+                .any(|name| name == "stretch"),
+            "an unknown sizing kind leaked into the accepted list"
+        );
+    }
+
+    // TP-CHROME-96: the widget surface.
+    #[test]
+    fn the_widget_kinds_the_message_lists_are_exactly_the_ones_accepted() {
+        let mut unknown = plain_section("fill");
+        unknown.widget.kind = "gauge".to_string();
+        let message = message_naming(unknown, "widget.kind is \"gauge\"");
+
+        assert_every_listed_name_is_accepted(
+            &message,
+            4,
+            |name| format!("widget.kind is \"{name}\""),
+            |name| {
+                let mut section = plain_section("fill");
+                section.widget.kind = name.to_string();
+                section
+            },
+        );
+    }
+
+    // TP-CHROME-97: the action surface. A refused action costs only its own section,
+    // which makes this the quietest drift of the four: the bar still divides and the
+    // part simply stops answering.
+    #[test]
+    fn the_action_kinds_the_message_lists_are_exactly_the_ones_accepted() {
+        let mut unknown = plain_section("fill");
+        unknown.action.kind = "teleport".to_string();
+        let message = message_naming(unknown, "action.kind is \"teleport\"");
+
+        assert_every_listed_name_is_accepted(
+            &message,
+            2,
+            |name| format!("action.kind is \"{name}\""),
+            |name| {
+                let mut section = plain_section("fill");
+                section.action.kind = name.to_string();
+                section
+            },
+        );
+    }
+
+    // TP-CHROME-98: this pair crosses a module boundary. The message is written here
+    // and the parser lives in `crate::resource`, so a table gathered inside this file
+    // cannot close the gap — it can only keep it visible.
+    #[test]
+    fn the_metrics_the_message_lists_are_exactly_the_ones_resource_parses() {
+        let mut section = plain_section("fill");
+        section.widget.kind = "resource".to_string();
+        section.widget.metric = "flux".to_string();
+        let message = message_naming(section, "widget.metric is \"flux\"");
+
+        let listed = expected_names(&message);
+        assert!(
+            listed.len() >= 3,
+            "the message no longer lists the accepted metrics: {message}"
+        );
+        for metric in &listed {
+            assert!(
+                crate::resource::ResourceMetric::parse(metric).is_some(),
+                "the message lists {metric:?} but ResourceMetric does not parse it"
+            );
+        }
+        assert!(
+            crate::resource::ResourceMetric::parse("flux").is_none(),
+            "an unknown metric parsed"
+        );
+    }
+
+    // TP-CHROME-102: `ram` is taken and never advertised.
+    //
+    // This is characterisation, not endorsement. The alias works and the guide says so,
+    // but the refusal names only cpu, mem and swap, so somebody who mistypes it is told
+    // nothing about the spelling that would have worked. A type table has to carry
+    // aliases or it will drop this one without a word; adding it to the message instead
+    // is a decision with its own docs, and either way this test should be the thing
+    // that makes the change deliberate.
+    #[test]
+    fn the_mem_metric_answers_to_ram_without_advertising_it() {
+        assert_eq!(
+            crate::resource::ResourceMetric::parse("ram"),
+            crate::resource::ResourceMetric::parse("mem"),
+            "ram stopped being an alias for mem"
+        );
+
+        let mut section = plain_section("fill");
+        section.widget.kind = "resource".to_string();
+        section.widget.metric = "flux".to_string();
+        let message = message_naming(section, "widget.metric is \"flux\"");
+        assert!(
+            !expected_names(&message).iter().any(|name| name == "ram"),
+            "ram started being advertised, which is a behaviour change rather than a \
+             refactor: {message}"
+        );
+    }
+
+    // TP-CHROME-103: the secondary surface, and the only list with a single member.
+    //
+    // `expected "tab"` has no separator in it. A generated list pinned only against the
+    // longer forms could produce a broken sentence here and nothing else would notice.
+    //
+    // The presentation is only read on the popup arm, and an empty argv is refused
+    // before it, so reaching this refusal needs a popup that is otherwise valid.
+    #[test]
+    fn the_secondary_presentations_the_message_lists_are_exactly_the_ones_accepted() {
+        let mut unknown = section_with_action("fill", "popup", &["true"]);
+        unknown.action.secondary = "tabs".to_string();
+        let message = message_naming(unknown, "action.secondary is \"tabs\"");
+
+        assert_every_listed_name_is_accepted(
+            &message,
+            1,
+            |name| format!("action.secondary is \"{name}\""),
+            |name| {
+                let mut section = section_with_action("fill", "popup", &["true"]);
+                section.action.secondary = name.to_string();
+                section
+            },
+        );
+    }
+
+    // TP-CHROME-104: the icon catalogue says what it bundles, like the other five.
+    //
+    // It was once the exception. A `match` can be asked whether it knows a name but
+    // never asked what names it knows, so this refusal turned a config down and left
+    // the reader with nowhere to look — the one closed set in the grammar that kept
+    // its contents to itself. The earlier version of this test pinned that gap and
+    // said closing it would turn the test red on purpose; the table in `crate::icon`
+    // closed it, and this is the same row now pinning the other direction.
+    #[test]
+    fn the_icon_catalogue_names_what_it_bundles() {
+        let art_section = |name: &str| {
+            let mut section = plain_section("fill");
+            section.widget.kind = "icon".to_string();
+            section.widget.art = name.to_string();
+            section
+        };
+        let message = message_naming(art_section("hrd"), "widget.art is \"hrd\"");
+
+        assert!(
+            message.contains("does not bundle"),
+            "the icon refusal changed shape: {message}"
+        );
+
+        // The same contract the other five surfaces carry: every name a message
+        // offers is a name its surface takes. A picture still has to fit the
+        // section it is put in, so what is checked is that the name itself was
+        // recognised rather than that nothing at all is reported.
+        assert_every_listed_name_is_accepted(
+            &message,
+            1,
+            |name| format!("widget.art is \"{name}\""),
+            art_section,
+        );
+
+        assert!(
+            !expected_names(&message).iter().any(|name| name == "hrd"),
+            "an unknown picture leaked into the accepted list: {message}"
+        );
+    }
+
+    // TP-CHROME-101: the empty kind is never offered as something to write.
+    //
+    // It is not a kind. It is where the leftover checks live, and they ask a different
+    // question — whether a width, a presentation or a plugin id outlived the action
+    // that gave them meaning. Listing `""` would invite people to write it, and a
+    // refactor that folded it into the kind table would lose those checks entirely.
+    #[test]
+    fn the_empty_kind_is_never_offered_as_something_to_write() {
+        let mut widget = plain_section("fill");
+        widget.widget.kind = "gauge".to_string();
+        let mut action = plain_section("fill");
+        action.action.kind = "teleport".to_string();
+
+        for message in [
+            message_naming(plain_section("stretch"), "sections[0].kind is \"stretch\""),
+            message_naming(widget, "widget.kind is \"gauge\""),
+            message_naming(action, "action.kind is \"teleport\""),
+        ] {
+            assert!(
+                !expected_names(&message).iter().any(|name| name.is_empty()),
+                "the empty kind was offered as something to write: {message}"
+            );
+        }
+    }
+
+    // The harvest reads only what follows `expected`, including the one-item form that
+    // has no separator to lean on.
+    #[test]
+    fn the_harvest_reads_only_what_comes_after_expected() {
+        let message = "shell.bars.top.sections[0].kind is \"stretch\"; expected \"fixed\", \
+                       \"fill\" or \"content\", so this bar is drawn undivided";
+        assert_eq!(expected_names(message), vec!["fixed", "fill", "content"]);
+        assert_eq!(expected_names("no such word here"), Vec::<String>::new());
+        assert_eq!(
+            expected_names("… action.secondary is \"tabs\"; expected \"tab\", so a right press …"),
+            vec!["tab"]
+        );
+    }
+
+    // TP-CHROME-105: the phrase a generated list has to reproduce, at every length the
+    // six refusals actually use. Pinning one arity would not pin the generator: the single-name
+    // form has no separator to get wrong, and the longer ones differ only in where
+    // the `or` falls. All four are taken from the messages as they read today.
+    #[test]
+    fn a_generated_list_reads_the_way_the_refusals_already_read() {
+        assert_eq!(accepted_names(&["tab"]), r#""tab""#);
+        assert_eq!(
+            accepted_names(&["popup", "plugin"]),
+            r#""popup" or "plugin""#
+        );
+        assert_eq!(
+            accepted_names(&["fixed", "fill", "content"]),
+            r#""fixed", "fill" or "content""#
+        );
+        assert_eq!(
+            accepted_names(&["label", "resource", "icon", "meter"]),
+            r#""label", "resource", "icon" or "meter""#
+        );
+
+        // An empty closed set cannot be written and would read as a missing sentence
+        // rather than a refusal, so it is named here rather than discovered later.
+        assert_eq!(accepted_names(&[]), "");
+    }
+
     fn plain_section(kind: &str) -> ShellBarSectionConfig {
         ShellBarSectionConfig {
             kind: kind.to_string(),
@@ -2036,25 +2939,143 @@ mod tests {
 
     /// The `toml` blocks of the guide's "Edge bars" section, in the order they
     /// are written.
-    fn documented_bar_examples() -> Vec<String> {
+    /// The guide, as one string.
+    fn configuration_guide() -> String {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("docs/next/website/src/content/docs/configuration.mdx");
-        let guide = std::fs::read_to_string(&path)
-            .unwrap_or_else(|err| panic!("the configuration guide at {path:?} is readable: {err}"));
+        std::fs::read_to_string(&path)
+            .unwrap_or_else(|err| panic!("the configuration guide at {path:?} is readable: {err}"))
+    }
 
+    /// Just the part of the guide that documents bars.
+    ///
+    /// Scoped rather than whole, for the checks that read the guide's own words
+    /// back: `kind` is a key several unrelated things could use, and a test that
+    /// held the whole file to the bar grammar would turn red the day somebody
+    /// documented one of them.
+    fn edge_bars_section() -> String {
+        let guide = configuration_guide();
         let after_heading = guide
             .split_once("\n## Edge bars\n")
             .unwrap_or_else(|| panic!("the guide still has an \"Edge bars\" section"))
             .1;
-        let section = after_heading
+        after_heading
             .split_once("\n## ")
-            .map_or(after_heading, |(before, _)| before);
+            .map_or(after_heading, |(before, _)| before)
+            .to_string()
+    }
 
-        section
+    fn documented_bar_examples() -> Vec<String> {
+        edge_bars_section()
             .split("```toml\n")
             .skip(1)
             .filter_map(|rest| rest.split_once("```"))
             .map(|(block, _)| block.to_string())
+            .collect()
+    }
+
+    /// The guide's table of bundled pictures: name, then the four numbers its
+    /// `Size` column writes out.
+    ///
+    /// Hand-written on purpose, and that is the whole point. Everything else
+    /// about the catalogue is derived from `BUILTIN_ART`, so a check that reads
+    /// the catalogue and looks each name up in a guide the catalogue also
+    /// produced would be two readings of one source — green, and measuring
+    /// nothing. This column is typed by a person, so it can disagree, and a
+    /// gate is only a gate where disagreement is possible.
+    /// The data rows of the first markdown table after `anchor`, as trimmed
+    /// cells, with the first cell's backticks stripped.
+    ///
+    /// The header is dropped by finding the `|---|` rule and taking what
+    /// follows, which is markdown's own structure rather than a count. The
+    /// first attempt here dropped the header by recognising it — a first cell
+    /// that is not a backticked name — and that was wrong within one table:
+    /// the picture table's header cell is `` `art` ``, backticks and all, so
+    /// the header sailed through as data and the size parser met the word
+    /// "Size". A rule row is the one line a markdown table is guaranteed to
+    /// have and the one nobody writes by accident.
+    fn guide_table_after(anchor: &str) -> Vec<Vec<String>> {
+        let section = edge_bars_section();
+        let after = section
+            .split_once(anchor)
+            .unwrap_or_else(|| panic!("the guide still has the passage {anchor:?}"))
+            .1;
+
+        // The table is the first run of `|` lines after the anchor, so the walk
+        // stops at the first line that is not one rather than reading on into
+        // whatever table comes next.
+        let rows = after
+            .lines()
+            .map(str::trim)
+            .skip_while(|line| !line.starts_with('|'))
+            .take_while(|line| line.starts_with('|'))
+            .collect::<Vec<_>>();
+
+        let cells = |line: &str| {
+            line.trim_matches('|')
+                .split('|')
+                .map(|cell| cell.trim().to_string())
+                .collect::<Vec<_>>()
+        };
+        let rule = rows
+            .iter()
+            .position(|line| {
+                cells(line).iter().all(|cell| {
+                    !cell.is_empty() && cell.chars().all(|glyph| glyph == '-' || glyph == ':')
+                })
+            })
+            .unwrap_or_else(|| panic!("the table after {anchor:?} still has a header rule"));
+
+        rows[rule + 1..]
+            .iter()
+            .map(|line| {
+                let mut columns = cells(line);
+                if let Some(first) = columns.first_mut() {
+                    *first = first.trim_matches('`').to_string();
+                }
+                columns
+            })
+            .collect()
+    }
+
+    /// The guide's table of bundled pictures: name, then the four numbers its
+    /// `Size` column writes out.
+    ///
+    /// Hand-written on purpose, and that is the whole point. Everything else
+    /// about the catalogue is derived from `BUILTIN_ART`, so a check that reads
+    /// the catalogue and looks each name up in a guide the catalogue also
+    /// produced would be two readings of one source — green, and measuring
+    /// nothing. This column is typed by a person, so it can disagree, and a
+    /// gate is only a gate where disagreement is possible.
+    fn documented_bundled_art() -> Vec<(String, [u16; 4])> {
+        guide_table_after("Bundled `art` names available today:")
+            .into_iter()
+            .map(|columns| {
+                let name = columns[0].clone();
+                let size = columns.get(1).cloned().unwrap_or_default();
+                // Every run of digits in the Size cell, in the order it wrote
+                // them: pixels wide, pixels tall, cells wide, cell rows.
+                let numbers = size
+                    .split(|character: char| !character.is_ascii_digit())
+                    .filter(|run| !run.is_empty())
+                    .map(|run| run.parse::<u16>().expect("a size in the guide is a number"))
+                    .collect::<Vec<_>>();
+                let numbers: [u16; 4] = numbers.as_slice().try_into().unwrap_or_else(|_| {
+                    panic!(
+                        "the Size column for {name:?} reads {size:?}; it must write four numbers, \
+                         as in \"10 × 6 pixels (10 cells × 3 rows)\""
+                    )
+                });
+                (name, numbers)
+            })
+            .collect()
+    }
+
+    /// The colour names the guide's own table offers.
+    fn documented_bar_colours() -> Vec<String> {
+        guide_table_after("### Colours\n")
+            .into_iter()
+            .map(|columns| columns[0].clone())
             .collect()
     }
 
@@ -2108,39 +3129,220 @@ mod tests {
     /// Both directions matter and they fail differently: a kind the guide never
     /// mentions is a feature nobody can find, and a kind the guide invents is a
     /// config an agent will write and Herdr will refuse.
-    // TODO(L1): read these from the shared kind table once it exists, so this
-    // list stops being a second place the kinds are written down.
+    ///
+    /// Every list below is read from the table that also carries the code
+    /// building each name. It used to be typed out here, which made this test
+    /// the second place the kinds were written down and left it able to agree
+    /// with a guide that both had fallen behind. Adding a kind now fails this
+    /// test until the guide learns it, without anybody having to remember that
+    /// this file exists.
     #[test]
     fn the_guide_shows_every_widget_and_action_kind() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("docs/next/website/src/content/docs/configuration.mdx");
-        let guide = std::fs::read_to_string(&path).expect("the configuration guide is readable");
+        let raw = std::fs::read_to_string(&path).expect("the configuration guide is readable");
+        // The guide aligns its assignments, so a section kind is written
+        // `kind  = "fixed"` with the spaces padded out. Runs of blanks are
+        // collapsed here rather than matched exactly: a gate that reports a
+        // documented kind as missing because of the width of a space sends
+        // somebody to edit a guide that was already right, and a gate nobody
+        // believes is worse than no gate. Newlines are left alone so nothing
+        // matches across two lines that never sat together.
+        let guide = raw
+            .split('\n')
+            .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
+            .collect::<Vec<_>>()
+            .join("\n");
 
         // TP-CHROME-95: the guide shows every kind there is and invents none.
         // A kind it never mentions is a feature nobody can find; a kind it
         // invents is a config an agent writes and Herdr refuses.
-        for kind in ["label", "resource", "meter", "icon"] {
-            assert!(
-                guide.contains(&format!("kind = \"{kind}\"")),
-                "the guide never shows widget kind {kind:?}"
-            );
+        for (surface, kinds) in [
+            ("sizing", SectionKind::offered(SIZING_KINDS)),
+            ("widget", SectionKind::offered(WIDGET_KINDS)),
+            ("action", SectionKind::offered(ACTION_KINDS)),
+        ] {
+            assert!(!kinds.is_empty(), "the {surface} table emptied out");
+            for kind in kinds {
+                assert!(
+                    guide.contains(&format!("kind = \"{kind}\"")),
+                    "the guide never shows {surface} kind {kind:?}"
+                );
+            }
         }
-        for kind in ["popup", "plugin"] {
-            assert!(
-                guide.contains(&format!("kind = \"{kind}\"")),
-                "the guide never shows action kind {kind:?}"
-            );
-        }
-        for art in ["herd", "dot"] {
-            assert!(
-                guide.contains(art),
-                "the guide never names the bundled art {art:?}"
-            );
-        }
-        for metric in ["cpu", "mem", "ram", "swap"] {
+        // Pictures are not checked here. They used to be, by asking whether the
+        // guide contained each bundled name anywhere at all, which for names
+        // like `bar` or `line` is a question a configuration manual answers yes
+        // to by accident. They are held to the guide's own table instead, by
+        // name and by size, in `the_guide_lists_exactly_the_bundled_pictures_at_the_sizes_they_draw`.
+        //
+        // Aliases as well as names: `ram` works, and a guide that omits it
+        // leaves the one spelling a refusal will never teach undocumented
+        // anywhere at all.
+        for metric in crate::resource::ResourceMetric::ACCEPTED
+            .iter()
+            .copied()
+            .chain(
+                crate::resource::ResourceMetric::ALIASES
+                    .iter()
+                    .map(|(alias, _)| *alias),
+            )
+        {
             assert!(
                 guide.contains(metric),
                 "the guide never names the metric {metric:?}"
+            );
+        }
+
+        // The other direction, which this row has always claimed and never
+        // actually checked. Everything above walks the tables and looks each
+        // name up in the guide, so a name the guide invents — or one it keeps
+        // showing after the build stopped accepting it — passes silently. That
+        // was measured: deleting a bundled picture from its table broke nothing
+        // at all, because a loop over the table simply stopped looking for it.
+        //
+        // So the guide is read the other way round: every kind and every
+        // picture it writes out has to be one this build takes. Only the bar
+        // section, because `kind` is a key other things could use one day.
+        let bars = edge_bars_section()
+            .split('\n')
+            .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let written = |assignment: &str| {
+            bars.match_indices(&format!("{assignment} = \""))
+                .filter_map(|(at, matched)| {
+                    let rest = &bars[at + matched.len()..];
+                    rest.find('"').map(|end| rest[..end].to_string())
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let known_kinds = SectionKind::offered(SIZING_KINDS)
+            .into_iter()
+            .chain(SectionKind::offered(WIDGET_KINDS))
+            .chain(SectionKind::offered(ACTION_KINDS))
+            .collect::<Vec<_>>();
+        let shown_kinds = written("kind");
+        assert!(
+            shown_kinds.len() >= known_kinds.len(),
+            "the guide stopped showing kinds at all, so the check below reads nothing: \
+             {shown_kinds:?}"
+        );
+        for kind in &shown_kinds {
+            assert!(
+                known_kinds.contains(&kind.as_str()),
+                "the guide writes kind {kind:?}, which this build does not accept"
+            );
+        }
+
+        let bundled = crate::icon::builtin_names();
+        for art in written("art") {
+            assert!(
+                bundled.contains(&art.as_str()),
+                "the guide writes art {art:?}, which this build does not bundle"
+            );
+        }
+    }
+
+    /// The guide's colour table is the set this build resolves, exactly.
+    ///
+    /// Read from the table rather than searched for in the prose, for the same
+    /// reason the pictures are: half of these names — `text`, `red`, `blue`,
+    /// `green`, `dim` — are ordinary English in a configuration manual, so a
+    /// substring search would answer yes for a colour the guide never offered.
+    ///
+    /// Both directions. A colour this build knows and the guide omits is one
+    /// nobody can discover, because nothing refuses an unknown colour and so
+    /// no message ever names the set. A colour the guide offers and this build
+    /// does not know is worse than undocumented: it is drawn in cyan, and the
+    /// person who wrote it read it here.
+    #[test]
+    fn the_guide_offers_exactly_the_colours_this_build_resolves() {
+        // TP-CHROME-107: the guide's colour table and the resolved set are one
+        // set, in both directions.
+        let documented = documented_bar_colours();
+        assert!(
+            documented.len() >= 8,
+            "the guide's colour table stopped parsing; found {documented:?}"
+        );
+
+        let documented = documented
+            .iter()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>();
+        let known = bar_color_tokens()
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            documented, known,
+            "the guide's colour table and the colours this build resolves are different sets"
+        );
+    }
+
+    /// The guide's table of pictures is the catalogue, exactly, at the sizes it
+    /// claims they draw.
+    ///
+    /// This replaces a substring search that could not fail. The check above
+    /// used to ask only whether each bundled name appeared *anywhere* in the
+    /// guide, and the guide is a configuration manual: measured on this file,
+    /// `bar` occurs 81 times, `star` 18, `ring` 14, `line` 11. Nine of fifteen
+    /// plausible names for a picture were already present as ordinary English,
+    /// so adding a picture called any of them would have shipped it with no
+    /// documentation at all and left this gate green.
+    ///
+    /// Sizes as well as names, because a name in the table is not yet a useful
+    /// entry. The `Size` column is what somebody reads to choose `cells`, and a
+    /// wrong number there sends them to a section that clips or sits half
+    /// empty — on screen, and never in a test.
+    #[test]
+    fn the_guide_lists_exactly_the_bundled_pictures_at_the_sizes_they_draw() {
+        // TP-ART-06: the guide's picture table and the catalogue are one set,
+        // and every size the table writes is the size that picture draws at.
+        let documented = documented_bundled_art();
+
+        // Guard the harvest first. A renamed anchor or a reworked table would
+        // leave every assertion below iterating over nothing, which is the one
+        // failure a documentation gate is least likely to notice about itself.
+        assert!(
+            documented.len() >= 2,
+            "the guide's bundled picture table stopped parsing; found {documented:?}"
+        );
+
+        let documented_names = documented
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        let bundled_names = crate::icon::builtin_names()
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            documented_names, bundled_names,
+            "the guide's picture table and the bundled catalogue name different sets; \
+             a picture in the catalogue and not the table is one nobody can find, and one \
+             in the table and not the catalogue is a config Herdr refuses"
+        );
+
+        let catalogue = crate::icon::builtin_catalogue()
+            .into_iter()
+            .map(|(name, cells, rows)| (name, (cells, rows)))
+            .collect::<std::collections::BTreeMap<_, _>>();
+
+        for (name, [pixels_wide, pixels_tall, cells, rows]) in documented {
+            let (drawn, _) = crate::icon::builtin(&name).expect("the sets matched above");
+            let actual_wide = u16::try_from(drawn[0].chars().count()).unwrap_or(u16::MAX);
+            let actual_tall = u16::try_from(drawn.len()).unwrap_or(u16::MAX);
+            let (actual_cells, actual_rows) = catalogue
+                .get(name.as_str())
+                .copied()
+                .unwrap_or_else(|| panic!("{name} is bundled but draws at no size"));
+
+            assert_eq!(
+                [pixels_wide, pixels_tall, cells, rows],
+                [actual_wide, actual_tall, actual_cells, actual_rows],
+                "the guide says {name} is {pixels_wide} × {pixels_tall} pixels \
+                 ({cells} cells × {rows} rows); it is {actual_wide} × {actual_tall} pixels \
+                 ({actual_cells} cells × {actual_rows} rows)"
             );
         }
     }
@@ -2236,8 +3438,14 @@ mod tests {
         section.widget.kind = "icon".to_string();
         section.widget.art = "herd".to_string();
 
+        // Tall enough to hold `herd`: this test is about the glyph switch, and
+        // a bar that refused the picture for its height would be answering a
+        // different question.
         let config = ShellBarsConfig {
-            top: bar_with_sections(vec![section]),
+            top: ShellBarConfig {
+                size: 3,
+                ..bar_with_sections(vec![section])
+            },
             ..Default::default()
         };
 
@@ -2425,8 +3633,15 @@ mod tests {
         section.widget.kind = "icon".to_string();
         section.widget.art = "herd".to_string();
 
+        // Three rows, because `herd` is three cell rows tall. This test is about
+        // the axis the terminal shares out; a bar too short to hold the picture
+        // would refuse it across the other axis, which is a number somebody
+        // wrote down and a different rule entirely.
         let config = ShellBarsConfig {
-            top: bar_with_sections(vec![section]),
+            top: ShellBarConfig {
+                size: 3,
+                ..bar_with_sections(vec![section])
+            },
             ..Default::default()
         };
 
@@ -2438,6 +3653,170 @@ mod tests {
         assert!(
             matches!(widget, SectionWidget::Art { art } if art.width() == 10),
             "a fill section keeps the picture: {widget:?}"
+        );
+    }
+
+    /// A picture is measured against the axis each number actually governs.
+    ///
+    /// `cells` runs along the bar and `size` across it, so on a left or right
+    /// bar `cells` is a height and `size` is a width. The fit check compared a
+    /// picture's width against `cells` whichever edge it was, which is two
+    /// separate faults in one line and both were measured against the built
+    /// binary: a left bar twelve columns wide, with a section three rows tall,
+    /// turned `herd` down for "needing 10 cells" — of which it had twelve; and
+    /// a one-row top bar accepted the same three-row picture and clipped it,
+    /// while the guide said a picture too tall is refused.
+    ///
+    /// The axis a section declares and the axis the bar declares are both
+    /// numbers somebody wrote down, so both are refusable for the same reason.
+    /// Neither is the terminal's, which is the line TP-ART-05 draws.
+    // TP-ART-09: each axis is checked against the number that governs it, and
+    // the two have separate causes because they send a person to different
+    // settings.
+    #[test]
+    fn a_picture_is_measured_against_the_axis_each_number_governs() {
+        let picture = |kind: &str, cells: u16| {
+            let mut section = plain_section(kind);
+            section.cells = cells;
+            section.widget.kind = "icon".to_string();
+            section.widget.art = "herd".to_string();
+            section
+        };
+        let side_bar = |size: u16, sections| ShellBarConfig {
+            size,
+            border: false,
+            ..bar_with_sections(sections)
+        };
+
+        // `herd` is ten columns by three rows. A side bar twelve columns wide
+        // with a three-row section holds it exactly.
+        let fitting = ShellBarsConfig {
+            left: side_bar(12, vec![picture("fixed", 3)]),
+            ..Default::default()
+        };
+        assert!(
+            shell_bar_config_problems(&fitting, true).is_empty(),
+            "a picture that fits a side bar exactly was refused: {:?}",
+            shell_bar_config_problems(&fitting, true)
+        );
+
+        // The same picture on a side bar too narrow for it: the width comes
+        // from `size` here, so the message has to say so.
+        let narrow = ShellBarsConfig {
+            left: side_bar(8, vec![picture("fixed", 3)]),
+            ..Default::default()
+        };
+        let reported = shell_bar_config_problems(&narrow, true)
+            .into_iter()
+            .map(|problem| problem.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(reported.len(), 1, "{reported:?}");
+        assert!(
+            reported[0].contains("needs 10 columns but the bar leaves 8")
+                && reported[0].contains("shell.bars.left.size"),
+            "a side bar's width comes from its size, and the message has to send \
+             somebody there: {reported:?}"
+        );
+
+        // And the section's own axis is still its own: three rows declared, two
+        // asked for, on a bar wide enough for the picture.
+        let short_section = ShellBarsConfig {
+            left: side_bar(12, vec![picture("fixed", 2)]),
+            ..Default::default()
+        };
+        let reported = shell_bar_config_problems(&short_section, true)
+            .into_iter()
+            .map(|problem| problem.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(reported.len(), 1, "{reported:?}");
+        assert!(
+            reported[0].contains("needs 3 cells but the section declares 2"),
+            "the axis the section declares keeps its own message: {reported:?}"
+        );
+    }
+
+    /// A picture taller than the bar is refused, and says which setting to raise.
+    ///
+    /// The bar's own height is not the terminal's business — `size` is a number
+    /// somebody wrote down — so the reason TP-ART-05 leaves a terminal-sized
+    /// width alone does not apply here. Before this, a three-row picture in a
+    /// one-row bar was accepted and silently clipped, which is the outcome the
+    /// width refusal exists to prevent, and the guide already promised it was
+    /// refused.
+    // TP-ART-09: too tall for the bar is its own cause, naming `size`.
+    #[test]
+    fn a_picture_taller_than_the_bar_is_refused_rather_than_clipped() {
+        let mut section = plain_section("fill");
+        section.widget.kind = "icon".to_string();
+        section.widget.art = "herd".to_string();
+
+        let config = ShellBarsConfig {
+            top: bar_with_sections(vec![section]),
+            ..Default::default()
+        };
+        let reported = shell_bar_config_problems(&config, true)
+            .into_iter()
+            .map(|problem| problem.to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(reported.len(), 1, "{reported:?}");
+        assert!(
+            reported[0].contains("needs 3 rows but the bar leaves 1")
+                && reported[0].contains("shell.bars.top.size"),
+            "the refusal has to name both numbers and the setting that changes \
+             one of them: {reported:?}"
+        );
+        assert_eq!(
+            ShellBarChrome::from_config(&config, true).widget_for(RegionId::TopBar, 0),
+            Some(&SectionWidget::None),
+            "a picture the checker refused must not be carried either"
+        );
+    }
+
+    /// A border eats a cell from each side, and the picture has to fit what is left.
+    ///
+    /// This is where the arithmetic is easiest to get wrong by hand: a bar of
+    /// three rows with a border has one row inside it, and every published
+    /// example that showed a three-row picture on a `size = 3` bar was drawing
+    /// a clipped mark. Two of them shipped — the guide's and the spec's — and
+    /// the check that found them is the one below.
+    // TP-ART-09: the bar's usable extent is its size less its border.
+    #[test]
+    fn the_border_is_taken_out_of_what_the_bar_leaves_a_picture() {
+        let picture = || {
+            let mut section = plain_section("fill");
+            section.widget.kind = "icon".to_string();
+            section.widget.art = "herd".to_string();
+            section
+        };
+        let bar = |size: u16, border: bool| ShellBarConfig {
+            size,
+            border,
+            ..bar_with_sections(vec![picture()])
+        };
+
+        let bordered = ShellBarsConfig {
+            top: bar(5, true),
+            ..Default::default()
+        };
+        assert!(
+            shell_bar_config_problems(&bordered, true).is_empty(),
+            "five rows less two of border is three, which is what the picture needs: {:?}",
+            shell_bar_config_problems(&bordered, true)
+        );
+
+        let one_short = ShellBarsConfig {
+            top: bar(4, true),
+            ..Default::default()
+        };
+        let reported = shell_bar_config_problems(&one_short, true)
+            .into_iter()
+            .map(|problem| problem.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(reported.len(), 1, "{reported:?}");
+        assert!(
+            reported[0].contains("needs 3 rows but the bar leaves 2"),
+            "the border has to come out of what is offered: {reported:?}"
         );
     }
 
@@ -2493,7 +3872,11 @@ mod tests {
     #[test]
     fn a_widget_this_build_cannot_show_is_reported_and_never_reaches_the_geometry() {
         let mut wrong_kind = plain_section("fill");
-        wrong_kind.widget.kind = "sparkline".to_string();
+        // Was "sparkline" until this build grew one. A test that needs a name
+        // nothing builds has to move whenever the name it borrowed becomes real
+        // -- a small price for the compiler-checked table that made adding the
+        // kind a two-line change everywhere else.
+        wrong_kind.widget.kind = "gauge".to_string();
         let mut orphan_text = plain_section("fill");
         orphan_text.widget.text = "CPU".to_string();
         let mut label = plain_section("fill");
@@ -2512,7 +3895,7 @@ mod tests {
 
         assert_eq!(reported.len(), 2, "{reported:?}");
         assert!(
-            reported[0].contains("sections[0].widget.kind is \"sparkline\""),
+            reported[0].contains("sections[0].widget.kind is \"gauge\""),
             "{reported:?}"
         );
         assert!(
@@ -3678,6 +5061,38 @@ mod tests {
         assert_eq!(bar_color("#fab387", &palette), parse_color("#fab387"));
         // Unreadable input must still answer with a colour.
         let _ = bar_color("not-a-colour-at-all", &palette);
+    }
+
+    /// Every published colour name follows the theme.
+    ///
+    /// The table carries a reader rather than a stored colour, so the way it
+    /// can still be wrong is a reader that ignores the palette it was handed —
+    /// a constant, a literal, a copied line that reads the wrong field twice.
+    /// None of those is visible in the table and all of them look right until
+    /// somebody switches theme and one part of the bar does not move.
+    ///
+    /// Two stock themes rather than a fabricated pair: if these two ever agree
+    /// on a colour this turns red, and that is worth knowing too.
+    #[test]
+    fn every_published_bar_colour_follows_the_palette() {
+        // TP-ART-07: a published colour name is read from the palette, so a
+        // theme change moves it.
+        let one = Palette::catppuccin();
+        let other = Palette::tokyo_night();
+
+        assert!(
+            bar_color_tokens().len() >= 8,
+            "the colour table thinned out: {:?}",
+            bar_color_tokens()
+        );
+        for name in bar_color_tokens() {
+            assert_ne!(
+                bar_color(name, &one),
+                bar_color(name, &other),
+                "the colour {name:?} answers the same under two themes, so it is not being \
+                 read from the palette at all"
+            );
+        }
     }
 
     fn gradient_config(stops: &[&str]) -> ShellBarConfig {

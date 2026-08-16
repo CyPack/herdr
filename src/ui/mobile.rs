@@ -69,7 +69,7 @@ pub(crate) struct MobileDrawerAreas {
     pub footer: Rect,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum MobileSwitcherTarget {
     NewWorkspace,
     Workspace(usize),
@@ -96,6 +96,15 @@ pub(crate) enum MobileSwitcherTarget {
     /// carries no workspace, because nothing claims the directory it came
     /// from. Indexed into the daily rows and nothing else.
     DailyChat {
+        chat_idx: usize,
+    },
+    /// Open a chat filed into a declared container.
+    ///
+    /// TP-MOB-100: addressed by the container's key rather than a workspace
+    /// index, because a container has no workspace — that is the whole reason
+    /// chats can be filed into one.
+    ModuleChat {
+        node_key: String,
         chat_idx: usize,
     },
     /// Open a remembered chat under a checkout.
@@ -166,6 +175,12 @@ pub(crate) enum DrawerRowContent {
     /// A chat from the daily section: no workspace behind it, so it is drawn
     /// from the daily rows and indexed into them.
     DailyChat {
+        chat_idx: usize,
+    },
+    /// A chat filed into a declared container, drawn from that container's own
+    /// ledger key and indexed into it.
+    ModuleChat {
+        node_key: String,
         chat_idx: usize,
     },
     /// A primary action pinned to the drawer's footer band, styled to read as
@@ -558,6 +573,26 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
             // `ChatNote` already keep here. The chats themselves are the one
             // thing the phone must be able to reach, so they alone carry a
             // target.
+            // TP-CHAT-MOVE-06: chats moved into a declared container are a
+            // desktop surface only for now. The phone drawer walks this same
+            // list, so the row would have to earn a drawer target and a tap
+            // path of its own before it appears here — and a row a phone can
+            // see but not reach is worse than one it does not draw.
+            // Parity is tracked as its own piece of work (#92, 92a-3b).
+            // TP-MOB-100: the phone draws it too. A chat filed into a
+            // container was reachable from the desktop and from nowhere else —
+            // the gap this file's own lesson names (TP-MOB-60): a remembered
+            // chat a phone cannot reach at all.
+            crate::ui::sidebar::WorkspaceListEntry::ModuleChat { node_key, chat_idx } => {
+                rows.push(DrawerRow {
+                    height: entry_h,
+                    target: Some(MobileSwitcherTarget::ModuleChat {
+                        node_key: node_key.clone(),
+                        chat_idx,
+                    }),
+                    content: DrawerRowContent::ModuleChat { node_key, chat_idx },
+                });
+            }
             crate::ui::sidebar::WorkspaceListEntry::DailyHeader => {
                 rows.push(DrawerRow {
                     height: 1,
@@ -584,6 +619,21 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
                     content: DrawerRowContent::ChatNote {
                         depth: 1,
                         label: format!("… {hidden} older"),
+                    },
+                });
+            }
+            // TP-DAILY-18: the phone draws the same note. Two surfaces walking
+            // one tree is the point (TP-DAILY-08) — a row the desktop folds and
+            // the phone omits is a place reachable from one screen and not the
+            // other. It carries no target for the reason `ChatNote` never does:
+            // the cursor must not stop on a row that does nothing.
+            crate::ui::sidebar::WorkspaceListEntry::DailyMoreWorkspaces { hidden, .. } => {
+                rows.push(DrawerRow {
+                    height: 1,
+                    target: None,
+                    content: DrawerRowContent::ChatNote {
+                        depth: 1,
+                        label: format!("… {hidden} more here"),
                     },
                 });
             }
@@ -911,7 +961,7 @@ pub(crate) fn mobile_drawer_default_cursor(app: &AppState) -> usize {
         .and_then(|target| {
             spans
                 .iter()
-                .find(|(_, row)| row.target == Some(target))
+                .find(|(_, row)| row.target.as_ref() == Some(&target))
                 .map(|(span, _)| span.start)
         })
         .or_else(|| mobile_drawer_cursor_stops(app).first().copied())
@@ -924,7 +974,7 @@ pub(crate) fn mobile_drawer_cursor_target(app: &AppState) -> Option<MobileSwitch
     drawer_row_spans(&rows)
         .into_iter()
         .find(|(span, _)| span.contains(&app.mobile_drawer_cursor))
-        .and_then(|(_, row)| row.target)
+        .and_then(|(_, row)| row.target.clone())
 }
 
 /// The document range the cursor's row occupies.
@@ -955,7 +1005,7 @@ pub(crate) fn mobile_drawer_target_at(
         return drawer_row_spans(&rows)
             .into_iter()
             .find(|(span, _)| span.contains(&doc_row))
-            .and_then(|(_, r)| r.target);
+            .and_then(|(_, r)| r.target.clone());
     }
 
     // The title band: on the left drawer it is the segment switcher, split
@@ -991,7 +1041,7 @@ pub(crate) fn mobile_drawer_target_at(
     let hit = drawer_row_spans(&rows)
         .into_iter()
         .find(|(span, _)| span.contains(&doc_row))
-        .map(|(_, r)| (r.target, r.content.clone()));
+        .map(|(_, r)| (r.target.clone(), r.content.clone()));
     let (target, row_content) = hit?;
     // A workspace row carries three tap zones. The head cells are the chat
     // disclosure — looking at a branch's history is not travelling to it —
@@ -1000,14 +1050,14 @@ pub(crate) fn mobile_drawer_target_at(
     // real taps missed even a five-cell target, so anything narrower is a
     // decoration, not a control (TP-MOB-84).
     if let (Some(MobileSwitcherTarget::Workspace(ws_idx)), DrawerRowContent::Space { .. }) =
-        (target, &row_content)
+        (target.as_ref(), &row_content)
     {
         let offset = col.saturating_sub(content.x);
         if offset < 3 {
-            return Some(MobileSwitcherTarget::ToggleBranchChats { ws_idx });
+            return Some(MobileSwitcherTarget::ToggleBranchChats { ws_idx: *ws_idx });
         }
         if content.width >= 10 && offset >= content.width.saturating_sub(3) {
-            return Some(MobileSwitcherTarget::NewChatIn { ws_idx });
+            return Some(MobileSwitcherTarget::NewChatIn { ws_idx: *ws_idx });
         }
         // The three cells before `+`: the row's own menu (TP-MOB-94). Only
         // when the label still keeps its floor — on a narrow panel the menu
@@ -1017,7 +1067,7 @@ pub(crate) fn mobile_drawer_target_at(
             && offset >= content.width.saturating_sub(6)
             && offset < content.width.saturating_sub(3)
         {
-            return Some(MobileSwitcherTarget::RowMenu { ws_idx });
+            return Some(MobileSwitcherTarget::RowMenu { ws_idx: *ws_idx });
         }
     }
     // A project header carries the same trailing `+` a workspace row does:
@@ -1026,11 +1076,13 @@ pub(crate) fn mobile_drawer_target_at(
     if let (
         Some(MobileSwitcherTarget::ToggleProject { proj_idx }),
         DrawerRowContent::Project { .. },
-    ) = (target, &row_content)
+    ) = (target.as_ref(), &row_content)
     {
         let offset = col.saturating_sub(content.x);
         if content.width >= 10 && offset >= content.width.saturating_sub(3) {
-            return Some(MobileSwitcherTarget::NewChatInProject { proj_idx });
+            return Some(MobileSwitcherTarget::NewChatInProject {
+                proj_idx: *proj_idx,
+            });
         }
     }
     target
@@ -1674,6 +1726,61 @@ fn render_mobile_drawer_content(
             DrawerRowContent::DailyChat { chat_idx } => {
                 if let Some(y) = visible_y(viewport, scroll, doc_y) {
                     let entry = crate::ui::sidebar::daily_chat_rows(app)
+                        .get(*chat_idx)
+                        .cloned();
+                    let title = entry
+                        .as_ref()
+                        .map(|row| row.title.clone().unwrap_or_else(|| row.session_id.clone()))
+                        .unwrap_or_default();
+                    let age = entry
+                        .map(|row| {
+                            let now_ms = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_millis() as u64)
+                                .unwrap_or(row.last_seen_ms);
+                            chat_age_label(now_ms, row.last_seen_ms)
+                        })
+                        .unwrap_or_default();
+                    // Depth 1: the section has no checkout above it to hang
+                    // from, so its rows sit one step in from the title alone.
+                    let indent = drawer_indent(1, content.width);
+                    let age_w = age.len() as u16;
+                    let title_w = content.width.saturating_sub(age_w.saturating_add(1)).max(4);
+                    let chat_icon = app.space_icons.chat.trim();
+                    let marker = if chat_icon.is_empty() {
+                        "·"
+                    } else {
+                        chat_icon
+                    };
+                    frame.render_widget(
+                        Paragraph::new(truncate_end(
+                            &format!("{:indent$}{marker} {title}", "", indent = indent),
+                            title_w as usize,
+                        ))
+                        .style(Style::default().fg(p.subtext0).bg(p.panel_bg)),
+                        Rect::new(content.x, y, title_w, 1),
+                    );
+                    if age_w > 0 && content.width > age_w {
+                        frame.render_widget(
+                            Paragraph::new(age).style(
+                                Style::default()
+                                    .fg(p.overlay1)
+                                    .bg(p.panel_bg)
+                                    .add_modifier(Modifier::DIM),
+                            ),
+                            Rect::new(content.x + content.width.saturating_sub(age_w), y, age_w, 1),
+                        );
+                    }
+                }
+            }
+            // TP-MOB-100: same shape as the daily row above — a chat with no
+            // workspace behind it, drawn from its own ledger key and indexed
+            // into it. Kept as its own arm rather than folded into `DailyChat`
+            // with an optional key: an index meaning two different lists
+            // depending on a `None` is how a row opens someone else's chat.
+            DrawerRowContent::ModuleChat { node_key, chat_idx } => {
+                if let Some(y) = visible_y(viewport, scroll, doc_y) {
+                    let entry = crate::ui::sidebar::module_chat_rows(app, node_key)
                         .get(*chat_idx)
                         .cloned();
                     let title = entry
@@ -2640,6 +2747,7 @@ fn fill_rect(frame: &mut Frame, area: Rect, style: Style) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::test_wait::LoadAwareDeadline;
 
     fn agent_entry(primary_tab_label: Option<&str>, agent_label: Option<&str>) -> AgentPanelEntry {
         AgentPanelEntry {
@@ -3046,7 +3154,7 @@ mod tests {
         let target_for = |ws: usize| {
             rows.iter()
                 .find(|row| matches!(row.content, DrawerRowContent::Space { ws_idx, .. } if ws_idx == ws))
-                .and_then(|row| row.target)
+                .and_then(|row| row.target.clone())
         };
         // Every row carries the same target: the two intents live in the
         // activation, because the consumers that identify a workspace row do
@@ -3777,6 +3885,43 @@ mod tests {
         assert_eq!(back.mobile_switcher_scroll, 0);
     }
 
+    // TP-MOB-100: a chat filed into a container was reachable from the desktop
+    // and from nowhere else — the gap TP-MOB-60 names. It must be drawn, and
+    // it must be reachable: a row a phone can see but not press is worse than
+    // one it does not draw.
+    #[test]
+    fn the_drawer_draws_a_filed_chat_and_can_reach_it() {
+        let mut app = chat_app(0, 76, 63);
+        app.space_nodes = vec![crate::spaces::SpaceNode {
+            key: "docs".into(),
+            name: "Docs".into(),
+            icon: None,
+            parent: None,
+            dir: None,
+        }];
+        app.workspace_chat_rows.insert(
+            crate::persist::workspace_chats::module_ledger_key("docs"),
+            vec![crate::app::state::WorkspaceChatRow {
+                session_id: "filed".into(),
+                agent: "claude".into(),
+                title: Some("a filed conversation".into()),
+                last_seen_ms: 5_000,
+                last_modified: None,
+            }],
+        );
+
+        let rows = mobile_drawer_rows(&app);
+        let filed = rows
+            .iter()
+            .find(|row| matches!(row.content, DrawerRowContent::ModuleChat { .. }))
+            .expect("the phone draws the filed chat");
+
+        assert!(
+            matches!(filed.target, Some(MobileSwitcherTarget::ModuleChat { .. })),
+            "and it can be pressed"
+        );
+    }
+
     /// A phone app whose daily directory holds `count` chats and whose
     /// checkouts live elsewhere — the shape the section exists for.
     fn daily_phone_app(count: usize) -> AppState {
@@ -3812,6 +3957,7 @@ mod tests {
             .map(|row| match &row.content {
                 DrawerRowContent::SectionTitle(title) if *title == "daily chats" => "daily-title",
                 DrawerRowContent::DailyChat { .. } => "daily-chat",
+                DrawerRowContent::ModuleChat { .. } => "module-chat",
                 DrawerRowContent::SectionTitle(_) => "title",
                 DrawerRowContent::Space { .. } => "space",
                 DrawerRowContent::Chat { .. } => "chat",
@@ -5050,8 +5196,14 @@ mod tests {
         )
         .unwrap();
 
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        while runtime.cwd() != Some(live_cwd.clone()) && std::time::Instant::now() < deadline {
+        // Was a bare deadline the loop simply gave up on: if the cwd never
+        // arrived the test carried on and failed later, complaining about
+        // whatever it checked next rather than about the wait that never
+        // finished. Everything below needs this cwd, so saying so here is both
+        // the honest message and the load-aware budget.
+        let wait = LoadAwareDeadline::new(2, "the runtime to report its working directory");
+        while runtime.cwd() != Some(live_cwd.clone()) {
+            wait.check();
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
 

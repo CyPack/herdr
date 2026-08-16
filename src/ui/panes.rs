@@ -265,6 +265,12 @@ fn stable_scrollbar_gutter(rt: &TerminalRuntime, pane_inner: Rect) -> (Rect, Opt
 }
 
 /// Resize every visible runtime in a tab to the geometry it would receive if the tab were selected.
+///
+/// A pane whose child has already been reaped is left alone: no process
+/// remains to receive the size, and the reflow would rewrap its whole
+/// scrollback for a terminal nobody is looking at. It still gets sized the
+/// moment it becomes the tab on screen, through `compute_pane_infos` — which
+/// is why that path deliberately carries no such guard. TP-PANE-RETIRED-01
 pub(super) fn resize_tab_panes(
     app: &AppState,
     terminal_runtimes: &TerminalRuntimeRegistry,
@@ -284,7 +290,7 @@ pub(super) fn resize_tab_panes(
             };
             let pane_inner = pane_inner_rect(area, borders);
             let inner_rect = stable_terminal_inner_rect(pane_inner);
-            if !app.direct_attach_resize_locks.contains(terminal_id) {
+            if !app.direct_attach_resize_locks.contains(terminal_id) && !rt.child_exited() {
                 rt.resize(
                     inner_rect.height,
                     inner_rect.width,
@@ -301,7 +307,7 @@ pub(super) fn resize_tab_panes(
 
         if let Some((terminal_id, rt)) = runtime_for_tab_pane(terminal_runtimes, tab, info.id) {
             let inner_rect = stable_terminal_inner_rect(pane_inner);
-            if !app.direct_attach_resize_locks.contains(terminal_id) {
+            if !app.direct_attach_resize_locks.contains(terminal_id) && !rt.child_exited() {
                 rt.resize(
                     inner_rect.height,
                     inner_rect.width,
@@ -463,10 +469,40 @@ pub(super) fn render_panes(
                 true,
             );
             render_copy_mode_cursor(app, frame, info);
+        } else if pane_terminal_is_dormant(app, ws, info.id) {
+            render_dormant_pane_notice(frame, info.inner_rect);
         }
     }
 
     render_pane_borders(app, ws, pane_infos, split_borders, frame);
+}
+
+fn pane_terminal_is_dormant(
+    app: &AppState,
+    ws: &crate::workspace::Workspace,
+    pane_id: crate::layout::PaneId,
+) -> bool {
+    ws.terminal_id(pane_id)
+        .and_then(|terminal_id| app.terminals.get(terminal_id))
+        .is_some_and(|terminal| terminal.dormant.is_some())
+}
+
+/// The static notice a dormant pane shows until a touch wakes it.
+///
+/// Deliberately one dim line and nothing else: a sleeping pane must not spend
+/// a timer, an animation, or a render pass on saying it is asleep. TP-DORMANT-06
+fn render_dormant_pane_notice(frame: &mut Frame, inner: Rect) {
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    let text = "· sleeping — select to wake ·";
+    let y = inner.y + inner.height / 2;
+    let x = inner.x + inner.width.saturating_sub(text.chars().count() as u16) / 2;
+    frame.render_widget(
+        ratatui::widgets::Paragraph::new(text)
+            .style(ratatui::style::Style::default().add_modifier(Modifier::DIM)),
+        Rect::new(x, y, (text.chars().count() as u16).min(inner.width), 1),
+    );
 }
 
 pub(crate) fn popup_pane_rects(app: &AppState, area: Rect) -> Option<(Rect, Rect)> {
@@ -1142,6 +1178,68 @@ mod tests {
             is_focused: focused,
         }];
         (app, infos)
+    }
+
+    // TP-DORMANT-06: a dormant pane says so on screen — one dim static line,
+    // proven at the buffer-cell level because a state flag alone cannot show
+    // that anything was actually drawn where a blank terminal used to be.
+    #[test]
+    fn a_dormant_pane_renders_its_sleeping_notice() {
+        let rect = Rect::new(0, 0, 40, 8);
+        let (mut app, infos) = agent_attachment_geometry_fixture(rect, Borders::NONE, false, false);
+        let pane_id = infos[0].id;
+        let terminal_id = app.workspaces[0].terminal_id(pane_id).cloned().unwrap();
+        app.terminals.get_mut(&terminal_id).unwrap().dormant =
+            Some(crate::terminal::DormantTerminal { history_path: None });
+        app.view.terminal_area = rect;
+        app.view.pane_infos = infos;
+        let runtimes = crate::terminal::TerminalRuntimeRegistry::new();
+
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(40, 8)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_panes(
+                    &app,
+                    &runtimes,
+                    frame,
+                    &app.view.pane_infos,
+                    &app.view.split_borders,
+                );
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let row: String = (0..40)
+            .map(|x| buffer[(x, 4)].symbol().to_string())
+            .collect();
+        assert!(
+            row.contains("sleeping — select to wake"),
+            "the notice has to be in the buffer, got row {row:?}"
+        );
+
+        // An awake pane with no runtime and no dormant flag stays blank —
+        // the notice is a dormancy statement, not a missing-runtime error.
+        app.terminals.get_mut(&terminal_id).unwrap().dormant = None;
+        terminal
+            .draw(|frame| {
+                render_panes(
+                    &app,
+                    &runtimes,
+                    frame,
+                    &app.view.pane_infos,
+                    &app.view.split_borders,
+                );
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let row: String = (0..40)
+            .map(|x| buffer[(x, 4)].symbol().to_string())
+            .collect();
+        assert!(
+            !row.contains("sleeping"),
+            "a non-dormant pane must not claim to be asleep, got row {row:?}"
+        );
     }
 
     // TP-M1.1-GEOMETRY: only the exact focused agent may own one complete

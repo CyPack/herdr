@@ -265,10 +265,17 @@ impl super::App {
                 return;
             }
         };
-        let root_pane = self.state.workspaces[ws_idx].tabs[tab_idx].root_pane;
-        self.terminal_runtimes.insert(terminal.id.clone(), runtime);
-        self.state.remove_alias_shadowed_by_new_pane(root_pane);
-        self.state.terminals.insert(terminal.id.clone(), terminal);
+        let Some(root_pane) = self.register_new_tab_pane(ws_idx, tab_idx, terminal, runtime) else {
+            tracing::warn!(
+                project = %req.project_path.display(),
+                "the project chat tab disappeared before it could be registered"
+            );
+            return;
+        };
+
+        // Between the two halves, and only here: a project chat wears the
+        // project's name and remembers the session it resumed, and both have to
+        // be true before anything draws the tab it just moved to.
         apply_project_chat_tab_name(
             &mut self.state.workspaces[ws_idx],
             tab_idx,
@@ -276,21 +283,8 @@ impl super::App {
         );
         self.state.workspaces[ws_idx].tabs[tab_idx].resumed_session_id = req.session_id;
         self.arm_projects_hot_poll();
-        self.state.switch_workspace_tab(ws_idx, tab_idx);
-        self.state.mode = crate::app::Mode::Terminal;
-        self.schedule_session_save();
-        if let Some(tab) = self.tab_info(ws_idx, tab_idx) {
-            self.emit_event(crate::api::schema::EventEnvelope {
-                event: crate::api::schema::EventKind::TabCreated,
-                data: crate::api::schema::EventData::TabCreated { tab },
-            });
-        }
-        if let Some(pane) = self.pane_info(ws_idx, root_pane) {
-            self.emit_event(crate::api::schema::EventEnvelope {
-                event: crate::api::schema::EventKind::PaneCreated,
-                data: crate::api::schema::EventData::PaneCreated { pane },
-            });
-        }
+
+        self.announce_new_tab(ws_idx, tab_idx, root_pane);
     }
 }
 
@@ -601,6 +595,90 @@ mod tests {
         let ws = &app.state.workspaces[0];
         assert_eq!(ws.tabs[0].resumed_session_id.as_deref(), Some("sess-3"));
         assert_eq!(app.state.active, Some(0), "new workspace focused");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    // TP-TAB-NEW-01: opening a project chat announces the tab and its pane.
+    //
+    // TP-CHROME-61 holds this for the right-press path; nothing held it here.
+    // An unannounced tab leaves every API subscriber with a tab list that is
+    // missing a tab, and these two emissions are exactly the lines a shared
+    // helper would move — so they need an owner before anything moves them.
+    #[tokio::test]
+    async fn open_chat_tab_announces_the_tab_and_its_pane() {
+        let dir = unique_project_dir("announce");
+        let mut app = test_app();
+        app.state.workspaces = vec![Workspace::test_new("proj")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+
+        app.open_project_chat_tab_with_argv(req(dir.clone(), None), &sh_argv(), Vec::new());
+
+        let announced = app
+            .event_hub
+            .events_after(0)
+            .into_iter()
+            .map(|(_, event)| event.event)
+            .collect::<Vec<_>>();
+        assert!(
+            announced.contains(&crate::api::schema::EventKind::TabCreated),
+            "the new tab was never announced: {announced:?}"
+        );
+        assert!(
+            announced.contains(&crate::api::schema::EventKind::PaneCreated),
+            "the new tab's pane was never announced: {announced:?}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    // TP-TAB-NEW-02: a new root pane clears the alias it shadows, and only that
+    // one.
+    //
+    // The quietest step in the sequence: if it stopped happening nothing on
+    // screen would change, and an old alias would simply go on resolving to a
+    // pane that is no longer what it names. It is the line a refactor is
+    // likeliest to swallow, which is why it needs a name of its own.
+    #[tokio::test]
+    async fn open_chat_tab_clears_only_the_alias_its_new_pane_shadows() {
+        let dir = unique_project_dir("alias");
+        let mut app = test_app();
+        app.state.workspaces = vec![Workspace::test_new("proj")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+
+        // A pane's id is not known until it exists, and ids come from a counter
+        // this test cannot rewind, so a window above the counter's current
+        // position is seeded and the assertion is about which entry survived.
+        // A fixed range would work only until something else allocated first.
+        // The window also catches the opposite mistake — clearing the whole
+        // table rather than the one entry.
+        let probe = crate::layout::PaneId::alloc().raw();
+        let window = probe..probe.saturating_add(64);
+        for raw in window.clone() {
+            app.state
+                .pane_id_aliases
+                .insert(raw, crate::layout::PaneId::from_raw(raw));
+        }
+        let seeded = app.state.pane_id_aliases.len();
+
+        app.open_project_chat_tab_with_argv(req(dir.clone(), None), &sh_argv(), Vec::new());
+
+        let ws = &app.state.workspaces[0];
+        let root = ws.tabs[ws.tabs.len() - 1].root_pane;
+        assert!(
+            window.contains(&root.raw()),
+            "the seeded window no longer covers the new pane's id, so this test would \
+             pass over nothing at all"
+        );
+        assert!(
+            !app.state.pane_id_aliases.contains_key(&root.raw()),
+            "the alias the new pane shadows survived"
+        );
+        assert_eq!(
+            app.state.pane_id_aliases.len(),
+            seeded - 1,
+            "clearing the shadowed alias took other entries with it"
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 

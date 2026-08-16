@@ -543,12 +543,13 @@ impl super::App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::test_wait::LoadAwareDeadline;
     use crate::fm::{
         HighlightedTextPreview, PreviewTextLine, PreviewTextSpan, PreviewTextStyle, TextPreview,
     };
     use std::path::{Path, PathBuf};
     use std::sync::{mpsc, Arc, Mutex};
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
     use tokio::sync::Notify;
 
     struct TempDir {
@@ -635,14 +636,14 @@ mod tests {
     }
 
     fn wait_for_current(worker: &mut FilePreviewHighlightWorker) -> FilePreviewHighlightResult {
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let wait = LoadAwareDeadline::new(5, "the highlighting to arrive");
         loop {
             let drained = worker.drain();
             assert!(!drained.disconnected, "worker disconnected before result");
             if let Some(current) = drained.current {
                 return current;
             }
-            assert!(Instant::now() < deadline, "timed out waiting for highlight");
+            wait.check();
             std::thread::sleep(Duration::from_millis(5));
         }
     }
@@ -880,17 +881,14 @@ mod tests {
         );
         worker.sync_target(Some((PathBuf::from("panic.rs"), preview("panic"))));
 
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let wait = LoadAwareDeadline::new(5, "the worker to disconnect");
         loop {
             let drained = worker.drain();
             assert!(drained.current.is_none());
             if drained.disconnected {
                 break;
             }
-            assert!(
-                Instant::now() < deadline,
-                "timed out waiting for disconnect"
-            );
+            wait.check();
             std::thread::sleep(Duration::from_millis(5));
         }
     }
@@ -946,7 +944,7 @@ mod tests {
             .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&td.root)))
             .expect("Files activation");
 
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let wait = LoadAwareDeadline::new(5, "the app to apply the preview");
         loop {
             let changed = app.sync_file_preview_worker();
             let highlighted =
@@ -964,7 +962,7 @@ mod tests {
                 assert_eq!(highlighted.syntax_name.as_deref(), Some("Rust"));
                 break;
             }
-            assert!(Instant::now() < deadline, "timed out waiting for App apply");
+            wait.check();
             std::thread::sleep(Duration::from_millis(5));
         }
 
@@ -1027,12 +1025,12 @@ mod tests {
             "a stale generation cannot replace pending state"
         );
 
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let wait = LoadAwareDeadline::new(5, "the clicked file to load");
         loop {
             if app.sync_file_preview_worker() {
                 break;
             }
-            assert!(Instant::now() < deadline, "timed out loading clicked file");
+            wait.check();
             std::thread::yield_now();
         }
 
@@ -1121,12 +1119,12 @@ mod tests {
             Some(&crate::fm::trail_snapshots::TrailDetailPreview::PendingSheet)
         );
 
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let wait = LoadAwareDeadline::new(5, "the workbook to be read");
         loop {
             if app.sync_file_preview_worker() {
                 break;
             }
-            assert!(Instant::now() < deadline, "timed out reading the workbook");
+            wait.check();
             std::thread::yield_now();
         }
 
@@ -1227,15 +1225,12 @@ mod tests {
         );
         std::fs::remove_file(&path).expect("delete before worker read");
 
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let wait = LoadAwareDeadline::new(5, "the missing-file result to be applied");
         loop {
             if app.sync_file_preview_worker() {
                 break;
             }
-            assert!(
-                Instant::now() < deadline,
-                "timed out applying missing result"
-            );
+            wait.check();
             std::thread::yield_now();
         }
         let file_manager = app.state.file_manager.as_ref().expect("open Files");
@@ -1277,15 +1272,12 @@ mod tests {
             crate::fm::trail_snapshots::TrailActivateOutcome::SelectedFile
         );
 
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let wait = LoadAwareDeadline::new(5, "the invalid-UTF-8 result to be applied");
         loop {
             if app.sync_file_preview_worker() {
                 break;
             }
-            assert!(
-                Instant::now() < deadline,
-                "timed out applying invalid UTF-8 result"
-            );
+            wait.check();
             std::thread::yield_now();
         }
         let file_manager = app.state.file_manager.as_ref().expect("open Files");
@@ -1335,15 +1327,12 @@ mod tests {
             crate::fm::trail_snapshots::TrailActivateOutcome::SelectedFile
         );
 
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let wait = LoadAwareDeadline::new(5, "the preview worker's disconnect to be observed");
         loop {
             if app.sync_file_preview_worker() {
                 break;
             }
-            assert!(
-                Instant::now() < deadline,
-                "timed out observing preview worker disconnect"
-            );
+            wait.check();
             std::thread::yield_now();
         }
         assert!(matches!(
@@ -1468,15 +1457,12 @@ mod tests {
         assert!(current_highlight.is_none());
 
         second_release_tx.send(()).expect("release second result");
-        let deadline = Instant::now() + Duration::from_secs(2);
+        let wait = LoadAwareDeadline::new(2, "the current result to be applied");
         loop {
             if app.sync_file_preview_worker() {
                 break;
             }
-            assert!(
-                Instant::now() < deadline,
-                "timed out applying current result"
-            );
+            wait.check();
             std::thread::yield_now();
         }
         let current_highlight = app
@@ -1563,15 +1549,12 @@ mod tests {
         );
 
         second_release_tx.send(()).expect("release current result");
-        let deadline = Instant::now() + Duration::from_secs(2);
+        let wait = LoadAwareDeadline::new(2, "the scrolled result to be applied");
         loop {
             if app.sync_file_preview_worker() {
                 break;
             }
-            assert!(
-                Instant::now() < deadline,
-                "timed out applying the current scrolled result"
-            );
+            wait.check();
             std::thread::yield_now();
         }
         let current_highlight = app
@@ -1621,15 +1604,12 @@ mod tests {
         assert!(!app.sync_file_preview_worker());
         release_tx.send(()).expect("release stale result");
 
-        let deadline = Instant::now() + Duration::from_secs(2);
+        let wait = LoadAwareDeadline::new(2, "the stale result to be dropped");
         loop {
             if lock_state(&shared.0).result.is_some() {
                 break;
             }
-            assert!(
-                Instant::now() < deadline,
-                "timed out waiting for stale result"
-            );
+            wait.check();
             std::thread::yield_now();
         }
         assert!(!app.sync_file_preview_worker());
@@ -1653,7 +1633,7 @@ mod tests {
             .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&first.root)))
             .expect("Files activation");
 
-        let first_deadline = Instant::now() + Duration::from_secs(5);
+        let first_wait = LoadAwareDeadline::new(5, "the first file manager to be highlighted");
         loop {
             app.sync_file_preview_worker();
             let syntax = app
@@ -1670,10 +1650,7 @@ mod tests {
             if syntax == Some("Rust") {
                 break;
             }
-            assert!(
-                Instant::now() < first_deadline,
-                "timed out highlighting first FM"
-            );
+            first_wait.check();
             std::thread::yield_now();
         }
 
@@ -1683,7 +1660,7 @@ mod tests {
             .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&second.root)))
             .expect("Files activation");
 
-        let second_deadline = Instant::now() + Duration::from_secs(5);
+        let second_wait = LoadAwareDeadline::new(5, "the reopened file manager to be highlighted");
         loop {
             app.sync_file_preview_worker();
             let syntax = app
@@ -1707,10 +1684,7 @@ mod tests {
                 syntax != Some("Rust"),
                 "closed file-manager syntax leaked after reopen"
             );
-            assert!(
-                Instant::now() < second_deadline,
-                "timed out highlighting reopened FM"
-            );
+            second_wait.check();
             std::thread::yield_now();
         }
     }

@@ -54,6 +54,23 @@ pub(crate) enum ResourceMetric {
 }
 
 impl ResourceMetric {
+    /// The names a refusal offers, in the order it offers them.
+    ///
+    /// It lives here rather than beside the message because the message is in another
+    /// module: a person adding a metric changes this file, and a list kept over there
+    /// would be the one thing they never think to open. `ram` is deliberately absent —
+    /// it is an alias `parse` honours, not a spelling to teach.
+    pub(crate) const ACCEPTED: &'static [&'static str] = &["cpu", "mem", "swap"];
+
+    /// The spellings `parse` honours that `ACCEPTED` deliberately does not teach,
+    /// each beside the name it is another word for.
+    ///
+    /// Kept apart rather than folded in. A refusal that offered four names would
+    /// present an alias as an equal citizen, and dropping the alias would break
+    /// files that already say it — so the grammar has to be able to state
+    /// "accepted, but not the spelling to learn", and this is where it states it.
+    pub(crate) const ALIASES: &'static [(&'static str, &'static str)] = &[("ram", "mem")];
+
     pub(crate) fn parse(name: &str) -> Option<Self> {
         match name {
             "cpu" => Some(Self::Cpu),
@@ -271,6 +288,77 @@ pub(crate) const fn eighth_block(eighths: u8) -> Option<&'static str> {
     }
 }
 
+/// The same, for a cell filled from the bottom rather than from the left.
+///
+/// A meter grows sideways and a sparkline grows upward, so they need different
+/// halves of the same idea: `eighth_block` gives ▏▎▍▌▋▊▉ and this gives ▁▂▃▄▅▆▇.
+/// Only the glyph table differs — the arithmetic that decides how many eighths
+/// a value is worth is `meter_cells`, and neither of them repeats it.
+pub(crate) const fn lower_eighth_block(eighths: u8) -> Option<&'static str> {
+    match eighths {
+        1 => Some("\u{2581}"),
+        2 => Some("\u{2582}"),
+        3 => Some("\u{2583}"),
+        4 => Some("\u{2584}"),
+        5 => Some("\u{2585}"),
+        6 => Some("\u{2586}"),
+        7 => Some("\u{2587}"),
+        _ => None,
+    }
+}
+
+/// How many readings of each metric are kept for a sparkline to draw.
+///
+/// Comfortably wider than any terminal, and small enough not to matter: three
+/// metrics at four bytes each is about six kilobytes. A section wider than this
+/// draws what there is rather than repeating the oldest reading, because a
+/// repeated sample is a shape somebody would read as real.
+pub(crate) const RESOURCE_HISTORY_CAPACITY: usize = 512;
+
+/// What each metric has recently been, oldest first.
+///
+/// Ratios rather than raw readings. `meter_ratio` already flattens the three
+/// metrics onto one 0..1 scale, so storing what it produced keeps the history
+/// metric-agnostic and means drawing does no arithmetic at all.
+///
+/// `Option` is carried through on purpose: a reading that could not be taken is
+/// not a reading of zero, and the two must not draw the same. That distinction
+/// is the whole reason this is a history of options rather than of numbers.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct ResourceHistory {
+    cpu: std::collections::VecDeque<Option<f32>>,
+    mem: std::collections::VecDeque<Option<f32>>,
+    swap: std::collections::VecDeque<Option<f32>>,
+}
+
+impl ResourceHistory {
+    /// Record one reading of every metric.
+    pub(crate) fn push(&mut self, sample: &ResourceSample) {
+        for (series, metric) in [
+            (&mut self.cpu, ResourceMetric::Cpu),
+            (&mut self.mem, ResourceMetric::Mem),
+            (&mut self.swap, ResourceMetric::Swap),
+        ] {
+            if series.len() == RESOURCE_HISTORY_CAPACITY {
+                series.pop_front();
+            }
+            series.push_back(meter_ratio(sample, metric));
+        }
+    }
+
+    /// One metric's readings, oldest first.
+    pub(crate) fn series(
+        &self,
+        metric: ResourceMetric,
+    ) -> &std::collections::VecDeque<Option<f32>> {
+        match metric {
+            ResourceMetric::Cpu => &self.cpu,
+            ResourceMetric::Mem => &self.mem,
+            ResourceMetric::Swap => &self.swap,
+        }
+    }
+}
+
 /// The colour a level reads as. Thresholds, not a gradient: a person reads a
 /// meter to answer "is this a problem", and three answers are easier to see at
 /// a glance in three cells than a continuous ramp.
@@ -319,6 +407,27 @@ fn usage_text(label: &str, usage: Option<Usage>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // TP-CHROME-106: the list a refusal offers and the names `parse` takes are two halves
+    // of one closed set, and they sit in different modules. Nothing but this holds them
+    // together, so a metric added to the enum and forgotten here would be a feature
+    // the message never mentions.
+    #[test]
+    fn every_offered_metric_is_one_this_build_parses() {
+        assert!(!ResourceMetric::ACCEPTED.is_empty());
+        for name in ResourceMetric::ACCEPTED {
+            assert!(
+                ResourceMetric::parse(name).is_some(),
+                "the refusal offers {name:?} but parse does not take it"
+            );
+        }
+
+        // The other direction, for the one spelling that is honoured without being
+        // offered. Kept as a fact rather than a rule: see the shell-side test that
+        // characterises it.
+        assert_eq!(ResourceMetric::parse("ram"), Some(ResourceMetric::Mem));
+        assert!(!ResourceMetric::ACCEPTED.contains(&"ram"));
+    }
 
     // A real line from a running 6.x kernel, ten fields wide.
     const PROC_STAT: &str = "cpu  1000 20 300 8000 50 0 10 0 0 0\n\
@@ -522,6 +631,77 @@ mod tests {
             meter_cells(0.5, 0),
             (0, 0),
             "a zero-width bar draws nothing"
+        );
+    }
+
+    // TP-SPARK-06: the upward glyph table, at both ends and through the middle.
+    //
+    // A glyph table is the kind of thing one wrong line breaks silently: every
+    // value still renders something, and the shape is merely wrong by one step.
+    // Checked against the codepoints rather than against itself, because a table
+    // compared to a copy of itself agrees however wrong both are.
+    #[test]
+    fn the_upward_eighths_climb_one_step_at_a_time() {
+        assert_eq!(lower_eighth_block(0), None, "nothing is not a glyph");
+        assert_eq!(
+            lower_eighth_block(8),
+            None,
+            "eight eighths is a full cell, which is the caller's to draw"
+        );
+        assert_eq!(
+            (1..8)
+                .filter_map(lower_eighth_block)
+                .collect::<Vec<_>>()
+                .concat(),
+            "▁▂▃▄▅▆▇",
+            "the upward eighths no longer climb one step at a time"
+        );
+    }
+
+    // TP-SPARK-01: the history is a ring — it stops growing, and it keeps order.
+    #[test]
+    fn the_history_drops_its_oldest_reading_rather_than_growing() {
+        let mut history = ResourceHistory::default();
+        for used in 0..(RESOURCE_HISTORY_CAPACITY as u64 + 10) {
+            history.push(&ResourceSample {
+                mem: Some(Usage { used, total: 1000 }),
+                ..Default::default()
+            });
+        }
+
+        let series = history.series(ResourceMetric::Mem);
+        assert_eq!(
+            series.len(),
+            RESOURCE_HISTORY_CAPACITY,
+            "the history grew past its capacity"
+        );
+        // The newest reading is the last one pushed, and the oldest survivor is
+        // the tenth — order is the whole meaning of a sparkline.
+        let newest = (RESOURCE_HISTORY_CAPACITY as u64 + 9) as f32 / 1000.0;
+        assert_eq!(series.back().copied().flatten(), Some(newest));
+        assert_eq!(series.front().copied().flatten(), Some(10.0 / 1000.0));
+    }
+
+    // TP-SPARK-02: a reading that could not be taken is not a reading of zero.
+    //
+    // The two are one pixel apart and mean opposite things: "the machine was
+    // idle" and "we have no idea". A history that flattened them would let a bar
+    // report an idle machine it never measured.
+    #[test]
+    fn an_unread_metric_is_kept_apart_from_one_that_read_zero() {
+        let mut history = ResourceHistory::default();
+        history.push(&ResourceSample::default());
+        history.push(&ResourceSample {
+            cpu: Some(0.0),
+            ..Default::default()
+        });
+
+        let cpu = history.series(ResourceMetric::Cpu);
+        assert_eq!(cpu.front().copied(), Some(None), "an unread metric is None");
+        assert_eq!(
+            cpu.back().copied(),
+            Some(Some(0.0)),
+            "a metric read as zero is Some(0.0), not None"
         );
     }
 

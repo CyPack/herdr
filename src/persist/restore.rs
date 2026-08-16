@@ -512,6 +512,16 @@ fn restore_tab(
             .and_then(|pane| pane.managed_agent_kind.as_deref())
             .and_then(crate::detect::parse_canonical_agent_label);
         let saved_launch_argv = saved_pane.and_then(|p| p.launch_argv.clone());
+        // A dormant pane's scrollback outranks the experimental session
+        // history: it was captured at the moment the pane went to sleep, for
+        // exactly this spawn. The file is consumed — it has one reader.
+        let dormant_history = saved_pane
+            .and_then(|p| p.dormant_history.as_deref())
+            .and_then(|path| {
+                let history = std::fs::read_to_string(path).ok();
+                let _ = std::fs::remove_file(path);
+                history
+            });
         let saved_agent_session = saved_pane.and_then(|p| p.agent_session.as_ref());
         let saved_history =
             old_id.and_then(|old_id| history.and_then(|history| history.panes.get(old_id)));
@@ -616,7 +626,7 @@ fn restore_tab(
                     crate::terminal_theme::TerminalTheme::default(),
                     runtime_context.shell_config,
                     &launch_env,
-                    startup.initial_history_ansi,
+                    dormant_history.as_deref().or(startup.initial_history_ansi),
                     runtime_context.events.clone(),
                     runtime_context.render_notify.clone(),
                     runtime_context.render_dirty.clone(),
@@ -634,7 +644,7 @@ fn restore_tab(
                     crate::terminal_theme::TerminalTheme::default(),
                     runtime_context.shell_config,
                     &launch_env,
-                    startup.initial_history_ansi,
+                    dormant_history.as_deref().or(startup.initial_history_ansi),
                     runtime_context.events.clone(),
                     runtime_context.render_notify.clone(),
                     runtime_context.render_dirty.clone(),
@@ -1301,6 +1311,7 @@ mod tests {
                                 value: "opencode-session".into(),
                             }),
                             launch_argv: None,
+                            dormant_history: None,
                         },
                     )]),
                     zoomed: false,
@@ -1378,6 +1389,7 @@ mod tests {
                         value: value.into(),
                     }),
                     launch_argv: None,
+                    dormant_history: None,
                 },
             )]),
             zoomed: false,
@@ -1547,6 +1559,7 @@ mod tests {
                                 managed_agent_kind: None,
                                 agent_session: None,
                                 launch_argv: None,
+                                dormant_history: None,
                             },
                         ),
                         (
@@ -1558,6 +1571,7 @@ mod tests {
                                 managed_agent_kind: None,
                                 agent_session: None,
                                 launch_argv: None,
+                                dormant_history: None,
                             },
                         ),
                     ]),
@@ -1614,6 +1628,7 @@ mod tests {
                     managed_agent_kind: None,
                     agent_session: None,
                     launch_argv: None,
+                    dormant_history: None,
                 },
             )
         };
@@ -1629,6 +1644,7 @@ mod tests {
                 value: "codex-session".into(),
             }),
             launch_argv: None,
+            dormant_history: None,
         };
         let snapshot = SessionSnapshot {
             version: super::super::snapshot::SNAPSHOT_VERSION,
@@ -1783,6 +1799,7 @@ mod tests {
                                 value: "codex-session".into(),
                             }),
                             launch_argv: None,
+                            dormant_history: None,
                         },
                     )]),
                     zoomed: false,
@@ -1889,6 +1906,10 @@ mod tests {
             "styled Unicode and hyperlink text should survive history replay"
         );
 
+        // Best effort, and deliberately not a `LoadAwareDeadline`: this waits only
+        // so the shell is up before being told to exit, and a cwd that never
+        // arrives is a slower machine rather than a broken product. Turning it
+        // into a panic would invent a failure the test was never about.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         while runtime.cwd().is_none() && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -1928,11 +1949,69 @@ mod tests {
             "pane history should not restore unless a history snapshot is supplied"
         );
 
+        // Best effort, and deliberately not a `LoadAwareDeadline`: this waits only
+        // so the shell is up before being told to exit, and a cwd that never
+        // arrives is a slower machine rather than a broken product. Turning it
+        // into a panic would invent a failure the test was never about.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         while runtime.cwd().is_none() && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         let _ = runtime.try_send_bytes(bytes::Bytes::from_static(b"exit\n"));
+    }
+
+    #[tokio::test]
+    async fn restore_replays_a_dormant_panes_scrollback_and_consumes_the_file() {
+        // TP-DORMANT-07: a server restart must not orphan the history
+        // dormancy promised to keep. The snapshot carries the file's path;
+        // the restored pane spawns fresh with that scrollback replayed, and
+        // the file has exactly one reader.
+        let dir = std::env::temp_dir().join(format!(
+            "herdr-dormant-restore-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let history_path = dir.join("term_test.ansi");
+        std::fs::write(&history_path, b"DORMANT_RESTORED_MARKER\r\n").unwrap();
+
+        let (mut snapshot, _history) = snapshot_with_saved_pane_history();
+        snapshot.workspaces[0].tabs[0]
+            .panes
+            .get_mut(&0)
+            .unwrap()
+            .dormant_history = Some(history_path.clone());
+
+        let (events, _events_rx) = mpsc::channel(8);
+        let (_workspaces, _terminals, runtimes) = restore(
+            &snapshot,
+            None,
+            5,
+            40,
+            4096,
+            test_restore_shell(),
+            crate::config::ShellModeConfig::NonLogin,
+            false,
+            events,
+            Arc::new(Notify::new()),
+            Arc::new(AtomicBool::new(false)),
+        );
+        let runtime = runtimes.values().next().expect("restored runtime");
+
+        let restored_text = runtime.recent_unwrapped_text(10);
+        assert!(
+            restored_text.contains("DORMANT_RESTORED_MARKER"),
+            "the dormant scrollback has to be replayed, got {restored_text:?}"
+        );
+        assert!(
+            !history_path.exists(),
+            "the dormant file is consumed by the restore"
+        );
+        let _ = runtime.try_send_bytes(bytes::Bytes::from_static(b"exit\n"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn snapshot_with_saved_pane_history() -> (SessionSnapshot, SessionHistorySnapshot) {
@@ -1947,6 +2026,7 @@ mod tests {
                 managed_agent_kind: None,
                 agent_session: None,
                 launch_argv: None,
+                dormant_history: None,
             },
         );
         let history = SessionHistorySnapshot {

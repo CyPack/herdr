@@ -1193,21 +1193,46 @@ impl HeadlessServer {
         );
 
         let mut handoff_entries = Vec::new();
+        let mut history_freight = HashMap::new();
         for (terminal_id, runtime) in self.app.terminal_runtimes.iter() {
             let Some(pane_id) = pane_by_terminal.get(terminal_id).copied() else {
                 continue;
             };
             let mut handoff_runtime = runtime.handoff_runtime_state(pane_id);
+            // One capture per pane; the inline replay is cut from it below.
+            let full_history = runtime.handoff_history_ansi_full();
             let has_agent_session = self
                 .app
                 .state
                 .terminals
                 .get(terminal_id)
                 .is_some_and(|terminal| terminal.persisted_agent_session.is_some());
+            // The inline replay keeps its historical shape — agent panes
+            // suppressed, the rest cut to the budget — because it is what an
+            // importer without freight support still receives. The freight
+            // carries every pane's full history: a handed-off agent is the
+            // same process on the same PTY and repaints nothing, so unlike
+            // cold restore there is no repaint to duplicate. TP-HANDOFF-HIST-01
             if !has_agent_session {
-                handoff_runtime.initial_history_ansi = runtime.handoff_history_ansi();
+                handoff_runtime.initial_history_ansi = full_history.clone().map(|history| {
+                    crate::pane::truncate_handoff_history(
+                        history,
+                        crate::server::handoff::MAX_REPLAY_BYTES_PER_PANE,
+                    )
+                });
+            }
+            if let Some(history) = full_history {
+                history_freight.insert(pane_id, history);
             }
             handoff_entries.push((terminal_id.clone(), handoff_runtime));
+        }
+        crate::server::handoff::sweep_dead_history_freight(&crate::session::data_dir());
+        if let Err(err) =
+            crate::server::handoff::write_history_freight(&socket_path, history_freight)
+        {
+            // Freight is an enhancement: without it the importer falls back to
+            // the inline replay, which is exactly the pre-freight behavior.
+            warn!(err = %err, "failed to write handoff history freight; panes will keep only the inline replay");
         }
 
         let panes = handoff_entries
@@ -1401,6 +1426,9 @@ impl HeadlessServer {
         }
         self.handoff_in_progress = false;
         let _ = std::fs::remove_file(socket_path);
+        // The freight shares the socket's lifecycle: a handoff that will not
+        // be imported must not leave its histories on disk.
+        crate::server::handoff::discard_history_freight(socket_path);
     }
 
     #[cfg(unix)]
@@ -4211,6 +4239,22 @@ impl HeadlessServer {
         changed |= self.app.sync_file_operation_worker();
         changed |= self.app.sync_file_manager_agent_handoff_send();
         changed |= self.app.sync_agent_attachment_delivery();
+        changed |= self.app.sync_pane_dormancy_sweep(now);
+        changed |= self.app.wake_dormant_panes_on_watched_tabs();
+        // An idle server retires itself: no client, no running child, and a
+        // grace period on the clock. Retired panes' scrollback goes to disk
+        // first, and the loop's exit path saves the session that points at
+        // it — the next start restores everything. A handoff in progress
+        // blocks this: that server is mid-transfer, not idle. TP-SRV-RETIRE-01
+        if !self.handoff_in_progress
+            && self
+                .app
+                .server_retirement_due(now, !self.clients.is_empty())
+        {
+            info!("idle server retiring: no clients, no running pane processes");
+            self.app.dormant_all_retired_panes();
+            self.app.state.should_quit = true;
+        }
         // Each display browses its own directory, so the file workers run
         // once per display, inside that display's view. TP-SUR-FM-02
         changed |= self.app.for_each_display(|app| {
@@ -4708,9 +4752,19 @@ fn run_handoff_import_server(socket_path: &Path, token: &str) -> io::Result<()> 
     let (api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
     let event_hub = api::EventHub::default();
 
+    // The freight file carries every pane's full history; the manifest's
+    // inline replay is its short fallback. Consume it before building the
+    // runtimes so a replaced entry never replays the cut version first.
+    let mut history_freight =
+        crate::server::handoff::take_history_freight(socket_path).unwrap_or_default();
+
     let mut imports = HashMap::new();
     for (pane, fd) in received.manifest.panes.into_iter().zip(received.fds) {
+        let mut pane = pane;
         let pane_id = pane.pane_id;
+        if let Some(history) = history_freight.remove(&pane_id) {
+            pane.initial_history_ansi = Some(history);
+        }
         imports.insert(
             pane_id,
             crate::handoff_runtime::ImportedHandoffRuntime {
@@ -4821,6 +4875,7 @@ fn init_logging() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::test_wait::LoadAwareDeadline;
 
     use crate::app::AppState;
     use crate::protocol::CursorState;
@@ -6360,7 +6415,7 @@ next_tab = ""
             "headless scheduling must submit the pending exact-path preview"
         );
 
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let wait = LoadAwareDeadline::new(5, "the headless text preview to be applied");
         loop {
             let _ = server.handle_scheduled_tasks_headless(Instant::now(), false);
             let resolved = server
@@ -6380,10 +6435,7 @@ next_tab = ""
             if resolved {
                 break;
             }
-            assert!(
-                Instant::now() < deadline,
-                "timed out applying headless text preview"
-            );
+            wait.check();
             std::thread::yield_now();
         }
     }
@@ -7960,7 +8012,7 @@ next_tab = ""
     /// nothing; every image test needs this and none of them should re-invent
     /// the deadline.
     fn headless_pump_image_until_ready(server: &mut HeadlessServer) {
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let wait = LoadAwareDeadline::new(10, "an image decode");
         loop {
             let _ = server.handle_scheduled_tasks_headless(Instant::now(), false);
             if matches!(
@@ -7969,11 +8021,10 @@ next_tab = ""
             ) {
                 return;
             }
-            assert!(
-                Instant::now() < deadline,
-                "timed out waiting for the image decode; state {:?}",
+            wait.check_with(format_args!(
+                "state {:?}",
                 headless_image_preview_state(server)
-            );
+            ));
             std::thread::yield_now();
         }
     }
@@ -8026,7 +8077,7 @@ next_tab = ""
 
         // Decoding happens on a worker thread, so pump the scheduler until the
         // pixels land rather than assuming one round is enough.
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let wait = LoadAwareDeadline::new(10, "a server-mode image decode");
         loop {
             let _ = server.handle_scheduled_tasks_headless(Instant::now(), false);
             if matches!(
@@ -8035,11 +8086,10 @@ next_tab = ""
             ) {
                 break;
             }
-            assert!(
-                Instant::now() < deadline,
-                "timed out waiting for the server-mode image decode; state {:?}",
+            wait.check_with(format_args!(
+                "state {:?}",
                 headless_image_preview_state(&server)
-            );
+            ));
             std::thread::yield_now();
         }
 
@@ -8102,7 +8152,7 @@ next_tab = ""
 
         // Drive the decode to Ready, checking inside display 1's window: with
         // several displays the register holds no file manager between serves.
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let wait = LoadAwareDeadline::new(10, "an image decode with two displays");
         loop {
             let _ = server.handle_scheduled_tasks_headless(Instant::now(), false);
             let previous = server.app.state.enter_viewer(Some(1));
@@ -8114,10 +8164,7 @@ next_tab = ""
             if ready {
                 break;
             }
-            assert!(
-                Instant::now() < deadline,
-                "timed out waiting for the image decode with two displays"
-            );
+            wait.check();
             std::thread::yield_now();
         }
 
@@ -8230,7 +8277,7 @@ next_tab = ""
             });
         let root = headless_server_showing_one_png(&mut server, "image-menu", frame_area);
 
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let wait = LoadAwareDeadline::new(10, "a decode");
         loop {
             let _ = server.handle_scheduled_tasks_headless(Instant::now(), false);
             if matches!(
@@ -8239,10 +8286,7 @@ next_tab = ""
             ) {
                 break;
             }
-            assert!(
-                Instant::now() < deadline,
-                "timed out waiting for the decode"
-            );
+            wait.check();
             std::thread::yield_now();
         }
 
@@ -8447,7 +8491,7 @@ next_tab = ""
             .expect("the open Files surface owns a strip entry");
 
         let pump_until_ready = |server: &mut HeadlessServer| {
-            let deadline = Instant::now() + Duration::from_secs(10);
+            let wait = LoadAwareDeadline::new(10, "an image decode");
             loop {
                 let _ = server.handle_scheduled_tasks_headless(Instant::now(), false);
                 if matches!(
@@ -8456,11 +8500,10 @@ next_tab = ""
                 ) {
                     return;
                 }
-                assert!(
-                    Instant::now() < deadline,
-                    "timed out waiting for the image decode; state {:?}",
+                wait.check_with(format_args!(
+                    "state {:?}",
                     headless_image_preview_state(server)
-                );
+                ));
                 std::thread::yield_now();
             }
         };
@@ -9449,6 +9492,106 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
         assert!(
             narrow_cols <= 60 && narrow_rows <= 20,
             "the tab only the narrow display watches fits the narrow display, got {narrow_rows}x{narrow_cols}"
+        );
+    }
+
+    // TP-PANE-RETIRED-02
+    #[tokio::test]
+    async fn a_handoff_pane_whose_process_is_gone_counts_as_retired() {
+        // A pane imported through a live handoff carries no reaping record --
+        // `from_handoff_fd` keeps the child's pid but leaves
+        // `child_wait_completed` empty, because the task that would have set it
+        // died with the previous server. Every pane in a session that has been
+        // updated in place looks like this, so the record alone would report
+        // every one of them as still running forever.
+        let live = crate::terminal::TerminalRuntime::test_with_screen_bytes(80, 24, b"live");
+        assert!(
+            !live.child_exited(),
+            "a pane with no pid and no record must read as live -- the safe answer"
+        );
+
+        let departed =
+            crate::terminal::TerminalRuntime::test_with_screen_bytes(80, 24, b"departed");
+        // Above every possible pid on any supported platform, so the process
+        // cannot exist and the lookup is the only thing that can answer.
+        departed.test_set_child_pid(u32::from(u16::MAX) * 2 + 1);
+        assert!(
+            departed.child_exited(),
+            "with no reaping record, a pid the OS does not know must read as gone"
+        );
+    }
+
+    // TP-PANE-RETIRED-01
+    #[tokio::test]
+    async fn a_background_pane_whose_child_exited_is_not_resized() {
+        let mut server = test_headless_server();
+        let mut workspace = crate::workspace::Workspace::test_new("test");
+        let active_pane = workspace.tabs[0].root_pane;
+        let background_tab = workspace.test_add_tab(Some("background"));
+        let background_pane = workspace.tabs[background_tab].root_pane;
+        workspace.tabs[0].runtimes.insert(
+            active_pane,
+            crate::terminal::TerminalRuntime::test_with_screen_bytes(80, 24, b"live"),
+        );
+        // Identical to its neighbour in every way except that its child has
+        // already been reaped.
+        let mut retired =
+            crate::terminal::TerminalRuntime::test_with_screen_bytes(80, 24, b"retired");
+        retired.test_mark_child_exited();
+        workspace.tabs[background_tab]
+            .runtimes
+            .insert(background_pane, retired);
+        server.app.state.workspaces = vec![workspace];
+        server.app.state.active = Some(0);
+        server.app.state.selected = 0;
+        server.app.state.mode = crate::app::Mode::Terminal;
+
+        server.clients.insert(
+            1,
+            ClientConnection::new(
+                (120, 40),
+                crate::kitty_graphics::HostCellSize::default(),
+                crate::terminal_theme::TerminalTheme::default(),
+                None,
+                1,
+                RenderEncoding::SemanticFrame,
+                None,
+            ),
+        );
+        server.foreground_client_id = Some(1);
+        server.sync_foreground_client_state();
+        server.resize_shared_runtime_to_effective_size();
+
+        let before = server.app.state.workspaces[0].tabs[background_tab].runtimes[&background_pane]
+            .applied_resizes_for_test();
+
+        // A second size-change event, to a size nothing has been sized to yet.
+        if let Some(client) = server.clients.get_mut(&1) {
+            client.terminal_size = (100, 30);
+        }
+        server.sync_foreground_client_state();
+        server.resize_shared_runtime_to_effective_size();
+
+        let after = server.app.state.workspaces[0].tabs[background_tab].runtimes[&background_pane]
+            .applied_resizes_for_test();
+        let (active_rows, active_cols) =
+            server.app.state.workspaces[0].tabs[0].runtimes[&active_pane].current_size();
+
+        assert_eq!(
+            after,
+            before,
+            "a pane whose child is gone must not be resized while it is out of \
+             sight: no process is left to receive the size, and the reflow rewraps \
+             its whole scrollback for nobody ({} applied)",
+            after - before
+        );
+        assert_eq!(
+            (active_rows, active_cols),
+            (
+                server.app.state.view.terminal_area.height,
+                server.app.state.view.terminal_area.width.saturating_sub(1)
+            ),
+            "the tab being looked at still follows the session size"
         );
     }
 

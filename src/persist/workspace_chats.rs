@@ -76,6 +76,17 @@ pub struct WorkspaceChatLedger {
     /// the moves if it saves — the observed history itself is never at risk.
     #[serde(default)]
     pub moves: BTreeMap<String, String>,
+    /// User-chosen names: session id → the name that chat's row wears
+    /// (TP-CHAT-NAME-01). Additive on the version-1 schema for the same reason
+    /// `moves` is: an older binary still reads the file and only loses the
+    /// names if it saves, while the observed history itself is never at risk.
+    ///
+    /// Kept beside the observations rather than inside `ChatRecord` because a
+    /// name belongs to the conversation, not to the workspace that happened to
+    /// see it — the same session observed in two directories must not be able
+    /// to wear two different names.
+    #[serde(default)]
+    pub names: BTreeMap<String, String>,
 }
 
 impl Default for WorkspaceChatLedger {
@@ -84,6 +95,7 @@ impl Default for WorkspaceChatLedger {
             version: LEDGER_VERSION,
             workspaces: BTreeMap::new(),
             moves: BTreeMap::new(),
+            names: BTreeMap::new(),
         }
     }
 }
@@ -99,6 +111,32 @@ pub fn ledger_key(identity_cwd: &Path) -> String {
     crate::worktree::canonical_or_original(identity_cwd)
         .to_string_lossy()
         .into_owned()
+}
+
+/// The prefix that separates container identities from directory keys.
+pub const MODULE_KEY_PREFIX: &str = "module:";
+
+/// Ledger identity of a declared container.
+///
+/// TP-CHAT-MOVE-05: a container is a label first and a directory maybe never —
+/// it can be declared before any checkout joins it, and the person who declared
+/// it may never give it one. So it cannot be keyed by a path, and this is the
+/// one place that decides what it is keyed by instead.
+///
+/// The ledger's key space now holds two kinds of string, and they must not be
+/// confused: `/home/ayaz/projects/herdr` is somewhere on disk, `module:docs`
+/// is not. Every reader builds its own key rather than parsing someone else's
+/// — [`ledger_key`] for directories, this for containers — so nothing
+/// downstream has to tell them apart by shape. A function that takes this
+/// string for a path produces the silent class of defect #88 was: no error, no
+/// crash, just a lookup that never matches.
+///
+/// A predicate that asks "is this key a container?" deliberately does not
+/// exist yet. Nothing in the product needs to ask — every reader knows which
+/// kind it built — and an unused one would be scaffolding the lint rejects.
+/// It arrives with the first caller that genuinely holds an unknown key.
+pub fn module_ledger_key(node_key: &str) -> String {
+    format!("{MODULE_KEY_PREFIX}{node_key}")
 }
 
 pub fn default_ledger_path() -> PathBuf {
@@ -199,6 +237,54 @@ impl WorkspaceChatLedger {
     /// (TP-CHAT-MOVE-03).
     pub fn clear_move(&mut self, session_id: &str) -> bool {
         self.moves.remove(session_id).is_some()
+    }
+
+    /// Name a chat. Returns whether the ledger changed, so re-submitting the
+    /// name already on screen never schedules a write.
+    ///
+    /// TP-CHAT-NAME-01: a blank name is not stored as a blank — it withdraws
+    /// the name instead, which is the only sensible reading of "clear the box
+    /// and press enter" and leaves the row with the title it would have had.
+    pub fn set_name(&mut self, session_id: &str, name: &str) -> bool {
+        let name = name.trim();
+        if session_id.is_empty() {
+            return false;
+        }
+        if name.is_empty() {
+            return self.clear_name(session_id);
+        }
+        if self.names.get(session_id).map(String::as_str) == Some(name) {
+            return false;
+        }
+        self.names.insert(session_id.to_string(), name.to_string());
+        true
+    }
+
+    /// Withdraw a name: the row goes back to whatever the transcript says.
+    pub fn clear_name(&mut self, session_id: &str) -> bool {
+        self.names.remove(session_id).is_some()
+    }
+}
+
+/// Lay the user's chat names over the assembled presentation rows.
+///
+/// TP-CHAT-NAME-01: this runs LAST, beside `apply_chat_moves` and for the
+/// identical reason. The agent's own store re-answers every refresh with the
+/// title it derived from the transcript, so a name written any earlier is
+/// overwritten within one sync — the chat would appear to rename itself back.
+pub fn apply_chat_names(
+    rows: &mut std::collections::HashMap<String, Vec<crate::app::state::WorkspaceChatRow>>,
+    names: &BTreeMap<String, String>,
+) {
+    if names.is_empty() {
+        return;
+    }
+    for chats in rows.values_mut() {
+        for chat in chats.iter_mut() {
+            if let Some(name) = names.get(&chat.session_id) {
+                chat.title = Some(name.clone());
+            }
+        }
     }
 }
 
@@ -645,6 +731,65 @@ mod tests {
         }
     }
 
+    // T3.6 / TP-CHAT-NAME-01: the name the user typed is what the row reads,
+    // wherever that row was assembled from.
+    #[test]
+    fn a_named_chat_wears_its_name_in_every_drawer_it_appears_in() {
+        let mut rows = std::collections::HashMap::from([
+            ("/repo/main".to_string(), vec![row("s1", 5_000)]),
+            // The agent-store merge attributed the same chat here too, with
+            // whatever title it derived from the transcript.
+            ("/repo/other".to_string(), vec![row("s1", 3_000)]),
+        ]);
+        let names = BTreeMap::from([("s1".to_string(), "gece nöbeti".to_string())]);
+
+        apply_chat_names(&mut rows, &names);
+
+        assert_eq!(rows["/repo/main"][0].title.as_deref(), Some("gece nöbeti"));
+        assert_eq!(rows["/repo/other"][0].title.as_deref(), Some("gece nöbeti"));
+    }
+
+    // TP-CHAT-NAME-01: an unnamed chat is left exactly as the sources built
+    // it. The overlay names what it was told to and nothing else.
+    #[test]
+    fn an_unnamed_chat_keeps_whatever_title_it_had() {
+        let mut rows =
+            std::collections::HashMap::from([("/repo/main".to_string(), vec![row("s1", 5_000)])]);
+        let before = rows["/repo/main"][0].title.clone();
+
+        apply_chat_names(&mut rows, &BTreeMap::new());
+
+        assert_eq!(rows["/repo/main"][0].title, before);
+    }
+
+    // TP-CHAT-NAME-01: a name is stored once, re-submitting it changes
+    // nothing, and clearing the box withdraws the name rather than storing an
+    // empty one — a blank row would be worse than the title it replaced.
+    #[test]
+    fn naming_a_chat_is_idempotent_and_a_blank_withdraws_it() {
+        let mut ledger = WorkspaceChatLedger::default();
+
+        assert!(ledger.set_name("s1", "gece nöbeti"));
+        assert!(
+            !ledger.set_name("s1", "  gece nöbeti  "),
+            "the same decision must not schedule a second write"
+        );
+        assert_eq!(
+            ledger.names.get("s1").map(String::as_str),
+            Some("gece nöbeti")
+        );
+
+        assert!(ledger.set_name("s1", "   "));
+        assert!(
+            !ledger.names.contains_key("s1"),
+            "a cleared box withdraws the name instead of storing a blank"
+        );
+        assert!(
+            !ledger.set_name("s1", ""),
+            "withdrawing twice changes nothing"
+        );
+    }
+
     // TP-CHAT-MOVE-01: a re-home wins over every source — the ledger's own
     // projection and the agent-store merge alike — and the chat appears in
     // exactly one drawer afterwards, in recency order.
@@ -782,6 +927,7 @@ mod tests {
                 }
             }),
             launch_argv: None,
+            dormant_history: None,
         }
     }
 
@@ -956,6 +1102,63 @@ mod tests {
             ledger_key(gone),
             gone.to_string_lossy(),
             "a missing directory keeps its raw key so its history survives"
+        );
+    }
+}
+
+#[cfg(test)]
+mod move_semantics_tests {
+    use super::{apply_chat_moves, module_ledger_key};
+    use std::collections::{BTreeMap, HashMap};
+
+    fn row(session_id: &str, last_seen_ms: u64) -> crate::app::state::WorkspaceChatRow {
+        crate::app::state::WorkspaceChatRow {
+            session_id: session_id.to_string(),
+            agent: "claude".to_string(),
+            title: Some("a conversation".to_string()),
+            last_seen_ms,
+            last_modified: None,
+        }
+    }
+
+    // M1.12 / TP-CHAT-MOVE-01: a move is a MOVE. The chat leaves every drawer
+    // it was in and appears in exactly one.
+    //
+    // The user stated this as the condition of the feature — "clone olarak
+    // degil tasinacak" — and the behaviour is already correct, so this test is
+    // a lock rather than a fix: filing a chat into a module while leaving a
+    // copy behind would turn one conversation into two rows that drift apart,
+    // and the drift would only be visible long after the move.
+    #[test]
+    fn moving_a_chat_leaves_no_copy_behind() {
+        let mut rows: HashMap<String, Vec<crate::app::state::WorkspaceChatRow>> = HashMap::new();
+        rows.insert("/repo/a".to_string(), vec![row("s1", 10), row("other", 5)]);
+        rows.insert("/repo/b".to_string(), vec![row("s1", 3)]);
+
+        let mut moves = BTreeMap::new();
+        moves.insert("s1".to_string(), module_ledger_key("docs"));
+        apply_chat_moves(&mut rows, &moves);
+
+        let occurrences: usize = rows
+            .values()
+            .flatten()
+            .filter(|entry| entry.session_id == "s1")
+            .count();
+        assert_eq!(occurrences, 1, "one conversation, one row");
+        assert!(
+            rows.get(&module_ledger_key("docs"))
+                .is_some_and(|list| list.iter().any(|entry| entry.session_id == "s1")),
+            "and it is in the module it was filed into"
+        );
+        assert!(
+            rows.get("/repo/a")
+                .is_some_and(|list| list.iter().all(|entry| entry.session_id != "s1")),
+            "the drawer it came from no longer shows it"
+        );
+        assert!(
+            rows.get("/repo/a")
+                .is_some_and(|list| list.iter().any(|entry| entry.session_id == "other")),
+            "and its neighbours are untouched"
         );
     }
 }

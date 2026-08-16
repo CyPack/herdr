@@ -1494,6 +1494,7 @@ mod tests {
         FileManagerDeleteRequest, FileManagerHeaderAction, FileManagerOperationItemStatus,
         FileManagerOperationKind, FileManagerOperationState, FileManagerOperationStatus,
     };
+    use crate::app::test_wait::LoadAwareDeadline;
     use crate::fm::delete::{
         execute_delete_operation, execute_delete_operation_with_host, DeleteBackendError,
         DeleteOperationHost, DeleteOperationKind, DeleteOperationPlan, DeleteOperationRequest,
@@ -1513,7 +1514,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{mpsc, Arc};
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
     use tokio::sync::Notify;
 
     fn unique() -> u64 {
@@ -1561,7 +1562,7 @@ mod tests {
     fn wait_for_completion(
         worker: &mut FileOperationWorker,
     ) -> super::FileOperationWorkerCompletion {
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let wait = LoadAwareDeadline::new(5, "the worker to report completion");
         loop {
             let drained = worker.drain();
             if let Some(completion) = drained.completion {
@@ -1571,7 +1572,7 @@ mod tests {
                 !drained.disconnected,
                 "worker disconnected before completion"
             );
-            assert!(Instant::now() < deadline, "worker completion timed out");
+            wait.check();
             std::thread::sleep(Duration::from_millis(5));
         }
     }
@@ -1788,7 +1789,7 @@ mod tests {
         );
 
         release_tx.send(()).expect("release App progress operation");
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let wait = LoadAwareDeadline::new(5, "the app to see the operation complete");
         while app
             .state
             .file_manager_operation
@@ -1796,10 +1797,7 @@ mod tests {
             .is_some_and(FileManagerOperationState::is_running)
         {
             let _ = app.sync_file_operations_for_test();
-            assert!(
-                Instant::now() < deadline,
-                "App progress completion timed out"
-            );
+            wait.check();
             std::thread::sleep(Duration::from_millis(5));
         }
     }
@@ -1959,7 +1957,7 @@ mod tests {
         let destination = plan.destination_directory().to_path_buf();
         let generation = worker.start(plan).expect("start completion race work");
 
-        let deadline = Instant::now() + Duration::from_secs(2);
+        let wait = LoadAwareDeadline::new(2, "the worker to buffer its completion");
         loop {
             let completion_is_buffered = {
                 let (state, _) = &*worker.shared;
@@ -1971,10 +1969,7 @@ mod tests {
             if completion_is_buffered {
                 break;
             }
-            assert!(
-                Instant::now() < deadline,
-                "worker completion was not buffered"
-            );
+            wait.check();
             std::thread::sleep(Duration::from_millis(5));
         }
 
@@ -2397,7 +2392,7 @@ mod tests {
         );
 
         release_tx.send(()).expect("release paste worker");
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let wait = LoadAwareDeadline::new(5, "the paste to complete");
         loop {
             if app.sync_file_operations_for_test()
                 && app
@@ -2410,7 +2405,7 @@ mod tests {
             {
                 break;
             }
-            assert!(Instant::now() < deadline, "paste completion timed out");
+            wait.check();
             std::thread::sleep(Duration::from_millis(5));
         }
         assert!(app.complete_file_manager_io_for_test());
@@ -2513,7 +2508,7 @@ mod tests {
             .await;
         assert!(app.state.file_manager.is_some());
 
-        let deadline = Instant::now() + Duration::from_secs(2);
+        let wait = LoadAwareDeadline::new(2, "the Esc cancellation to land");
         loop {
             if app.sync_file_operations_for_test()
                 && app
@@ -2526,7 +2521,7 @@ mod tests {
             {
                 break;
             }
-            assert!(Instant::now() < deadline, "Esc cancellation timed out");
+            wait.check();
             std::thread::sleep(Duration::from_millis(5));
         }
 
@@ -2565,7 +2560,7 @@ mod tests {
             "stale generation cannot cancel the reused lane"
         );
 
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let wait = LoadAwareDeadline::new(5, "the next generation to start");
         while app
             .state
             .file_manager_operation
@@ -2573,7 +2568,7 @@ mod tests {
             .is_some_and(FileManagerOperationState::is_running)
         {
             let _ = app.sync_file_operations_for_test();
-            assert!(Instant::now() < deadline, "next generation timed out");
+            wait.check();
             std::thread::sleep(Duration::from_millis(5));
         }
         let next_operation = app
@@ -2631,7 +2626,7 @@ mod tests {
             .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&reopened_destination)))
             .expect("Files activation");
         release_tx.send(()).expect("release stale operation");
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let wait = LoadAwareDeadline::new(5, "the stale completion to be dropped");
         while app
             .state
             .file_manager_operation
@@ -2639,7 +2634,7 @@ mod tests {
             .is_some_and(|operation| operation.status == FileManagerOperationStatus::Running)
         {
             let _ = app.sync_file_operations_for_test();
-            assert!(Instant::now() < deadline, "stale completion timed out");
+            wait.check();
             std::thread::sleep(Duration::from_millis(5));
         }
 
@@ -2769,7 +2764,7 @@ mod tests {
             .expect("running permanent delete")
             .generation;
 
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let wait = LoadAwareDeadline::new(5, "the permanent delete to finish");
         loop {
             let _ = app.sync_file_operations_for_test();
             if app
@@ -2780,7 +2775,7 @@ mod tests {
             {
                 break;
             }
-            assert!(Instant::now() < deadline, "permanent delete timed out");
+            wait.check();
             std::thread::sleep(Duration::from_millis(5));
         }
         assert!(app.complete_file_manager_io_for_test());
@@ -2953,7 +2948,7 @@ mod tests {
         });
 
         assert!(app.sync_file_operations_for_test());
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let wait = LoadAwareDeadline::new(5, "the trash cancellation to land");
         loop {
             let _ = app.sync_file_operations_for_test();
             if app
@@ -2964,7 +2959,7 @@ mod tests {
             {
                 break;
             }
-            assert!(Instant::now() < deadline, "trash cancellation timed out");
+            wait.check();
             std::thread::sleep(Duration::from_millis(5));
         }
 
@@ -3009,7 +3004,7 @@ mod tests {
         });
 
         assert!(app.sync_file_operations_for_test());
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let wait = LoadAwareDeadline::new(5, "the delete worker's panic to surface");
         loop {
             let _ = app.sync_file_operations_for_test();
             if app
@@ -3020,7 +3015,7 @@ mod tests {
             {
                 break;
             }
-            assert!(Instant::now() < deadline, "delete panic timed out");
+            wait.check();
             std::thread::sleep(Duration::from_millis(5));
         }
 
@@ -3104,7 +3099,7 @@ mod tests {
             .collect(),
         });
 
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let wait = LoadAwareDeadline::new(5, "the app to recover from a panic mid-progress");
         while app
             .state
             .file_manager_operation
@@ -3112,10 +3107,7 @@ mod tests {
             .is_some_and(FileManagerOperationState::is_running)
         {
             let _ = app.sync_file_operations_for_test();
-            assert!(
-                Instant::now() < deadline,
-                "progress panic recovery timed out"
-            );
+            wait.check();
             std::thread::sleep(Duration::from_millis(5));
         }
 
@@ -3143,7 +3135,7 @@ mod tests {
             .expect("next panic recovery operation running")
             .generation;
         assert!(next_generation > failed_generation);
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let wait = LoadAwareDeadline::new(5, "the reused lane to finish after a panic");
         while app
             .state
             .file_manager_operation
@@ -3151,7 +3143,7 @@ mod tests {
             .is_some_and(FileManagerOperationState::is_running)
         {
             let _ = app.sync_file_operations_for_test();
-            assert!(Instant::now() < deadline, "reused panic lane timed out");
+            wait.check();
             std::thread::sleep(Duration::from_millis(5));
         }
         assert_eq!(
@@ -3255,9 +3247,9 @@ mod tests {
             .expect("next operation running")
             .generation;
         assert!(next_generation > failed_generation);
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let wait = LoadAwareDeadline::new(5, "the recovered lane to finish");
         while !app.file_operation_worker.has_buffered_completion() {
-            assert!(Instant::now() < deadline, "recovered lane timed out");
+            wait.check();
             std::thread::sleep(Duration::from_millis(5));
         }
         assert!(app.sync_file_operations_for_test());
@@ -3304,7 +3296,7 @@ mod tests {
             .expect("rename operation state")
             .generation;
 
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let wait = LoadAwareDeadline::new(5, "the rename to complete");
         loop {
             let _ = app.sync_file_operations_for_test();
             if app
@@ -3315,7 +3307,7 @@ mod tests {
             {
                 break;
             }
-            assert!(Instant::now() < deadline, "rename completion timed out");
+            wait.check();
             std::thread::sleep(Duration::from_millis(5));
         }
         assert!(app.complete_file_manager_io_for_test());
@@ -3556,7 +3548,7 @@ mod tests {
             .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&reopened_directory)))
             .expect("Files activation");
         release_tx.send(()).expect("release rename worker");
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let wait = LoadAwareDeadline::new(5, "the rename to complete after reopening");
         while app
             .state
             .file_manager_operation
@@ -3564,7 +3556,7 @@ mod tests {
             .is_some_and(FileManagerOperationState::is_running)
         {
             let _ = app.sync_file_operations_for_test();
-            assert!(Instant::now() < deadline, "reopened rename timed out");
+            wait.check();
             std::thread::sleep(Duration::from_millis(5));
         }
 
@@ -3672,7 +3664,7 @@ mod tests {
 
         assert!(app.sync_file_operations_for_test());
         assert!(app.state.request_file_manager_bulk_rename.is_none());
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let wait = LoadAwareDeadline::new(5, "the bulk rename to complete");
         loop {
             let _ = app.sync_file_operations_for_test();
             if app
@@ -3683,7 +3675,7 @@ mod tests {
             {
                 break;
             }
-            assert!(Instant::now() < deadline, "App bulk rename timed out");
+            wait.check();
             std::thread::sleep(Duration::from_millis(5));
         }
 
@@ -3814,7 +3806,7 @@ mod tests {
             .as_ref()
             .expect("private recovery operation running")
             .generation;
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let wait = LoadAwareDeadline::new(5, "the private recovery path to finish");
         while app
             .state
             .file_manager_operation
@@ -3822,7 +3814,7 @@ mod tests {
             .is_some_and(FileManagerOperationState::is_running)
         {
             let _ = app.sync_file_operations_for_test();
-            assert!(Instant::now() < deadline, "private recovery timed out");
+            wait.check();
             std::thread::sleep(Duration::from_millis(5));
         }
 
@@ -3875,7 +3867,7 @@ mod tests {
             .expect("post-recovery operation running")
             .generation;
         assert!(next_generation > failed_generation);
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let wait = LoadAwareDeadline::new(5, "the paste to complete after recovery");
         while app
             .state
             .file_manager_operation
@@ -3883,7 +3875,7 @@ mod tests {
             .is_some_and(FileManagerOperationState::is_running)
         {
             let _ = app.sync_file_operations_for_test();
-            assert!(Instant::now() < deadline, "post-recovery paste timed out");
+            wait.check();
             std::thread::sleep(Duration::from_millis(5));
         }
         assert_eq!(
