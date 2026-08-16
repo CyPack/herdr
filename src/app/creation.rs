@@ -107,6 +107,58 @@ impl App {
             return;
         }
 
+        self.tui_new_workspace(request_id);
+        self.state.mode = if self.state.active.is_some() {
+            Mode::Terminal
+        } else {
+            Mode::Navigate
+        };
+    }
+
+    /// The TUI's own "new workspace" intent — every road to it ends here.
+    ///
+    /// TP-DAILY-17: the rule that a second unnamed workspace in the daily
+    /// directory becomes a TAB rather than a workspace belongs to this layer
+    /// and NOT to `workspace.create`. A plugin or script that asks the API for
+    /// a workspace must get a workspace; handing it a tab back would break the
+    /// contract silently, and the response type says `workspace_created`. What
+    /// the person pressed, on the other hand, was "give me somewhere new to
+    /// work" — and in a directory that already has an unnamed workspace, a new
+    /// tab in it IS somewhere new to work.
+    ///
+    /// Both TUI roads (the mouse/key affordance and the `request_new_workspace`
+    /// loop) call this one function. Menu verbs with two bodies are how #91
+    /// shipped an affordance that worked in every test and did nothing in the
+    /// product; one body cannot drift from itself.
+    pub(crate) fn tui_new_workspace(&mut self, request_id: &'static str) {
+        // Only when the new workspace would have landed in the daily directory
+        // anyway. A "new workspace" pressed inside a repository must still make
+        // a workspace in that repository — breaking that would be a far larger
+        // defect than the one being fixed.
+        let target_cwd = self.resolve_new_terminal_cwd(
+            self.workspace_creation_source()
+                .and_then(|source| self.focused_pane_cwd_in_workspace(source)),
+        );
+        if let Some(ws_idx) = self.state.daily_adoption_target(&target_cwd) {
+            let workspace_id = self.state.workspaces.get(ws_idx).map(|ws| ws.id.clone());
+            if let Some(workspace_id) = workspace_id {
+                self.runtime_tab_create(
+                    request_id,
+                    crate::api::schema::TabCreateParams {
+                        workspace_id: Some(workspace_id),
+                        cwd: None,
+                        // Focused: the person asked for somewhere new to work,
+                        // so landing them nowhere is the one outcome worse than
+                        // the duplicate row this replaces.
+                        focus: true,
+                        label: None,
+                        env: Default::default(),
+                    },
+                );
+                return;
+            }
+        }
+
         self.runtime_workspace_create(
             request_id,
             crate::api::schema::WorkspaceCreateParams {
@@ -116,11 +168,80 @@ impl App {
                 env: Default::default(),
             },
         );
-        self.state.mode = if self.state.active.is_some() {
-            Mode::Terminal
-        } else {
-            Mode::Navigate
+    }
+
+    /// Fold every interchangeable daily workspace into one.
+    ///
+    /// TP-DAILY-19: TP-DAILY-17 stopped new ones being born and TP-DAILY-18
+    /// stopped the existing ones filling the sidebar, but neither removed them
+    /// — folding a row away is hiding it, and the person asked how to get rid
+    /// of them. This is the verb that does.
+    ///
+    /// Nothing is closed and nothing is killed. Each pane is moved into a new
+    /// tab of the target workspace by `pane.move`, which already keeps the
+    /// terminal alive, aliases the pane's public id so a plugin holding the old
+    /// one still resolves it, and drops the source workspace by itself once its
+    /// last pane leaves. So the work survives and the empty shells go, without
+    /// this function ever closing anything.
+    ///
+    /// The public pane ids are collected BEFORE the first move on purpose:
+    /// `handle_pane_move` removes an emptied workspace from the list, which
+    /// shifts every index after it. Indices gathered up front would address the
+    /// wrong workspace by the second move; public ids do not move.
+    pub(crate) fn merge_daily_workspaces(&mut self, request_id: &'static str) {
+        let mergeable = self.state.mergeable_daily_workspaces();
+        if mergeable.len() < 2 {
+            return;
+        }
+        let Some(target_ws_idx) = self.state.daily_merge_target() else {
+            return;
         };
+        let Some(target_workspace_id) = self
+            .state
+            .workspaces
+            .get(target_ws_idx)
+            .map(|ws| ws.id.clone())
+        else {
+            return;
+        };
+
+        let mut sources: Vec<String> = Vec::new();
+        for ws_idx in mergeable {
+            if ws_idx == target_ws_idx {
+                continue;
+            }
+            let Some(workspace) = self.state.workspaces.get(ws_idx) else {
+                continue;
+            };
+            let pane_ids: Vec<crate::layout::PaneId> = workspace
+                .tabs
+                .iter()
+                .flat_map(|tab| tab.layout.pane_ids())
+                .collect();
+            for pane_id in pane_ids {
+                if let Some(public_id) = self.public_pane_id(ws_idx, pane_id) {
+                    sources.push(public_id);
+                }
+            }
+        }
+
+        for pane_id in sources {
+            self.runtime_pane_move(
+                request_id,
+                crate::api::schema::PaneMoveParams {
+                    pane_id,
+                    destination: crate::api::schema::PaneMoveDestination::NewTab {
+                        workspace_id: Some(target_workspace_id.clone()),
+                        label: None,
+                    },
+                    // Not focused: a merge of fifteen panes that stole focus
+                    // fifteen times would throw the screen around once per
+                    // move. The person stays where they already were, which
+                    // `daily_merge_target` has already made the destination.
+                    focus: false,
+                },
+            );
+        }
     }
 
     /// Create a workspace with a real PTY (needs event_tx).
@@ -546,4 +667,189 @@ fn terminal_agent_session_info(
             kind: session.session_ref.kind,
             value: session.session_ref.value.clone(),
         })
+}
+
+#[cfg(test)]
+mod merge_tests {
+    use super::App;
+    use crate::workspace::Workspace;
+
+    /// The reported shape: `n` workspaces standing in one directory, none of
+    /// them named.
+    ///
+    /// `Workspace::test_new` hands back a NAMED workspace — it stores its
+    /// argument as `custom_name` — and a named workspace is never mergeable, so
+    /// leaving the fixture's name in place would make every assertion below
+    /// pass without the merge ever running. The precondition is asserted rather
+    /// than assumed for that reason.
+    fn app_with_unnamed_daily_workspaces(n: usize) -> App {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &crate::config::Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        let daily = std::path::PathBuf::from("/herdr-test-daily-merge");
+        app.state.daily_chat_cwd = Some(daily.clone());
+        app.state.workspaces = (0..n)
+            .map(|_| {
+                let mut ws = Workspace::test_new("ayaz");
+                ws.custom_name = None;
+                ws.identity_cwd = daily.clone();
+                ws
+            })
+            .collect();
+        app.state.ensure_test_terminals();
+        app.state.active = (n > 0).then_some(0);
+        app.state.selected = 0;
+        assert_eq!(
+            app.state.mergeable_daily_workspaces().len(),
+            n,
+            "precondition: all {n} fixture workspaces are unnamed and stand in the daily directory"
+        );
+        app
+    }
+
+    fn total_panes(app: &App) -> usize {
+        app.state
+            .workspaces
+            .iter()
+            .flat_map(|ws| ws.tabs.iter())
+            .map(|tab| tab.layout.pane_count())
+            .sum()
+    }
+
+    fn live_terminals(app: &App) -> std::collections::BTreeSet<String> {
+        app.state
+            .workspaces
+            .iter()
+            .flat_map(|ws| ws.tabs.iter())
+            .flat_map(|tab| tab.panes.values())
+            .map(|pane| format!("{:?}", pane.attached_terminal_id))
+            .collect()
+    }
+
+    // P2.3 + P2.5 / TP-DAILY-19: the whole point. Three copies of one place
+    // become one, and NOTHING is lost on the way — every pane arrives and every
+    // terminal id is still alive. Those six workspaces on the reported machine
+    // held fifteen panes and one blocked agent; a cleanup that killed them
+    // would be far worse than the rows it removed.
+    #[test]
+    fn merging_leaves_one_workspace_and_carries_every_pane_into_it() {
+        let mut app = app_with_unnamed_daily_workspaces(3);
+        let panes_before = total_panes(&app);
+        let terminals_before = live_terminals(&app);
+
+        app.merge_daily_workspaces("test.daily.merge");
+
+        assert_eq!(
+            app.state.mergeable_daily_workspaces().len(),
+            1,
+            "one place gets one workspace"
+        );
+        assert_eq!(
+            total_panes(&app),
+            panes_before,
+            "every pane survived the move"
+        );
+        assert_eq!(
+            live_terminals(&app),
+            terminals_before,
+            "no terminal was killed to tidy the sidebar"
+        );
+    }
+
+    // P2.6 / TP-DAILY-19: the survivor is the one the person was standing in.
+    #[test]
+    fn the_workspace_you_are_in_is_the_one_that_survives() {
+        let mut app = app_with_unnamed_daily_workspaces(3);
+        app.state.active = Some(2);
+        let survivor = app.state.workspaces[2].id.clone();
+
+        app.merge_daily_workspaces("test.daily.merge");
+
+        let remaining = app.state.mergeable_daily_workspaces();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(
+            app.state.workspaces[remaining[0]].id, survivor,
+            "a cleanup must not carry the person out of where they were working"
+        );
+    }
+
+    // P2.4 / TP-DAILY-19: a named workspace is left exactly where it stands.
+    #[test]
+    fn merging_leaves_a_named_workspace_alone() {
+        let mut app = app_with_unnamed_daily_workspaces(3);
+        app.state.workspaces[2].custom_name = Some("log tail".to_string());
+        let named_id = app.state.workspaces[2].id.clone();
+        let panes_before = total_panes(&app);
+
+        app.merge_daily_workspaces("test.daily.merge");
+
+        assert!(
+            app.state.workspaces.iter().any(|ws| ws.id == named_id),
+            "the named workspace is still its own place"
+        );
+        assert_eq!(total_panes(&app), panes_before, "and it kept its panes");
+    }
+
+    // P2.2 / TP-DAILY-19: with one workspace there is no work, and the verb
+    // must not invent any. Called directly rather than through the menu because
+    // the menu already refuses to offer it — this pins the body itself, so a
+    // future caller cannot make it act on a set it should leave alone.
+    #[test]
+    fn merging_a_single_workspace_changes_nothing() {
+        let mut app = app_with_unnamed_daily_workspaces(1);
+        let workspaces_before = app.state.workspaces.len();
+        let panes_before = total_panes(&app);
+
+        app.merge_daily_workspaces("test.daily.merge");
+
+        assert_eq!(app.state.workspaces.len(), workspaces_before);
+        assert_eq!(total_panes(&app), panes_before);
+    }
+
+    // P2.8 / TP-DAILY-19: a plugin or a CLI caller holding a pane's public id
+    // from before the merge still resolves it afterwards. `pane.move` aliases
+    // the id precisely so this holds; if it stopped holding, `pane send-keys`
+    // would quietly reach the wrong pane rather than fail.
+    #[test]
+    fn a_merged_pane_still_answers_to_the_public_id_it_had() {
+        let mut app = app_with_unnamed_daily_workspaces(2);
+        let source_ws = app.state.mergeable_daily_workspaces()[1];
+        let pane = app.state.workspaces[source_ws].tabs[0].root_pane;
+        let old_public_id = app
+            .public_pane_id(source_ws, pane)
+            .expect("the fixture pane has a public id");
+
+        app.merge_daily_workspaces("test.daily.merge");
+
+        assert!(
+            app.parse_pane_id(&old_public_id).is_some(),
+            "the id a plugin already holds must keep resolving after the move"
+        );
+    }
+
+    // P2.9 / TP-DAILY-19: a workspace in a repository is never in the set, so
+    // the merge cannot reach it. This is the guard that keeps a tidy-up of the
+    // daily area from ever touching real work elsewhere.
+    #[test]
+    fn a_workspace_in_a_repository_is_untouched_by_the_merge() {
+        let mut app = app_with_unnamed_daily_workspaces(2);
+        let mut repo = Workspace::test_new("herdr");
+        repo.custom_name = None;
+        repo.identity_cwd = std::env::temp_dir().join("herdr-merge-test-repo");
+        let repo_id = repo.id.clone();
+        app.state.workspaces.push(repo);
+        app.state.ensure_test_terminals();
+
+        app.merge_daily_workspaces("test.daily.merge");
+
+        assert!(
+            app.state.workspaces.iter().any(|ws| ws.id == repo_id),
+            "the rule is about one directory, not about workspaces in general"
+        );
+    }
 }

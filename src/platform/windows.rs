@@ -883,6 +883,7 @@ fn read_unicode_string(process: HANDLE, unicode: UNICODE_STRING) -> Option<Strin
 
 #[cfg(test)]
 mod tests {
+    use crate::app::test_wait::LoadAwareDeadline;
     use std::{
         fs,
         process::{Command, Stdio},
@@ -1160,13 +1161,14 @@ mod tests {
             .spawn()
             .expect("spawn cmd");
 
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let wait = LoadAwareDeadline::new(5, "the child to report its working directory");
         let mut observed = None;
-        while Instant::now() < deadline {
+        loop {
             observed = super::process_cwd(child.id());
             if observed.as_deref() == Some(cwd.as_path()) {
                 break;
             }
+            wait.check();
             thread::sleep(Duration::from_millis(100));
         }
 

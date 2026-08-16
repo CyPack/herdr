@@ -85,6 +85,7 @@ pub(crate) fn restrict_socket_permissions(path: &Path) -> io::Result<()> {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use crate::app::test_wait::LoadAwareDeadline;
     use std::fs;
     use std::os::unix::net::UnixListener;
     use std::time::Duration;
@@ -141,11 +142,12 @@ mod tests {
             let _listener = UnixListener::bind(&socket_path).expect("bind stale socket");
         }
 
-        let deadline = std::time::Instant::now() + Duration::from_secs(1);
-        while std::time::Instant::now() < deadline {
+        let wait = LoadAwareDeadline::new(1, "the old listener to stop answering");
+        loop {
             if std::os::unix::net::UnixStream::connect(&socket_path).is_err() {
                 break;
             }
+            wait.check();
             std::thread::sleep(Duration::from_millis(10));
         }
 

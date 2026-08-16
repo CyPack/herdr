@@ -24,6 +24,30 @@ impl App {
             if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
                 && mouse.modifiers.is_empty()
             {
+                // TP-MOD-35: the two buttons are matched BEFORE the rows. They
+                // sit on the footer, not on the list, but order is the
+                // behaviour here for the same reason it is on the daily
+                // header (TP-DAILY-10): a press that can mean two things must
+                // have exactly one rule saying which.
+                if self
+                    .state
+                    .agent_attachment_picker
+                    .as_ref()
+                    .is_some_and(|picker| picker.module_key().is_some())
+                {
+                    if let Some((cancel, set)) =
+                        crate::ui::module_dir_button_rects(self.state.view.terminal_area)
+                    {
+                        if rect_contains(cancel, mouse.column, mouse.row) {
+                            self.state.close_agent_attachment_picker();
+                            return true;
+                        }
+                        if rect_contains(set, mouse.column, mouse.row) {
+                            self.state.submit_module_dir_from_picker();
+                            return true;
+                        }
+                    }
+                }
                 let target = self
                     .state
                     .view

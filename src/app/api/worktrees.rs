@@ -719,6 +719,7 @@ fn worktree_membership(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::test_wait::LoadAwareDeadline;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use crate::api::schema::{
@@ -797,15 +798,12 @@ mod tests {
     }
 
     fn wait_for_app_event(app: &mut App) -> AppEvent {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let wait = LoadAwareDeadline::new(5, "an app event");
         loop {
             if let Ok(event) = app.event_rx.try_recv() {
                 return event;
             }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "timed out waiting for app event"
-            );
+            wait.check();
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
     }

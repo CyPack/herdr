@@ -149,7 +149,7 @@ impl crate::app::App {
             .state
             .agent_attachment_picker
             .as_ref()
-            .is_some_and(|picker| picker.target == request.target);
+            .is_some_and(|picker| picker.attachment_target() == Some(&request.target));
         if !picker_matches
             || !self
                 .state

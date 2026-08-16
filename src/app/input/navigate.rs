@@ -1901,6 +1901,7 @@ fn unique_scrollback_path(attempt: u32) -> std::path::PathBuf {
 #[cfg(test)]
 mod tests {
     #[cfg(unix)]
+    use crate::app::test_wait::LoadAwareDeadline;
     use std::time::Duration;
 
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -3354,6 +3355,10 @@ navigate_pane_down = "ctrl+j"
         assert_eq!(app.state.mode, Mode::Terminal);
 
         std::fs::write(&release_path, b"release").expect("release command");
+        // Best effort, and deliberately not a `LoadAwareDeadline`: the branch
+        // below already handles the process outliving the wait by killing it, so
+        // the wait running out is a path this test covers rather than one it
+        // fails on.
         let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
         while crate::platform::process_exists(pid) && tokio::time::Instant::now() < deadline {
             app.reap_finished_custom_commands();
@@ -3449,13 +3454,14 @@ navigate_pane_down = "ctrl+j"
         );
 
         let _ = wait_for_file(&output_path);
-        let deadline = std::time::Instant::now() + Duration::from_secs(2);
-        while std::time::Instant::now() < deadline {
+        let wait = LoadAwareDeadline::new(2, "the tab to fall back to a single pane");
+        loop {
             if app.drain_internal_events()
                 && app.state.workspaces[0].tabs[0].layout.pane_count() == 1
             {
                 break;
             }
+            wait.check();
             std::thread::sleep(Duration::from_millis(20));
         }
 

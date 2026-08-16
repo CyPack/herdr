@@ -223,47 +223,130 @@ fn pixel_at(
     })
 }
 
+/// One bundled picture: what it is called, its pixel rows, and what its letters
+/// stand for.
+struct BuiltinArt {
+    name: &'static str,
+    rows: &'static [&'static str],
+    palette: &'static [(&'static str, &'static str)],
+}
+
+/// The bundled pictures, in the order a refusal offers them.
+///
+/// A table rather than a match, for the same reason the section kinds became
+/// one: a match can be asked whether it knows a name but never asked what names
+/// it knows, so the refusal had no way to say what it would have accepted. That
+/// left this the one closed set in the bar grammar that turned a config down
+/// without telling anybody what to write instead.
+const BUILTIN_ART: &[BuiltinArt] = &[
+    // Agents converging into one runtime: two chevrons narrowing into a stem.
+    // Ten pixels wide by six tall, which is ten cells by three rows — the
+    // smallest size where the two halves still read as one mark.
+    BuiltinArt {
+        name: "herd",
+        rows: &[
+            "..a....a..",
+            "...a..a...",
+            "....aa....",
+            "....bb....",
+            "...bbbb...",
+            "..bb..bb..",
+        ],
+        palette: &[("a", "mauve"), ("b", "teal")],
+    },
+    // The same mark for a bar with no room for three rows. A bar is three rows
+    // by default and `herd` was drawn for exactly that, which left the one
+    // picture carrying the product's own mark unusable on every bar somebody
+    // made shorter. Two ticks converging into a solid stem keeps what the mark
+    // means; the legs are what four pixel rows cannot hold, and inventing a
+    // one-pixel version of them would draw a smudge rather than a leg.
+    BuiltinArt {
+        name: "herd-small",
+        rows: &["a....a", ".a..a.", "..bb..", "..bb.."],
+        palette: &[("a", "mauve"), ("b", "teal")],
+    },
+    // A filled dot, for the one-cell-row case: two pixel rows, four wide. The
+    // two lit columns sit in the middle and both their halves are set, so the
+    // cell row paints `·██·` — one solid block with a cell of air on each side.
+    // A terminal cell is about twice as tall as it is wide, which is what makes
+    // two cells by one row read as round rather than as a bar.
+    BuiltinArt {
+        name: "dot",
+        rows: &[".aa.", ".aa."],
+        palette: &[("a", "accent")],
+    },
+    // `dot` with the middle taken out, so the two read as one pair: filled for
+    // a thing that is happening, hollow for one that is waiting. Two shapes
+    // that differ only in fill say that without a legend; two unrelated marks
+    // would need one.
+    BuiltinArt {
+        name: "ring",
+        rows: &[".aa.", "a..a", "a..a", ".aa."],
+        palette: &[("a", "accent")],
+    },
+    // Three ascending bars, to sit beside a `resource`, `meter` or `sparkline`
+    // section and say what the number next to it is about.
+    //
+    // One colour on purpose. Grading the three from green to red would draw a
+    // reading, and this picture has none: it is compiled in, it never sees the
+    // machine, and it would go on showing a comfortable green while the meter
+    // beside it sat full.
+    BuiltinArt {
+        name: "level",
+        rows: &["....a", "..a.a", "a.a.a", "a.a.a"],
+        palette: &[("a", "accent")],
+    },
+];
+
 /// The bundled pictures, by name.
 ///
 /// Closed on purpose. A name that resolves to nothing draws an empty section,
 /// which is indistinguishable from a section meant to be empty, so an unknown
 /// name is refused where it is written rather than discovered on screen.
 pub(crate) fn builtin(name: &str) -> Option<(Vec<String>, BTreeMap<String, String>)> {
-    match name {
-        // Agents converging into one runtime: two chevrons narrowing into a
-        // stem. Ten pixels wide by six tall, which is ten cells by three rows —
-        // the smallest size where the two halves still read as one mark.
-        "herd" => Some((
-            [
-                "..a....a..",
-                "...a..a...",
-                "....aa....",
-                "....bb....",
-                "...bbbb...",
-                "..bb..bb..",
-            ]
-            .iter()
-            .map(|row| (*row).to_string())
-            .collect(),
-            [
-                ("a".to_string(), "mauve".to_string()),
-                ("b".to_string(), "teal".to_string()),
-            ]
-            .into_iter()
-            .collect(),
-        )),
-        // A filled dot, for the one-cell-row case: two pixel rows, four wide.
-        "dot" => Some((
-            ["a..a", ".aa."]
+    BUILTIN_ART.iter().find(|art| art.name == name).map(|art| {
+        (
+            art.rows.iter().map(|row| (*row).to_string()).collect(),
+            art.palette
+                .iter()
+                .map(|(key, colour)| ((*key).to_string(), (*colour).to_string()))
+                .collect(),
+        )
+    })
+}
+
+/// The names of the bundled pictures, in the order a refusal offers them.
+pub(crate) fn builtin_names() -> Vec<&'static str> {
+    BUILTIN_ART.iter().map(|art| art.name).collect()
+}
+
+/// Every bundled picture with the size it draws at, in cells.
+///
+/// A picture that cannot be read is left out rather than panicked over: the
+/// table is compiled in, so an unreadable entry is a mistake made here and a
+/// test says so, while a person running the CLI should not be the one who finds
+/// out. `every_bundled_picture_is_one_that_can_be_drawn`, in `ui::shell::spec`,
+/// is that test: it sits with the spec because the spec is what publishes this
+/// catalogue, and an entry silently missing from it is the shape a reader is
+/// handed.
+pub(crate) fn builtin_catalogue() -> Vec<(&'static str, u16, u16)> {
+    BUILTIN_ART
+        .iter()
+        .filter_map(|entry| {
+            let rows = entry
+                .rows
                 .iter()
                 .map(|row| (*row).to_string())
-                .collect(),
-            [("a".to_string(), "accent".to_string())]
-                .into_iter()
-                .collect(),
-        )),
-        _ => None,
-    }
+                .collect::<Vec<_>>();
+            let palette = entry
+                .palette
+                .iter()
+                .map(|(key, colour)| ((*key).to_string(), (*colour).to_string()))
+                .collect::<BTreeMap<_, _>>();
+            let art = art_from_pixels(&rows, &palette).ok()?;
+            Some((entry.name, art.width(), art.height()))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -366,6 +449,76 @@ mod tests {
                 key: "ab".to_string()
             }),
             "a two-character key makes a pixel row readable two ways"
+        );
+    }
+
+    /// A bundled picture as the characters it will paint, one string per cell
+    /// row: `█` where both halves are set, `▀` upper only, `▄` lower only, `·`
+    /// transparent.
+    ///
+    /// Written as a picture because that is the only form in which a wrong
+    /// shape is obvious. Every other spelling of the same fact — a cell count,
+    /// a pixel index, a width — is a number that looks exactly as plausible
+    /// wrong as right, which is how `dot` came to draw a valley while its own
+    /// description, and the shipped guide, both called it filled.
+    fn drawn(name: &str) -> Vec<String> {
+        let (pixels, palette) = builtin(name).unwrap_or_else(|| panic!("{name} is bundled"));
+        let art = art_from_pixels(&pixels, &palette).expect("a bundled picture parses");
+        (0..art.height())
+            .map(|row| {
+                (0..art.width())
+                    .map(|column| match art.cell(column, row).unwrap_or_default() {
+                        HalfCell {
+                            upper: Some(_),
+                            lower: Some(_),
+                        } => '█',
+                        HalfCell {
+                            upper: Some(_),
+                            lower: None,
+                        } => '▀',
+                        HalfCell {
+                            upper: None,
+                            lower: Some(_),
+                        } => '▄',
+                        HalfCell {
+                            upper: None,
+                            lower: None,
+                        } => '·',
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    // TP-ART-08: a bundled picture is held to the cells it paints, not only to
+    // the size it occupies.
+    #[test]
+    fn the_bundled_pictures_draw_the_shapes_their_descriptions_promise() {
+        assert_eq!(
+            drawn("dot"),
+            vec!["·██·"],
+            "a picture called `dot`, and documented as filled, has to be filled"
+        );
+        assert_eq!(
+            drawn("herd"),
+            vec!["··▀▄··▄▀··", "····██····", "··▄█▀▀█▄··"],
+            "two marks converging into a stem that opens again"
+        );
+        assert_eq!(
+            drawn("herd-small"),
+            vec!["▀▄··▄▀", "··██··"],
+            "the same converging pair, over a stem, in two rows"
+        );
+        assert_eq!(
+            drawn("ring"),
+            vec!["▄▀▀▄", "▀▄▄▀"],
+            "`ring` is `dot` with the middle taken out; a filled one would make \
+             the pair say nothing"
+        );
+        assert_eq!(
+            drawn("level"),
+            vec!["··▄·█", "█·█·█"],
+            "three bars, each taller than the last, with a gap between them"
         );
     }
 

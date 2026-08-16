@@ -6,6 +6,9 @@ use ratatui::{
 };
 
 pub(crate) mod app_dock;
+#[cfg(test)]
+pub(crate) use sidebar::closed_agent_row_slots;
+
 mod compose;
 mod dialogs;
 mod file_manager;
@@ -116,21 +119,22 @@ pub(crate) use self::{
         file_delete_choose_button_rects, file_delete_confirmation_inner_rect,
         file_delete_permanent_button_rects,
     },
+    file_manager::module_dir_button_rects,
     settings::{settings_button_rects, settings_popup_rect_in, settings_show_primary_action},
     sidebar::{
         agent_entry_gap, agent_entry_height_in_body, agent_panel_body_rect, agent_panel_entries,
         agent_panel_scroll_for_target, agent_panel_scroll_metrics, agent_panel_scrollbar_rect,
-        agent_panel_toggle_rect, all_agent_panel_entries, closed_agent_row_slots,
+        agent_panel_toggle_rect, all_agent_panel_entries, closed_agent_index_at,
         collapsed_sidebar_sections, collapsed_sidebar_toggle_rect, compute_workspace_card_areas,
         daily_chat_rows, daily_new_chat_cell, effective_space, expanded_sidebar_sections,
         expanded_sidebar_toggle_rect, header_menu_cell, header_new_branch_cell,
-        normalized_workspace_scroll, projects_scroll_metrics, projects_scrollbar_rect,
-        sidebar_section_divider_rect, space_owner_for_key, workspace_chat_rows_for,
-        workspace_chat_toggle_cell, workspace_drop_indicator_row, workspace_list_entries,
-        workspace_list_entries_expanded, workspace_list_rect, workspace_list_scroll_metrics,
-        workspace_list_scrollbar_rect, workspace_menu_cell, workspace_new_chat_cell,
-        workspace_parent_group_state, worktree_source_for_module, AgentPanelEntry,
-        WorkspaceListEntry,
+        is_git_repository_root, module_branch_source, normalized_workspace_scroll,
+        projects_scroll_metrics, projects_scrollbar_rect, sidebar_section_divider_rect,
+        space_owner_for_key, workspace_chat_rows_for, workspace_chat_toggle_cell,
+        workspace_drop_indicator_row, workspace_list_entries, workspace_list_entries_expanded,
+        workspace_list_rect, workspace_list_scroll_metrics, workspace_list_scrollbar_rect,
+        workspace_menu_cell, workspace_new_chat_cell, workspace_parent_group_state,
+        AgentPanelEntry, ModuleBranchSource, WorkspaceListEntry,
     },
 };
 pub(crate) use self::{
@@ -628,6 +632,7 @@ fn compute_view_internal(
         daily_chat_row_areas: daily_areas.chats,
         module_chat_row_areas,
         daily_more_area: daily_areas.more,
+        daily_more_workspaces_area: daily_areas.more_workspaces,
         sidebar_tab_hit_areas,
         project_row_areas,
         app_dock_entry_areas,
@@ -800,6 +805,7 @@ fn compute_mobile_view(
         daily_chat_row_areas: Vec::new(),
         module_chat_row_areas: Vec::new(),
         daily_more_area: None,
+        daily_more_workspaces_area: None,
         workspace_group_header_areas: Vec::new(),
         workspace_project_header_areas: Vec::new(),
         workspace_empty_module_areas: Vec::new(),
@@ -1088,6 +1094,7 @@ impl compose::Component for BaseLayer {
                         frame,
                         widget,
                         &app.resources,
+                        &app.resource_history,
                         &app.palette,
                         rect,
                         section_style,

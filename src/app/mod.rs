@@ -43,6 +43,8 @@ pub(crate) mod tab_branches;
 mod tabs;
 mod terminal_targets;
 mod terminal_titles;
+#[cfg(test)]
+pub(crate) mod test_wait;
 mod theme_sync;
 mod worktrees;
 
@@ -469,6 +471,26 @@ fn resolve_effective_theme(
     )
 }
 
+/// The interval a `resource` section is sampled at, or the default when the
+/// config asks for one this build will not honour.
+///
+/// Refused rather than clamped, and the refusal is reported by
+/// `shell_config_problems` — but a number outside the range must not stop the
+/// meter, only leave it at the pace it had. Silently drawing nothing would
+/// answer a bad number with a broken bar, which is a worse answer than a
+/// working bar and a sentence explaining the number.
+fn resource_sample_interval(shell: &crate::config::ShellConfig) -> std::time::Duration {
+    let millis = shell.resource_interval_ms;
+    let accepted = crate::config::ShellConfig::RESOURCE_INTERVAL_MS_MIN
+        ..=crate::config::ShellConfig::RESOURCE_INTERVAL_MS_MAX;
+    let honoured = if accepted.contains(&millis) {
+        millis
+    } else {
+        crate::config::ShellConfig::resource_interval_ms_default()
+    };
+    std::time::Duration::from_millis(honoured)
+}
+
 impl App {
     /// Drops the workers a departed display was being served by.
     ///
@@ -809,6 +831,7 @@ impl App {
                 &theme_palette,
             ),
             resources: crate::resource::ResourceSample::default(),
+            resource_history: crate::resource::ResourceHistory::default(),
             terminals: std::collections::HashMap::new(),
             closed_agents: Default::default(),
             direct_attach_resize_locks: std::collections::HashSet::new(),
@@ -853,16 +876,22 @@ impl App {
             detach_exits: no_session,
             detach_requested: false,
             request_new_workspace: false,
+            request_revive_closed_agent: None,
+            request_merge_daily_workspaces: false,
+            request_module_git_init: None,
+            request_module_branch_workspace: None,
             request_new_tab: false,
             request_new_linked_worktree: None,
             request_open_existing_worktree: None,
             pending_move_new_group: None,
             pending_new_module: None,
             pending_module_dir: None,
+            pending_chat_rename: None,
             pending_branch_module: None,
             chat_move_overrides: Default::default(),
             recent_move_targets: Vec::new(),
             request_chat_move: None,
+            request_chat_rename: None,
             request_new_workspace_cwd: None,
             request_remove_linked_worktree: None,
             request_submit_worktree_create: false,
@@ -905,6 +934,7 @@ impl App {
             expanded_chat_workspaces: std::collections::HashSet::new(),
             daily_section_collapsed: false,
             daily_section_expanded: false,
+            daily_workspaces_expanded: false,
             suppressed_chat_drawers: std::collections::HashSet::new(),
             tab_branch_cache: std::collections::HashMap::new(),
             sessions_parse_cache: Default::default(),
@@ -951,6 +981,7 @@ impl App {
                 daily_chat_row_areas: Vec::new(),
                 module_chat_row_areas: Vec::new(),
                 daily_more_area: None,
+                daily_more_workspaces_area: None,
                 workspace_group_header_areas: Vec::new(),
                 workspace_project_header_areas: Vec::new(),
                 workspace_empty_module_areas: Vec::new(),
@@ -1057,6 +1088,7 @@ impl App {
             shell_mode: config.terminal.shell_mode,
             new_terminal_cwd: config.terminal.new_cwd.clone(),
             pane_scrollback_limit_bytes: config.advanced.scrollback_limit_bytes,
+            resource_sample_interval: resource_sample_interval(&config.shell),
             accent: crate::config::parse_color(&config.ui.accent),
             sound: config.ui.sound.clone(),
             local_sound_playback: true,
@@ -1451,17 +1483,27 @@ impl App {
                 needs_render = true;
             }
 
+            if self.state.request_merge_daily_workspaces {
+                self.state.request_merge_daily_workspaces = false;
+                // TP-DAILY-19: both context-menu bodies set the flag and the
+                // work happens here, where the API dispatch actually exists.
+                self.merge_daily_workspaces("tui.daily.merge");
+                needs_render = true;
+            }
+
+            // TP-AGPANEL-45: the graveyard menu's revive, on the road the
+            // API actually exists on.
+            if let Some(agent_id) = self.state.request_revive_closed_agent.take() {
+                self.revive_closed_agent_via_api(agent_id);
+                needs_render = true;
+            }
+
             if self.state.request_new_workspace {
                 self.state.request_new_workspace = false;
-                self.runtime_workspace_create(
-                    "tui.workspace.create",
-                    crate::api::schema::WorkspaceCreateParams {
-                        cwd: None,
-                        focus: true,
-                        label: None,
-                        env: Default::default(),
-                    },
-                );
+                // TP-DAILY-17: the second TUI road to "new workspace", routed
+                // through the same body as the first so the adoption rule
+                // cannot apply to one and not the other.
+                self.tui_new_workspace("tui.workspace.create");
                 needs_render = true;
             }
 
@@ -1481,6 +1523,21 @@ impl App {
                 needs_render = true;
             }
 
+            // TP-MOD-38: before the worktree request below, so initialising a
+            // repository and branching from it can complete in one pass rather
+            // than making the person press the verb twice.
+            if let Some(module_key) = self.state.request_module_git_init.take() {
+                self.initialize_module_repository(&module_key);
+                needs_render = true;
+            }
+
+            // TP-MOD-37: opens the module's own repository as a workspace and
+            // arms the branch request, which the arm below then answers.
+            if let Some(module_key) = self.state.request_module_branch_workspace.take() {
+                self.open_branch_workspace_for_module(&module_key);
+                needs_render = true;
+            }
+
             if let Some(ws_idx) = self.state.request_new_linked_worktree.take() {
                 self.open_new_linked_worktree_dialog(ws_idx);
                 needs_render = true;
@@ -1493,6 +1550,14 @@ impl App {
 
             if let Some((session_id, target)) = self.state.request_chat_move.take() {
                 self.apply_chat_move(&session_id, target.as_deref());
+                needs_render = true;
+            }
+
+            // TP-CHAT-NAME-01: the naming decision travels the same road the
+            // move does — the input layer decides, the App loop is the only
+            // thing that touches the ledger.
+            if let Some((session_id, name)) = self.state.request_chat_rename.take() {
+                self.apply_chat_rename(&session_id, &name);
                 needs_render = true;
             }
 
@@ -2015,6 +2080,7 @@ impl App {
 
         if !invalid_section("advanced") {
             self.state.pane_scrollback_limit_bytes = config.advanced.scrollback_limit_bytes;
+            self.state.resource_sample_interval = resource_sample_interval(&config.shell);
         }
 
         if !invalid_section("update") {

@@ -420,12 +420,12 @@ impl AppState {
         // mean inventing one — and #46 measured exactly where invented
         // directories land ($HOME). The directory is now a fact the person
         // stated (TP-MOD-33), which is what makes reopening safe.
-        let Some(dir) = self
-            .space_nodes
-            .iter()
-            .find(|node| node.key == node_key)
-            .and_then(|node| node.dir.clone())
-        else {
+        // TP-MOD-36: resolved through the one definition, so a chat filed into
+        // a BUCKET reopens too. Reading `space_nodes` directly answered "no
+        // directory" for every bucket, and buckets are twenty of the
+        // twenty-four modules on the machine this was reported from — the move
+        // would have succeeded and the chat would then have been unreachable.
+        let Some(dir) = self.module_directory_for_key(node_key) else {
             return;
         };
         // Checked again here, not just when it was written: a directory can be
@@ -489,9 +489,15 @@ impl AppState {
     /// Open the daily area's header menu (TP-DAILY-12) — the one door both
     /// the "⋯" and the right-click walk, so they can never drift apart.
     pub(crate) fn open_daily_header_menu(&mut self, x: u16, y: u16) {
+        // TP-DAILY-19: two or more interchangeable workspaces is the whole
+        // condition for offering the merge. Computed here, at open time, from
+        // the core set rather than from the drawn rows — the verb has to be
+        // offered on the same grounds whether the section is folded or not.
+        let has_mergeable = self.mergeable_daily_workspaces().len() >= 2;
         self.context_menu = Some(crate::app::state::ContextMenuState {
             kind: crate::app::state::ContextMenuKind::DailyHeader {
                 collapsed: self.daily_section_collapsed,
+                has_mergeable,
             },
             x,
             y,
@@ -915,8 +921,11 @@ impl AppState {
         if self.sidebar_collapsed {
             return None;
         }
-        let (_, ghost_rows) = crate::ui::closed_agent_row_slots(self, self.agent_panel_rect())?;
-        let hit = ghost_rows.iter().position(|y| *y == row)?;
+        // TP-AGPANEL-43: resolved from the same placement walk the painter
+        // uses, and across the ghost's whole card rather than only its first
+        // row — a headstone is a card now, and a press on its lower half must
+        // not fall through.
+        let hit = crate::ui::closed_agent_index_at(self, self.agent_panel_rect(), row)?;
         self.closed_agents
             .entries()
             .nth(hit)
@@ -4134,6 +4143,54 @@ mod tests {
             }],
         );
         state
+    }
+
+    /// The same fixture, but the module is a BUCKET rather than a node.
+    ///
+    /// M1.11: buckets are twenty of the twenty-four modules on the machine this
+    /// was reported from, so this is the shape the feature is actually used in.
+    fn state_with_bucket_chat(repo_root: std::path::PathBuf) -> crate::app::state::AppState {
+        let mut state = crate::app::state::AppState::test_new();
+        state.space_nodes.clear();
+        state.space_split_rules = vec![crate::spaces::SpaceSplitRule {
+            repo_root,
+            patterns: vec!["*".to_string()],
+            key: "bucket".to_string(),
+            label: "Bucket".to_string(),
+            icon: None,
+            parent: None,
+        }];
+        state.workspace_chat_rows.insert(
+            crate::persist::workspace_chats::module_ledger_key("bucket"),
+            vec![crate::app::state::WorkspaceChatRow {
+                session_id: "filed-session".into(),
+                agent: "claude".into(),
+                title: Some("a filed conversation".into()),
+                last_seen_ms: 1,
+                last_modified: None,
+            }],
+        );
+        state
+    }
+
+    // M1.11 / TP-MOD-36: a chat filed into a BUCKET reopens too, in the
+    // repository its rule names. Resolving through `space_nodes` alone answered
+    // "no directory" for every bucket, so the move would have succeeded and the
+    // chat would then have been unreachable — moved into a place that could
+    // never open it.
+    #[test]
+    fn a_filed_chat_in_a_bucket_resumes_in_its_repository() {
+        let dir = std::env::temp_dir();
+        let mut state = state_with_bucket_chat(dir.clone());
+
+        state.open_module_chat("bucket", 0);
+
+        let request = state
+            .request_project_chat_tab
+            .as_ref()
+            .expect("the chat is queued to reopen");
+        assert_eq!(request.project_path, dir);
+        assert_eq!(request.session_id.as_deref(), Some("filed-session"));
     }
 
     // TP-CHAT-MOVE-10 (R1): a dead chat filed into a module reopens in that

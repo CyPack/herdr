@@ -142,6 +142,10 @@ pub(crate) fn merge_managed_spaces_str(config: &mut Config, content: &str) -> Ve
             config.spaces.split.extend(managed.spaces.split);
             config.spaces.project.extend(managed.spaces.project);
             config.spaces.node.extend(managed.spaces.node);
+            // TP-MOD-34: appended after the user's own, which is what makes
+            // `display_name_for`'s last-wins rule mean "the most recent
+            // decision" rather than "whichever file was read second".
+            config.spaces.display.extend(managed.spaces.display);
             Vec::new()
         }
         Err(err) => vec![format!(

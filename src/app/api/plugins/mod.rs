@@ -867,6 +867,7 @@ mod tests {
     use crate::api::schema::{
         Method, PaneListParams, PluginSourceInfo, PluginSourceKind, Request, SuccessResponse,
     };
+    use crate::app::test_wait::LoadAwareDeadline;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn test_app() -> App {
@@ -904,20 +905,58 @@ mod tests {
     /// Wait for non-empty contents at `path`. Shell `>` creates the file empty
     /// before the command writes, so waiting on existence alone can read EOF.
     /// `pump` advances any event loop the command depends on.
+    // TP-PLUGIN-CAP-01: a capture still being written is not read early.
+    //
+    // The deterministic form of a flake that only ever appeared under a loaded
+    // full suite. `pump` runs once per poll and BEFORE the read, so the file has
+    // to grow on the second poll: the first read then sees a partial capture,
+    // which is exactly what a plugin writing line by line does to a reader that
+    // returns on the first byte. Against the pre-fix helper this returns
+    // "first\n" and the assertion below fails, which is what makes it a
+    // reproduction rather than a hope.
+    #[test]
+    fn a_capture_still_being_written_is_not_read_until_it_settles() {
+        let path = unique_temp_path("capture-settle");
+        std::fs::write(&path, "first\n").expect("seed the capture");
+
+        let mut polls = 0_u32;
+        let text = read_capture_when_ready(&path, || {
+            polls += 1;
+            if polls == 2 {
+                std::fs::write(&path, "first\nsecond\n").expect("grow the capture");
+            }
+        });
+
+        assert_eq!(
+            text, "first\nsecond\n",
+            "a capture that was still growing was read as if it were finished"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
     fn read_capture_when_ready(path: &std::path::Path, mut pump: impl FnMut()) -> String {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        // Non-empty is not ready, and that is what `2fe57a57` left behind when it
+        // stabilised these tests: a plugin writes its capture a line at a time, so
+        // the first byte can land several lines before the last, and a reader that
+        // returns on the first byte gets however much happened to be flushed. The
+        // flake got rarer and stayed -- surfacing as a missing line rather than an
+        // empty file, which is a complaint about the content instead of about the
+        // waiting.
+        //
+        // Settled is ready: the same non-empty contents seen twice in a row.
+        let wait = LoadAwareDeadline::new(5, "a plugin command to finish writing its output");
+        let mut previous: Option<String> = None;
         loop {
             pump();
             if let Ok(contents) = std::fs::read_to_string(path) {
                 if !contents.is_empty() {
-                    return contents;
+                    if previous.as_deref() == Some(contents.as_str()) {
+                        return contents;
+                    }
+                    previous = Some(contents);
                 }
             }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "plugin command did not write {} within deadline",
-                path.display()
-            );
+            wait.check_with(format_args!("{}", path.display()));
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
     }
@@ -2937,14 +2976,15 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
         };
         assert_eq!(log.status, PluginCommandStatus::Running);
 
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while std::time::Instant::now() < deadline {
+        let wait = LoadAwareDeadline::new(5, "a plugin command to stop running");
+        loop {
             app.drain_all_internal_events();
             if app.state.plugin_command_logs.iter().any(|entry| {
                 entry.log_id == log.log_id && entry.status != PluginCommandStatus::Running
             }) {
                 break;
             }
+            wait.check();
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
 
@@ -3084,14 +3124,15 @@ command = ["sh", "-c", "printf '%s\n%s\n%s' \"$HERDR_PLUGIN_ROOT\" \"$HERDR_PLUG
             panic!("expected plugin action invocation: {invoke}");
         };
 
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while std::time::Instant::now() < deadline {
+        let wait = LoadAwareDeadline::new(5, "a plugin command to stop running");
+        loop {
             app.drain_all_internal_events();
             if app.state.plugin_command_logs.iter().any(|entry| {
                 entry.log_id == log.log_id && entry.status != PluginCommandStatus::Running
             }) {
                 break;
             }
+            wait.check();
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
 
@@ -3470,14 +3511,15 @@ action = "open"
             .expect("plugin command log should be recorded")
             .clone();
 
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while std::time::Instant::now() < deadline {
+        let wait = LoadAwareDeadline::new(5, "a plugin command to stop running");
+        loop {
             app.drain_all_internal_events();
             if app.state.plugin_command_logs.iter().any(|entry| {
                 entry.log_id == log.log_id && entry.status != PluginCommandStatus::Running
             }) {
                 break;
             }
+            wait.check();
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
 

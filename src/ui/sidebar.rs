@@ -585,6 +585,73 @@ pub(crate) fn space_owner_for_key(app: &AppState, space_key: &str) -> Option<Str
 /// through it, then the same search up the module's own ancestor chain — a
 /// freshly created (still invisible) module borrows its ancestors' repo
 /// (TP-DOTS-14).
+/// What a module can start a branch from.
+///
+/// TP-MOD-37: "New branch..." has been on every module header since TP-DOTS-13,
+/// but it only ever looked for a checkout already standing under the module.
+/// A module the person gave a directory to — which TP-MOD-33 made possible and
+/// TP-MOD-35 gave a picker for — had nothing to offer, so the verb answered
+/// "move a branch under it first" and stopped there. That is a dead end wearing
+/// the clothes of an explanation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ModuleBranchSource {
+    /// A checkout already stands under this module. Today's behaviour, and it
+    /// wins over everything below: a checkout under the module is a more
+    /// specific answer than the module's own directory, and quietly preferring
+    /// the directory would move the branch somewhere else than before.
+    Workspace(usize),
+    /// The module's own directory IS a git repository root.
+    Repository(std::path::PathBuf),
+    /// The directory is there but is not a repository root — the one case that
+    /// can be fixed on the spot, by initialising it.
+    UninitializedDirectory(std::path::PathBuf),
+    /// Nothing stated, or what was stated is no longer on disk.
+    NoDirectory,
+}
+
+/// Whether `dir` is a git repository ROOT.
+///
+/// ⛔ TP-MOD-37: deliberately NOT `git rev-parse --show-toplevel`, and
+/// deliberately no walk up the parents. Measured on the reporting machine:
+///
+/// ```text
+/// /home/ayaz/Marktplaats satis        exists, empty, no .git
+/// git -C "/home/ayaz/Marktplaats satis" rev-parse --show-toplevel  →  /home/ayaz
+/// ```
+///
+/// `$HOME` is itself a git repository there. A climbing check would have called
+/// that module a repository and opened branches and worktrees in the home
+/// directory — over `~/.claude`, `~/.config` and every project in it. Only the
+/// directory the person named counts, and only if it is a root.
+///
+/// `.git` is tested with `exists()` rather than `is_dir()` because a linked
+/// worktree and a submodule both carry a `.git` FILE, and both are perfectly
+/// good places to branch from.
+pub(crate) fn is_git_repository_root(dir: &std::path::Path) -> bool {
+    dir.join(".git").exists()
+}
+
+/// TP-MOD-37: the four answers, in the order that keeps today's behaviour safe.
+pub(crate) fn module_branch_source(app: &AppState, module_key: &str) -> ModuleBranchSource {
+    if let Some(ws_idx) = worktree_source_for_module(app, module_key) {
+        return ModuleBranchSource::Workspace(ws_idx);
+    }
+    let Some(dir) = app.module_directory_for_key(module_key) else {
+        return ModuleBranchSource::NoDirectory;
+    };
+    // Checked here and not only when it was written: a directory can be removed
+    // afterwards — a worktree pruned, a disk unmounted — and TP-CHAT-MOVE-10
+    // (R3) already pays this exact toll on the chat side.
+    if !dir.is_dir() {
+        return ModuleBranchSource::NoDirectory;
+    }
+    if is_git_repository_root(&dir) {
+        ModuleBranchSource::Repository(dir)
+    } else {
+        ModuleBranchSource::UninitializedDirectory(dir)
+    }
+}
+
 pub(crate) fn worktree_source_for_module(app: &AppState, module_key: &str) -> Option<usize> {
     let chain_hits_module = |idx: usize, target: &str| -> bool {
         let Some(space) = effective_space(app, idx) else {
@@ -738,12 +805,120 @@ pub(crate) fn indented_row_label(
     label: &str,
     branch: Option<&str>,
     has_custom_name: bool,
-    is_daily_area: bool,
+    daily_name: Option<&str>,
 ) -> String {
-    if is_daily_area {
-        return label.to_string();
+    // TP-DAILY-14: a daily row has no checkout, so the branch it used to show
+    // came from whatever repository happened to contain the daily directory —
+    // on the machine this was reported from, `$HOME`, and seven rows all read
+    // `main`. The name arrives already resolved (TP-DAILY-15/16) because
+    // telling the rows apart is a question about the whole set, not about one
+    // row.
+    if let Some(name) = daily_name {
+        return name.to_string();
     }
     grouped_child_display_label(label, branch, has_custom_name)
+}
+
+/// The name a row takes from what is *inside* it, for a workspace whose
+/// directory cannot tell it apart from its neighbours.
+///
+/// The daily area collects every workspace standing in one directory, so the
+/// directory's own name is the one thing they all share — deriving the label
+/// from it names them all the same. Seven rows reading `ayaz` say no more than
+/// seven rows reading `main` did (#99): a name repeated seven times is not a
+/// name, it is a category.
+///
+/// So the row asks its contents instead, in the order a person would:
+///
+/// 1. **A tab that has been named.** A named tab is the one place a purpose has
+///    already been written down — by hand or by the auto-namer. With a single
+///    tab the workspace *is* that tab, so it wears the name outright; with
+///    several it wears the first and counts the rest, because a multi-tab
+///    workspace cannot honestly be reduced to one of them.
+/// 2. **What is running in it.** A workspace of unnamed tabs is still
+///    distinguishable by the agent inside it. `pane_details` only answers for
+///    panes that report an agent, so a plain shell contributes nothing and
+///    never becomes a name.
+/// 3. **Nothing.** The caller keeps the directory name — and
+///    [`disambiguate_repeated_labels`] makes the repeats addressable.
+///
+/// Tab numbers are deliberately not a source: `tab_display_name` falls back to
+/// the tab's ordinal, so an unnamed tab answers `"1"`. That is a position, not
+/// an identity, and hoisting it into the row would name six workspaces `1`.
+/// Only `custom_name` counts as named, which is why this takes the raw option
+/// rather than the display string.
+// TP-DAILY-15
+pub(crate) fn content_derived_row_name<'a>(
+    tab_names: impl IntoIterator<Item = Option<&'a str>>,
+    agent_labels: impl IntoIterator<Item = &'a str>,
+) -> Option<String> {
+    let mut tab_count = 0usize;
+    let mut first_named: Option<&str> = None;
+    for name in tab_names {
+        tab_count += 1;
+        if first_named.is_some() {
+            continue;
+        }
+        let named = name.map(str::trim).filter(|name| !name.is_empty());
+        first_named = named;
+    }
+
+    if let Some(name) = first_named {
+        return Some(if tab_count > 1 {
+            format!("{name} +{}", tab_count - 1)
+        } else {
+            name.to_string()
+        });
+    }
+
+    agent_labels
+        .into_iter()
+        .map(str::trim)
+        .find(|label| !label.is_empty())
+        .map(str::to_string)
+}
+
+/// Make repeated labels addressable by numbering the repeats.
+///
+/// Two rows that read alike are two rows a person cannot choose between. When
+/// the derivation above still lands on one name — five workspaces each running
+/// nothing but `reviewr` — the repeats take an ordinal so every row can at
+/// least be named out loud. The first keeps the bare name: numbering something
+/// that appears once invents a series that does not exist.
+// TP-DAILY-16
+pub(crate) fn disambiguate_repeated_labels(labels: &mut [String]) {
+    let mut occurrences: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for label in labels.iter() {
+        *occurrences.entry(label.as_str()).or_insert(0) += 1;
+    }
+    if occurrences.values().all(|count| *count <= 1) {
+        return;
+    }
+
+    // Every name already on screen is spoken for, including the ones this loop
+    // has not reached yet. A row literally named `reviewr 2` must not be
+    // shadowed by an ordinal minted for a different row — two rows reading
+    // `reviewr 2` is the very defect being fixed, arrived at from the other
+    // side.
+    let mut taken: std::collections::HashSet<String> = labels.iter().cloned().collect();
+    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for label in labels.iter_mut() {
+        let count = seen.entry(label.clone()).or_insert(0);
+        *count += 1;
+        if *count == 1 {
+            continue;
+        }
+        let mut ordinal = *count;
+        let numbered = loop {
+            let candidate = format!("{label} {ordinal}");
+            if !taken.contains(&candidate) {
+                break candidate;
+            }
+            ordinal += 1;
+        };
+        taken.insert(numbered.clone());
+        *label = numbered;
+    }
 }
 
 pub(crate) fn grouped_child_display_label(
@@ -851,6 +1026,17 @@ pub(crate) enum WorkspaceListEntry {
     },
     /// The daily section's own "… N older" switch (TP-DRAW-11's sibling).
     DailyMore {
+        expanded: bool,
+    },
+    /// The switch that reveals the other workspaces standing in the daily
+    /// directory.
+    ///
+    /// TP-DAILY-18: the same shape `DailyMore` uses for chats, for the same
+    /// reason — the section is a glance surface. Seven rows for one place read
+    /// as spam, which is exactly how it was reported; one row and a switch
+    /// reads as one place you can look inside.
+    DailyMoreWorkspaces {
+        hidden: usize,
         expanded: bool,
     },
 }
@@ -1139,22 +1325,57 @@ fn daily_section_visible(app: &AppState) -> bool {
 /// set feeds the client frame as well as the sidebar. Removing a workspace at
 /// the source removes it from every surface that reads it — the regression the
 /// first attempt at this shipped and had to take back.
+/// TP-DAILY-17: the membership test itself now lives on the state, because the
+/// "new workspace" road has to ask the same question and two copies of it would
+/// drift. This adds the one thing that is genuinely the sidebar's business —
+/// whether the section is drawn at all.
 fn daily_owned_workspaces(app: &AppState) -> Vec<usize> {
     if !daily_section_visible(app) {
         return Vec::new();
     }
-    let Some(daily) = app.daily_chat_cwd.as_deref() else {
-        return Vec::new();
+    app.workspaces_in_daily_directory()
+}
+
+/// The name each daily-area row wears, resolved for the whole set at once.
+///
+/// Telling these rows apart is a question about the set, not about any one row:
+/// a name is only useless *because another row has it too*. So the derivation
+/// (TP-DAILY-15) and the numbering that follows it (TP-DAILY-16) run together,
+/// once, and the render loop reads the answer.
+///
+/// A workspace the user has named keeps that name untouched — an explicit
+/// intent outranks anything derived — but it still takes part in the
+/// numbering, because two rows named alike by hand are just as unaddressable
+/// as two named alike by accident.
+// TP-DAILY-15/16
+fn daily_row_names(
+    app: &AppState,
+    owned: &[usize],
+    terminal_runtimes: Option<&TerminalRuntimeRegistry>,
+) -> std::collections::HashMap<usize, String> {
+    let directory_name = |ws: &crate::workspace::Workspace| match terminal_runtimes {
+        Some(runtimes) => ws.display_name_from(&app.terminals, runtimes),
+        None => ws.display_name(),
     };
-    let daily_key = crate::persist::workspace_chats::ledger_key(daily);
-    app.workspaces
+
+    let mut labels: Vec<String> = owned
         .iter()
-        .enumerate()
-        .filter(|(_, ws)| {
-            crate::persist::workspace_chats::ledger_key(ws.effective_cwd()) == daily_key
+        .filter_map(|ws_idx| app.workspaces.get(*ws_idx))
+        .map(|ws| {
+            if ws.custom_name.is_some() {
+                return directory_name(ws);
+            }
+            let details = ws.pane_details(&app.terminals);
+            content_derived_row_name(
+                ws.tabs.iter().map(|tab| tab.custom_name.as_deref()),
+                details.iter().map(|detail| detail.label.as_str()),
+            )
+            .unwrap_or_else(|| directory_name(ws))
         })
-        .map(|(ws_idx, _)| ws_idx)
-        .collect()
+        .collect();
+    disambiguate_repeated_labels(&mut labels);
+
+    owned.iter().copied().zip(labels).collect()
 }
 
 /// Append the daily section — header first, then its chats — above the tree.
@@ -1192,12 +1413,48 @@ fn push_daily_section(app: &AppState, entries: &mut Vec<WorkspaceListEntry>, own
     // closing together because one shared key holds their fold state. The row
     // is here to reach the workspace and its panes; the chats are already
     // above it.
-    for ws_idx in owned {
+    //
+    // TP-DAILY-18: and only ONE of them at a glance. The daily directory is a
+    // single place — its chats are keyed by that directory, which is why these
+    // rows have no drawer of their own — so several rows for it say the same
+    // thing several times. Seven of them was the reported defect, and naming
+    // them apart (TP-DAILY-15/16) made the repetition legible without making it
+    // any less repetitive: "hepsinin içinde aynı chatler var, fark ne ki?".
+    //
+    // The rest fold behind a switch rather than disappearing. Those six held
+    // fifteen panes and one blocked agent on the machine this came from, and a
+    // row nobody can reach is the #88 failure, not a fix for it.
+    for (position, ws_idx) in daily_workspace_order(app, owned).into_iter().enumerate() {
+        if position > 0 && !app.daily_workspaces_expanded {
+            break;
+        }
         entries.push(WorkspaceListEntry::Workspace {
-            ws_idx: *ws_idx,
+            ws_idx,
             indented: true,
         });
     }
+    if owned.len() > 1 {
+        entries.push(WorkspaceListEntry::DailyMoreWorkspaces {
+            hidden: owned.len() - 1,
+            expanded: app.daily_workspaces_expanded,
+        });
+    }
+}
+
+/// The daily workspaces with the one that should always be visible first.
+///
+/// TP-DAILY-18: the workspace you are IN leads, when it is one of these.
+/// A fixed "always the first in list order" would hide the row you are working
+/// in behind the switch — the row most worth seeing, folded away by the rule
+/// meant to reduce noise.
+pub(crate) fn daily_workspace_order(app: &AppState, owned: &[usize]) -> Vec<usize> {
+    let mut order: Vec<usize> = owned.to_vec();
+    if let Some(active) = app.active {
+        if let Some(position) = order.iter().position(|ws_idx| *ws_idx == active) {
+            order.swap(0, position);
+        }
+    }
+    order
 }
 
 /// Append a workspace's chat drawer rows, if it is open.
@@ -2084,6 +2341,9 @@ fn entry_row_metrics(
         WorkspaceListEntry::DailyHeader => Some((1, 0)),
         WorkspaceListEntry::DailyChat { .. }
         | WorkspaceListEntry::DailyMore { .. }
+        // TP-DAILY-18: the workspace switch measures like the chat switch —
+        // it is the same kind of row in the same section.
+        | WorkspaceListEntry::DailyMoreWorkspaces { .. }
         // TP-CHAT-MOVE-06: a container's chat measures like every other
         // chat row; it is the same kind of thing in a different home.
         | WorkspaceListEntry::ModuleChat { .. } => {
@@ -2175,7 +2435,73 @@ fn resolved_agent_rows(app: &AppState, entry: &AgentPanelEntry) -> Vec<Vec<Resol
         .get(agent_panel_status_key(entry.state, entry.seen))
         .map(String::as_str)
         .unwrap_or_else(|| state_label(entry.state, entry.seen));
-    tokens::agent_rows(&app.sidebar_agents, entry, label)
+    tokens::agent_rows(&app.sidebar_agents, entry.into(), label)
+}
+
+/// A ghost's rows, laid out by the very function the living use.
+///
+/// TP-AGPANEL-42: the user asked for the closed agents to be drawn "in the
+/// same format as the open ones, the only difference being that they are a
+/// faded grey". Calling the same layout is how that is kept true — a second
+/// drawing path would be free to drift, and the one it replaces had already
+/// drifted all the way to a bare `Paragraph` of one line.
+///
+/// Where a living row says what it is doing, a ghost says when it stopped. The
+/// state slot cannot stay empty (the layout would collapse) and cannot carry a
+/// live state (it has none), and the age is the one fact a graveyard exists to
+/// answer — "let me see the ones opened and closed in the last month" was the
+/// request that produced this section.
+// TP-AGPANEL-44
+fn resolved_ghost_rows(
+    app: &AppState,
+    record: &crate::app::closed_agents::ClosedAgentRecord,
+    now: std::time::SystemTime,
+) -> Vec<Vec<ResolvedToken>> {
+    let empty = std::collections::HashMap::new();
+    let name = ghost_display_label(record);
+    tokens::agent_rows(
+        &app.sidebar_agents,
+        tokens::AgentTokenContext {
+            agent: None,
+            primary_label: &name,
+            primary_tab_label: None,
+            pane_label: None,
+            agent_label: None,
+            terminal_title: None,
+            terminal_title_stripped: None,
+            tokens: &empty,
+        },
+        &ghost_age_label(record, now),
+    )
+}
+
+/// The name a headstone wears, with the static ellipsis a revival adds.
+///
+/// TP-AGPANEL-22 put the ellipsis on the name and it stays there: state, not
+/// animation — nothing ticks for a ghost. It rides the name rather than the
+/// age because the name is the one thing a headstone always has, so a row
+/// layout that asks for no state text still shows that a revival is under way.
+fn ghost_display_label(record: &crate::app::closed_agents::ClosedAgentRecord) -> String {
+    if record.revival == crate::app::closed_agents::RevivalState::Reviving {
+        format!("{} …", record.label)
+    } else {
+        record.label.clone()
+    }
+}
+
+/// How long ago a ghost closed, in the panel's own relative vocabulary.
+///
+/// TP-AGPANEL-44: where a living row says what it is doing, a headstone says
+/// when it stopped. The state slot cannot stay empty — the layout would
+/// collapse — and cannot carry a live state, because a ghost has none. "let me
+/// see the ones opened and closed in the last month" is the request this
+/// section exists to answer, and the age is the half of it the row can show.
+fn ghost_age_label(
+    record: &crate::app::closed_agents::ClosedAgentRecord,
+    now: std::time::SystemTime,
+) -> String {
+    let closed_at = std::time::UNIX_EPOCH + std::time::Duration::from_millis(record.closed_at);
+    format_relative_time(closed_at, now)
 }
 
 pub(crate) fn agent_entry_height_in_body(
@@ -2204,60 +2530,160 @@ fn agent_panel_visible_count_from(app: &AppState, area: Rect, scroll: usize) -> 
         return 0;
     }
 
+    let entries = agent_panel_entries(app);
+    let ghosts = ghost_row_layouts(app);
+    let rows = agent_panel_rows(app, entries.len());
     let mut used_rows = 0u16;
     let mut visible = 0usize;
-    let entries = agent_panel_entries(app);
-    for (index, entry) in entries.iter().enumerate().skip(scroll) {
-        let height = agent_entry_height_in_body(app, entry, body.height);
+    for index in scroll..rows.len() {
+        let height = agent_panel_row_height(app, rows[index], &entries, &ghosts, body.height);
         if used_rows.saturating_add(height) > body.height {
             break;
         }
         used_rows = used_rows.saturating_add(height);
         visible += 1;
         used_rows = used_rows
-            .saturating_add(agent_entry_gap(app, index, entries.len()))
+            .saturating_add(agent_panel_row_gap(app, &rows, index))
             .min(body.height);
     }
     visible
 }
 
-/// Rows the last screen keeps for the graveyard: one separator, one ghost.
+/// Where every row of the panel is painted, and how tall it is.
 ///
-/// TP-AGPANEL-29: a separator with nothing under it is the rendering bug the
-/// graveyard contract already forbids, so the reserve is never one row.
-const GRAVEYARD_MIN_ROWS: u16 = 2;
+/// TP-AGPANEL-43: one walk feeds the painter AND both hit tests, so a row's
+/// click box can never sit beside its paint — the rule TP-CHROME-15/16 pinned
+/// for the collapse control, applied to a list.
+pub(crate) fn agent_panel_placements(app: &AppState, area: Rect) -> Vec<(AgentPanelRow, u16, u16)> {
+    let metrics = agent_panel_scroll_metrics(app, area);
+    let body = agent_panel_body_rect(area, should_show_scrollbar(metrics));
+    if body == Rect::default() || body.height == 0 {
+        return Vec::new();
+    }
+    let entries = agent_panel_entries(app);
+    let ghosts = ghost_row_layouts(app);
+    let rows = agent_panel_rows(app, entries.len());
+    let scroll = app.agent_panel_scroll.min(metrics.max_offset_from_bottom);
+
+    let mut placements = Vec::new();
+    let mut row_y = body.y;
+    let body_bottom = body.y + body.height;
+    for index in scroll..rows.len() {
+        let height = agent_panel_row_height(app, rows[index], &entries, &ghosts, body.height);
+        if row_y.saturating_add(height) > body_bottom {
+            break;
+        }
+        placements.push((rows[index], row_y, height));
+        row_y = row_y
+            .saturating_add(height)
+            .saturating_add(agent_panel_row_gap(app, &rows, index))
+            .min(body_bottom);
+    }
+    placements
+}
+
+/// One thing the agents panel scrolls past: a running agent, the divider, or a
+/// closed one.
+///
+/// TP-AGPANEL-43: the graveyard used to be drawn into whatever space the
+/// living left over — it took no part in the scroll metrics, the ceiling
+/// reserved two rows for it, and the painter filled the remainder newest-first
+/// and clipped the rest. Measured on the reported machine that meant 62 ghosts
+/// of which at most a handful could ever be seen, and NO scroll position
+/// reached the others: the user asked to see them "one by one, in a scrollable
+/// area", and the panel was structurally incapable of it.
+///
+/// Making them rows of the same list is what makes them reachable. Scrolling,
+/// visible-count, hit testing and painting then all read one sequence, so a
+/// ghost cannot be reachable by one and invisible to another.
+#[derive(Clone, Copy)]
+pub(crate) enum AgentPanelRow {
+    Live(usize),
+    Separator,
+    Ghost(usize),
+}
+
+/// The panel's whole scrollable sequence: the living, then — only if there are
+/// any ghosts — a divider and the ghosts.
+///
+/// TP-AGPANEL-29 survives here rather than as a reserved-rows constant: the
+/// separator is emitted only alongside at least one ghost, so a divider
+/// dividing nothing remains impossible by construction.
+pub(crate) fn agent_panel_rows(app: &AppState, live_count: usize) -> Vec<AgentPanelRow> {
+    let mut rows: Vec<AgentPanelRow> = (0..live_count).map(AgentPanelRow::Live).collect();
+    let ghosts = app.closed_agents.entries().count();
+    if ghosts > 0 {
+        rows.push(AgentPanelRow::Separator);
+        rows.extend((0..ghosts).map(AgentPanelRow::Ghost));
+    }
+    rows
+}
+
+/// How tall one row of that sequence is, in the body it is drawn into.
+fn agent_panel_row_height(
+    app: &AppState,
+    row: AgentPanelRow,
+    entries: &[AgentPanelEntry],
+    ghost_rows: &[Vec<Vec<ResolvedToken>>],
+    body_height: u16,
+) -> u16 {
+    match row {
+        AgentPanelRow::Live(idx) => entries
+            .get(idx)
+            .map(|entry| agent_entry_height_in_body(app, entry, body_height))
+            .unwrap_or(0),
+        AgentPanelRow::Separator => 1.min(body_height),
+        AgentPanelRow::Ghost(idx) => ghost_rows
+            .get(idx)
+            .map(|rows| (rows.len().max(1) as u16).min(body_height))
+            .unwrap_or(0),
+    }
+}
+
+/// The gap under a row. Only the living carry one: the divider is already the
+/// separation the graveyard needs, and spacing the ghosts apart would spend
+/// the panel's scarcest resource — rows — on air.
+fn agent_panel_row_gap(app: &AppState, rows: &[AgentPanelRow], index: usize) -> u16 {
+    match rows.get(index) {
+        Some(AgentPanelRow::Live(_)) if index + 1 < rows.len() => app.sidebar_agents.row_gap,
+        _ => 0,
+    }
+}
+
+/// Every ghost's laid-out rows, computed once per frame.
+///
+/// `SystemTime::now()` is read here rather than inside the layout so the whole
+/// panel agrees on one instant; two ghosts closed a second apart must not be
+/// able to disagree about what "now" was.
+fn ghost_row_layouts(app: &AppState) -> Vec<Vec<Vec<ResolvedToken>>> {
+    let now = std::time::SystemTime::now();
+    app.closed_agents
+        .entries()
+        .map(|record| resolved_ghost_rows(app, record, now))
+        .collect()
+}
 
 fn agent_panel_bottom_start(app: &AppState, area: Rect) -> usize {
     let body = agent_panel_body_rect(area, false);
     let entries = agent_panel_entries(app);
-    // TP-AGPANEL-29: when there are ghosts, the last screen keeps room for the
-    // separator and at least one of them.
-    //
-    // Without this the ceiling packs the last screen with living rows, the
-    // graveyard is drawn only into space they leave over, and the two rules
-    // meet badly: on a panel that is always full there is never any leftover
-    // space and no scroll position reaches the ghosts at all. A section that
-    // cannot be reached is a section that is not there. Reserved only when a
-    // graveyard exists — growing the ceiling for an empty one would open a
-    // gap under the panel that says "more below" and means nothing.
-    let ghost_reserve = if app.closed_agents.entries().next().is_some() {
-        GRAVEYARD_MIN_ROWS.min(body.height)
-    } else {
-        0
-    };
-    let usable = body.height.saturating_sub(ghost_reserve);
+    let ghosts = ghost_row_layouts(app);
+    let rows = agent_panel_rows(app, entries.len());
+    if rows.is_empty() {
+        return 0;
+    }
     let mut used_rows = 0u16;
-    let mut start = entries.len();
-    for (index, entry) in entries.iter().enumerate().rev() {
-        let gap = agent_entry_gap(app, index, entries.len());
-        let needed = agent_entry_height_in_body(app, entry, body.height).saturating_add(gap);
-        if used_rows.saturating_add(needed) > usable {
+    let mut start = rows.len();
+    for index in (0..rows.len()).rev() {
+        let gap = agent_panel_row_gap(app, &rows, index);
+        let needed = agent_panel_row_height(app, rows[index], &entries, &ghosts, body.height)
+            .saturating_add(gap);
+        if used_rows.saturating_add(needed) > body.height {
             break;
         }
         used_rows = used_rows.saturating_add(needed);
         start = index;
     }
-    start.min(entries.len().saturating_sub(1))
+    start.min(rows.len().saturating_sub(1))
 }
 
 /// Where the graveyard paints: the separator row's y and each ghost row's y,
@@ -2267,37 +2693,41 @@ fn agent_panel_bottom_start(app: &AppState, area: Rect) -> usize {
 /// space is left under the live entries, newest first, and clip from the
 /// oldest end; a separator with no room for a single row under it is not
 /// drawn at all — a divider dividing nothing reads as a rendering bug.
+/// The graveyard's placements in the shape the tests that predate the unified
+/// list assert on: the separator's row, then each headstone's first row.
+///
+/// Test-facing on purpose. Production reads `agent_panel_placements` directly —
+/// this is the older, narrower view of the same walk, kept so the
+/// characterization tests written against the leftover-space graveyard keep
+/// guarding the behaviour they were written for.
+#[cfg(test)]
 pub(crate) fn closed_agent_row_slots(app: &AppState, area: Rect) -> Option<(u16, Vec<u16>)> {
-    let ghost_count = app.closed_agents.entries().count();
-    if ghost_count == 0 {
-        return None;
-    }
-    let metrics = agent_panel_scroll_metrics(app, area);
-    let body = agent_panel_body_rect(area, should_show_scrollbar(metrics));
-    if body == Rect::default() {
-        return None;
-    }
-    let entries = agent_panel_entries(app);
-    let scroll = app.agent_panel_scroll.min(metrics.max_offset_from_bottom);
-    let mut row_y = body.y;
-    let body_bottom = body.y + body.height;
-    for (index, entry) in entries.iter().enumerate().skip(scroll) {
-        let height = agent_entry_height_in_body(app, entry, body.height);
-        if row_y.saturating_add(height) > body_bottom {
-            // The living already fill the panel; the graveyard yields.
-            return None;
-        }
-        row_y = row_y
-            .saturating_add(height)
-            .saturating_add(agent_entry_gap(app, index, entries.len()))
-            .min(body_bottom);
-    }
-    if row_y.saturating_add(2) > body_bottom {
-        return None;
-    }
-    let separator_y = row_y;
-    let rows = (separator_y + 1..body_bottom).take(ghost_count).collect();
-    Some((separator_y, rows))
+    let placements = agent_panel_placements(app, area);
+    let separator_y = placements
+        .iter()
+        .find_map(|(row, y, _)| matches!(row, AgentPanelRow::Separator).then_some(*y))?;
+    let ghosts: Vec<u16> = placements
+        .iter()
+        .filter_map(|(row, y, _)| matches!(row, AgentPanelRow::Ghost(_)).then_some(*y))
+        .collect();
+    (!ghosts.is_empty()).then_some((separator_y, ghosts))
+}
+
+/// The ghost whose card covers `row`, by index.
+///
+/// TP-AGPANEL-43: a ghost is a card now, not a line, so a press anywhere on it
+/// counts. Matching only its first row would make the lower half of a two-row
+/// headstone silently dead — the class of defect the shared layout exists to
+/// prevent.
+pub(crate) fn closed_agent_index_at(app: &AppState, area: Rect, row: u16) -> Option<usize> {
+    agent_panel_placements(app, area)
+        .into_iter()
+        .find_map(|(kind, y, height)| match kind {
+            AgentPanelRow::Ghost(idx) if row >= y && row < y.saturating_add(height.max(1)) => {
+                Some(idx)
+            }
+            _ => None,
+        })
 }
 
 pub(crate) fn agent_panel_scroll_for_target(
@@ -2384,6 +2814,8 @@ pub(crate) struct DailySectionAreas {
     pub header: Option<Rect>,
     pub chats: Vec<crate::app::state::DailyChatRowArea>,
     pub more: Option<Rect>,
+    /// TP-DAILY-18: the workspace switch's own target.
+    pub more_workspaces: Option<Rect>,
 }
 
 pub(crate) fn compute_workspace_list_areas(app: &AppState, area: Rect) -> WorkspaceListAreas {
@@ -2491,6 +2923,13 @@ pub(crate) fn compute_workspace_list_areas(app: &AppState, area: Rect) -> Worksp
             }
             WorkspaceListEntry::DailyMore { .. } => {
                 daily.more = Some(rect);
+            }
+            // TP-DAILY-18: its own rect, not the chat switch's. Sharing one
+            // would make a press on either toggle both — two switches one
+            // column apart doing each other's job is the confusion TP-TREE-01
+            // split rows to prevent.
+            WorkspaceListEntry::DailyMoreWorkspaces { .. } => {
+                daily.more_workspaces = Some(rect);
             }
             // TP-MOD-25: laid out to be drawn, not to be pressed.
             WorkspaceListEntry::EmptyModule { node_key } => {
@@ -3034,6 +3473,11 @@ fn render_workspace_list(
     // card but the question is about the whole list, and asking it per card
     // would walk every workspace for every row.
     let daily_owned = daily_owned_workspaces(app);
+    // TP-DAILY-15/16: resolved for the whole set here, for the same reason
+    // `daily_owned` is — the question is about the list, and asking it per card
+    // would both walk every workspace per row and lose the one fact that makes
+    // the answer useful: what the *other* rows are called.
+    let daily_names = daily_row_names(app, &daily_owned, Some(terminal_runtimes));
 
     for card in cards {
         let i = card.ws_idx;
@@ -3102,13 +3546,14 @@ fn render_workspace_list(
             //
             // #94 moved those rows under the daily header and, without meaning
             // to, moved their labels too — before it they read `ayaz`, after it
-            // `main`. Withholding the branch here restores the name the row
-            // would have had, without touching the tree's own rows.
+            // `main`. Withholding the branch was the first half of the fix; the
+            // second is that `ayaz` seven times says no more than `main` seven
+            // times did, so the name arrives resolved (TP-DAILY-15/16).
             indented_row_label(
                 &label,
                 ws.branch().as_deref(),
                 ws.custom_name.is_some(),
-                daily_owned.contains(&i),
+                daily_names.get(&i).map(String::as_str),
             )
         } else {
             space_header_display_label(app, i, label)
@@ -3746,6 +4191,26 @@ fn render_daily_section(app: &AppState, frame: &mut Frame, list_bottom: u16) {
                     "   … {} older",
                     chats.len().saturating_sub(WORKSPACE_CHAT_ROW_LIMIT)
                 )
+            };
+            frame.render_widget(
+                Paragraph::new(Span::styled(
+                    super::text::truncate_end(&label, rect.width as usize),
+                    Style::default().fg(p.overlay0),
+                )),
+                rect,
+            );
+        }
+    }
+
+    // TP-DAILY-18: the workspace switch, in the chat switch's dialect. One
+    // place, one row, and a way to look at the rest of what stands in it.
+    if let Some(rect) = app.view.daily_more_workspaces_area {
+        if rect.width > 0 && rect.y < list_bottom {
+            let hidden = daily_owned_workspaces(app).len().saturating_sub(1);
+            let label = if app.daily_workspaces_expanded {
+                "   … fewer workspaces".to_string()
+            } else {
+                format!("   … {hidden} more here")
             };
             frame.render_widget(
                 Paragraph::new(Span::styled(
@@ -4401,16 +4866,40 @@ fn render_agent_detail(
         return;
     }
 
-    let scroll = app.agent_panel_scroll.min(metrics.max_offset_from_bottom);
-    let mut row_y = body.y;
-    let body_bottom = body.y + body.height;
-    for (index, detail) in details.iter().enumerate().skip(scroll) {
+    // TP-AGPANEL-43: one walk, one sequence. The graveyard is no longer drawn
+    // into leftover space after this loop — it IS part of this loop, which is
+    // what makes every ghost reachable by scrolling.
+    let ghost_layouts = ghost_row_layouts(app);
+    let ghost_records: Vec<_> = app.closed_agents.entries().collect();
+    for (kind, row_y, height) in agent_panel_placements(app, area) {
+        let (index, detail) = match kind {
+            AgentPanelRow::Live(index) => match details.get(index) {
+                Some(detail) => (index, detail),
+                None => continue,
+            },
+            AgentPanelRow::Separator => {
+                let sep_line = "─".repeat(body.width as usize);
+                frame.render_widget(
+                    Paragraph::new(Span::styled(&sep_line, Style::default().fg(p.surface_dim))),
+                    Rect::new(body.x, row_y, body.width, 1),
+                );
+                continue;
+            }
+            AgentPanelRow::Ghost(idx) => {
+                render_ghost_card(
+                    app,
+                    frame,
+                    body,
+                    row_y,
+                    height,
+                    ghost_layouts.get(idx).map(Vec::as_slice).unwrap_or(&[]),
+                    ghost_records.get(idx).copied(),
+                );
+                continue;
+            }
+        };
         let label_color = state_label_color(detail.state, detail.seen, p);
         let rows = resolved_agent_rows(app, detail);
-        let height = (rows.len().max(1) as u16).min(body.height);
-        if row_y.saturating_add(height) > body_bottom {
-            break;
-        }
 
         let is_active = app.is_active_pane(detail.ws_idx, detail.tab_idx, detail.pane_id);
         // TP-AGPANEL-01: the active row speaks the active tab's language —
@@ -4463,39 +4952,65 @@ fn render_agent_detail(
                 Rect::new(body.x, row_y + row_index as u16, body.width, 1),
             );
         }
-        row_y = row_y
-            .saturating_add(height)
-            .saturating_add(agent_entry_gap(app, index, details.len()))
-            .min(body_bottom);
-    }
-
-    // TP-AGPANEL-22: after the living, the graveyard — a separator, then the
-    // recently closed agents as plain text. The third visual class must hold
-    // on one axis: the active card wears the accent, passive rows drop bold,
-    // and a ghost dims *and* leans (italic) — dim alone would collide with
-    // the passive agent token, which already dims. A reviving row wears a
-    // static ellipsis: state, not animation; nothing ticks for a ghost.
-    if let Some((separator_y, ghost_rows)) = closed_agent_row_slots(app, area) {
-        let sep_line = "─".repeat(body.width as usize);
-        frame.render_widget(
-            Paragraph::new(Span::styled(&sep_line, Style::default().fg(p.surface_dim))),
-            Rect::new(body.x, separator_y, body.width, 1),
-        );
-        let ghost_style = Style::default()
-            .fg(p.overlay0)
-            .add_modifier(Modifier::DIM | Modifier::ITALIC);
-        for (record, y) in app.closed_agents.entries().zip(ghost_rows) {
-            let reviving = record.revival == crate::app::closed_agents::RevivalState::Reviving;
-            let text = format!(" {}{}", record.label, if reviving { " …" } else { "" });
-            frame.render_widget(
-                Paragraph::new(Span::styled(text, ghost_style)),
-                Rect::new(body.x, y, body.width, 1),
-            );
-        }
+        let _ = index;
     }
 
     if let Some(track) = scrollbar_rect {
         render_scrollbar(frame, metrics, track, p.surface_dim, p.overlay0, "▕");
+    }
+}
+
+/// Draw one headstone, through the very span builder the living rows use.
+///
+/// TP-AGPANEL-22 keeps its third visual class here: the active card wears the
+/// accent, passive rows drop bold, and a ghost dims *and* leans — dim alone
+/// would collide with the passive agent token, which already dims. What
+/// changed is only that the dimming is applied to a card rather than to a
+/// bare line of text.
+// TP-AGPANEL-42/44
+fn render_ghost_card(
+    app: &AppState,
+    frame: &mut Frame,
+    body: Rect,
+    row_y: u16,
+    height: u16,
+    rows: &[Vec<ResolvedToken>],
+    record: Option<&crate::app::closed_agents::ClosedAgentRecord>,
+) {
+    let p = &app.palette;
+    let ghost_style = Style::default()
+        .fg(p.overlay0)
+        .add_modifier(Modifier::DIM | Modifier::ITALIC);
+    // Nothing ticks for a ghost: the icon is asked for a static glyph, never
+    // for a spinner frame.
+    let state_icon = ("·", ghost_style);
+
+    if rows.is_empty() {
+        let label = record.map(ghost_display_label).unwrap_or_default();
+        frame.render_widget(
+            Paragraph::new(Span::styled(format!(" {label}"), ghost_style)),
+            Rect::new(body.x, row_y, body.width, 1),
+        );
+        return;
+    }
+
+    for (row_index, resolved) in rows.iter().take(height.max(1) as usize).enumerate() {
+        let mut spans = vec![Span::raw(if row_index == 0 { " " } else { "   " })];
+        spans.extend(resolved_token_spans(
+            resolved,
+            state_icon,
+            ghost_style,
+            ghost_style,
+            ghost_style,
+            ghost_style,
+            p,
+            body.width
+                .saturating_sub(if row_index == 0 { 1 } else { 3 }) as usize,
+        ));
+        frame.render_widget(
+            Paragraph::new(Line::from(spans)),
+            Rect::new(body.x, row_y + row_index as u16, body.width, 1),
+        );
     }
 }
 
@@ -4565,6 +5080,7 @@ fn render_sidebar_toggle(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::test_wait::LoadAwareDeadline;
     use crate::{detect::Agent, workspace::Workspace};
     use ratatui::{backend::TestBackend, Terminal};
 
@@ -4874,6 +5390,126 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             ));
         }
         app
+    }
+
+    // T2.1 / TP-AGPANEL-43: the reported defect, stated as a property. Sixty-two
+    // headstones were on disk and at most a handful could ever be seen, because
+    // the graveyard was painted into whatever space the living left over — the
+    // rest were not merely below the fold, they were unreachable at every
+    // scroll position there was. "I want to see them one by one, in a
+    // scrollable area" is not satisfiable while that is true, whatever the rows
+    // look like.
+    #[test]
+    fn every_headstone_is_reachable_at_some_scroll_position() {
+        let ghosts = 20;
+        let mut app = app_with_a_full_panel_and_ghosts(24, ghosts);
+        let area = Rect::new(0, 0, 30, 12);
+
+        assert!(
+            agent_panel_bottom_start(&app, area) > 0,
+            "precondition: the panel scrolls at all"
+        );
+
+        let ceiling = agent_panel_bottom_start(&app, area);
+        let mut reached = std::collections::HashSet::new();
+        for scroll in 0..=ceiling {
+            app.agent_panel_scroll = scroll;
+            for (row, _, _) in agent_panel_placements(&app, area) {
+                if let AgentPanelRow::Ghost(idx) = row {
+                    reached.insert(idx);
+                }
+            }
+        }
+
+        assert_eq!(
+            reached.len(),
+            ghosts,
+            "every headstone must be reachable; reached {} of {ghosts}",
+            reached.len()
+        );
+    }
+
+    // T2.2 / TP-AGPANEL-42: a headstone is laid out by the living rows' own
+    // layout, so a two-row configuration gives it two rows. Drawn by a second
+    // path it would be free to drift — and the path it replaced had drifted all
+    // the way to one bare line of text.
+    #[test]
+    fn a_headstone_is_as_tall_as_the_row_layout_says() {
+        let mut app = app_with_a_full_panel_and_ghosts(1, 1);
+        app.sidebar_agents.rows = vec![
+            vec![crate::config::AgentSidebarToken::Workspace],
+            vec![crate::config::AgentSidebarToken::StateText],
+        ];
+        let area = Rect::new(0, 0, 30, 12);
+
+        let placements = agent_panel_placements(&app, area);
+        let ghost_height = placements
+            .iter()
+            .find_map(|(row, _, height)| matches!(row, AgentPanelRow::Ghost(_)).then_some(*height))
+            .expect("the graveyard is drawn");
+        let live_height = placements
+            .iter()
+            .find_map(|(row, _, height)| matches!(row, AgentPanelRow::Live(_)).then_some(*height))
+            .expect("a living row is drawn");
+
+        assert_eq!(
+            ghost_height, live_height,
+            "the only difference between the two must be colour"
+        );
+        assert_eq!(ghost_height, 2, "a two-row layout gives two rows");
+    }
+
+    // T2.4 / TP-AGPANEL-43: a headstone is a card, so a press on its lower half
+    // counts. Matching only its first row would leave the rest of the card
+    // silently dead — the class of defect one shared layout exists to prevent.
+    #[test]
+    fn a_press_on_the_lower_half_of_a_headstone_still_hits_it() {
+        let mut app = app_with_a_full_panel_and_ghosts(1, 1);
+        app.sidebar_agents.rows = vec![
+            vec![crate::config::AgentSidebarToken::Workspace],
+            vec![crate::config::AgentSidebarToken::StateText],
+        ];
+        let area = Rect::new(0, 0, 30, 12);
+        let (_, y, height) = agent_panel_placements(&app, area)
+            .into_iter()
+            .find(|(row, _, _)| matches!(row, AgentPanelRow::Ghost(_)))
+            .expect("the graveyard is drawn");
+        assert_eq!(height, 2, "precondition: the headstone is two rows tall");
+
+        assert_eq!(closed_agent_index_at(&app, area, y), Some(0));
+        assert_eq!(
+            closed_agent_index_at(&app, area, y + 1),
+            Some(0),
+            "the second row of the card belongs to the same headstone"
+        );
+    }
+
+    // T2.3 / TP-AGPANEL-22: the third visual class holds. A headstone dims and
+    // leans and never wears the accent — the accent means "this is where you
+    // are", and nowhere is where a closed agent is.
+    #[test]
+    fn a_headstone_never_wears_the_active_accent() {
+        let app = app_with_a_full_panel_and_ghosts(1, 1);
+        let area = Rect::new(0, 0, 30, 12);
+        let (_, ghost_y, _) = agent_panel_placements(&app, area)
+            .into_iter()
+            .find(|(row, _, _)| matches!(row, AgentPanelRow::Ghost(_)))
+            .expect("the graveyard is drawn");
+
+        let mut terminal = Terminal::new(TestBackend::new(30, 12)).unwrap();
+        terminal
+            .draw(|frame| render_agent_detail(&app, &TerminalRuntimeRegistry::new(), frame, area))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let body = agent_panel_body_rect(area, false);
+
+        for x in body.x..body.x + body.width {
+            assert_ne!(
+                buffer[(x, ghost_y)].style().bg,
+                Some(app.palette.accent),
+                "a headstone must never read as the row you are on"
+            );
+        }
     }
 
     // TP-AGPANEL-29 (R1): a panel the living rows fill can still be scrolled
@@ -7032,8 +7668,14 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         )
         .unwrap();
 
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        while runtime.cwd() != Some(live_cwd.clone()) && std::time::Instant::now() < deadline {
+        // Was a bare deadline the loop simply gave up on: if the cwd never
+        // arrived the test carried on and failed later, complaining about
+        // whatever it checked next rather than about the wait that never
+        // finished. Everything below needs this cwd, so saying so here is both
+        // the honest message and the load-aware budget.
+        let wait = LoadAwareDeadline::new(2, "the runtime to report its working directory");
+        while runtime.cwd() != Some(live_cwd.clone()) {
+            wait.check();
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
 
@@ -7116,6 +7758,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
                 WorkspaceListEntry::DailyHeader => "daily-header",
                 WorkspaceListEntry::DailyChat { .. } => "daily-chat",
                 WorkspaceListEntry::DailyMore { .. } => "daily-more",
+                WorkspaceListEntry::DailyMoreWorkspaces { .. } => "daily-more-workspaces",
                 WorkspaceListEntry::ModuleChat { .. } => "module-chat",
             })
             .collect()
@@ -7379,6 +8022,355 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         assert!(
             daily_owned_workspaces(&app).is_empty(),
             "with no daily directory there is nothing for a workspace to belong to"
+        );
+    }
+
+    /// The reported shape: `n` workspaces all standing in the daily directory,
+    /// none of them named, exactly as `workspace list` answered on the machine.
+    ///
+    /// `Workspace::test_new` hands back a workspace that IS named — it stores
+    /// its argument as `custom_name` — and that is the opposite of what was
+    /// measured: those seven carried no name at all and read `ayaz` only
+    /// because that is what `$HOME` is called. Leaving the fixture's name in
+    /// place makes every derivation test pass without ever running the
+    /// derivation, which is how the first version of these tests went green
+    /// while proving nothing.
+    fn app_with_n_workspaces_in_the_daily_directory(n: usize) -> (AppState, std::path::PathBuf) {
+        let (mut app, daily) = app_with_daily_chats(2);
+        for _ in 0..n {
+            let mut home = Workspace::test_new("ayaz");
+            home.custom_name = None;
+            home.identity_cwd = daily.clone();
+            app.workspaces.push(home);
+        }
+        assert!(
+            app.workspaces
+                .iter()
+                .skip(1)
+                .all(|ws| ws.custom_name.is_none()),
+            "precondition: the measured workspaces carry no name of their own"
+        );
+        (app, daily)
+    }
+
+    // P1.1 / TP-DAILY-17: the root cause. `new_cwd = "follow"` means a new
+    // workspace inherits the pane's directory, so a `$HOME` workspace makes the
+    // next `$HOME` workspace — five of them within 32 minutes on the machine
+    // this was reported from. The second one becomes a TAB instead.
+    #[test]
+    fn a_second_workspace_in_the_daily_directory_is_adopted_instead() {
+        let (app, daily) = app_with_n_workspaces_in_the_daily_directory(1);
+        let owned = daily_owned_workspaces(&app);
+
+        assert_eq!(
+            app.daily_adoption_target(&daily),
+            owned.first().copied(),
+            "the place already has an unnamed workspace; a second one is the same place twice"
+        );
+    }
+
+    // P1.2 / TP-DAILY-17: a NAMED workspace is never adopted. A name is a
+    // deliberate identity — if someone said "this one is the log tail", a
+    // second one standing beside it is deliberate too, and folding into the
+    // first would overrule a decision the machine has no business overruling.
+    #[test]
+    fn a_named_workspace_in_the_daily_directory_is_not_adopted() {
+        let (mut app, daily) = app_with_n_workspaces_in_the_daily_directory(1);
+        if let Some(ws) = app.workspaces.last_mut() {
+            ws.custom_name = Some("log tail".to_string());
+        }
+
+        assert_eq!(
+            app.daily_adoption_target(&daily),
+            None,
+            "an explicit name outranks the tidy-up"
+        );
+    }
+
+    // P1.3 / TP-DAILY-17: the first one is legitimate. The rule says "no
+    // second", not "none".
+    #[test]
+    fn the_first_workspace_in_the_daily_directory_is_still_created() {
+        let (app, daily) = app_with_daily_chats(2);
+
+        assert_eq!(app.daily_adoption_target(&daily), None);
+    }
+
+    // P1.4 / TP-DAILY-17: the load-bearing guard. A "new workspace" pressed
+    // inside a repository must still make a workspace there — breaking that
+    // would be a far larger defect than the duplicate rows being removed.
+    #[test]
+    fn a_new_workspace_outside_the_daily_directory_is_untouched() {
+        let (app, _) = app_with_n_workspaces_in_the_daily_directory(3);
+        let elsewhere = std::env::temp_dir().join("herdr-some-repo");
+
+        assert_eq!(
+            app.daily_adoption_target(&elsewhere),
+            None,
+            "the rule is about one directory, not about new workspaces"
+        );
+    }
+
+    // P2.1 / TP-DAILY-19: the set the merge verb folds. Two or more unnamed
+    // workspaces standing in one directory are copies of that directory, and
+    // the verb exists to turn them back into one.
+    #[test]
+    fn every_unnamed_workspace_in_the_daily_directory_is_mergeable() {
+        let (app, _) = app_with_n_workspaces_in_the_daily_directory(3);
+
+        assert_eq!(
+            app.mergeable_daily_workspaces().len(),
+            3,
+            "all three stand in the same place and none of them is named"
+        );
+    }
+
+    // P2.2 / TP-DAILY-19: with one workspace there is nothing to fold, and a
+    // verb with no work to do is a button that does nothing. The menu must not
+    // promise what the section cannot keep.
+    #[test]
+    fn a_single_daily_workspace_is_not_a_merge() {
+        let (app, _) = app_with_n_workspaces_in_the_daily_directory(1);
+
+        assert!(
+            app.mergeable_daily_workspaces().len() < 2,
+            "one workspace is already the merged state"
+        );
+    }
+
+    // P2.4 / TP-DAILY-19: a named workspace is excluded for exactly the reason
+    // adoption excludes it (P1.2) — the name is a decision, and a tidy-up must
+    // not overrule it.
+    #[test]
+    fn a_named_workspace_is_never_merged_away() {
+        let (mut app, _) = app_with_n_workspaces_in_the_daily_directory(3);
+        if let Some(ws) = app.workspaces.last_mut() {
+            ws.custom_name = Some("log tail".to_string());
+        }
+
+        let mergeable = app.mergeable_daily_workspaces();
+        assert_eq!(mergeable.len(), 2, "the named one drops out of the set");
+        assert!(
+            !mergeable.contains(&(app.workspaces.len() - 1)),
+            "and it is specifically the named one that is spared"
+        );
+    }
+
+    // P2.6 / TP-DAILY-19: the target is the workspace the person is standing
+    // in, when that is one of them. A cleanup someone asked for must not carry
+    // them out of where they were working — the core-side counterpart of the
+    // row order the section already draws (TP-DAILY-18).
+    #[test]
+    fn the_merge_target_is_the_active_workspace_when_it_is_one_of_them() {
+        let (mut app, _) = app_with_n_workspaces_in_the_daily_directory(3);
+        let mergeable = app.mergeable_daily_workspaces();
+        let last = *mergeable.last().expect("three were pushed");
+        assert_ne!(
+            last, mergeable[0],
+            "precondition: the active one below is NOT the first, or this proves nothing"
+        );
+        app.active = Some(last);
+
+        assert_eq!(
+            app.daily_merge_target(),
+            Some(last),
+            "the person stays where they already were"
+        );
+    }
+
+    // P2.6b / TP-DAILY-19: standing somewhere else, the first is the target.
+    // Without this the verb would have no destination at all whenever the
+    // person pressed it from a repository workspace.
+    #[test]
+    fn the_merge_target_falls_back_to_the_first_when_the_active_is_elsewhere() {
+        let (mut app, _) = app_with_n_workspaces_in_the_daily_directory(3);
+        app.active = Some(0); // the fixture's own non-daily workspace
+
+        let mergeable = app.mergeable_daily_workspaces();
+        assert!(
+            !mergeable.contains(&0),
+            "precondition: workspace 0 is not one of the daily ones"
+        );
+        assert_eq!(app.daily_merge_target(), mergeable.first().copied());
+    }
+
+    // P2.9 / TP-DAILY-19: the rule is about ONE directory. A workspace standing
+    // in a repository is never in the set, so merging can never reach it —
+    // the same boundary P1.4 draws for adoption.
+    #[test]
+    fn workspaces_outside_the_daily_directory_are_never_mergeable() {
+        let (mut app, _) = app_with_n_workspaces_in_the_daily_directory(2);
+        let mut repo = Workspace::test_new("herdr");
+        repo.custom_name = None;
+        repo.identity_cwd = std::env::temp_dir().join("herdr-some-repo");
+        app.workspaces.push(repo);
+        let repo_idx = app.workspaces.len() - 1;
+
+        assert!(
+            !app.mergeable_daily_workspaces().contains(&repo_idx),
+            "an unnamed workspace in a repository is still that repository's, not the daily area's"
+        );
+    }
+
+    // P3.2 / TP-DAILY-18: the reported defect, answered. Seven rows for one
+    // place read as spam — "hepsinin içinde aynı chatler var, fark ne ki?" —
+    // so the section shows ONE and offers the rest.
+    #[test]
+    fn the_daily_area_shows_one_workspace_and_a_switch_for_the_rest() {
+        let (app, _) = app_with_n_workspaces_in_the_daily_directory(7);
+        let entries = workspace_list_entries(&app);
+
+        // Only the daily area's own rows: the fixture also has a workspace
+        // living elsewhere, and it is drawn in the tree where it belongs.
+        let owned = daily_owned_workspaces(&app);
+        let rows = entries
+            .iter()
+            .filter(|entry| {
+                matches!(entry, WorkspaceListEntry::Workspace { ws_idx, .. } if owned.contains(ws_idx))
+            })
+            .count();
+        let switch = entries
+            .iter()
+            .find_map(|entry| match entry {
+                WorkspaceListEntry::DailyMoreWorkspaces { hidden, expanded } => {
+                    Some((*hidden, *expanded))
+                }
+                _ => None,
+            })
+            .expect("seven workspaces in one place offer a switch");
+
+        assert_eq!(rows, 1, "one place, one row");
+        assert_eq!(switch, (6, false), "and six more, folded");
+    }
+
+    // P3.3 / TP-DAILY-18: the switch goes both ways. A fold with no way back
+    // is not a fold, it is a hiding place — and those six held fifteen panes.
+    #[test]
+    fn expanding_the_switch_reveals_every_workspace_standing_there() {
+        let (mut app, _) = app_with_n_workspaces_in_the_daily_directory(7);
+        app.daily_workspaces_expanded = true;
+
+        let owned = daily_owned_workspaces(&app);
+        let rows = workspace_list_entries(&app)
+            .iter()
+            .filter(|entry| {
+                matches!(entry, WorkspaceListEntry::Workspace { ws_idx, .. } if owned.contains(ws_idx))
+            })
+            .count();
+
+        assert_eq!(rows, 7, "every workspace is reachable once asked for");
+    }
+
+    // P3.1 / TP-DAILY-18: one workspace offers no switch. "More here" with
+    // nothing more here is a control that lies.
+    #[test]
+    fn a_single_daily_workspace_offers_no_switch() {
+        let (app, _) = app_with_n_workspaces_in_the_daily_directory(1);
+
+        assert!(
+            !workspace_list_entries(&app)
+                .iter()
+                .any(|entry| matches!(entry, WorkspaceListEntry::DailyMoreWorkspaces { .. })),
+            "a lone workspace has nothing folded behind it"
+        );
+    }
+
+    // P3.4 / TP-DAILY-18: the workspace you are IN leads. Folding the row you
+    // are working in behind the switch is the #88 failure wearing the costume
+    // of a tidy-up.
+    #[test]
+    fn the_workspace_you_are_in_is_the_one_left_visible() {
+        let (mut app, _) = app_with_n_workspaces_in_the_daily_directory(4);
+        let owned = daily_owned_workspaces(&app);
+        let last = *owned.last().expect("four workspaces");
+        app.active = Some(last);
+
+        let drawn = workspace_list_entries(&app)
+            .iter()
+            .find_map(|entry| match entry {
+                WorkspaceListEntry::Workspace { ws_idx, .. } if owned.contains(ws_idx) => {
+                    Some(*ws_idx)
+                }
+                _ => None,
+            })
+            .expect("one daily row is drawn");
+
+        assert_eq!(
+            drawn, last,
+            "the row you are working in must not be the one folded away"
+        );
+    }
+
+    // T1.3 / TP-DAILY-16: the defect end to end. Seven workspaces share one
+    // directory, so the directory's name names them all — and a name repeated
+    // seven times is a category, not a name. Every row must be addressable.
+    #[test]
+    fn seven_rows_in_one_directory_do_not_all_read_alike() {
+        let (mut app, _) = app_with_n_workspaces_in_the_daily_directory(7);
+        // One of the seven held a named tab on the machine; the other six did
+        // not. Both halves belong in the same assertion: derivation names the
+        // one it can, numbering rescues the ones it cannot, and neither alone
+        // makes all seven addressable.
+        if let Some(ws) = app.workspaces.last_mut() {
+            if let Some(tab) = ws.tabs.first_mut() {
+                tab.custom_name = Some("HERDR SERVER".to_string());
+            }
+        }
+        let owned = daily_owned_workspaces(&app);
+        assert_eq!(owned.len(), 7, "precondition: seven rows share a directory");
+
+        let names = daily_row_names(&app, &owned, None);
+        let unique: std::collections::HashSet<&String> = names.values().collect();
+
+        assert_eq!(
+            unique.len(),
+            7,
+            "every row must be tellable from its neighbours: {names:?}"
+        );
+        assert!(
+            names.values().any(|name| name == "HERDR SERVER"),
+            "the row that had something to say must say it: {names:?}"
+        );
+    }
+
+    // T1.1 / TP-DAILY-15: the row takes the name of the tab inside it, so a
+    // workspace whose directory says nothing still says something.
+    #[test]
+    fn a_daily_row_wears_the_name_of_the_tab_inside_it() {
+        let (mut app, _) = app_with_n_workspaces_in_the_daily_directory(1);
+        if let Some(ws) = app.workspaces.last_mut() {
+            if let Some(tab) = ws.tabs.first_mut() {
+                tab.custom_name = Some("HERDR SERVER".to_string());
+            }
+        }
+        let owned = daily_owned_workspaces(&app);
+        let names = daily_row_names(&app, &owned, None);
+
+        assert_eq!(
+            names.values().next().map(String::as_str),
+            Some("HERDR SERVER"),
+            "a named tab is the one place this workspace's purpose is written down"
+        );
+    }
+
+    // T1.4 / TP-DAILY-15: an explicit name outranks anything derived. The
+    // derivation exists because there was nothing better; here there is.
+    #[test]
+    fn a_named_daily_workspace_keeps_the_name_its_owner_gave_it() {
+        let (mut app, _) = app_with_n_workspaces_in_the_daily_directory(1);
+        if let Some(ws) = app.workspaces.last_mut() {
+            ws.custom_name = Some("gece nöbeti".to_string());
+            if let Some(tab) = ws.tabs.first_mut() {
+                tab.custom_name = Some("HERDR SERVER".to_string());
+            }
+        }
+        let owned = daily_owned_workspaces(&app);
+        let names = daily_row_names(&app, &owned, None);
+
+        assert_eq!(
+            names.values().next().map(String::as_str),
+            Some("gece nöbeti"),
+            "the derivation must not overrule a name the user typed"
         );
     }
 
@@ -8223,8 +9215,8 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
     #[test]
     fn a_daily_area_row_keeps_its_own_name_instead_of_a_branch() {
         assert_eq!(
-            indented_row_label("ayaz", Some("main"), false, true),
-            "ayaz",
+            indented_row_label("ayaz", Some("main"), false, Some("reviewr 2")),
+            "reviewr 2",
             "the branch belongs to the directory, not to this row"
         );
     }
@@ -8235,8 +9227,113 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
     #[test]
     fn a_group_child_row_still_reads_as_its_branch() {
         assert_eq!(
-            indented_row_label("herdr", Some("worktree/issue-137"), false, false),
+            indented_row_label("herdr", Some("worktree/issue-137"), false, None),
             "issue-137"
+        );
+    }
+
+    // T1.1 / TP-DAILY-15: a single named tab IS the workspace. Carrying both
+    // the directory name and the tab name would say one thing twice, and the
+    // directory half is the half that repeats.
+    #[test]
+    fn a_lone_named_tab_names_the_row_outright() {
+        assert_eq!(
+            content_derived_row_name([Some("HERDR SERVER")], []),
+            Some("HERDR SERVER".to_string())
+        );
+    }
+
+    // T1.2 / TP-DAILY-15: an unnamed tab answers `tab_display_name` with its
+    // ordinal — `"1"`. That is a position, not an identity; six workspaces
+    // would all become `1`. Only `custom_name` counts, so the row falls
+    // through to what is actually running in it.
+    #[test]
+    fn an_unnamed_tab_yields_to_the_agent_running_in_it() {
+        assert_eq!(
+            content_derived_row_name([None], ["reviewr"]),
+            Some("reviewr".to_string()),
+            "a tab number is a position, not a name"
+        );
+    }
+
+    // T1.5 / TP-DAILY-15: a workspace of several tabs cannot honestly be
+    // reduced to one of them, so the row names the first and counts the rest.
+    #[test]
+    fn a_multi_tab_row_names_the_first_and_counts_the_rest() {
+        assert_eq!(
+            content_derived_row_name(
+                [
+                    None,
+                    Some("HERDR SERVER"),
+                    Some("Jellyfin"),
+                    Some("temizlik")
+                ],
+                []
+            ),
+            Some("HERDR SERVER +3".to_string())
+        );
+    }
+
+    // TP-DAILY-15: a blank custom name is not a name. Whitespace would
+    // otherwise win over a perfectly good agent label and produce an empty row.
+    #[test]
+    fn a_blank_tab_name_does_not_count_as_named() {
+        assert_eq!(
+            content_derived_row_name([Some("   ")], ["reviewr"]),
+            Some("reviewr".to_string())
+        );
+    }
+
+    // TP-DAILY-15: with nothing named and nothing running, there is no content
+    // to name the row after; the caller keeps the directory name rather than
+    // inventing one.
+    #[test]
+    fn a_row_with_no_content_derives_no_name() {
+        assert_eq!(content_derived_row_name([None], []), None);
+    }
+
+    // T1.3 / TP-DAILY-16: the reported defect in one assertion — rows that all
+    // resolve alike must still be addressable one by one.
+    #[test]
+    fn repeated_labels_are_numbered_so_every_row_is_addressable() {
+        let mut labels = vec![
+            "reviewr".to_string(),
+            "reviewr".to_string(),
+            "reviewr".to_string(),
+        ];
+        disambiguate_repeated_labels(&mut labels);
+
+        assert_eq!(labels, vec!["reviewr", "reviewr 2", "reviewr 3"]);
+        let unique: std::collections::HashSet<&String> = labels.iter().collect();
+        assert_eq!(unique.len(), labels.len(), "no two rows may read alike");
+    }
+
+    // TP-DAILY-16: a name that appears once keeps its bare form. Numbering it
+    // would announce a series of one.
+    #[test]
+    fn a_label_that_appears_once_is_left_alone() {
+        let mut labels = vec!["HERDR SERVER".to_string(), "reviewr".to_string()];
+        disambiguate_repeated_labels(&mut labels);
+
+        assert_eq!(labels, vec!["HERDR SERVER", "reviewr"]);
+    }
+
+    // TP-DAILY-16: the ordinal must not collide with a name that already ends
+    // in one. Appending blindly would produce two rows reading `reviewr 2`.
+    #[test]
+    fn numbering_steps_over_a_name_that_already_reads_like_an_ordinal() {
+        let mut labels = vec![
+            "reviewr".to_string(),
+            "reviewr 2".to_string(),
+            "reviewr".to_string(),
+        ];
+        disambiguate_repeated_labels(&mut labels);
+
+        let unique: std::collections::HashSet<&String> = labels.iter().collect();
+        assert_eq!(
+            unique.len(),
+            labels.len(),
+            "an ordinal that lands on an existing label defeats its own purpose: {labels:?}"
         );
     }
 
@@ -10743,5 +11840,262 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
                 },
             ]
         );
+    }
+}
+
+#[cfg(test)]
+mod module_gap_tests {
+    use super::{module_branch_source, ModuleBranchSource};
+    use crate::app::state::AppState;
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("herdr-modgap-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch directory");
+        dir
+    }
+
+    fn state_with_node(key: &str, dir: Option<std::path::PathBuf>) -> AppState {
+        let mut app = AppState::test_new();
+        app.space_nodes = vec![crate::spaces::SpaceNode {
+            key: key.to_string(),
+            name: key.to_string(),
+            icon: None,
+            parent: None,
+            dir,
+        }];
+        app
+    }
+
+    fn state_with_bucket(key: &str, repo_root: std::path::PathBuf) -> AppState {
+        let mut app = AppState::test_new();
+        app.space_split_rules = vec![crate::spaces::SpaceSplitRule {
+            repo_root,
+            patterns: vec!["*".to_string()],
+            key: key.to_string(),
+            label: format!("{key} label"),
+            icon: None,
+            parent: None,
+        }];
+        app
+    }
+
+    // M1.8 / TP-MOD-36: a node states its directory and that is the answer.
+    #[test]
+    fn a_node_with_a_directory_answers_with_it() {
+        let dir = scratch("node-dir");
+        let app = state_with_node("mod", Some(dir.clone()));
+
+        assert_eq!(app.module_directory_for_key("mod"), Some(dir));
+    }
+
+    // M1.9 / TP-MOD-36: a bucket's directory is its repo root — also a fact the
+    // person wrote down, in the rule itself. Twenty of the twenty-four modules
+    // on the reporting machine are buckets, so a definition that skipped them
+    // would answer "no directory" for most of that tree.
+    #[test]
+    fn a_bucket_answers_with_its_repository_root() {
+        let repo = scratch("bucket-repo");
+        let app = state_with_bucket("bucket", repo.clone());
+
+        assert_eq!(app.module_directory_for_key("bucket"), Some(repo));
+    }
+
+    // M1.10 / TP-MOD-36: nothing stated, nothing invented. #46 measured where
+    // guessed directories land.
+    #[test]
+    fn a_module_with_nothing_stated_has_no_directory() {
+        let app = state_with_node("mod", None);
+
+        assert_eq!(app.module_directory_for_key("mod"), None);
+        assert_eq!(app.module_directory_for_key("nobody"), None);
+    }
+
+    // M2.2 / TP-MOD-37: the module's own directory is a repository root, so it
+    // is somewhere to branch from.
+    #[test]
+    fn a_module_standing_in_a_repository_root_can_branch() {
+        let repo = scratch("repo-root");
+        std::fs::create_dir_all(repo.join(".git")).expect("repo marker");
+        let app = state_with_node("mod", Some(repo.clone()));
+
+        assert_eq!(
+            module_branch_source(&app, "mod"),
+            ModuleBranchSource::Repository(repo)
+        );
+    }
+
+    // M2.3 🔴 / TP-MOD-37: THE guard. Measured on the reporting machine:
+    //
+    //   /home/ayaz/Marktplaats satis          exists, empty, no .git
+    //   git -C "..." rev-parse --show-toplevel  →  /home/ayaz
+    //
+    // `$HOME` is itself a git repository there. If this answered `Repository`,
+    // "New branch..." on that module would open branches and worktrees over the
+    // whole home directory — `~/.claude`, `~/.config`, every project in it.
+    // This test failing is that defect.
+    #[test]
+    fn a_directory_inside_a_repository_is_not_itself_a_branch_source() {
+        let root = scratch("outer-repo");
+        std::fs::create_dir_all(root.join(".git")).expect("repo marker");
+        let inner = root.join("inner");
+        std::fs::create_dir_all(&inner).expect("inner directory");
+        let app = state_with_node("mod", Some(inner.clone()));
+
+        assert_eq!(
+            module_branch_source(&app, "mod"),
+            ModuleBranchSource::UninitializedDirectory(inner),
+            "only the directory the person named counts, and only if it is a root"
+        );
+    }
+
+    // M2.4 / TP-MOD-37: nothing stated — the menu needs to know so it can point
+    // at "Set directory..." instead of at a dead end.
+    #[test]
+    fn a_module_with_no_directory_has_no_branch_source() {
+        let app = state_with_node("mod", None);
+
+        assert_eq!(
+            module_branch_source(&app, "mod"),
+            ModuleBranchSource::NoDirectory
+        );
+    }
+
+    // M2.5 / TP-MOD-37: stated once, gone since. Re-measured at use, the same
+    // toll TP-CHAT-MOVE-10 (R3) already pays on the chat side.
+    #[test]
+    fn a_module_whose_directory_has_gone_has_no_branch_source() {
+        let gone = std::env::temp_dir().join("herdr-modgap-never-existed");
+        let app = state_with_node("mod", Some(gone));
+
+        assert_eq!(
+            module_branch_source(&app, "mod"),
+            ModuleBranchSource::NoDirectory
+        );
+    }
+
+    // M2.10 / TP-MOD-37: a bucket branches from the repository its rule names.
+    #[test]
+    fn a_bucket_branches_from_the_repository_its_rule_names() {
+        let repo = scratch("bucket-branch");
+        std::fs::create_dir_all(repo.join(".git")).expect("repo marker");
+        let app = state_with_bucket("bucket", repo.clone());
+
+        assert_eq!(
+            module_branch_source(&app, "bucket"),
+            ModuleBranchSource::Repository(repo)
+        );
+    }
+
+    // M1.1 + M1.2 / TP-CHAT-MOVE-11: nodes AND buckets are destinations, each
+    // keyed by `module:<key>`.
+    #[test]
+    fn nodes_and_buckets_are_both_module_destinations() {
+        let repo = scratch("targets-repo");
+        let dir = scratch("targets-node");
+        let mut app = state_with_node("node-mod", Some(dir));
+        app.space_split_rules = vec![crate::spaces::SpaceSplitRule {
+            repo_root: repo,
+            patterns: vec!["*".to_string()],
+            key: "bucket-mod".to_string(),
+            label: "Bucket Mod".to_string(),
+            icon: None,
+            parent: None,
+        }];
+
+        let keys: Vec<String> = app
+            .module_move_target_entries()
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect();
+
+        assert!(keys.contains(&"module:node-mod".to_string()));
+        assert!(
+            keys.contains(&"module:bucket-mod".to_string()),
+            "buckets are twenty of this person's twenty-four modules"
+        );
+    }
+
+    // M1.3 / TP-CHAT-MOVE-11: the module list holds modules only. Two verbs
+    // that offer the same list are one verb wearing two names.
+    #[test]
+    fn the_module_list_never_offers_a_workspace() {
+        let dir = scratch("modules-only");
+        let app = state_with_node("mod", Some(dir));
+
+        assert!(
+            app.module_move_target_entries()
+                .iter()
+                .all(|(key, _)| key.starts_with("module:")),
+            "every entry is a module identity, never a directory key"
+        );
+    }
+
+    // M1.4 / TP-CHAT-MOVE-11: a module with a directory can actually receive a
+    // chat and reopen it; one without cannot (TP-CHAT-MOVE-07). Offering the
+    // dead end first would point at the option that does not work.
+    #[test]
+    fn modules_with_a_directory_are_offered_first() {
+        let dir = scratch("ordered");
+        let mut app = AppState::test_new();
+        app.space_nodes = vec![
+            crate::spaces::SpaceNode {
+                key: "no-dir".to_string(),
+                name: "No Dir".to_string(),
+                icon: None,
+                parent: None,
+                dir: None,
+            },
+            crate::spaces::SpaceNode {
+                key: "has-dir".to_string(),
+                name: "Has Dir".to_string(),
+                icon: None,
+                parent: None,
+                dir: Some(dir),
+            },
+        ];
+
+        let keys: Vec<String> = app
+            .module_move_target_entries()
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect();
+
+        assert_eq!(
+            keys.first().map(String::as_str),
+            Some("module:has-dir"),
+            "the first option must be one that works"
+        );
+    }
+
+    // TP-CHAT-MOVE-11: one row per module, not per rule. The reporting config
+    // gives `herdr:web` two `[[spaces.split]]` rules; listing it twice would
+    // read as two modules with the same name.
+    #[test]
+    fn a_module_claimed_by_two_rules_is_listed_once() {
+        let repo = scratch("dup-rules");
+        let mut app = AppState::test_new();
+        app.space_nodes.clear();
+        app.space_split_rules = vec![
+            crate::spaces::SpaceSplitRule {
+                repo_root: repo.clone(),
+                patterns: vec!["a*".to_string()],
+                key: "same".to_string(),
+                label: "Same".to_string(),
+                icon: None,
+                parent: None,
+            },
+            crate::spaces::SpaceSplitRule {
+                repo_root: repo,
+                patterns: vec!["b*".to_string()],
+                key: "same".to_string(),
+                label: "Same".to_string(),
+                icon: None,
+                parent: None,
+            },
+        ];
+
+        let entries = app.module_move_target_entries();
+        assert_eq!(entries.len(), 1, "one module, one row");
     }
 }

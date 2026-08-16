@@ -35,6 +35,11 @@ SKIPPED_SUBTREES = (
     "spaces.split",
     "spaces.project",
     "spaces.node",
+    # A rename laid over a header the rules above already resolved, keyed by
+    # that rule's key. Open-ended for the same reason the tables it renames
+    # are: one entry per key a person chose to rename. Documented in prose in
+    # the Spaces section.
+    "spaces.display",
     # A bar's sections are an ordered array of tables: the keys inside one
     # depend on the section's own `kind`, and there is no fixed number of them.
     # Documented in prose in the Shell section instead.

@@ -492,12 +492,58 @@ impl AppState {
         let file_manager = crate::fm::FmState::new(cwd);
         self.agent_attachment_picker = Some(AgentAttachmentPickerState {
             file_manager,
-            target,
+            purpose: crate::app::state::PickerPurpose::AttachToAgent(target),
         });
         self.request_agent_attachment_delivery = None;
         self.view.agent_attachment_action_area = None;
         self.enter_overlay_mode(Mode::AttachFile);
         Ok(())
+    }
+
+    /// Open the file picker on a module's directory.
+    ///
+    /// TP-MOD-35: seeded at the directory the module already points at, so the
+    /// common edit — a correction — starts where the answer is, exactly as the
+    /// text box it replaces did. A module with no directory yet, or one whose
+    /// directory has since gone, starts at home rather than refusing: the
+    /// person opened this to choose a place, and a picker that will not open
+    /// is worse than one that opens somewhere ordinary.
+    pub(crate) fn open_module_dir_picker(&mut self, node_key: String) -> bool {
+        use crate::app::state::{AgentAttachmentPickerState, PickerPurpose};
+
+        let current = self
+            .space_nodes
+            .iter()
+            .find(|node| node.key == node_key)
+            .and_then(|node| node.dir.clone())
+            .filter(|dir| dir.is_dir());
+        let start = current.unwrap_or_else(|| crate::worktree::expand_tilde_path("~"));
+        let file_manager = crate::fm::FmState::new(start);
+        self.agent_attachment_picker = Some(AgentAttachmentPickerState {
+            file_manager,
+            purpose: PickerPurpose::SetModuleDirectory { node_key },
+        });
+        self.request_agent_attachment_delivery = None;
+        self.context_menu = None;
+        self.enter_overlay_mode(Mode::AttachFile);
+        true
+    }
+
+    /// Commit the picker's directory to the module it was opened for.
+    ///
+    /// TP-MOD-35: the write goes through `submit_module_dir`, the same road the
+    /// text box used. A second write path would be a second place for the
+    /// overlay's rules to be got wrong.
+    pub(crate) fn submit_module_dir_from_picker(&mut self) {
+        let Some(picker) = self.agent_attachment_picker.as_ref() else {
+            return;
+        };
+        let Some(node_key) = picker.module_key().map(str::to_string) else {
+            return;
+        };
+        let dir = picker.chosen_directory().display().to_string();
+        self.close_agent_attachment_picker();
+        self.submit_module_dir(node_key, &dir);
     }
 
     pub(crate) fn close_agent_attachment_picker(&mut self) {
@@ -2025,6 +2071,224 @@ impl AppState {
         self.recent_move_targets.truncate(REMEMBERED);
     }
 
+    /// The workspaces standing in the daily directory, in list order.
+    ///
+    /// TP-DAILY-17: one definition, because there are now two callers who must
+    /// agree — the sidebar, which draws them, and the "new workspace" road,
+    /// which must not create another one. A second copy of this predicate is a
+    /// drift waiting to happen: the two would answer differently on exactly the
+    /// machines where it matters, and the symptom (a row that appears or a
+    /// workspace that is not adopted) gives no hint that they disagreed.
+    ///
+    /// Deliberately NOT gated on the section being visible. Whether the daily
+    /// area is drawn is a question about the sidebar; whether a workspace
+    /// stands in that directory is a question about the session. The sidebar
+    /// wraps this with its own visibility test.
+    pub(crate) fn workspaces_in_daily_directory(&self) -> Vec<usize> {
+        let Some(daily) = self.daily_chat_cwd.as_deref() else {
+            return Vec::new();
+        };
+        let daily_key = crate::persist::workspace_chats::ledger_key(daily);
+        self.workspaces
+            .iter()
+            .enumerate()
+            .filter(|(_, ws)| {
+                crate::persist::workspace_chats::ledger_key(ws.effective_cwd()) == daily_key
+            })
+            .map(|(ws_idx, _)| ws_idx)
+            .collect()
+    }
+
+    /// The workspace a new one would be folded into, if there is one.
+    ///
+    /// TP-DAILY-17: the daily directory is one place, and one place gets one
+    /// workspace. Measured on the reported machine: seven stood there, five of
+    /// them created within 32 minutes of each other, each one spawned from
+    /// inside the last — `new_cwd = "follow"` inherits the pane's directory, so
+    /// a `$HOME` workspace makes the next `$HOME` workspace, which makes the
+    /// next. Six of the seven held nothing but a shell and a plugin pane.
+    ///
+    /// A NAMED workspace is never adopted. A name is a deliberate identity: if
+    /// someone said "this one is the log tail", a second one standing in the
+    /// same directory is also deliberate, and folding into the first would
+    /// overrule a decision the machine has no business overruling.
+    pub(crate) fn adoptable_daily_workspace(&self) -> Option<usize> {
+        self.mergeable_daily_workspaces().first().copied()
+    }
+
+    /// Every unnamed workspace standing in the daily directory.
+    ///
+    /// TP-DAILY-19: the set the merge verb folds together, and — as its first
+    /// element — the one a new workspace is adopted into. Deliberately ONE
+    /// definition: adoption (TP-DAILY-17) and merging answer the same question,
+    /// "which workspaces here are interchangeable copies of this place", and a
+    /// second definition would let the two drift until a workspace could be
+    /// adoptable but not mergeable, or the reverse.
+    ///
+    /// Named workspaces are excluded for the reason adoption excludes them: a
+    /// name is a deliberate identity, and folding it away would overrule a
+    /// decision the machine has no business overruling.
+    ///
+    /// ⚠ Not `ui::sidebar::daily_owned_workspaces` — that one wraps this with a
+    /// visibility gate, so a merge built on it would behave differently while
+    /// the section is folded.
+    pub(crate) fn mergeable_daily_workspaces(&self) -> Vec<usize> {
+        self.workspaces_in_daily_directory()
+            .into_iter()
+            .filter(|ws_idx| {
+                self.workspaces
+                    .get(*ws_idx)
+                    .is_some_and(|ws| ws.custom_name.is_none())
+            })
+            .collect()
+    }
+
+    /// The workspace a merge folds the others into.
+    ///
+    /// TP-DAILY-19: the active one when it is part of the set, otherwise the
+    /// first. Someone standing inside one of these workspaces must not be
+    /// carried out of it by a cleanup they asked for — that is the core-side
+    /// counterpart of the row order the section already draws, where the active
+    /// workspace is the one kept visible (TP-DAILY-18).
+    pub(crate) fn daily_merge_target(&self) -> Option<usize> {
+        let mergeable = self.mergeable_daily_workspaces();
+        if let Some(active) = self.active {
+            if mergeable.contains(&active) {
+                return Some(active);
+            }
+        }
+        mergeable.first().copied()
+    }
+
+    /// Whether the TUI's "new workspace" intent would be folded into an
+    /// existing workspace rather than creating one, for a cwd it resolves to.
+    ///
+    /// Split out from the routing so the RULE is testable without a PTY, and
+    /// so the two TUI roads provably share it.
+    // TP-DAILY-17
+    pub(crate) fn daily_adoption_target(&self, target_cwd: &std::path::Path) -> Option<usize> {
+        let daily = self.daily_chat_cwd.as_deref()?;
+        let key = crate::persist::workspace_chats::ledger_key;
+        if key(target_cwd) != key(daily) {
+            return None;
+        }
+        self.adoptable_daily_workspace()
+    }
+
+    /// What a chat's row currently reads, by session id.
+    ///
+    /// TP-CHAT-NAME-01: searched across every drawer rather than within one,
+    /// because the menu that asks does not always know which drawer the row was
+    /// pressed in — a daily row belongs to no workspace at all
+    /// (TP-CHAT-MOVE-08). `None` when the row carries no resolvable title,
+    /// which is exactly the chat most worth naming: for one started outside a
+    /// workspace's directory there is nothing to derive a title from, and its
+    /// row is the one that came back saying only `ayaz`.
+    pub(crate) fn chat_row_title(&self, session_id: &str) -> Option<String> {
+        self.workspace_chat_rows
+            .values()
+            .flatten()
+            .find(|row| row.session_id == session_id)
+            .and_then(|row| row.title.clone())
+    }
+
+    /// The directory a module stands in — whatever kind of module it is.
+    ///
+    /// TP-MOD-36: the tree calls three different things a module, and to the
+    /// person using it they ARE all modules (TP-DOTS-01/10): a `[[spaces.node]]`
+    /// container, a `[[spaces.project]]` (which is a node, TP-NODE-02), and a
+    /// `[[spaces.split]]` bucket. Only the first two can carry a `dir`; a bucket
+    /// carries a `repo_root` instead, and that is just as much a directory the
+    /// person wrote down.
+    ///
+    /// Measured on the reporting machine: of 24 modules, **20 are buckets**. A
+    /// definition that answered only for nodes would answer "no directory" for
+    /// five sixths of that tree, so every feature built on it would be dead
+    /// where it was asked for.
+    ///
+    /// `None` when nothing was stated. Refusing beats guessing: #46 measured
+    /// where guessed directories land, and TP-CHAT-MOVE-07 drew this boundary
+    /// for exactly that reason. Nothing here consults the filesystem or climbs
+    /// to a parent repository — see `module_branch_source` for why that matters.
+    pub(crate) fn module_directory_for_key(&self, key: &str) -> Option<std::path::PathBuf> {
+        if let Some(dir) = self
+            .space_nodes
+            .iter()
+            .find(|node| node.key == key)
+            .and_then(|node| node.dir.clone())
+        {
+            return Some(dir);
+        }
+        self.space_split_rules
+            .iter()
+            .find(|rule| rule.key == key)
+            .map(|rule| rule.repo_root.clone())
+    }
+
+    /// Every module a chat can be filed into, as `(ledger key, label)`.
+    ///
+    /// TP-CHAT-MOVE-11: split out from `chat_move_target_entries` rather than
+    /// mixed into it. On the reporting machine one combined list would be about
+    /// thirty checkouts and twenty-four modules deep, and finding a module in
+    /// it is the needle in the haystack the report described. Two verbs, two
+    /// lists.
+    ///
+    /// Buckets are included for the reason `module_directory_for_key` reads
+    /// them: they are most of what this person calls a module. The ledger side
+    /// needs nothing new — `module_ledger_key` mints an identity and never asks
+    /// what kind of module minted it (TP-CHAT-MOVE-05).
+    ///
+    /// Modules with a known directory come first. A chat filed into a module
+    /// with no directory cannot be reopened at all (TP-CHAT-MOVE-07/10), so
+    /// offering one of those before a destination that works would be pointing
+    /// at the dead end first.
+    pub(crate) fn module_move_target_entries(&self) -> Vec<(String, String)> {
+        let mut entries: Vec<(String, String, bool)> = Vec::new();
+
+        for node in &self.space_nodes {
+            if node.key.is_empty() {
+                continue;
+            }
+            let label = if node.name.trim().is_empty() {
+                node.key.clone()
+            } else {
+                node.name.clone()
+            };
+            let has_dir = self.module_directory_for_key(&node.key).is_some();
+            entries.push((
+                crate::persist::workspace_chats::module_ledger_key(&node.key),
+                label,
+                has_dir,
+            ));
+        }
+
+        for rule in &self.space_split_rules {
+            if rule.key.is_empty() {
+                continue;
+            }
+            let key = crate::persist::workspace_chats::module_ledger_key(&rule.key);
+            // A bucket key can repeat across rules — the same module is allowed
+            // to claim several branch patterns, and the reporting config does
+            // exactly that for `herdr:web`. One row per module, not per rule.
+            if entries.iter().any(|(existing, _, _)| *existing == key) {
+                continue;
+            }
+            let label = if rule.label.trim().is_empty() {
+                rule.key.clone()
+            } else {
+                rule.label.clone()
+            };
+            let has_dir = self.module_directory_for_key(&rule.key).is_some();
+            entries.push((key, label, has_dir));
+        }
+
+        entries.sort_by_key(|(_, _, has_dir)| !*has_dir);
+        entries
+            .into_iter()
+            .map(|(key, label, _)| (key, label))
+            .collect()
+    }
+
     /// `exclude_ws_idx` is the drawer the chat is shown in, when it is shown in
     /// one at all. A daily chat belongs to no workspace (TP-CHAT-MOVE-08), so
     /// it passes `None` and every workspace stays on offer — excluding an
@@ -2132,22 +2396,22 @@ impl AppState {
         if name.is_empty() {
             return;
         }
-        let key = rename_key
-            .unwrap_or_else(|| format!("group:{}", crate::cli::space::slug_for_branch(name)));
-        // TP-MOD-33: the overlay upsert replaces the whole entry by key, so a
-        // rename that did not carry the directory forward would quietly delete
-        // it — the module would keep its new name and lose the place it stands.
-        let dir = self
-            .space_nodes
-            .iter()
-            .find(|node| node.key == key)
-            .and_then(|node| node.dir.as_ref())
-            .map(|dir| dir.display().to_string());
+        // TP-MOD-34: a rename is a name and nothing else, so it goes to the
+        // display overlay rather than rewriting the rule. That is what lets the
+        // verb be offered on hand-written modules and buckets at all — and it
+        // retires TP-MOD-33's hazard outright: a rename that forgets to carry
+        // the directory forward can no longer delete it, because it never
+        // touches the entry holding it.
+        if let Some(key) = rename_key {
+            self.submit_module_display_name(key, name);
+            return;
+        }
+        let key = format!("group:{}", crate::cli::space::slug_for_branch(name));
         let node = crate::cli::space::NodePlan {
             key,
             name: name.to_string(),
             parent,
-            dir,
+            dir: None,
         };
         let path = crate::config::managed_spaces_path();
         let current = std::fs::read_to_string(&path).unwrap_or_default();
@@ -2231,6 +2495,32 @@ impl AppState {
         }
     }
 
+    /// Lay a name over whatever a header currently reads — module, bucket or
+    /// project alike.
+    ///
+    /// TP-MOD-34: this is the one rename road, and it works the same on every
+    /// header because it never asks who authored the rule underneath. A blank
+    /// name is refused rather than written: an empty header cannot be pointed
+    /// at, clicked, or spoken about, which is a worse state than any name.
+    pub(crate) fn submit_module_display_name(&mut self, key: String, name: &str) {
+        let name = name.trim();
+        if name.is_empty() || key.trim().is_empty() {
+            return;
+        }
+        let path = crate::config::managed_spaces_path();
+        let current = std::fs::read_to_string(&path).unwrap_or_default();
+        match crate::cli::space::upsert_managed_display_name(&current, &key, name) {
+            Ok(updated) => {
+                if let Err(err) = std::fs::write(&path, updated) {
+                    tracing::warn!(error = %err, "managed overlay write failed");
+                    return;
+                }
+                self.reload_space_rules_from_disk();
+            }
+            Err(err) => tracing::warn!(error = %err, "display rename failed"),
+        }
+    }
+
     /// Take back a module the machine wrote.
     ///
     /// TP-MOD-08: creating one is two clicks, so undoing one cannot be a hand
@@ -2247,6 +2537,12 @@ impl AppState {
     pub(crate) fn delete_managed_node(&mut self, node_key: &str) {
         let path = crate::config::managed_spaces_path();
         let current = std::fs::read_to_string(&path).unwrap_or_default();
+        // TP-MOD-34: the rename goes with the module. A display entry that
+        // outlives its module is a name waiting for a stranger — the next
+        // module to take that key would be born wearing it.
+        let current = crate::cli::space::remove_managed_display_name(&current, node_key)
+            .map(|(updated, _)| updated)
+            .unwrap_or(current);
         match crate::cli::space::remove_managed_node(&current, node_key) {
             Ok((_, 0)) => {
                 tracing::info!(
@@ -4684,6 +4980,7 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::test_wait::LoadAwareDeadline;
     use crate::detect::{Agent, AgentState};
     use crate::workspace::Workspace;
     use ratatui::layout::Direction;
@@ -5852,8 +6149,14 @@ mod tests {
         )
         .unwrap();
 
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        while runtime.cwd() != Some(live_cwd.clone()) && std::time::Instant::now() < deadline {
+        // Was a bare deadline the loop simply gave up on: if the cwd never
+        // arrived the test carried on and failed later, complaining about
+        // whatever it checked next rather than about the wait that never
+        // finished. Everything below needs this cwd, so saying so here is both
+        // the honest message and the load-aware budget.
+        let wait = LoadAwareDeadline::new(2, "the runtime to report its working directory");
+        while runtime.cwd() != Some(live_cwd.clone()) {
+            wait.check();
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
 

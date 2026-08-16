@@ -622,6 +622,21 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
                     },
                 });
             }
+            // TP-DAILY-18: the phone draws the same note. Two surfaces walking
+            // one tree is the point (TP-DAILY-08) — a row the desktop folds and
+            // the phone omits is a place reachable from one screen and not the
+            // other. It carries no target for the reason `ChatNote` never does:
+            // the cursor must not stop on a row that does nothing.
+            crate::ui::sidebar::WorkspaceListEntry::DailyMoreWorkspaces { hidden, .. } => {
+                rows.push(DrawerRow {
+                    height: 1,
+                    target: None,
+                    content: DrawerRowContent::ChatNote {
+                        depth: 1,
+                        label: format!("… {hidden} more here"),
+                    },
+                });
+            }
             crate::ui::sidebar::WorkspaceListEntry::GroupHeader { space_key } => {
                 let collapsed = app.collapsed_space_keys.contains(&space_key);
                 // Inside a project every level steps in one (TP-MOB-98).
@@ -2732,6 +2747,7 @@ fn fill_rect(frame: &mut Frame, area: Rect, style: Style) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::test_wait::LoadAwareDeadline;
 
     fn agent_entry(primary_tab_label: Option<&str>, agent_label: Option<&str>) -> AgentPanelEntry {
         AgentPanelEntry {
@@ -5180,8 +5196,14 @@ mod tests {
         )
         .unwrap();
 
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        while runtime.cwd() != Some(live_cwd.clone()) && std::time::Instant::now() < deadline {
+        // Was a bare deadline the loop simply gave up on: if the cwd never
+        // arrived the test carried on and failed later, complaining about
+        // whatever it checked next rather than about the wait that never
+        // finished. Everything below needs this cwd, so saying so here is both
+        // the honest message and the load-aware budget.
+        let wait = LoadAwareDeadline::new(2, "the runtime to report its working directory");
+        while runtime.cwd() != Some(live_cwd.clone()) {
+            wait.check();
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
 

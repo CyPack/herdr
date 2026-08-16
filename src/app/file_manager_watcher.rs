@@ -543,6 +543,7 @@ impl super::App {
 mod tests {
     use super::*;
     use crate::app::state::FileManagerHeaderAction;
+    use crate::app::test_wait::LoadAwareDeadline;
     use crate::fm::operations::execute_file_operation;
     use crate::fm::watcher::{watch_message_from_result, FmWatcherSlot};
     use notify_debouncer_full::{
@@ -798,21 +799,24 @@ mod tests {
         description: &str,
         predicate: impl Fn(&crate::fm::FmState) -> bool,
     ) {
-        let deadline = Instant::now() + Duration::from_secs(5);
+        // `check_with` rather than `check`: what this wait was for is decided by
+        // its caller, and the entries it actually saw are the half of the
+        // message that says which run this was. A fixed name would have thrown
+        // both away.
+        let wait = LoadAwareDeadline::new(5, "the file manager to match a predicate");
         loop {
             let _ = app.sync_file_manager_watcher();
             if app.state.file_manager.as_ref().is_some_and(&predicate) {
                 return;
             }
-            assert!(
-                Instant::now() < deadline,
-                "timed out waiting for {description}; entries={:?}",
+            wait.check_with(format_args!(
+                "{description}; entries={:?}",
                 app.state.file_manager.as_ref().map(|state| state
                     .entries
                     .iter()
                     .map(|entry| entry.name.as_str())
                     .collect::<Vec<_>>())
-            );
+            ));
             std::thread::sleep(Duration::from_millis(20));
         }
     }
@@ -909,9 +913,9 @@ mod tests {
 
         app.state.file_manager_clipboard = vec![source];
         assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::Paste));
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let wait = LoadAwareDeadline::new(5, "the reconcile worker to finish");
         while !app.file_operation_worker.has_buffered_completion() {
-            assert!(Instant::now() < deadline, "reconcile worker timed out");
+            wait.check();
             std::thread::sleep(Duration::from_millis(5));
         }
 
@@ -1364,9 +1368,9 @@ mod tests {
         assert!(app.sync_file_manager_watcher_at(now));
 
         release_tx.send(()).expect("release worker completion");
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let wait = LoadAwareDeadline::new(5, "the completion to be buffered");
         while !app.file_operation_worker.has_buffered_completion() {
-            assert!(Instant::now() < deadline, "completion buffering timed out");
+            wait.check();
             std::thread::sleep(Duration::from_millis(5));
         }
         assert!(app.sync_file_operations_for_test());
@@ -1410,9 +1414,9 @@ mod tests {
         let watcher_generation = app.watcher().generation();
         app.state.file_manager_clipboard = vec![source];
         assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::Paste));
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let wait = LoadAwareDeadline::new(5, "the completion to be buffered");
         while !app.file_operation_worker.has_buffered_completion() {
-            assert!(Instant::now() < deadline, "completion buffering timed out");
+            wait.check();
             std::thread::sleep(Duration::from_millis(5));
         }
 
@@ -1507,9 +1511,9 @@ mod tests {
             .preview_generation;
 
         release_tx.send(()).expect("release prior generation");
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let wait = LoadAwareDeadline::new(5, "the stale completion to be dropped");
         while !app.file_operation_worker.has_buffered_completion() {
-            assert!(Instant::now() < deadline, "stale completion timed out");
+            wait.check();
             std::thread::sleep(Duration::from_millis(5));
         }
         assert!(app.sync_file_operations_for_test());
@@ -1559,9 +1563,9 @@ mod tests {
             .preview_generation;
         app.state.file_manager_clipboard = vec![source];
         assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::Paste));
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let wait = LoadAwareDeadline::new(5, "the polling completion to arrive");
         while !app.file_operation_worker.has_buffered_completion() {
-            assert!(Instant::now() < deadline, "polling completion timed out");
+            wait.check();
             std::thread::sleep(Duration::from_millis(5));
         }
 

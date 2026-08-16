@@ -1360,6 +1360,7 @@ pub(super) mod test_support {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::test_wait::LoadAwareDeadline;
     use crate::detect::{Agent, AgentState};
 
     #[cfg(unix)]
@@ -1741,8 +1742,14 @@ mod tests {
             std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .unwrap();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        while runtime.cwd() != Some(live_cwd.clone()) && std::time::Instant::now() < deadline {
+        // Was a bare deadline the loop simply gave up on: if the cwd never
+        // arrived the test carried on and failed later, complaining about
+        // whatever it checked next rather than about the wait that never
+        // finished. Everything below needs this cwd, so saying so here is both
+        // the honest message and the load-aware budget.
+        let wait = LoadAwareDeadline::new(2, "the runtime to report its working directory");
+        while runtime.cwd() != Some(live_cwd.clone()) {
+            wait.check();
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
         app.terminal_runtimes.insert(terminal_id, runtime);
@@ -1833,8 +1840,14 @@ mod tests {
             std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .unwrap();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        while runtime.cwd() != Some(live_cwd.clone()) && std::time::Instant::now() < deadline {
+        // Was a bare deadline the loop simply gave up on: if the cwd never
+        // arrived the test carried on and failed later, complaining about
+        // whatever it checked next rather than about the wait that never
+        // finished. Everything below needs this cwd, so saying so here is both
+        // the honest message and the load-aware budget.
+        let wait = LoadAwareDeadline::new(2, "the runtime to report its working directory");
+        while runtime.cwd() != Some(live_cwd.clone()) {
+            wait.check();
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
         app.terminal_runtimes.insert(terminal_id, runtime);
