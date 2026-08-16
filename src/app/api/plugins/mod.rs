@@ -867,6 +867,7 @@ mod tests {
     use crate::api::schema::{
         Method, PaneListParams, PluginSourceInfo, PluginSourceKind, Request, SuccessResponse,
     };
+    use crate::app::test_wait::LoadAwareDeadline;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn test_app() -> App {
@@ -905,7 +906,7 @@ mod tests {
     /// before the command writes, so waiting on existence alone can read EOF.
     /// `pump` advances any event loop the command depends on.
     fn read_capture_when_ready(path: &std::path::Path, mut pump: impl FnMut()) -> String {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let wait = LoadAwareDeadline::new(5, "a plugin command to write its output");
         loop {
             pump();
             if let Ok(contents) = std::fs::read_to_string(path) {
@@ -913,11 +914,7 @@ mod tests {
                     return contents;
                 }
             }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "plugin command did not write {} within deadline",
-                path.display()
-            );
+            wait.check_with(format_args!("{}", path.display()));
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
     }

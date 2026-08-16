@@ -1056,6 +1056,7 @@ fn immediate_api_error_message(response: Option<&str>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::test_wait::LoadAwareDeadline;
 
     fn unique_temp_path(name: &str) -> std::path::PathBuf {
         let nanos = std::time::SystemTime::now()
@@ -1093,14 +1094,14 @@ mod tests {
     }
 
     fn wait_for_worktree_event(app: &mut App) -> AppEvent {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        while std::time::Instant::now() < deadline {
+        let wait = LoadAwareDeadline::new(2, "a worktree event");
+        loop {
             if let Ok(event) = app.event_rx.try_recv() {
                 return event;
             }
+            wait.check();
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        panic!("timed out waiting for worktree event");
     }
 
     fn app_for_worktree_tests() -> App {

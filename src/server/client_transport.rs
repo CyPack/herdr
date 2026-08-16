@@ -804,6 +804,7 @@ fn client_read_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::test_wait::LoadAwareDeadline;
     use interprocess::local_socket::traits::Listener as _;
     use std::path::PathBuf;
 
@@ -842,11 +843,15 @@ mod tests {
     }
 
     fn recv_server_event(receiver: &mut mpsc::Receiver<ServerEvent>, context: &str) -> ServerEvent {
-        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        // The old shape let an expired deadline fall through to the
+        // disconnected arm, so a wait that ran out reported "channel empty" --
+        // a sentence about the channel rather than about the waiting.
+        let wait = LoadAwareDeadline::new(1, "a server event");
         loop {
             match receiver.try_recv() {
                 Ok(event) => return event,
-                Err(mpsc::error::TryRecvError::Empty) if std::time::Instant::now() < deadline => {
+                Err(mpsc::error::TryRecvError::Empty) => {
+                    wait.check_with(format_args!("{context}"));
                     std::thread::sleep(Duration::from_millis(1));
                 }
                 Err(err) => panic!("{context}: {err}"),

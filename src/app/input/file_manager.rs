@@ -1756,6 +1756,7 @@ mod tests {
         FileManagerLocationNavigationRequest, FileManagerRowAction, FileManagerRowActionArea,
         FileManagerRowArea,
     };
+    use crate::app::test_wait::LoadAwareDeadline;
     use crate::app::Mode;
     use crate::fm::{FmState, MAX_MULTI_SELECTION_PATHS};
     use crate::kitty_graphics::HostCellSize;
@@ -1833,16 +1834,13 @@ mod tests {
     }
 
     fn wait_for_image_preview_ready(app: &mut crate::app::App) {
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let wait = LoadAwareDeadline::new(5, "the image preview worker");
         loop {
             let _ = app.sync_image_preview_worker();
             if image_preview_ready(app) {
                 return;
             }
-            assert!(
-                Instant::now() < deadline,
-                "timed out waiting for the image preview worker"
-            );
+            wait.check();
             std::thread::yield_now();
         }
     }
