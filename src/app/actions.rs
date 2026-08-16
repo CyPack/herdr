@@ -492,12 +492,58 @@ impl AppState {
         let file_manager = crate::fm::FmState::new(cwd);
         self.agent_attachment_picker = Some(AgentAttachmentPickerState {
             file_manager,
-            target,
+            purpose: crate::app::state::PickerPurpose::AttachToAgent(target),
         });
         self.request_agent_attachment_delivery = None;
         self.view.agent_attachment_action_area = None;
         self.enter_overlay_mode(Mode::AttachFile);
         Ok(())
+    }
+
+    /// Open the file picker on a module's directory.
+    ///
+    /// TP-MOD-35: seeded at the directory the module already points at, so the
+    /// common edit — a correction — starts where the answer is, exactly as the
+    /// text box it replaces did. A module with no directory yet, or one whose
+    /// directory has since gone, starts at home rather than refusing: the
+    /// person opened this to choose a place, and a picker that will not open
+    /// is worse than one that opens somewhere ordinary.
+    pub(crate) fn open_module_dir_picker(&mut self, node_key: String) -> bool {
+        use crate::app::state::{AgentAttachmentPickerState, PickerPurpose};
+
+        let current = self
+            .space_nodes
+            .iter()
+            .find(|node| node.key == node_key)
+            .and_then(|node| node.dir.clone())
+            .filter(|dir| dir.is_dir());
+        let start = current.unwrap_or_else(|| crate::worktree::expand_tilde_path("~"));
+        let file_manager = crate::fm::FmState::new(start);
+        self.agent_attachment_picker = Some(AgentAttachmentPickerState {
+            file_manager,
+            purpose: PickerPurpose::SetModuleDirectory { node_key },
+        });
+        self.request_agent_attachment_delivery = None;
+        self.context_menu = None;
+        self.enter_overlay_mode(Mode::AttachFile);
+        true
+    }
+
+    /// Commit the picker's directory to the module it was opened for.
+    ///
+    /// TP-MOD-35: the write goes through `submit_module_dir`, the same road the
+    /// text box used. A second write path would be a second place for the
+    /// overlay's rules to be got wrong.
+    pub(crate) fn submit_module_dir_from_picker(&mut self) {
+        let Some(picker) = self.agent_attachment_picker.as_ref() else {
+            return;
+        };
+        let Some(node_key) = picker.module_key().map(str::to_string) else {
+            return;
+        };
+        let dir = picker.chosen_directory().display().to_string();
+        self.close_agent_attachment_picker();
+        self.submit_module_dir(node_key, &dir);
     }
 
     pub(crate) fn close_agent_attachment_picker(&mut self) {

@@ -1131,14 +1131,19 @@ pub(super) fn apply_context_menu_action(
             state.unfold_node(&node_key);
             leave_modal(state);
         }
+        // TP-MOD-35: the file picker, not a text box. Falls back to the text
+        // box only when the picker cannot open at all — a verb that does
+        // nothing is worse than a verb that asks you to type.
         (ContextMenuKind::NodeHeader { node_key, .. }, Some("Set directory...")) => {
-            let current = state
-                .space_nodes
-                .iter()
-                .find(|node| node.key == node_key)
-                .and_then(|node| node.dir.as_ref())
-                .map(|dir| dir.display().to_string());
-            open_module_dir_input(state, node_key, current);
+            if !state.open_module_dir_picker(node_key.clone()) {
+                let current = state
+                    .space_nodes
+                    .iter()
+                    .find(|node| node.key == node_key)
+                    .and_then(|node| node.dir.as_ref())
+                    .map(|dir| dir.display().to_string());
+                open_module_dir_input(state, node_key, current);
+            }
         }
         (ContextMenuKind::NodeHeader { node_key, .. }, Some("Rename module...")) => {
             let parent = state
@@ -1913,15 +1918,19 @@ impl App {
             // TP-MOD-33: on the production body too. #91 was a menu item whose
             // arm lived only in the `#[cfg(test)]` sibling — green tests, dead
             // affordance.
+            // TP-MOD-35: the production twin. A verb wired into only one of the
+            // two bodies works in tests and does nothing on screen.
             (ContextMenuKind::NodeHeader { node_key, .. }, Some("Set directory...")) => {
-                let current = self
-                    .state
-                    .space_nodes
-                    .iter()
-                    .find(|node| node.key == node_key)
-                    .and_then(|node| node.dir.as_ref())
-                    .map(|dir| dir.display().to_string());
-                open_module_dir_input(&mut self.state, node_key, current);
+                if !self.state.open_module_dir_picker(node_key.clone()) {
+                    let current = self
+                        .state
+                        .space_nodes
+                        .iter()
+                        .find(|node| node.key == node_key)
+                        .and_then(|node| node.dir.as_ref())
+                        .map(|dir| dir.display().to_string());
+                    open_module_dir_input(&mut self.state, node_key, current);
+                }
             }
             (ContextMenuKind::NodeHeader { node_key, .. }, Some("Rename module...")) => {
                 let parent = self
@@ -3878,6 +3887,130 @@ mod tests {
         );
     }
 
+    // T4.1 / TP-MOD-35: the verb opens the file picker, seeded at the
+    // directory the module already points at. The text box it replaces
+    // prefilled the same value for the same reason: the common edit is a
+    // correction, and retyping a path by hand is where typos come from.
+    #[test]
+    fn setting_a_module_directory_opens_the_picker_where_the_module_stands() {
+        let mut app = app_with_test_workspaces(&["main"]);
+        let dir = std::env::temp_dir();
+        app.state.space_nodes = vec![crate::spaces::SpaceNode {
+            key: "group:docs".into(),
+            name: "Docs".into(),
+            icon: None,
+            parent: None,
+            dir: Some(dir.clone()),
+        }];
+
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::NodeHeader {
+                node_key: "group:docs".into(),
+                collapsed: false,
+                deletable: true,
+            },
+            x: 0,
+            y: 0,
+            list: crate::app::state::MenuListState::new(0),
+        };
+        let idx = menu
+            .items()
+            .iter()
+            .position(|item| *item == "Set directory...")
+            .expect("the verb is on the menu");
+
+        app.apply_context_menu_action_via_api(menu, idx);
+
+        let picker = app
+            .state
+            .agent_attachment_picker
+            .as_ref()
+            .expect("the picker opens");
+        assert_eq!(
+            picker.module_key(),
+            Some("group:docs"),
+            "the picker knows which module it is choosing for"
+        );
+        assert_eq!(
+            picker.file_manager.cwd,
+            crate::worktree::canonical_or_original(&dir),
+            "and it starts where the module already stands"
+        );
+        assert_eq!(app.state.mode, Mode::AttachFile);
+    }
+
+    // T4.6 / TP-MOD-35: cancel is cancel. The module keeps the directory it
+    // had and nothing is written — an overlay write on the way out would make
+    // the escape hatch a decision.
+    #[test]
+    fn cancelling_the_directory_picker_writes_nothing() {
+        let mut app = app_with_test_workspaces(&["main"]);
+        app.state.space_nodes = vec![crate::spaces::SpaceNode {
+            key: "group:docs".into(),
+            name: "Docs".into(),
+            icon: None,
+            parent: None,
+            dir: Some(std::env::temp_dir()),
+        }];
+        assert!(app.state.open_module_dir_picker("group:docs".into()));
+
+        app.state.close_agent_attachment_picker();
+
+        assert!(app.state.agent_attachment_picker.is_none());
+        assert_ne!(app.state.mode, Mode::AttachFile);
+        assert_eq!(
+            app.state.space_nodes[0].dir.as_deref(),
+            Some(std::env::temp_dir().as_path()),
+            "the module keeps the place it stood in"
+        );
+    }
+
+    // T4.9 / TP-MOD-35: the target is a directory. A file under the cursor
+    // does not disqualify the choice — the person is standing in a directory
+    // and pressing Set means "this one". Refusing because the cursor happens
+    // to rest on a README would be a button that looks pressable and is not.
+    #[test]
+    fn the_picker_chooses_a_directory_even_when_the_cursor_rests_on_a_file() {
+        let root = std::env::temp_dir().join("herdr-dir-picker-fixture");
+        let _ = std::fs::create_dir_all(root.join("inner"));
+        let _ = std::fs::write(root.join("a-file.txt"), b"x");
+
+        let mut app = app_with_test_workspaces(&["main"]);
+        app.state.space_nodes = vec![crate::spaces::SpaceNode {
+            key: "group:docs".into(),
+            name: "Docs".into(),
+            icon: None,
+            parent: None,
+            dir: Some(root.clone()),
+        }];
+        assert!(app.state.open_module_dir_picker("group:docs".into()));
+
+        let picker = app
+            .state
+            .agent_attachment_picker
+            .as_mut()
+            .expect("the picker opens");
+        let file_idx = picker
+            .file_manager
+            .entries
+            .iter()
+            .position(|entry| !entry.is_dir())
+            .expect("the fixture has a file");
+        picker.file_manager.select(file_idx);
+        let chosen = app
+            .state
+            .agent_attachment_picker
+            .as_ref()
+            .map(|picker| picker.chosen_directory())
+            .expect("a choice");
+
+        assert!(
+            chosen.is_dir(),
+            "a directory is what a module can stand in: {chosen:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     // T3.3 / TP-CHAT-NAME-01: a chat row had no rename at all. The name it
     // wore came from the transcript, and for a chat started outside a
     // workspace's directory there is no title to derive — which is how a row
@@ -4324,10 +4457,20 @@ mod tests {
 
         app.apply_context_menu_action_via_api(menu, idx);
 
+        // TP-MOD-35 changed what the verb opens — a file picker rather than a
+        // text box — and left the thing this test is about untouched: that the
+        // PRODUCTION arm exists at all. Either road proves it.
+        let opened_for = app
+            .state
+            .agent_attachment_picker
+            .as_ref()
+            .and_then(|picker| picker.module_key())
+            .map(str::to_string)
+            .or_else(|| app.state.pending_module_dir.clone());
         assert_eq!(
-            app.state.pending_module_dir.as_deref(),
+            opened_for.as_deref(),
             Some("docs"),
-            "the production road opens the directory input for this module"
+            "the production road opens the directory chooser for this module"
         );
         assert!(
             app.state.pending_new_module.is_none(),
@@ -4349,8 +4492,19 @@ mod tests {
 
         app.apply_context_menu_action_via_api(menu, idx);
 
-        assert_eq!(app.state.name_input, "/tmp");
-        assert!(app.state.name_input_replace_on_type);
+        // TP-MOD-35: the prefill moved from a text box to the picker's own
+        // starting directory. Same contract — the chooser opens where the
+        // answer already is — expressed in whichever surface is on screen.
+        match app.state.agent_attachment_picker.as_ref() {
+            Some(picker) => assert_eq!(
+                picker.file_manager.cwd,
+                crate::worktree::canonical_or_original(std::path::Path::new("/tmp"))
+            ),
+            None => {
+                assert_eq!(app.state.name_input, "/tmp");
+                assert!(app.state.name_input_replace_on_type);
+            }
+        }
     }
 
     // TP-MOD-33 (D7): a directory that does not exist is refused rather than

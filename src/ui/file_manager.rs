@@ -812,11 +812,14 @@ pub(crate) fn render_agent_attachment_picker(app: &AppState, frame: &mut Frame, 
     if render_panel_shell(frame, areas.popup, app.palette.accent, app.palette.panel_bg).is_none() {
         return;
     }
-    let target_current = app.agent_attachment_target_is_current(&picker.target);
-    let (title, color) = if target_current {
-        ("Attach file", app.palette.text)
-    } else {
-        ("Attach file · target unavailable", app.palette.peach)
+    let module_key = picker.module_key();
+    let (title, color) = match picker.attachment_target() {
+        Some(target) if app.agent_attachment_target_is_current(target) => {
+            ("Attach file", app.palette.text)
+        }
+        Some(_) => ("Attach file · target unavailable", app.palette.peach),
+        // TP-MOD-35: the same popup, saying which of its two jobs it is doing.
+        None => ("Set module directory", app.palette.text),
     };
     frame.render_widget(
         Paragraph::new(title).style(Style::default().fg(color).add_modifier(Modifier::BOLD)),
@@ -834,9 +837,71 @@ pub(crate) fn render_agent_attachment_picker(app: &AppState, frame: &mut Frame, 
         fallback_rows.as_slice()
     };
     render_agent_attachment_file_manager(app, &picker.file_manager, frame, areas.content, rows);
+    if module_key.is_some() {
+        render_module_dir_buttons(app, frame, areas.footer);
+    } else {
+        frame.render_widget(
+            Paragraph::new("Enter attach  Esc cancel")
+                .style(Style::default().fg(app.palette.overlay1)),
+            areas.footer,
+        );
+    }
+}
+
+/// Where the module-directory picker's two buttons sit: Cancel on the left,
+/// Set on the right.
+///
+/// TP-MOD-35: the sides are the request, stated exactly ("set sağda cancel
+/// solda"), and they are also the convention the rest of the app follows — the
+/// action that goes forward sits where the eye ends up. One function answers
+/// for both the paint and the hit test so a button cannot be pressable
+/// somewhere it is not drawn.
+pub(crate) fn module_dir_button_rects(area: Rect) -> Option<(Rect, Rect)> {
+    let areas = agent_attachment_picker_areas(area)?;
+    let footer = areas.footer;
+    // Both labels plus a gap. Below that the buttons would overlap, and a
+    // popup whose Cancel cannot be pressed is a popup that cannot be left.
+    const CANCEL: u16 = 8;
+    const SET: u16 = 5;
+    if footer.width < CANCEL + SET + 1 || footer.height == 0 {
+        return None;
+    }
+    let cancel = Rect::new(footer.x, footer.y, CANCEL, 1);
+    let set = Rect::new(
+        footer.x + footer.width.saturating_sub(SET),
+        footer.y,
+        SET,
+        1,
+    );
+    Some((cancel, set))
+}
+
+fn render_module_dir_buttons(app: &AppState, frame: &mut Frame, footer: Rect) {
+    let Some((cancel, set)) = module_dir_button_rects(app.view.terminal_area)
+        .filter(|_| footer.height > 0)
+        .or_else(|| {
+            // The picker can be drawn into an area that is not the live
+            // terminal (tests, and the fallback row path above), so the
+            // geometry is recomputed from the footer actually handed over
+            // rather than assumed to match.
+            (footer.width >= 14).then(|| {
+                (
+                    Rect::new(footer.x, footer.y, 8, 1),
+                    Rect::new(footer.x + footer.width.saturating_sub(5), footer.y, 5, 1),
+                )
+            })
+        })
+    else {
+        return;
+    };
+    let button = Style::default().fg(app.palette.text);
+    let accent = Style::default()
+        .fg(app.palette.accent)
+        .add_modifier(Modifier::BOLD);
+    frame.render_widget(Paragraph::new(Span::styled(" Cancel ", button)), cancel);
     frame.render_widget(
-        Paragraph::new("Enter attach  Esc cancel").style(Style::default().fg(app.palette.overlay1)),
-        areas.footer,
+        Paragraph::new(Span::styled(" Set ", accent)).alignment(ratatui::layout::Alignment::Right),
+        set,
     );
 }
 
@@ -4361,5 +4426,39 @@ mod tests {
         assert!(compact_style
             .2
             .contains(Modifier::BOLD | Modifier::REVERSED));
+    }
+
+    // T4.2 / TP-MOD-35: the sides are the request, stated exactly — "set sağda
+    // cancel solda" — and they are also where the eye ends up. One function
+    // answers for the paint and the hit test, so a button cannot be pressable
+    // somewhere it is not drawn.
+    #[test]
+    fn the_directory_picker_puts_cancel_on_the_left_and_set_on_the_right() {
+        let area = Rect::new(0, 0, 80, 30);
+        let (cancel, set) = module_dir_button_rects(area).expect("a roomy popup has both buttons");
+
+        assert!(
+            cancel.x < set.x,
+            "cancel sits left of set: cancel={cancel:?} set={set:?}"
+        );
+        assert_eq!(cancel.y, set.y, "both buttons share the footer row");
+        assert!(
+            cancel.x + cancel.width <= set.x,
+            "the two must not overlap: cancel={cancel:?} set={set:?}"
+        );
+    }
+
+    // T4.8 / TP-MOD-35: below the width that fits both labels apart, no
+    // buttons are claimed at all. Drawing them overlapping would make Cancel
+    // pressable only where Set is — a popup that cannot be left.
+    #[test]
+    fn a_popup_too_narrow_claims_no_buttons() {
+        for width in 1u16..14 {
+            let area = Rect::new(0, 0, width, 30);
+            assert!(
+                module_dir_button_rects(area).is_none(),
+                "width {width} cannot hold two buttons apart"
+            );
+        }
     }
 }

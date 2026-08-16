@@ -1626,7 +1626,55 @@ pub struct AgentAttachmentTarget {
 #[derive(Debug, Clone)]
 pub struct AgentAttachmentPickerState {
     pub file_manager: crate::fm::FmState,
-    pub target: AgentAttachmentTarget,
+    pub purpose: PickerPurpose,
+}
+
+/// What the file picker is being used to choose.
+///
+/// TP-MOD-35: the module directory used to be typed into a text box, and the
+/// user asked for the file manager instead — "our file manager, the one with
+/// Miller columns". Herdr already has it, already in a popup, already wired to
+/// keys and mouse: the attachment picker. Giving that one popup a second
+/// purpose is the whole feature; building a second directory browser beside it
+/// would be two pickers to keep in step, and CLAUDE.md asks for the opposite.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PickerPurpose {
+    /// Hand a file to the agent in a pane.
+    AttachToAgent(AgentAttachmentTarget),
+    /// Give a module the directory it stands in.
+    SetModuleDirectory { node_key: String },
+}
+
+impl AgentAttachmentPickerState {
+    pub fn attachment_target(&self) -> Option<&AgentAttachmentTarget> {
+        match &self.purpose {
+            PickerPurpose::AttachToAgent(target) => Some(target),
+            PickerPurpose::SetModuleDirectory { .. } => None,
+        }
+    }
+
+    pub fn module_key(&self) -> Option<&str> {
+        match &self.purpose {
+            PickerPurpose::SetModuleDirectory { node_key } => Some(node_key.as_str()),
+            PickerPurpose::AttachToAgent(_) => None,
+        }
+    }
+
+    /// The directory a "Set" would commit: the highlighted row when it is a
+    /// directory, otherwise the one being browsed.
+    ///
+    /// TP-MOD-35: a file under the cursor does not disqualify the choice —
+    /// the person is standing in a directory and pressing Set means "this
+    /// one". Refusing because the cursor happens to rest on a README would be
+    /// a button that looks pressable and is not.
+    pub fn chosen_directory(&self) -> std::path::PathBuf {
+        self.file_manager
+            .entries
+            .get(self.file_manager.cursor)
+            .filter(|entry| entry.is_dir())
+            .map(|entry| entry.path.clone())
+            .unwrap_or_else(|| self.file_manager.cwd.clone())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -5241,9 +5289,10 @@ mod tests {
             .as_ref()
             .expect("picker state");
         assert_eq!(picker.file_manager.cwd, root.0);
-        assert_eq!(picker.target.workspace_id, workspace_id);
-        assert_eq!(picker.target.pane_id, pane_id);
-        assert_eq!(picker.target.terminal_id, terminal_id);
+        let target = picker.attachment_target().expect("an attachment purpose");
+        assert_eq!(target.workspace_id, workspace_id);
+        assert_eq!(target.pane_id, pane_id);
+        assert_eq!(target.terminal_id, terminal_id);
         assert_eq!(state.mode, Mode::AttachFile);
         assert_eq!(state.view.agent_attachment_action_area, None);
     }

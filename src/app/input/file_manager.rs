@@ -821,12 +821,26 @@ pub(crate) fn handle_agent_attachment_picker_key(
             }
             AttachmentPickerKeyDispatch::Consumed
         }
+        // TP-MOD-35: choosing a directory is what this popup is FOR when it was
+        // opened for a module, so Enter commits and the arrow keys walk. The
+        // attachment purpose keeps Enter as "attach or descend" — the two jobs
+        // want opposite things from one key, and the purpose is the only thing
+        // that can tell them apart.
+        (KeyCode::Enter, KeyModifiers::NONE)
+            if state
+                .agent_attachment_picker
+                .as_ref()
+                .is_some_and(|picker| picker.module_key().is_some()) =>
+        {
+            state.submit_module_dir_from_picker();
+            AttachmentPickerKeyDispatch::Consumed
+        }
         (KeyCode::Enter, KeyModifiers::NONE) => {
             if let Some(path) = state.agent_attachment_selected_file() {
                 if let Some(target) = state
                     .agent_attachment_picker
                     .as_ref()
-                    .map(|picker| picker.target.clone())
+                    .and_then(|picker| picker.attachment_target().cloned())
                 {
                     state.request_agent_attachment_delivery =
                         Some(crate::app::state::AgentAttachmentDeliveryRequest { path, target });
@@ -2245,8 +2259,8 @@ mod tests {
             app.state
                 .agent_attachment_picker
                 .as_ref()
-                .unwrap()
-                .target
+                .and_then(|picker| picker.attachment_target())
+                .expect("an attachment purpose")
                 .terminal_id,
             terminal_id
         );
