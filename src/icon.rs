@@ -254,6 +254,17 @@ const BUILTIN_ART: &[BuiltinArt] = &[
         ],
         palette: &[("a", "mauve"), ("b", "teal")],
     },
+    // The same mark for a bar with no room for three rows. A bar is three rows
+    // by default and `herd` was drawn for exactly that, which left the one
+    // picture carrying the product's own mark unusable on every bar somebody
+    // made shorter. Two ticks converging into a solid stem keeps what the mark
+    // means; the legs are what four pixel rows cannot hold, and inventing a
+    // one-pixel version of them would draw a smudge rather than a leg.
+    BuiltinArt {
+        name: "herd-small",
+        rows: &["a....a", ".a..a.", "..bb..", "..bb.."],
+        palette: &[("a", "mauve"), ("b", "teal")],
+    },
     // A filled dot, for the one-cell-row case: two pixel rows, four wide. The
     // two lit columns sit in the middle and both their halves are set, so the
     // cell row paints `·██·` — one solid block with a cell of air on each side.
@@ -262,6 +273,27 @@ const BUILTIN_ART: &[BuiltinArt] = &[
     BuiltinArt {
         name: "dot",
         rows: &[".aa.", ".aa."],
+        palette: &[("a", "accent")],
+    },
+    // `dot` with the middle taken out, so the two read as one pair: filled for
+    // a thing that is happening, hollow for one that is waiting. Two shapes
+    // that differ only in fill say that without a legend; two unrelated marks
+    // would need one.
+    BuiltinArt {
+        name: "ring",
+        rows: &[".aa.", "a..a", "a..a", ".aa."],
+        palette: &[("a", "accent")],
+    },
+    // Three ascending bars, to sit beside a `resource`, `meter` or `sparkline`
+    // section and say what the number next to it is about.
+    //
+    // One colour on purpose. Grading the three from green to red would draw a
+    // reading, and this picture has none: it is compiled in, it never sees the
+    // machine, and it would go on showing a comfortable green while the meter
+    // beside it sat full.
+    BuiltinArt {
+        name: "level",
+        rows: &["....a", "..a.a", "a.a.a", "a.a.a"],
         palette: &[("a", "accent")],
     },
 ];
@@ -471,6 +503,22 @@ mod tests {
             drawn("herd"),
             vec!["··▀▄··▄▀··", "····██····", "··▄█▀▀█▄··"],
             "two marks converging into a stem that opens again"
+        );
+        assert_eq!(
+            drawn("herd-small"),
+            vec!["▀▄··▄▀", "··██··"],
+            "the same converging pair, over a stem, in two rows"
+        );
+        assert_eq!(
+            drawn("ring"),
+            vec!["▄▀▀▄", "▀▄▄▀"],
+            "`ring` is `dot` with the middle taken out; a filled one would make \
+             the pair say nothing"
+        );
+        assert_eq!(
+            drawn("level"),
+            vec!["··▄·█", "█·█·█"],
+            "three bars, each taller than the last, with a gap between them"
         );
     }
 
