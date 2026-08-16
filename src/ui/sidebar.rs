@@ -738,12 +738,120 @@ pub(crate) fn indented_row_label(
     label: &str,
     branch: Option<&str>,
     has_custom_name: bool,
-    is_daily_area: bool,
+    daily_name: Option<&str>,
 ) -> String {
-    if is_daily_area {
-        return label.to_string();
+    // TP-DAILY-14: a daily row has no checkout, so the branch it used to show
+    // came from whatever repository happened to contain the daily directory —
+    // on the machine this was reported from, `$HOME`, and seven rows all read
+    // `main`. The name arrives already resolved (TP-DAILY-15/16) because
+    // telling the rows apart is a question about the whole set, not about one
+    // row.
+    if let Some(name) = daily_name {
+        return name.to_string();
     }
     grouped_child_display_label(label, branch, has_custom_name)
+}
+
+/// The name a row takes from what is *inside* it, for a workspace whose
+/// directory cannot tell it apart from its neighbours.
+///
+/// The daily area collects every workspace standing in one directory, so the
+/// directory's own name is the one thing they all share — deriving the label
+/// from it names them all the same. Seven rows reading `ayaz` say no more than
+/// seven rows reading `main` did (#99): a name repeated seven times is not a
+/// name, it is a category.
+///
+/// So the row asks its contents instead, in the order a person would:
+///
+/// 1. **A tab that has been named.** A named tab is the one place a purpose has
+///    already been written down — by hand or by the auto-namer. With a single
+///    tab the workspace *is* that tab, so it wears the name outright; with
+///    several it wears the first and counts the rest, because a multi-tab
+///    workspace cannot honestly be reduced to one of them.
+/// 2. **What is running in it.** A workspace of unnamed tabs is still
+///    distinguishable by the agent inside it. `pane_details` only answers for
+///    panes that report an agent, so a plain shell contributes nothing and
+///    never becomes a name.
+/// 3. **Nothing.** The caller keeps the directory name — and
+///    [`disambiguate_repeated_labels`] makes the repeats addressable.
+///
+/// Tab numbers are deliberately not a source: `tab_display_name` falls back to
+/// the tab's ordinal, so an unnamed tab answers `"1"`. That is a position, not
+/// an identity, and hoisting it into the row would name six workspaces `1`.
+/// Only `custom_name` counts as named, which is why this takes the raw option
+/// rather than the display string.
+// TP-DAILY-15
+pub(crate) fn content_derived_row_name<'a>(
+    tab_names: impl IntoIterator<Item = Option<&'a str>>,
+    agent_labels: impl IntoIterator<Item = &'a str>,
+) -> Option<String> {
+    let mut tab_count = 0usize;
+    let mut first_named: Option<&str> = None;
+    for name in tab_names {
+        tab_count += 1;
+        if first_named.is_some() {
+            continue;
+        }
+        let named = name.map(str::trim).filter(|name| !name.is_empty());
+        first_named = named;
+    }
+
+    if let Some(name) = first_named {
+        return Some(if tab_count > 1 {
+            format!("{name} +{}", tab_count - 1)
+        } else {
+            name.to_string()
+        });
+    }
+
+    agent_labels
+        .into_iter()
+        .map(str::trim)
+        .find(|label| !label.is_empty())
+        .map(str::to_string)
+}
+
+/// Make repeated labels addressable by numbering the repeats.
+///
+/// Two rows that read alike are two rows a person cannot choose between. When
+/// the derivation above still lands on one name — five workspaces each running
+/// nothing but `reviewr` — the repeats take an ordinal so every row can at
+/// least be named out loud. The first keeps the bare name: numbering something
+/// that appears once invents a series that does not exist.
+// TP-DAILY-16
+pub(crate) fn disambiguate_repeated_labels(labels: &mut [String]) {
+    let mut occurrences: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for label in labels.iter() {
+        *occurrences.entry(label.as_str()).or_insert(0) += 1;
+    }
+    if occurrences.values().all(|count| *count <= 1) {
+        return;
+    }
+
+    // Every name already on screen is spoken for, including the ones this loop
+    // has not reached yet. A row literally named `reviewr 2` must not be
+    // shadowed by an ordinal minted for a different row — two rows reading
+    // `reviewr 2` is the very defect being fixed, arrived at from the other
+    // side.
+    let mut taken: std::collections::HashSet<String> = labels.iter().cloned().collect();
+    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for label in labels.iter_mut() {
+        let count = seen.entry(label.clone()).or_insert(0);
+        *count += 1;
+        if *count == 1 {
+            continue;
+        }
+        let mut ordinal = *count;
+        let numbered = loop {
+            let candidate = format!("{label} {ordinal}");
+            if !taken.contains(&candidate) {
+                break candidate;
+            }
+            ordinal += 1;
+        };
+        taken.insert(numbered.clone());
+        *label = numbered;
+    }
 }
 
 pub(crate) fn grouped_child_display_label(
@@ -1155,6 +1263,48 @@ fn daily_owned_workspaces(app: &AppState) -> Vec<usize> {
         })
         .map(|(ws_idx, _)| ws_idx)
         .collect()
+}
+
+/// The name each daily-area row wears, resolved for the whole set at once.
+///
+/// Telling these rows apart is a question about the set, not about any one row:
+/// a name is only useless *because another row has it too*. So the derivation
+/// (TP-DAILY-15) and the numbering that follows it (TP-DAILY-16) run together,
+/// once, and the render loop reads the answer.
+///
+/// A workspace the user has named keeps that name untouched — an explicit
+/// intent outranks anything derived — but it still takes part in the
+/// numbering, because two rows named alike by hand are just as unaddressable
+/// as two named alike by accident.
+// TP-DAILY-15/16
+fn daily_row_names(
+    app: &AppState,
+    owned: &[usize],
+    terminal_runtimes: Option<&TerminalRuntimeRegistry>,
+) -> std::collections::HashMap<usize, String> {
+    let directory_name = |ws: &crate::workspace::Workspace| match terminal_runtimes {
+        Some(runtimes) => ws.display_name_from(&app.terminals, runtimes),
+        None => ws.display_name(),
+    };
+
+    let mut labels: Vec<String> = owned
+        .iter()
+        .filter_map(|ws_idx| app.workspaces.get(*ws_idx))
+        .map(|ws| {
+            if ws.custom_name.is_some() {
+                return directory_name(ws);
+            }
+            let details = ws.pane_details(&app.terminals);
+            content_derived_row_name(
+                ws.tabs.iter().map(|tab| tab.custom_name.as_deref()),
+                details.iter().map(|detail| detail.label.as_str()),
+            )
+            .unwrap_or_else(|| directory_name(ws))
+        })
+        .collect();
+    disambiguate_repeated_labels(&mut labels);
+
+    owned.iter().copied().zip(labels).collect()
 }
 
 /// Append the daily section — header first, then its chats — above the tree.
@@ -3034,6 +3184,11 @@ fn render_workspace_list(
     // card but the question is about the whole list, and asking it per card
     // would walk every workspace for every row.
     let daily_owned = daily_owned_workspaces(app);
+    // TP-DAILY-15/16: resolved for the whole set here, for the same reason
+    // `daily_owned` is — the question is about the list, and asking it per card
+    // would both walk every workspace per row and lose the one fact that makes
+    // the answer useful: what the *other* rows are called.
+    let daily_names = daily_row_names(app, &daily_owned, Some(terminal_runtimes));
 
     for card in cards {
         let i = card.ws_idx;
@@ -3102,13 +3257,14 @@ fn render_workspace_list(
             //
             // #94 moved those rows under the daily header and, without meaning
             // to, moved their labels too — before it they read `ayaz`, after it
-            // `main`. Withholding the branch here restores the name the row
-            // would have had, without touching the tree's own rows.
+            // `main`. Withholding the branch was the first half of the fix; the
+            // second is that `ayaz` seven times says no more than `main` seven
+            // times did, so the name arrives resolved (TP-DAILY-15/16).
             indented_row_label(
                 &label,
                 ws.branch().as_deref(),
                 ws.custom_name.is_some(),
-                daily_owned.contains(&i),
+                daily_names.get(&i).map(String::as_str),
             )
         } else {
             space_header_display_label(app, i, label)
@@ -7382,6 +7538,107 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         );
     }
 
+    /// The reported shape: `n` workspaces all standing in the daily directory,
+    /// none of them named, exactly as `workspace list` answered on the machine.
+    ///
+    /// `Workspace::test_new` hands back a workspace that IS named — it stores
+    /// its argument as `custom_name` — and that is the opposite of what was
+    /// measured: those seven carried no name at all and read `ayaz` only
+    /// because that is what `$HOME` is called. Leaving the fixture's name in
+    /// place makes every derivation test pass without ever running the
+    /// derivation, which is how the first version of these tests went green
+    /// while proving nothing.
+    fn app_with_n_workspaces_in_the_daily_directory(n: usize) -> (AppState, std::path::PathBuf) {
+        let (mut app, daily) = app_with_daily_chats(2);
+        for _ in 0..n {
+            let mut home = Workspace::test_new("ayaz");
+            home.custom_name = None;
+            home.identity_cwd = daily.clone();
+            app.workspaces.push(home);
+        }
+        assert!(
+            app.workspaces
+                .iter()
+                .skip(1)
+                .all(|ws| ws.custom_name.is_none()),
+            "precondition: the measured workspaces carry no name of their own"
+        );
+        (app, daily)
+    }
+
+    // T1.3 / TP-DAILY-16: the defect end to end. Seven workspaces share one
+    // directory, so the directory's name names them all — and a name repeated
+    // seven times is a category, not a name. Every row must be addressable.
+    #[test]
+    fn seven_rows_in_one_directory_do_not_all_read_alike() {
+        let (mut app, _) = app_with_n_workspaces_in_the_daily_directory(7);
+        // One of the seven held a named tab on the machine; the other six did
+        // not. Both halves belong in the same assertion: derivation names the
+        // one it can, numbering rescues the ones it cannot, and neither alone
+        // makes all seven addressable.
+        if let Some(ws) = app.workspaces.last_mut() {
+            if let Some(tab) = ws.tabs.first_mut() {
+                tab.custom_name = Some("HERDR SERVER".to_string());
+            }
+        }
+        let owned = daily_owned_workspaces(&app);
+        assert_eq!(owned.len(), 7, "precondition: seven rows share a directory");
+
+        let names = daily_row_names(&app, &owned, None);
+        let unique: std::collections::HashSet<&String> = names.values().collect();
+
+        assert_eq!(
+            unique.len(),
+            7,
+            "every row must be tellable from its neighbours: {names:?}"
+        );
+        assert!(
+            names.values().any(|name| name == "HERDR SERVER"),
+            "the row that had something to say must say it: {names:?}"
+        );
+    }
+
+    // T1.1 / TP-DAILY-15: the row takes the name of the tab inside it, so a
+    // workspace whose directory says nothing still says something.
+    #[test]
+    fn a_daily_row_wears_the_name_of_the_tab_inside_it() {
+        let (mut app, _) = app_with_n_workspaces_in_the_daily_directory(1);
+        if let Some(ws) = app.workspaces.last_mut() {
+            if let Some(tab) = ws.tabs.first_mut() {
+                tab.custom_name = Some("HERDR SERVER".to_string());
+            }
+        }
+        let owned = daily_owned_workspaces(&app);
+        let names = daily_row_names(&app, &owned, None);
+
+        assert_eq!(
+            names.values().next().map(String::as_str),
+            Some("HERDR SERVER"),
+            "a named tab is the one place this workspace's purpose is written down"
+        );
+    }
+
+    // T1.4 / TP-DAILY-15: an explicit name outranks anything derived. The
+    // derivation exists because there was nothing better; here there is.
+    #[test]
+    fn a_named_daily_workspace_keeps_the_name_its_owner_gave_it() {
+        let (mut app, _) = app_with_n_workspaces_in_the_daily_directory(1);
+        if let Some(ws) = app.workspaces.last_mut() {
+            ws.custom_name = Some("gece nöbeti".to_string());
+            if let Some(tab) = ws.tabs.first_mut() {
+                tab.custom_name = Some("HERDR SERVER".to_string());
+            }
+        }
+        let owned = daily_owned_workspaces(&app);
+        let names = daily_row_names(&app, &owned, None);
+
+        assert_eq!(
+            names.values().next().map(String::as_str),
+            Some("gece nöbeti"),
+            "the derivation must not overrule a name the user typed"
+        );
+    }
+
     // TP-DAILY-13: only a real collision moves. If this gate goes, every
     // workspace in the tree falls into the daily area.
     #[test]
@@ -8223,8 +8480,8 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
     #[test]
     fn a_daily_area_row_keeps_its_own_name_instead_of_a_branch() {
         assert_eq!(
-            indented_row_label("ayaz", Some("main"), false, true),
-            "ayaz",
+            indented_row_label("ayaz", Some("main"), false, Some("reviewr 2")),
+            "reviewr 2",
             "the branch belongs to the directory, not to this row"
         );
     }
@@ -8235,8 +8492,113 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
     #[test]
     fn a_group_child_row_still_reads_as_its_branch() {
         assert_eq!(
-            indented_row_label("herdr", Some("worktree/issue-137"), false, false),
+            indented_row_label("herdr", Some("worktree/issue-137"), false, None),
             "issue-137"
+        );
+    }
+
+    // T1.1 / TP-DAILY-15: a single named tab IS the workspace. Carrying both
+    // the directory name and the tab name would say one thing twice, and the
+    // directory half is the half that repeats.
+    #[test]
+    fn a_lone_named_tab_names_the_row_outright() {
+        assert_eq!(
+            content_derived_row_name([Some("HERDR SERVER")], []),
+            Some("HERDR SERVER".to_string())
+        );
+    }
+
+    // T1.2 / TP-DAILY-15: an unnamed tab answers `tab_display_name` with its
+    // ordinal — `"1"`. That is a position, not an identity; six workspaces
+    // would all become `1`. Only `custom_name` counts, so the row falls
+    // through to what is actually running in it.
+    #[test]
+    fn an_unnamed_tab_yields_to_the_agent_running_in_it() {
+        assert_eq!(
+            content_derived_row_name([None], ["reviewr"]),
+            Some("reviewr".to_string()),
+            "a tab number is a position, not a name"
+        );
+    }
+
+    // T1.5 / TP-DAILY-15: a workspace of several tabs cannot honestly be
+    // reduced to one of them, so the row names the first and counts the rest.
+    #[test]
+    fn a_multi_tab_row_names_the_first_and_counts_the_rest() {
+        assert_eq!(
+            content_derived_row_name(
+                [
+                    None,
+                    Some("HERDR SERVER"),
+                    Some("Jellyfin"),
+                    Some("temizlik")
+                ],
+                []
+            ),
+            Some("HERDR SERVER +3".to_string())
+        );
+    }
+
+    // TP-DAILY-15: a blank custom name is not a name. Whitespace would
+    // otherwise win over a perfectly good agent label and produce an empty row.
+    #[test]
+    fn a_blank_tab_name_does_not_count_as_named() {
+        assert_eq!(
+            content_derived_row_name([Some("   ")], ["reviewr"]),
+            Some("reviewr".to_string())
+        );
+    }
+
+    // TP-DAILY-15: with nothing named and nothing running, there is no content
+    // to name the row after; the caller keeps the directory name rather than
+    // inventing one.
+    #[test]
+    fn a_row_with_no_content_derives_no_name() {
+        assert_eq!(content_derived_row_name([None], []), None);
+    }
+
+    // T1.3 / TP-DAILY-16: the reported defect in one assertion — rows that all
+    // resolve alike must still be addressable one by one.
+    #[test]
+    fn repeated_labels_are_numbered_so_every_row_is_addressable() {
+        let mut labels = vec![
+            "reviewr".to_string(),
+            "reviewr".to_string(),
+            "reviewr".to_string(),
+        ];
+        disambiguate_repeated_labels(&mut labels);
+
+        assert_eq!(labels, vec!["reviewr", "reviewr 2", "reviewr 3"]);
+        let unique: std::collections::HashSet<&String> = labels.iter().collect();
+        assert_eq!(unique.len(), labels.len(), "no two rows may read alike");
+    }
+
+    // TP-DAILY-16: a name that appears once keeps its bare form. Numbering it
+    // would announce a series of one.
+    #[test]
+    fn a_label_that_appears_once_is_left_alone() {
+        let mut labels = vec!["HERDR SERVER".to_string(), "reviewr".to_string()];
+        disambiguate_repeated_labels(&mut labels);
+
+        assert_eq!(labels, vec!["HERDR SERVER", "reviewr"]);
+    }
+
+    // TP-DAILY-16: the ordinal must not collide with a name that already ends
+    // in one. Appending blindly would produce two rows reading `reviewr 2`.
+    #[test]
+    fn numbering_steps_over_a_name_that_already_reads_like_an_ordinal() {
+        let mut labels = vec![
+            "reviewr".to_string(),
+            "reviewr 2".to_string(),
+            "reviewr".to_string(),
+        ];
+        disambiguate_repeated_labels(&mut labels);
+
+        let unique: std::collections::HashSet<&String> = labels.iter().collect();
+        assert_eq!(
+            unique.len(),
+            labels.len(),
+            "an ordinal that lands on an existing label defeats its own purpose: {labels:?}"
         );
     }
 
