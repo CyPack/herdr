@@ -277,10 +277,12 @@ pub(crate) fn render_text(spec: &ShellSpec) -> String {
     out.push_str("\nbundled art (widget.art = …)\n");
     for art in &spec.icon_art {
         out.push_str(&format!(
-            "  {name}: {cells} cells by {rows} rows\n",
+            "  {name}: {cells} cell{cell_s} by {rows} row{row_s}\n",
             name = art.name,
             cells = art.cells,
-            rows = art.rows
+            cell_s = if art.cells == 1 { "" } else { "s" },
+            rows = art.rows,
+            row_s = if art.rows == 1 { "" } else { "s" }
         ));
     }
 
