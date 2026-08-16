@@ -502,6 +502,16 @@ pub(crate) enum BarConfigProblem {
         needs: u16,
         has: u16,
     },
+    /// Too big for the axis the bar's own `size` governs, rather than the one
+    /// the section declared. Its own cause because the setting to change is a
+    /// different one, on a different table, and a message naming `cells` would
+    /// send somebody to edit a number that was already right.
+    IconDoesNotFitAcrossTheBar {
+        edge: &'static str,
+        index: usize,
+        needs: u16,
+        has: u16,
+    },
     WidgetTextWithoutWidget {
         edge: &'static str,
         index: usize,
@@ -727,6 +737,23 @@ impl std::fmt::Display for BarConfigProblem {
                 "shell.bars.{edge}.sections[{index}].widget needs {needs} cells but the section \
                  declares {has}; a clipped picture is the wrong picture"
             ),
+            Self::IconDoesNotFitAcrossTheBar {
+                edge,
+                index,
+                needs,
+                has,
+            } => {
+                let (unit, remedy) = if edge_is_horizontal(edge) {
+                    ("rows", "a shorter picture")
+                } else {
+                    ("columns", "a narrower picture")
+                };
+                write!(
+                    formatter,
+                    "shell.bars.{edge}.sections[{index}].widget needs {needs} {unit} but the bar \
+                     leaves {has}; raise shell.bars.{edge}.size or use {remedy}"
+                )
+            }
             Self::WidgetTextWithoutWidget { edge, index } => write!(
                 formatter,
                 "shell.bars.{edge}.sections[{index}].widget sets text but names no widget to \
@@ -737,6 +764,28 @@ impl std::fmt::Display for BarConfigProblem {
 }
 
 /// Why this edge's size cannot be drawn, if it cannot.
+/// How many cells a bar leaves across its short axis, after its border.
+///
+/// Rows for a top or bottom bar, columns for a left or right one. `size` counts
+/// cells along the edge's own axis, and the border takes one cell on each side
+/// of it, which is the same arithmetic `BarTrack::inner` does at draw time.
+fn bar_across(config: &ShellBarConfig) -> u16 {
+    config
+        .size
+        .saturating_sub(if config.border { 2 } else { 0 })
+}
+
+/// Whether this edge runs left to right.
+///
+/// `size` and `cells` swap meaning between the two orientations — `cells` runs
+/// along the bar, so it is a width on a top bar and a height on a left one —
+/// and a check that forgets this compares one axis against the other. That is
+/// not hypothetical: it is what the picture fit check did, and it refused a
+/// picture that fitted a side bar exactly.
+fn edge_is_horizontal(edge: &str) -> bool {
+    matches!(edge, "top" | "bottom")
+}
+
 fn bar_size_problem(config: &ShellBarConfig, edge: &'static str) -> Option<BarConfigProblem> {
     if config.size == 0 || config.size > MAX_BAR_CELLS {
         return Some(BarConfigProblem::SizeOutOfRange {
@@ -866,7 +915,8 @@ pub(crate) fn shell_bar_config_problems(
             // guess that the other was also refused. The widget is asked before
             // the action so a section's complaints read in the order the table
             // is written.
-            if let Err(problem) = section_widget(section, edge, index, glyph_icons) {
+            if let Err(problem) = section_widget(section, edge, index, glyph_icons, bar_across(bar))
+            {
                 problems.push(problem);
             }
             if let Err(problem) = section_action(section, edge, index) {
@@ -970,6 +1020,16 @@ struct SectionAt<'a> {
     edge: &'static str,
     index: usize,
     glyph_icons: bool,
+    /// How many cells the bar leaves across its short axis — rows for a top or
+    /// bottom bar, columns for a left or right one — after its border.
+    ///
+    /// The one extent of a section that does not depend on the terminal. What
+    /// runs *along* the bar is shared out at draw time and a section can only
+    /// declare it; what runs *across* comes from `size`, which somebody wrote
+    /// down, so it can be checked in the same breath and for the same reason.
+    ///
+    /// `None` where nothing asked: sizing and actions have no geometry.
+    across: Option<u16>,
 }
 
 impl<'a> SectionAt<'a> {
@@ -984,6 +1044,7 @@ impl<'a> SectionAt<'a> {
             edge,
             index,
             glyph_icons: true,
+            across: None,
         }
     }
 }
@@ -1441,7 +1502,7 @@ fn bar_section_chrome(
         .iter()
         .enumerate()
         .map(|(index, section)| SectionChrome {
-            widget: match section_widget(section, edge, index, glyph_icons) {
+            widget: match section_widget(section, edge, index, glyph_icons, bar_across(config)) {
                 Ok(widget) => widget,
                 Err(problem) => {
                     tracing::warn!(%problem, "the section is drawn with nothing in it");
@@ -1469,6 +1530,7 @@ fn section_widget(
     edge: &'static str,
     index: usize,
     glyph_icons: bool,
+    across: u16,
 ) -> Result<SectionWidget, BarConfigProblem> {
     // Naming nothing is not one of the choices below; it is the absence of a
     // choice, and the only question left is whether anything was written for a
@@ -1488,6 +1550,7 @@ fn section_widget(
         edge,
         index,
         glyph_icons,
+        across: Some(across),
     };
     match SectionKind::find(WIDGET_KINDS, config.widget.kind.as_str()) {
         Some(entry) => (entry.build)(at),
@@ -1525,7 +1588,13 @@ const WIDGET_KINDS: &[SectionKind<SectionWidget>] = &[
         // something to say.
         keys: &["glyph", "art", "pixels", "text"],
         refuses: &[],
-        example: "[shell.bars.top]\nenabled = true\n\n\
+        // The only example here that has to say anything about the bar itself.
+        // A bar is three cells and bordered unless told otherwise, and a border
+        // takes one from each side, so the default bar has a single row inside
+        // it — enough for every other widget and not for a picture three rows
+        // tall. Leaving that out shipped an example that parsed and drew a
+        // clipped mark.
+        example: "[shell.bars.top]\nenabled = true\nsize = 3\nborder = false\n\n\
                   [[shell.bars.top.sections]]\nkind = \"content\"\n\
                   widget = { kind = \"icon\", art = \"herd\" }\n",
         build: section_icon,
@@ -1602,6 +1671,7 @@ fn section_icon(at: SectionAt<'_>) -> Result<SectionWidget, BarConfigProblem> {
         edge,
         index,
         glyph_icons,
+        across,
     } = at;
     let widget = &config.widget;
     let named = usize::from(!widget.glyph.trim().is_empty())
@@ -1613,16 +1683,41 @@ fn section_icon(at: SectionAt<'_>) -> Result<SectionWidget, BarConfigProblem> {
         _ => return Err(BarConfigProblem::IconWithTwoPictures { edge, index }),
     }
 
-    // A section only knows its own width when it declared one.
+    // A section only knows its extent along the bar when it declared one.
     let declared = (config.kind.trim().eq_ignore_ascii_case("fixed")).then_some(config.cells);
-    let refuse_unless_fits = |needs: u16| match declared {
-        Some(has) if has < needs => Err(BarConfigProblem::IconDoesNotFit {
-            edge,
-            index,
-            needs,
-            has,
-        }),
-        _ => Ok(()),
+    let horizontal = edge_is_horizontal(edge);
+
+    // Both axes, each against the number that actually governs it. `cells` runs
+    // along the bar and `size` across it, so on a side bar `cells` is a height —
+    // which is why comparing a picture's width against it refused pictures that
+    // fitted, and why nothing ever refused one that was simply too tall.
+    let refuse_unless_fits = |columns: u16, rows: u16| {
+        let (along, across_needs) = if horizontal {
+            (columns, rows)
+        } else {
+            (rows, columns)
+        };
+        if let Some(has) = declared {
+            if has < along {
+                return Err(BarConfigProblem::IconDoesNotFit {
+                    edge,
+                    index,
+                    needs: along,
+                    has,
+                });
+            }
+        }
+        if let Some(has) = across {
+            if has < across_needs {
+                return Err(BarConfigProblem::IconDoesNotFitAcrossTheBar {
+                    edge,
+                    index,
+                    needs: across_needs,
+                    has,
+                });
+            }
+        }
+        Ok(())
     };
 
     if !widget.glyph.trim().is_empty() {
@@ -1644,7 +1739,8 @@ fn section_icon(at: SectionAt<'_>) -> Result<SectionWidget, BarConfigProblem> {
         let glyph = widget.glyph.clone();
         let needs = u16::try_from(unicode_width::UnicodeWidthStr::width(glyph.as_str()))
             .unwrap_or(u16::MAX);
-        refuse_unless_fits(needs)?;
+        // A glyph is one row tall whatever else it is.
+        refuse_unless_fits(needs, 1)?;
         return Ok(SectionWidget::Icon { glyph });
     }
 
@@ -1665,7 +1761,7 @@ fn section_icon(at: SectionAt<'_>) -> Result<SectionWidget, BarConfigProblem> {
             problem,
         }
     })?;
-    refuse_unless_fits(art.width())?;
+    refuse_unless_fits(art.width(), art.height())?;
     Ok(SectionWidget::Art { art })
 }
 
@@ -2061,27 +2157,109 @@ fn tint_from_parts(
     }
 }
 
+/// One colour name the bar grammar knows, and what it reads from the palette.
+pub(crate) struct BarColorToken {
+    pub name: &'static str,
+    /// What this name resolves to against a live palette. A function rather
+    /// than a stored `Color` for the same reason `IconArt` keeps its specs
+    /// unresolved: the palette changes with the theme, and a colour decided
+    /// once would be the one surface that kept the old one.
+    pub read: fn(&Palette) -> Color,
+}
+
+/// The colour names a bar config may write, in the order a reader meets them.
+///
+/// A table rather than a `match`, for the third time in this grammar and for
+/// the same reason as the first two: a `match` can be asked whether it knows a
+/// name but never asked what names it knows. The section kinds became a table
+/// so a refusal could say what it would have accepted, and the bundled
+/// pictures became one so an unknown name could offer the known ones. This set
+/// had the same shape and a worse ending — an unrecognised colour is not
+/// refused at all. It falls through to `parse_color`, which warns into the log
+/// and returns cyan, so a name nobody could look up anywhere becomes a colour
+/// nobody asked for, on screen, silently.
+///
+/// `peach`/`orange` and `surface`/`dim` are spellings of one colour rather
+/// than a name and an alias. Nothing here refuses an unknown colour, so unlike
+/// the metric aliases there is no refusal message for a second spelling to
+/// contradict: both are simply names, and both are published.
+pub(crate) const BAR_COLOR_TOKENS: &[BarColorToken] = &[
+    BarColorToken {
+        name: "accent",
+        read: |palette| palette.accent,
+    },
+    BarColorToken {
+        name: "text",
+        read: |palette| palette.text,
+    },
+    BarColorToken {
+        name: "mauve",
+        read: |palette| palette.mauve,
+    },
+    BarColorToken {
+        name: "green",
+        read: |palette| palette.green,
+    },
+    BarColorToken {
+        name: "yellow",
+        read: |palette| palette.yellow,
+    },
+    BarColorToken {
+        name: "red",
+        read: |palette| palette.red,
+    },
+    BarColorToken {
+        name: "blue",
+        read: |palette| palette.blue,
+    },
+    BarColorToken {
+        name: "teal",
+        read: |palette| palette.teal,
+    },
+    BarColorToken {
+        name: "peach",
+        read: |palette| palette.peach,
+    },
+    BarColorToken {
+        name: "orange",
+        read: |palette| palette.peach,
+    },
+    BarColorToken {
+        name: "surface",
+        read: |palette| palette.surface_dim,
+    },
+    BarColorToken {
+        name: "dim",
+        read: |palette| palette.surface_dim,
+    },
+];
+
+/// The colour names this build resolves against the palette.
+pub(crate) fn bar_color_tokens() -> Vec<&'static str> {
+    BAR_COLOR_TOKENS.iter().map(|token| token.name).collect()
+}
+
 /// A palette token first, a literal colour second.
 ///
 /// Writing `accent` should follow the theme the way every other herdr surface
 /// does; writing `#fab387` should mean exactly that. An empty setting is the
 /// warm default, which is what makes an unconfigured bar look deliberate
 /// rather than like a rendering fault.
+///
+/// An unreadable colour still answers. Refusing one would mean a config that
+/// loads today and not tomorrow, and this function is called from the
+/// renderer, which has no one to refuse to.
 pub(crate) fn bar_color(spec: &str, palette: &Palette) -> Color {
-    match spec.trim().to_lowercase().as_str() {
-        "" => palette.peach,
-        "accent" => palette.accent,
-        "text" => palette.text,
-        "mauve" => palette.mauve,
-        "green" => palette.green,
-        "yellow" => palette.yellow,
-        "red" => palette.red,
-        "blue" => palette.blue,
-        "teal" => palette.teal,
-        "peach" | "orange" => palette.peach,
-        "surface" | "dim" => palette.surface_dim,
-        other => parse_color(other),
+    let name = spec.trim().to_lowercase();
+    // Empty is the warm default rather than a name: nobody writes it, and
+    // offering it as one would put a blank in the list a reader learns from.
+    if name.is_empty() {
+        return palette.peach;
     }
+    BAR_COLOR_TOKENS
+        .iter()
+        .find(|token| token.name == name)
+        .map_or_else(|| parse_color(&name), |token| (token.read)(palette))
 }
 
 /// Whether each half of the left panel wears a frame, and in what tone.
@@ -2796,6 +2974,111 @@ mod tests {
             .collect()
     }
 
+    /// The guide's table of bundled pictures: name, then the four numbers its
+    /// `Size` column writes out.
+    ///
+    /// Hand-written on purpose, and that is the whole point. Everything else
+    /// about the catalogue is derived from `BUILTIN_ART`, so a check that reads
+    /// the catalogue and looks each name up in a guide the catalogue also
+    /// produced would be two readings of one source — green, and measuring
+    /// nothing. This column is typed by a person, so it can disagree, and a
+    /// gate is only a gate where disagreement is possible.
+    /// The data rows of the first markdown table after `anchor`, as trimmed
+    /// cells, with the first cell's backticks stripped.
+    ///
+    /// The header is dropped by finding the `|---|` rule and taking what
+    /// follows, which is markdown's own structure rather than a count. The
+    /// first attempt here dropped the header by recognising it — a first cell
+    /// that is not a backticked name — and that was wrong within one table:
+    /// the picture table's header cell is `` `art` ``, backticks and all, so
+    /// the header sailed through as data and the size parser met the word
+    /// "Size". A rule row is the one line a markdown table is guaranteed to
+    /// have and the one nobody writes by accident.
+    fn guide_table_after(anchor: &str) -> Vec<Vec<String>> {
+        let section = edge_bars_section();
+        let after = section
+            .split_once(anchor)
+            .unwrap_or_else(|| panic!("the guide still has the passage {anchor:?}"))
+            .1;
+
+        // The table is the first run of `|` lines after the anchor, so the walk
+        // stops at the first line that is not one rather than reading on into
+        // whatever table comes next.
+        let rows = after
+            .lines()
+            .map(str::trim)
+            .skip_while(|line| !line.starts_with('|'))
+            .take_while(|line| line.starts_with('|'))
+            .collect::<Vec<_>>();
+
+        let cells = |line: &str| {
+            line.trim_matches('|')
+                .split('|')
+                .map(|cell| cell.trim().to_string())
+                .collect::<Vec<_>>()
+        };
+        let rule = rows
+            .iter()
+            .position(|line| {
+                cells(line).iter().all(|cell| {
+                    !cell.is_empty() && cell.chars().all(|glyph| glyph == '-' || glyph == ':')
+                })
+            })
+            .unwrap_or_else(|| panic!("the table after {anchor:?} still has a header rule"));
+
+        rows[rule + 1..]
+            .iter()
+            .map(|line| {
+                let mut columns = cells(line);
+                if let Some(first) = columns.first_mut() {
+                    *first = first.trim_matches('`').to_string();
+                }
+                columns
+            })
+            .collect()
+    }
+
+    /// The guide's table of bundled pictures: name, then the four numbers its
+    /// `Size` column writes out.
+    ///
+    /// Hand-written on purpose, and that is the whole point. Everything else
+    /// about the catalogue is derived from `BUILTIN_ART`, so a check that reads
+    /// the catalogue and looks each name up in a guide the catalogue also
+    /// produced would be two readings of one source — green, and measuring
+    /// nothing. This column is typed by a person, so it can disagree, and a
+    /// gate is only a gate where disagreement is possible.
+    fn documented_bundled_art() -> Vec<(String, [u16; 4])> {
+        guide_table_after("Bundled `art` names available today:")
+            .into_iter()
+            .map(|columns| {
+                let name = columns[0].clone();
+                let size = columns.get(1).cloned().unwrap_or_default();
+                // Every run of digits in the Size cell, in the order it wrote
+                // them: pixels wide, pixels tall, cells wide, cell rows.
+                let numbers = size
+                    .split(|character: char| !character.is_ascii_digit())
+                    .filter(|run| !run.is_empty())
+                    .map(|run| run.parse::<u16>().expect("a size in the guide is a number"))
+                    .collect::<Vec<_>>();
+                let numbers: [u16; 4] = numbers.as_slice().try_into().unwrap_or_else(|_| {
+                    panic!(
+                        "the Size column for {name:?} reads {size:?}; it must write four numbers, \
+                         as in \"10 × 6 pixels (10 cells × 3 rows)\""
+                    )
+                });
+                (name, numbers)
+            })
+            .collect()
+    }
+
+    /// The colour names the guide's own table offers.
+    fn documented_bar_colours() -> Vec<String> {
+        guide_table_after("### Colours\n")
+            .into_iter()
+            .map(|columns| columns[0].clone())
+            .collect()
+    }
+
     /// Every example in the guide is a config this build accepts.
     ///
     /// A documented example is the first thing anyone copies, an agent most of
@@ -2887,12 +3170,12 @@ mod tests {
                 );
             }
         }
-        for art in crate::icon::builtin_names() {
-            assert!(
-                guide.contains(art),
-                "the guide never names the bundled art {art:?}"
-            );
-        }
+        // Pictures are not checked here. They used to be, by asking whether the
+        // guide contained each bundled name anywhere at all, which for names
+        // like `bar` or `line` is a question a configuration manual answers yes
+        // to by accident. They are held to the guide's own table instead, by
+        // name and by size, in `the_guide_lists_exactly_the_bundled_pictures_at_the_sizes_they_draw`.
+        //
         // Aliases as well as names: `ram` works, and a guide that omits it
         // leaves the one spelling a refusal will never teach undocumented
         // anywhere at all.
@@ -2958,6 +3241,108 @@ mod tests {
             assert!(
                 bundled.contains(&art.as_str()),
                 "the guide writes art {art:?}, which this build does not bundle"
+            );
+        }
+    }
+
+    /// The guide's colour table is the set this build resolves, exactly.
+    ///
+    /// Read from the table rather than searched for in the prose, for the same
+    /// reason the pictures are: half of these names — `text`, `red`, `blue`,
+    /// `green`, `dim` — are ordinary English in a configuration manual, so a
+    /// substring search would answer yes for a colour the guide never offered.
+    ///
+    /// Both directions. A colour this build knows and the guide omits is one
+    /// nobody can discover, because nothing refuses an unknown colour and so
+    /// no message ever names the set. A colour the guide offers and this build
+    /// does not know is worse than undocumented: it is drawn in cyan, and the
+    /// person who wrote it read it here.
+    #[test]
+    fn the_guide_offers_exactly_the_colours_this_build_resolves() {
+        // TP-CHROME-107: the guide's colour table and the resolved set are one
+        // set, in both directions.
+        let documented = documented_bar_colours();
+        assert!(
+            documented.len() >= 8,
+            "the guide's colour table stopped parsing; found {documented:?}"
+        );
+
+        let documented = documented
+            .iter()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>();
+        let known = bar_color_tokens()
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            documented, known,
+            "the guide's colour table and the colours this build resolves are different sets"
+        );
+    }
+
+    /// The guide's table of pictures is the catalogue, exactly, at the sizes it
+    /// claims they draw.
+    ///
+    /// This replaces a substring search that could not fail. The check above
+    /// used to ask only whether each bundled name appeared *anywhere* in the
+    /// guide, and the guide is a configuration manual: measured on this file,
+    /// `bar` occurs 81 times, `star` 18, `ring` 14, `line` 11. Nine of fifteen
+    /// plausible names for a picture were already present as ordinary English,
+    /// so adding a picture called any of them would have shipped it with no
+    /// documentation at all and left this gate green.
+    ///
+    /// Sizes as well as names, because a name in the table is not yet a useful
+    /// entry. The `Size` column is what somebody reads to choose `cells`, and a
+    /// wrong number there sends them to a section that clips or sits half
+    /// empty — on screen, and never in a test.
+    #[test]
+    fn the_guide_lists_exactly_the_bundled_pictures_at_the_sizes_they_draw() {
+        // TP-ART-06: the guide's picture table and the catalogue are one set,
+        // and every size the table writes is the size that picture draws at.
+        let documented = documented_bundled_art();
+
+        // Guard the harvest first. A renamed anchor or a reworked table would
+        // leave every assertion below iterating over nothing, which is the one
+        // failure a documentation gate is least likely to notice about itself.
+        assert!(
+            documented.len() >= 2,
+            "the guide's bundled picture table stopped parsing; found {documented:?}"
+        );
+
+        let documented_names = documented
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        let bundled_names = crate::icon::builtin_names()
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            documented_names, bundled_names,
+            "the guide's picture table and the bundled catalogue name different sets; \
+             a picture in the catalogue and not the table is one nobody can find, and one \
+             in the table and not the catalogue is a config Herdr refuses"
+        );
+
+        let catalogue = crate::icon::builtin_catalogue()
+            .into_iter()
+            .map(|(name, cells, rows)| (name, (cells, rows)))
+            .collect::<std::collections::BTreeMap<_, _>>();
+
+        for (name, [pixels_wide, pixels_tall, cells, rows]) in documented {
+            let (drawn, _) = crate::icon::builtin(&name).expect("the sets matched above");
+            let actual_wide = u16::try_from(drawn[0].chars().count()).unwrap_or(u16::MAX);
+            let actual_tall = u16::try_from(drawn.len()).unwrap_or(u16::MAX);
+            let (actual_cells, actual_rows) = catalogue
+                .get(name.as_str())
+                .copied()
+                .unwrap_or_else(|| panic!("{name} is bundled but draws at no size"));
+
+            assert_eq!(
+                [pixels_wide, pixels_tall, cells, rows],
+                [actual_wide, actual_tall, actual_cells, actual_rows],
+                "the guide says {name} is {pixels_wide} × {pixels_tall} pixels \
+                 ({cells} cells × {rows} rows); it is {actual_wide} × {actual_tall} pixels \
+                 ({actual_cells} cells × {actual_rows} rows)"
             );
         }
     }
@@ -3053,8 +3438,14 @@ mod tests {
         section.widget.kind = "icon".to_string();
         section.widget.art = "herd".to_string();
 
+        // Tall enough to hold `herd`: this test is about the glyph switch, and
+        // a bar that refused the picture for its height would be answering a
+        // different question.
         let config = ShellBarsConfig {
-            top: bar_with_sections(vec![section]),
+            top: ShellBarConfig {
+                size: 3,
+                ..bar_with_sections(vec![section])
+            },
             ..Default::default()
         };
 
@@ -3242,8 +3633,15 @@ mod tests {
         section.widget.kind = "icon".to_string();
         section.widget.art = "herd".to_string();
 
+        // Three rows, because `herd` is three cell rows tall. This test is about
+        // the axis the terminal shares out; a bar too short to hold the picture
+        // would refuse it across the other axis, which is a number somebody
+        // wrote down and a different rule entirely.
         let config = ShellBarsConfig {
-            top: bar_with_sections(vec![section]),
+            top: ShellBarConfig {
+                size: 3,
+                ..bar_with_sections(vec![section])
+            },
             ..Default::default()
         };
 
@@ -3255,6 +3653,170 @@ mod tests {
         assert!(
             matches!(widget, SectionWidget::Art { art } if art.width() == 10),
             "a fill section keeps the picture: {widget:?}"
+        );
+    }
+
+    /// A picture is measured against the axis each number actually governs.
+    ///
+    /// `cells` runs along the bar and `size` across it, so on a left or right
+    /// bar `cells` is a height and `size` is a width. The fit check compared a
+    /// picture's width against `cells` whichever edge it was, which is two
+    /// separate faults in one line and both were measured against the built
+    /// binary: a left bar twelve columns wide, with a section three rows tall,
+    /// turned `herd` down for "needing 10 cells" — of which it had twelve; and
+    /// a one-row top bar accepted the same three-row picture and clipped it,
+    /// while the guide said a picture too tall is refused.
+    ///
+    /// The axis a section declares and the axis the bar declares are both
+    /// numbers somebody wrote down, so both are refusable for the same reason.
+    /// Neither is the terminal's, which is the line TP-ART-05 draws.
+    // TP-ART-09: each axis is checked against the number that governs it, and
+    // the two have separate causes because they send a person to different
+    // settings.
+    #[test]
+    fn a_picture_is_measured_against_the_axis_each_number_governs() {
+        let picture = |kind: &str, cells: u16| {
+            let mut section = plain_section(kind);
+            section.cells = cells;
+            section.widget.kind = "icon".to_string();
+            section.widget.art = "herd".to_string();
+            section
+        };
+        let side_bar = |size: u16, sections| ShellBarConfig {
+            size,
+            border: false,
+            ..bar_with_sections(sections)
+        };
+
+        // `herd` is ten columns by three rows. A side bar twelve columns wide
+        // with a three-row section holds it exactly.
+        let fitting = ShellBarsConfig {
+            left: side_bar(12, vec![picture("fixed", 3)]),
+            ..Default::default()
+        };
+        assert!(
+            shell_bar_config_problems(&fitting, true).is_empty(),
+            "a picture that fits a side bar exactly was refused: {:?}",
+            shell_bar_config_problems(&fitting, true)
+        );
+
+        // The same picture on a side bar too narrow for it: the width comes
+        // from `size` here, so the message has to say so.
+        let narrow = ShellBarsConfig {
+            left: side_bar(8, vec![picture("fixed", 3)]),
+            ..Default::default()
+        };
+        let reported = shell_bar_config_problems(&narrow, true)
+            .into_iter()
+            .map(|problem| problem.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(reported.len(), 1, "{reported:?}");
+        assert!(
+            reported[0].contains("needs 10 columns but the bar leaves 8")
+                && reported[0].contains("shell.bars.left.size"),
+            "a side bar's width comes from its size, and the message has to send \
+             somebody there: {reported:?}"
+        );
+
+        // And the section's own axis is still its own: three rows declared, two
+        // asked for, on a bar wide enough for the picture.
+        let short_section = ShellBarsConfig {
+            left: side_bar(12, vec![picture("fixed", 2)]),
+            ..Default::default()
+        };
+        let reported = shell_bar_config_problems(&short_section, true)
+            .into_iter()
+            .map(|problem| problem.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(reported.len(), 1, "{reported:?}");
+        assert!(
+            reported[0].contains("needs 3 cells but the section declares 2"),
+            "the axis the section declares keeps its own message: {reported:?}"
+        );
+    }
+
+    /// A picture taller than the bar is refused, and says which setting to raise.
+    ///
+    /// The bar's own height is not the terminal's business — `size` is a number
+    /// somebody wrote down — so the reason TP-ART-05 leaves a terminal-sized
+    /// width alone does not apply here. Before this, a three-row picture in a
+    /// one-row bar was accepted and silently clipped, which is the outcome the
+    /// width refusal exists to prevent, and the guide already promised it was
+    /// refused.
+    // TP-ART-09: too tall for the bar is its own cause, naming `size`.
+    #[test]
+    fn a_picture_taller_than_the_bar_is_refused_rather_than_clipped() {
+        let mut section = plain_section("fill");
+        section.widget.kind = "icon".to_string();
+        section.widget.art = "herd".to_string();
+
+        let config = ShellBarsConfig {
+            top: bar_with_sections(vec![section]),
+            ..Default::default()
+        };
+        let reported = shell_bar_config_problems(&config, true)
+            .into_iter()
+            .map(|problem| problem.to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(reported.len(), 1, "{reported:?}");
+        assert!(
+            reported[0].contains("needs 3 rows but the bar leaves 1")
+                && reported[0].contains("shell.bars.top.size"),
+            "the refusal has to name both numbers and the setting that changes \
+             one of them: {reported:?}"
+        );
+        assert_eq!(
+            ShellBarChrome::from_config(&config, true).widget_for(RegionId::TopBar, 0),
+            Some(&SectionWidget::None),
+            "a picture the checker refused must not be carried either"
+        );
+    }
+
+    /// A border eats a cell from each side, and the picture has to fit what is left.
+    ///
+    /// This is where the arithmetic is easiest to get wrong by hand: a bar of
+    /// three rows with a border has one row inside it, and every published
+    /// example that showed a three-row picture on a `size = 3` bar was drawing
+    /// a clipped mark. Two of them shipped — the guide's and the spec's — and
+    /// the check that found them is the one below.
+    // TP-ART-09: the bar's usable extent is its size less its border.
+    #[test]
+    fn the_border_is_taken_out_of_what_the_bar_leaves_a_picture() {
+        let picture = || {
+            let mut section = plain_section("fill");
+            section.widget.kind = "icon".to_string();
+            section.widget.art = "herd".to_string();
+            section
+        };
+        let bar = |size: u16, border: bool| ShellBarConfig {
+            size,
+            border,
+            ..bar_with_sections(vec![picture()])
+        };
+
+        let bordered = ShellBarsConfig {
+            top: bar(5, true),
+            ..Default::default()
+        };
+        assert!(
+            shell_bar_config_problems(&bordered, true).is_empty(),
+            "five rows less two of border is three, which is what the picture needs: {:?}",
+            shell_bar_config_problems(&bordered, true)
+        );
+
+        let one_short = ShellBarsConfig {
+            top: bar(4, true),
+            ..Default::default()
+        };
+        let reported = shell_bar_config_problems(&one_short, true)
+            .into_iter()
+            .map(|problem| problem.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(reported.len(), 1, "{reported:?}");
+        assert!(
+            reported[0].contains("needs 3 rows but the bar leaves 2"),
+            "the border has to come out of what is offered: {reported:?}"
         );
     }
 
@@ -4499,6 +5061,38 @@ mod tests {
         assert_eq!(bar_color("#fab387", &palette), parse_color("#fab387"));
         // Unreadable input must still answer with a colour.
         let _ = bar_color("not-a-colour-at-all", &palette);
+    }
+
+    /// Every published colour name follows the theme.
+    ///
+    /// The table carries a reader rather than a stored colour, so the way it
+    /// can still be wrong is a reader that ignores the palette it was handed —
+    /// a constant, a literal, a copied line that reads the wrong field twice.
+    /// None of those is visible in the table and all of them look right until
+    /// somebody switches theme and one part of the bar does not move.
+    ///
+    /// Two stock themes rather than a fabricated pair: if these two ever agree
+    /// on a colour this turns red, and that is worth knowing too.
+    #[test]
+    fn every_published_bar_colour_follows_the_palette() {
+        // TP-ART-07: a published colour name is read from the palette, so a
+        // theme change moves it.
+        let one = Palette::catppuccin();
+        let other = Palette::tokyo_night();
+
+        assert!(
+            bar_color_tokens().len() >= 8,
+            "the colour table thinned out: {:?}",
+            bar_color_tokens()
+        );
+        for name in bar_color_tokens() {
+            assert_ne!(
+                bar_color(name, &one),
+                bar_color(name, &other),
+                "the colour {name:?} answers the same under two themes, so it is not being \
+                 read from the palette at all"
+            );
+        }
     }
 
     fn gradient_config(stops: &[&str]) -> ShellBarConfig {

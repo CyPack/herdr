@@ -12,6 +12,116 @@ use crate::events::AppEvent;
 use crate::events::{WorktreeAddResult, WorktreeRemoveResult};
 
 impl App {
+    /// Turn a module's stated directory into a git repository (TP-MOD-38).
+    ///
+    /// The module key travels here, not the path, and the path is resolved and
+    /// re-measured at this point rather than when the menu opened: a directory
+    /// can be initialised in another terminal between the two moments, and
+    /// running `git init` over an existing repository — while harmless — would
+    /// report success for work it did not do.
+    pub(crate) fn initialize_module_repository(&mut self, module_key: &str) {
+        let Some(dir) = self.state.module_directory_for_key(module_key) else {
+            self.state.config_diagnostic = Some(format!(
+                "module {module_key:?} has no directory yet — use \"Set directory...\" first"
+            ));
+            return;
+        };
+        if !dir.is_dir() {
+            self.state.config_diagnostic = Some(format!(
+                "module {module_key:?} points at {}, which is not there any more",
+                dir.display()
+            ));
+            return;
+        }
+        // ⛔ Only this directory. NOT `git rev-parse --show-toplevel`: on the
+        // machine this was reported from `$HOME` is itself a repository, so a
+        // climbing check would call an empty subdirectory of it "already a
+        // repository" and later open branches over the whole home directory.
+        if crate::ui::is_git_repository_root(&dir) {
+            self.state.config_diagnostic =
+                Some(format!("{} is already a git repository", dir.display()));
+            return;
+        }
+        match std::process::Command::new("git")
+            .arg("init")
+            .arg(&dir)
+            .output()
+        {
+            Ok(output) if output.status.success() => {
+                self.state.config_diagnostic = Some(format!(
+                    "initialised a git repository in {} — \"New branch...\" can use it now",
+                    dir.display()
+                ));
+            }
+            Ok(output) => {
+                let detail = String::from_utf8_lossy(&output.stderr);
+                let detail = detail.trim();
+                self.state.config_diagnostic = Some(if detail.is_empty() {
+                    format!("git init failed in {}", dir.display())
+                } else {
+                    format!("git init failed in {}: {detail}", dir.display())
+                });
+            }
+            Err(err) => {
+                self.state.config_diagnostic =
+                    Some(format!("could not run git in {}: {err}", dir.display()));
+            }
+        }
+    }
+
+    /// Open a module's own repository as a workspace, then walk the ordinary
+    /// branch road from it (TP-MOD-37).
+    ///
+    /// The module stated a directory and that directory is a repository, but
+    /// nothing had it open — so the branch verb had no workspace to work from
+    /// and said "move a branch under it first". Opening one IS moving a branch
+    /// under it; doing it here means the person presses the verb once.
+    pub(crate) fn open_branch_workspace_for_module(&mut self, module_key: &str) {
+        let Some(dir) = self.state.module_directory_for_key(module_key) else {
+            return;
+        };
+        if !crate::ui::is_git_repository_root(&dir) {
+            // Re-measured for the same reason `initialize_module_repository`
+            // re-measures: the menu decided a while ago.
+            self.state.config_diagnostic = Some(format!(
+                "module {module_key:?} points at {}, which is not a git repository",
+                dir.display()
+            ));
+            return;
+        }
+        if let Some(existing) = self
+            .state
+            .workspaces
+            .iter()
+            .position(|ws| ws.effective_cwd() == dir.as_path())
+        {
+            self.state.pending_branch_module = Some(module_key.to_string());
+            self.state.request_new_linked_worktree = Some(existing);
+            return;
+        }
+        self.runtime_workspace_create(
+            "tui.module.branch_workspace",
+            crate::api::schema::WorkspaceCreateParams {
+                cwd: Some(dir.display().to_string()),
+                focus: true,
+                label: None,
+                env: Default::default(),
+            },
+        );
+        let Some(opened) = self
+            .state
+            .workspaces
+            .iter()
+            .position(|ws| ws.effective_cwd() == dir.as_path())
+        else {
+            self.state.config_diagnostic =
+                Some(format!("could not open {} as a workspace", dir.display()));
+            return;
+        };
+        self.state.pending_branch_module = Some(module_key.to_string());
+        self.state.request_new_linked_worktree = Some(opened);
+    }
+
     fn worktree_source_metadata(
         &self,
         ws_idx: usize,
@@ -2553,5 +2663,162 @@ mod tests {
             cfg!(windows)
         );
         assert!(App::should_shutdown_workspace_terminal_runtimes_for_worktree_remove(true));
+    }
+}
+
+#[cfg(test)]
+mod module_repo_tests {
+    use super::App;
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("herdr-modrepo-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch directory");
+        dir
+    }
+
+    fn app_with_module(key: &str, dir: Option<std::path::PathBuf>) -> App {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &crate::config::Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.state.space_nodes = vec![crate::spaces::SpaceNode {
+            key: key.to_string(),
+            name: key.to_string(),
+            icon: None,
+            parent: None,
+            dir,
+        }];
+        app
+    }
+
+    // M2.9 / TP-MOD-38: the chain closes. A stated directory that was not a
+    // repository becomes one, and the branch verb has somewhere to work from.
+    // This is the step the report said was missing.
+    #[test]
+    fn initialising_a_module_directory_makes_it_a_repository() {
+        let dir = scratch("init-ok");
+        let mut app = app_with_module("docs", Some(dir.clone()));
+        assert!(
+            !dir.join(".git").exists(),
+            "precondition: the directory is not a repository yet"
+        );
+
+        app.initialize_module_repository("docs");
+
+        assert!(
+            dir.join(".git").exists(),
+            "git init ran where the person pointed the module"
+        );
+        assert_eq!(
+            crate::ui::module_branch_source(&app.state, "docs"),
+            crate::ui::ModuleBranchSource::Repository(dir.clone()),
+            "and the branch verb now has a source"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // M2.8 / TP-MOD-38: run twice, it says so rather than claiming to have done
+    // work it did not do. The directory can also have become a repository in
+    // another terminal between the menu opening and the item being picked,
+    // which is why the measurement happens here and not there.
+    #[test]
+    fn initialising_an_existing_repository_reports_rather_than_repeats() {
+        let dir = scratch("init-twice");
+        std::fs::create_dir_all(dir.join(".git")).expect("repo marker");
+        let mut app = app_with_module("docs", Some(dir.clone()));
+
+        app.initialize_module_repository("docs");
+
+        let diagnostic = app
+            .state
+            .config_diagnostic
+            .as_deref()
+            .expect("it says something");
+        assert!(
+            diagnostic.contains("already a git repository"),
+            "got {diagnostic:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // TP-MOD-38: nothing stated, nothing created. The verb points at the one
+    // that comes first instead.
+    #[test]
+    fn initialising_a_module_without_a_directory_creates_nothing() {
+        let mut app = app_with_module("docs", None);
+
+        app.initialize_module_repository("docs");
+
+        let diagnostic = app
+            .state
+            .config_diagnostic
+            .as_deref()
+            .expect("it says something");
+        assert!(
+            diagnostic.contains("Set directory"),
+            "a refusal must name the next step; got {diagnostic:?}"
+        );
+    }
+
+    // 🔴 TP-MOD-38: the `$HOME` guard, on the writing side. A directory sitting
+    // INSIDE a repository is still initialised as its own repository — it is
+    // not treated as "already a repository" just because a parent is one.
+    // Getting this wrong the other way would leave the module permanently
+    // unable to branch while claiming it already could.
+    #[test]
+    fn a_directory_inside_a_repository_is_still_initialised_on_its_own() {
+        let root = scratch("outer-for-init");
+        std::fs::create_dir_all(root.join(".git")).expect("outer repo marker");
+        let inner = root.join("inner");
+        std::fs::create_dir_all(&inner).expect("inner directory");
+        let mut app = app_with_module("docs", Some(inner.clone()));
+
+        app.initialize_module_repository("docs");
+
+        assert!(
+            inner.join(".git").exists(),
+            "the module's own directory became its own repository"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // M2.6 / TP-MOD-37: a checkout under the module wins over the module's own
+    // directory. Quietly preferring the directory would send the branch
+    // somewhere other than where it used to go.
+    #[test]
+    fn a_checkout_under_the_module_outranks_the_modules_own_directory() {
+        let dir = scratch("outranked");
+        std::fs::create_dir_all(dir.join(".git")).expect("repo marker");
+        let mut app = app_with_module("docs", Some(dir.clone()));
+        let mut ws = crate::workspace::Workspace::test_new("under-docs");
+        ws.identity_cwd = dir.clone();
+        app.state.workspaces = vec![ws];
+        app.state.space_split_rules = vec![crate::spaces::SpaceSplitRule {
+            repo_root: dir.clone(),
+            patterns: vec!["*".to_string()],
+            key: "docs-bucket".to_string(),
+            label: "Docs bucket".to_string(),
+            icon: None,
+            parent: Some("docs".to_string()),
+        }];
+
+        // Whatever the tree resolves, the answer must never be the bare
+        // directory while a workspace stands under the module.
+        let source = crate::ui::module_branch_source(&app.state, "docs");
+        if let crate::ui::ModuleBranchSource::Workspace(idx) = source {
+            assert_eq!(idx, 0);
+        } else {
+            assert_eq!(
+                source,
+                crate::ui::ModuleBranchSource::Repository(dir.clone()),
+                "with no workspace claimed by the tree, the module's own repository is the source"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
