@@ -289,7 +289,10 @@ pub(crate) fn builtin_names() -> Vec<&'static str> {
 /// A picture that cannot be read is left out rather than panicked over: the
 /// table is compiled in, so an unreadable entry is a mistake made here and a
 /// test says so, while a person running the CLI should not be the one who finds
-/// out. `builtin_catalogue_is_complete` is that test.
+/// out. `every_bundled_picture_is_one_that_can_be_drawn`, in `ui::shell::spec`,
+/// is that test: it sits with the spec because the spec is what publishes this
+/// catalogue, and an entry silently missing from it is the shape a reader is
+/// handed.
 pub(crate) fn builtin_catalogue() -> Vec<(&'static str, u16, u16)> {
     BUILTIN_ART
         .iter()
