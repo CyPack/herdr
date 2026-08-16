@@ -2139,3 +2139,95 @@ fn live_handoff_preserves_agent_pane_scrollback() {
     );
     cleanup_test_base(&base);
 }
+
+#[test]
+fn live_handoff_preserves_primary_history_of_an_alt_screen_pane() {
+    // TP-HANDOFF-HIST-02: a pane caught on the alternate screen — a fullscreen
+    // app, an open pager — keeps its primary scrollback across a live handoff.
+    // Before vendor patch 0002 the export could only read the active screen,
+    // so this pane class lost 100% of its primary history on every
+    // `herdr update --handoff`; it was the last handoff data-loss hole.
+    let _lock = test_lock();
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    let api_socket = runtime_dir.join("herdr.sock");
+
+    let spawned = spawn_server(&config_home, &runtime_dir, &api_socket);
+    wait_for_socket(&api_socket, Duration::from_secs(10));
+    register_runtime_dir(&runtime_dir);
+
+    let created = request(
+        &api_socket,
+        serde_json::json!({
+            "id": "test:workspace:create",
+            "method": "workspace.create",
+            "params": {"cwd": "/tmp", "focus": true}
+        }),
+    );
+    let pane_id = created["result"]["root_pane"]["pane_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    emit_numbered_markers(&api_socket, &pane_id);
+    let before = read_recent_text(&api_socket, &pane_id, 5000);
+    assert!(
+        before.contains("marker-0000"),
+        "the pane has to hold the full history before the handoff proves anything"
+    );
+
+    // Enter the alternate screen the way a fullscreen app does, and prove the
+    // switch actually happened: the recent read now sees the alternate frame
+    // and no longer sees the primary markers. The sentinels are split with ''
+    // so the shell's echo of the command line cannot satisfy the waits.
+    assert_ok(request(
+        &api_socket,
+        serde_json::json!({
+            "id": "test:pane:enter-alt",
+            "method": "pane.send_input",
+            "params": {"pane_id": pane_id, "text": "printf '\\033[?1049h'; echo ALT-''IN", "keys": ["Enter"]}
+        }),
+    ));
+    wait_for_output(&api_socket, &pane_id, "ALT-IN");
+    let mid = read_recent_text(&api_socket, &pane_id, 5000);
+    assert!(
+        !mid.contains("marker-0000"),
+        "the alternate screen has to actually be active, or this test proves \
+         nothing about the lost pane class; got the primary content instead"
+    );
+
+    let old_server_pid = api_server_pid(&api_socket).expect("old server answers pre-handoff");
+    assert_ok(request(
+        &api_socket,
+        serde_json::json!({"id":"test:handoff","method":"server.live_handoff","params":{}}),
+    ));
+    wait_for_new_server_on_socket(&api_socket, old_server_pid, Duration::from_secs(10));
+    drop(spawned);
+    wait_for_api(&api_socket, Duration::from_secs(10));
+
+    // Leave the alternate screen (harmless if the imported terminal already
+    // woke up on the primary one) and read the primary scrollback.
+    assert_ok(request(
+        &api_socket,
+        serde_json::json!({
+            "id": "test:pane:leave-alt",
+            "method": "pane.send_input",
+            "params": {"pane_id": pane_id, "text": "printf '\\033[?1049l'; echo BACK-''PRIMARY", "keys": ["Enter"]}
+        }),
+    ));
+    wait_for_output(&api_socket, &pane_id, "BACK-PRIMARY");
+
+    let after = read_recent_text(&api_socket, &pane_id, 5000);
+    assert!(
+        after.contains("marker-0000") && after.contains("marker-0599"),
+        "an alt-screen pane's primary scrollback has to survive the handoff; \
+         the screen-aware capture (vendor patch 0002) is the only reader that \
+         can reach it mid-fullscreen"
+    );
+
+    let _ = request(
+        &api_socket,
+        serde_json::json!({"id":"test:stop","method":"server.stop","params":{}}),
+    );
+    cleanup_test_base(&base);
+}

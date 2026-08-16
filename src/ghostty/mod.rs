@@ -9,6 +9,7 @@
     rustdoc::all
 )]
 pub mod bindings;
+pub mod bindings_ext;
 
 use std::cell::Cell;
 use std::collections::hash_map::DefaultHasher;
@@ -1127,6 +1128,73 @@ impl Terminal {
             unwrap,
             true,
         )
+    }
+
+    /// The whole content of one specific screen as VT sequences, regardless
+    /// of which screen is active.
+    ///
+    /// Every other read on this type goes through the active screen, so a
+    /// pane sitting on the alternate screen hides its primary scrollback
+    /// from them. This is the one read that can still reach it, via the
+    /// patched `ghostty_formatter_screen_new` (patch 0002): no selection
+    /// means the screen formatter emits the full page list of the requested
+    /// screen.
+    pub fn read_ansi_full_screen(&self, screen: ActiveScreen) -> Result<String, Error> {
+        let screen = match screen {
+            ActiveScreen::Primary => ffi::GhosttyTerminalScreen_GHOSTTY_TERMINAL_SCREEN_PRIMARY,
+            ActiveScreen::Alternate => ffi::GhosttyTerminalScreen_GHOSTTY_TERMINAL_SCREEN_ALTERNATE,
+        };
+        let options = ffi::GhosttyFormatterTerminalOptions {
+            size: mem::size_of::<ffi::GhosttyFormatterTerminalOptions>(),
+            emit: FormatterFormat::Vt.as_raw(),
+            unwrap: true,
+            trim: true,
+            extra: ffi::GhosttyFormatterTerminalExtra {
+                size: mem::size_of::<ffi::GhosttyFormatterTerminalExtra>(),
+                screen: ffi::GhosttyFormatterScreenExtra {
+                    size: mem::size_of::<ffi::GhosttyFormatterScreenExtra>(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            selection: ptr::null(),
+        };
+        let mut formatter: ffi::GhosttyFormatter = ptr::null_mut();
+        unsafe {
+            bindings_ext::ghostty_formatter_screen_new(
+                ptr::null(),
+                &mut formatter,
+                self.raw,
+                screen,
+                options,
+            )
+            .into_result()?;
+        }
+
+        let mut out_ptr = ptr::null_mut();
+        let mut out_len = 0usize;
+        let result = unsafe {
+            ffi::ghostty_formatter_format_alloc(formatter, ptr::null(), &mut out_ptr, &mut out_len)
+        };
+        unsafe {
+            ffi::ghostty_formatter_free(formatter);
+        }
+        result.into_result()?;
+
+        let text = if out_len == 0 {
+            String::new()
+        } else {
+            let bytes = unsafe { slice::from_raw_parts(out_ptr.cast_const(), out_len) };
+            String::from_utf8_lossy(bytes).into_owned()
+        };
+
+        if !out_ptr.is_null() {
+            unsafe {
+                ffi::ghostty_free(ptr::null(), out_ptr, out_len);
+            }
+        }
+
+        Ok(text)
     }
 
     pub fn keyboard_state_ansi(&self) -> Result<String, Error> {
@@ -3653,6 +3721,37 @@ mod tests {
             terminal.read_text_viewport((0, 0), (6, 0), false).unwrap(),
             "primary"
         );
+    }
+
+    #[test]
+    fn reading_the_primary_screen_while_the_alternate_is_active() {
+        // Every other read goes through the active screen, so before patch
+        // 0002 this content was unreachable mid-alternate — the root of the
+        // alt-screen handoff/dormancy history loss. TP-HANDOFF-HIST-02
+        let mut terminal = Terminal::new(40, 4, 10_000).unwrap();
+
+        terminal.write(b"early-primary-marker\r\nsecond-line");
+        terminal.write(b"\x1b[?1049h\x1b[Halternate-frame");
+        assert_eq!(terminal.active_screen().unwrap(), ActiveScreen::Alternate);
+
+        let primary = terminal
+            .read_ansi_full_screen(ActiveScreen::Primary)
+            .unwrap();
+        assert!(
+            primary.contains("early-primary-marker") && primary.contains("second-line"),
+            "primary scrollback should be readable from the alternate screen; got: {primary:?}"
+        );
+        assert!(
+            !primary.contains("alternate-frame"),
+            "the primary read must not leak alternate-screen content; got: {primary:?}"
+        );
+
+        // The same read on the alternate screen sees only its own frame.
+        let alternate = terminal
+            .read_ansi_full_screen(ActiveScreen::Alternate)
+            .unwrap();
+        assert!(alternate.contains("alternate-frame"));
+        assert!(!alternate.contains("early-primary-marker"));
     }
 
     #[test]

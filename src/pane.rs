@@ -1579,10 +1579,12 @@ impl PaneRuntime {
     /// The pane's full primary-screen history, for the handoff freight file.
     ///
     /// Untruncated: the freight travels on disk, not inside the manifest line,
-    /// so the inline replay budget does not apply. The alternate-screen guard
-    /// stays — the bindings can only read the active screen, and replaying an
-    /// alternate-screen frame as history would corrupt the primary screen the
-    /// application returns to.
+    /// so the inline replay budget does not apply. A pane sitting on the
+    /// alternate screen no longer loses this history: the patched screen
+    /// formatter (vendor patch 0002) reads the primary screen directly, and
+    /// replaying that on import is correct because a fresh terminal starts on
+    /// the primary screen — the live application repaints its own alternate
+    /// frame afterwards. TP-HANDOFF-HIST-02
     #[cfg(unix)]
     pub fn handoff_history_ansi_full(&self) -> Option<String> {
         if self
@@ -1590,7 +1592,7 @@ impl PaneRuntime {
             .input_state()
             .is_some_and(|input_state| input_state.alternate_screen)
         {
-            return None;
+            return self.terminal.primary_screen_history_ansi();
         }
         self.snapshot_history()
     }
@@ -1807,6 +1809,14 @@ impl PaneRuntime {
         let pane_terminal = GhosttyPaneTerminal::new(terminal, response_tx.clone())?;
         pane_terminal.apply_host_terminal_theme(host_terminal_theme);
         pane_terminal.seed_terminal_title(terminal_title);
+        // The history replay is primary-screen content and the fresh core is
+        // on the primary screen right now, so it has to land before the input
+        // state is seeded: seeding an alternate-screen mode first would flush
+        // the replay into the alternate screen and leave the primary blank —
+        // exactly the loss the freight exists to prevent. TP-HANDOFF-HIST-02
+        if let Some(ansi) = initial_history_ansi.as_deref() {
+            pane_terminal.seed_history_ansi(ansi);
+        }
         if let Some(input_state) = input_state {
             pane_terminal.seed_handoff_input_state(input_state);
         }
@@ -1814,9 +1824,6 @@ impl PaneRuntime {
             pane_terminal.seed_keyboard_protocol_ansi(ansi);
         } else {
             pane_terminal.seed_keyboard_protocol_flags(keyboard_protocol_flags);
-        }
-        if let Some(ansi) = initial_history_ansi.as_deref() {
-            pane_terminal.seed_history_ansi(ansi);
         }
         let terminal = Arc::new(PaneTerminal::new(pane_terminal));
         let child_pid = Arc::new(AtomicU32::new(child_pid));
@@ -3356,7 +3363,11 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn handoff_history_ansi_skips_alternate_screen() {
+    async fn handoff_history_ansi_reads_the_primary_screen_from_the_alternate() {
+        // Before vendor patch 0002 this returned None and the inline replay
+        // carried nothing for an alt-screen pane. The capture now reads the
+        // primary screen, whose content is safe to replay: a fresh terminal
+        // starts on the primary screen. TP-HANDOFF-HIST-02
         let runtime = PaneRuntime::test_with_scrollback_bytes(
             40,
             5,
@@ -3364,7 +3375,9 @@ mod tests {
             b"primary\r\n\x1b[?1049halt-screen",
         );
 
-        assert!(runtime.handoff_history_ansi().is_none());
+        let inline = runtime.handoff_history_ansi().unwrap();
+        assert!(inline.contains("primary"));
+        assert!(!inline.contains("alt-screen"));
     }
 
     #[cfg(unix)]
@@ -3401,16 +3414,31 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn handoff_history_ansi_full_skips_alternate_screen() {
-        // The freight shares the alternate-screen guard: the bindings only read
-        // the active screen, and replaying an alt-screen frame as history would
-        // corrupt the primary screen the application returns to.
+    async fn handoff_history_ansi_full_reads_the_primary_screen_from_the_alternate() {
+        // The lost class the freight could not save before vendor patch 0002:
+        // a pane caught mid-fullscreen-app dropped its whole primary
+        // scrollback on handoff. The capture now reads the primary screen and
+        // must not leak the alternate frame into it. TP-HANDOFF-HIST-02
         let runtime = PaneRuntime::test_with_scrollback_bytes(
             40,
             5,
             4096,
             b"primary\r\n\x1b[?1049halt-screen",
         );
+
+        let full = runtime.handoff_history_ansi_full().unwrap();
+        assert!(full.contains("primary"));
+        assert!(!full.contains("alt-screen"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn handoff_history_ansi_full_is_none_for_an_empty_primary_behind_the_alternate() {
+        // A pane that entered the alternate screen without ever writing to
+        // the primary one has nothing worth carrying; the capture must say so
+        // instead of freighting an empty string.
+        let runtime =
+            PaneRuntime::test_with_scrollback_bytes(40, 5, 4096, b"\x1b[?1049halt-screen");
 
         assert!(runtime.handoff_history_ansi_full().is_none());
     }

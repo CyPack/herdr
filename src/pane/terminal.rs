@@ -413,6 +413,11 @@ impl PaneTerminal {
         self.ghostty.recent_unwrapped_ansi_snapshot(lines)
     }
 
+    #[cfg(unix)]
+    pub fn primary_screen_history_ansi(&self) -> Option<String> {
+        self.ghostty.primary_screen_history_ansi()
+    }
+
     pub fn extract_selection(&self, selection: &crate::selection::Selection) -> Option<String> {
         self.ghostty.extract_selection(selection)
     }
@@ -1769,6 +1774,27 @@ impl GhosttyPaneTerminal {
             .ok()
             .and_then(|core| ghostty_recent_ansi_snapshot(&core, lines, true).ok())
             .unwrap_or_default()
+    }
+
+    /// The full primary-screen content as ANSI, readable even while the
+    /// alternate screen is active.
+    ///
+    /// Every recent-* read above goes through the active screen, so a pane
+    /// sitting inside a fullscreen application hides its primary scrollback
+    /// from them; this is the capture path handoff and dormancy use instead.
+    /// Unix-only like its callers: handoff freight and the dormancy capture.
+    /// TP-HANDOFF-HIST-02
+    #[cfg(unix)]
+    pub fn primary_screen_history_ansi(&self) -> Option<String> {
+        self.core
+            .lock()
+            .ok()
+            .and_then(|core| {
+                core.terminal
+                    .read_ansi_full_screen(crate::ghostty::ActiveScreen::Primary)
+                    .ok()
+            })
+            .filter(|text| !text.trim().is_empty())
     }
 
     pub fn extract_selection(&self, selection: &crate::selection::Selection) -> Option<String> {

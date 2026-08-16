@@ -38,8 +38,12 @@ pub(crate) enum DormancyRefusal {
     /// The scrollback could not be written; the runtime was kept rather than
     /// releasing history that only existed in memory.
     HistoryWriteFailed,
-    /// The pane is on the alternate screen, where the bindings cannot reach
-    /// the primary scrollback; sleeping it would silently discard history.
+    /// The pane is on the alternate screen, where the non-unix capture path
+    /// can only read the active screen; sleeping it would silently discard
+    /// the primary history. On unix the patched screen formatter (vendor
+    /// patch 0002) reads the primary screen directly, so this refusal no
+    /// longer exists there — the pane sleeps with its primary history.
+    #[cfg(not(unix))]
     HistoryUnavailable,
 }
 
@@ -96,11 +100,14 @@ impl App {
             return Err(DormancyRefusal::Watched);
         }
 
-        // The alternate screen hides the primary scrollback from the bindings:
-        // capture would come back empty and the pane would sleep into exactly
-        // the deferred data loss TP-DORMANT-03 names. Same situation as a
-        // failed write — the runtime is the only holder — same answer: keep
-        // it. TP-DORMANT-10
+        // A pane on the alternate screen used to be refused here: capture
+        // could only read the active screen, so it came back empty and the
+        // pane would sleep into exactly the deferred data loss TP-DORMANT-03
+        // names. On unix the capture now reads the primary screen directly
+        // (vendor patch 0002), so such a pane sleeps with its primary
+        // history. The non-unix capture path still reads the active screen
+        // only, where the loss is real — the refusal stays. TP-DORMANT-10
+        #[cfg(not(unix))]
         if runtime
             .input_state()
             .is_some_and(|input_state| input_state.alternate_screen)
@@ -641,27 +648,55 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn an_alt_screen_retired_pane_is_refused_dormancy() {
-        // TP-DORMANT-10 (GAP-C): "history could not be captured" and "history
-        // could not be written" are the same situation — the runtime is the
-        // only holder — and they get the same answer: keep the runtime.
-        // Sleeping the pane anyway would be exactly the deferred data loss
-        // TP-DORMANT-03 names.
+    async fn an_alt_screen_retired_pane_sleeps_with_its_primary_history() {
+        // TP-DORMANT-10: this used to be a HistoryUnavailable refusal —
+        // capture could only read the active screen. With vendor patch 0002
+        // the capture reads the primary screen directly, so the pane sleeps
+        // carrying exactly the history the user would scroll back to, and the
+        // alternate frame must not leak into the file.
         let (mut app, pane_id) =
             app_with_scrollback_pane(b"primary-history\r\n\x1b[?1049halt-screen", true);
         let terminal_id = terminal_id_of(&app, pane_id);
 
-        let refused = app.make_pane_dormant(pane_id);
+        app.make_pane_dormant(pane_id)
+            .expect("an alt-screen pane sleeps with its primary history");
 
-        assert_eq!(refused, Err(DormancyRefusal::HistoryUnavailable));
-        assert!(app.terminal_runtimes.get(&terminal_id).is_some());
-        assert!(app
+        let dormant = app
             .state
             .terminals
             .get(&terminal_id)
             .unwrap()
             .dormant
-            .is_none());
+            .clone()
+            .expect("dormant marker set");
+        let path = dormant.history_path.expect("primary history written");
+        let written = std::fs::read_to_string(&path).expect("history file readable");
+        assert!(written.contains("primary-history"));
+        assert!(!written.contains("alt-screen"));
+        assert!(app.terminal_runtimes.get(&terminal_id).is_none());
+    }
+
+    #[tokio::test]
+    async fn an_alt_screen_pane_with_an_empty_primary_sleeps_without_a_file() {
+        // The empty-pane contract survives the TP-DORMANT-10 semantics
+        // change: a pane that went fullscreen without ever writing to the
+        // primary screen has nothing to carry, so it keeps its fileless sleep.
+        let (mut app, pane_id) = app_with_scrollback_pane(b"\x1b[?1049halt-screen", true);
+        let terminal_id = terminal_id_of(&app, pane_id);
+
+        app.make_pane_dormant(pane_id)
+            .expect("empty-primary alt-screen pane sleeps");
+
+        let dormant = app
+            .state
+            .terminals
+            .get(&terminal_id)
+            .unwrap()
+            .dormant
+            .clone()
+            .expect("dormant marker set");
+        assert!(dormant.history_path.is_none(), "nothing to write, no file");
+        assert!(app.terminal_runtimes.get(&terminal_id).is_none());
     }
 
     #[tokio::test]
