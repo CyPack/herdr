@@ -110,6 +110,50 @@ pub fn prune(
     records
 }
 
+/// Derive ghosts from the transcript store for conversations the graveyard
+/// never saw.
+///
+/// TP-AGPANEL-39: persistence only remembers deaths it witnessed, and it
+/// started witnessing them today. The month the user asked to see already
+/// happened — its only surviving record is the transcript store, which keeps a
+/// file per conversation with the directory it ran in and the time it last
+/// moved.
+///
+/// Derived rows are marked by nothing: a ghost is a ghost. What matters is
+/// that they carry the same two things a witnessed one does — the directory
+/// and the session ref — so a revival resolves instead of refusing.
+///
+/// `live` decides which conversations are still open; those are not deaths and
+/// must not appear as such. Callers pass the same predicate the sidebar uses,
+/// so a chat cannot be both a live tab and a headstone.
+/// Reads the rows the drawer already loaded rather than re-walking the store:
+/// `App::new` has just parsed that directory, and reading the same files twice
+/// on a startup path buys nothing.
+pub fn derive_from_chat_rows(
+    existing: &[StoredClosedAgent],
+    cwd: &str,
+    rows: &[crate::app::state::WorkspaceChatRow],
+    live: &dyn Fn(&str) -> bool,
+) -> Vec<StoredClosedAgent> {
+    rows.iter()
+        .filter(|row| !live(&row.session_id))
+        .filter(|row| !existing.iter().any(|kept| kept.agent_id == row.session_id))
+        .map(|row| StoredClosedAgent {
+            agent_id: row.session_id.clone(),
+            label: row.display_label(),
+            cwd: Some(cwd.to_string()),
+            workspace_key: None,
+            session: Some(StoredSession {
+                source: "herdr:claude".into(),
+                agent: row.agent.clone(),
+                ref_kind: crate::agent_resume::AgentSessionRefKind::Id,
+                ref_value: row.session_id.clone(),
+            }),
+            closed_at: row.last_activity_ms(),
+        })
+        .collect()
+}
+
 /// Read the store; any failure is a normal empty start.
 ///
 /// A graveyard that refuses to load is worse than an empty one: it would take
@@ -193,6 +237,74 @@ mod tests {
             "herdr-closed-agents-{name}-{}-{stamp}.json",
             std::process::id()
         ))
+    }
+
+    fn chat_row(id: &str, title: &str, ms: u64) -> crate::app::state::WorkspaceChatRow {
+        crate::app::state::WorkspaceChatRow {
+            session_id: id.into(),
+            agent: "claude".into(),
+            title: Some(title.into()),
+            last_seen_ms: ms,
+            last_modified: None,
+        }
+    }
+
+    // TP-AGPANEL-39 (S1/S4): the month the user asked for already happened,
+    // and its only surviving record is the transcript store. A derived ghost
+    // must carry the directory and the session ref, or it is a headstone that
+    // can be read and never revived.
+    #[test]
+    fn a_conversation_with_no_headstone_gets_one_from_the_store() {
+        let derived = derive_from_chat_rows(
+            &[],
+            "/home/tester/project",
+            &[chat_row("s1", "fixing the parser", 5_000)],
+            &|_| false,
+        );
+
+        assert_eq!(derived.len(), 1);
+        let row = &derived[0];
+        assert_eq!(row.agent_id, "s1");
+        assert_eq!(row.label, "fixing the parser");
+        assert_eq!(row.cwd.as_deref(), Some("/home/tester/project"));
+        assert_eq!(row.closed_at, 5_000);
+        assert_eq!(
+            row.session.as_ref().map(|s| s.ref_value.as_str()),
+            Some("s1"),
+            "a derived ghost resumes like any other"
+        );
+    }
+
+    // TP-AGPANEL-39 (S2): an open conversation is not a death. Without this
+    // the same chat would stand in the panel twice — once as a live agent and
+    // once as its own headstone.
+    #[test]
+    fn a_live_conversation_is_not_given_a_headstone() {
+        let derived = derive_from_chat_rows(
+            &[],
+            "/home/tester/project",
+            &[chat_row("open", "still going", 5_000)],
+            &|id| id == "open",
+        );
+
+        assert!(derived.is_empty());
+    }
+
+    // TP-AGPANEL-39 (S3): a witnessed death outranks a derived one. Two ghosts
+    // with one identity leave the user guessing which revives, and the answer
+    // would be neither reliably — the same reasoning `record_closed` dedups on.
+    #[test]
+    fn a_conversation_already_remembered_is_not_derived_twice() {
+        let existing = vec![record("s1", 9_000)];
+
+        let derived = derive_from_chat_rows(
+            &existing,
+            "/home/tester/project",
+            &[chat_row("s1", "a different title", 5_000)],
+            &|_| false,
+        );
+
+        assert!(derived.is_empty());
     }
 
     // TP-AGPANEL-30: the graveyard survives the process that wrote it.

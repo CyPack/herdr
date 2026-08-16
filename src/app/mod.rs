@@ -1111,11 +1111,45 @@ impl App {
             let stored = crate::persist::closed_agents::load_from_path(
                 &crate::persist::closed_agents::default_store_path(),
             );
+            let now_ms = crate::persist::workspace_chats::now_ms();
+            let mut records = crate::persist::closed_agents::prune(
+                stored.records,
+                now_ms,
+                crate::persist::closed_agents::RETENTION_MS,
+            );
+            // TP-AGPANEL-39: the month the user asked to see already happened,
+            // and persistence only remembers deaths it witnessed — it started
+            // witnessing them today. The transcript rows loaded just above are
+            // the surviving record of the ones before that, so the graveyard is
+            // seeded from them rather than starting a month behind.
+            //
+            // A conversation that still has a tab is not a death; without that
+            // filter the same chat would stand in the panel twice, once as a
+            // live agent and once as its own headstone.
+            let live: Vec<String> = state
+                .workspaces
+                .iter()
+                .flat_map(|ws| ws.tabs.iter())
+                .filter_map(|tab| tab.resumed_session_id.clone())
+                .collect();
+            let derived: Vec<_> = state
+                .workspace_chat_rows
+                .iter()
+                .flat_map(|(key, rows)| {
+                    crate::persist::closed_agents::derive_from_chat_rows(
+                        &records,
+                        key,
+                        rows,
+                        &|id| live.iter().any(|open| open == id),
+                    )
+                })
+                .collect();
+            records.extend(derived);
             state
                 .closed_agents
                 .load_stored(crate::persist::closed_agents::prune(
-                    stored.records,
-                    crate::persist::workspace_chats::now_ms(),
+                    records,
+                    now_ms,
                     crate::persist::closed_agents::RETENTION_MS,
                 ));
         }
