@@ -960,11 +960,18 @@ impl AppState {
                         let dots = crate::ui::header_menu_cell(head.rect);
                         if self.mouse_capture && dots.width > 0 && mouse.column == dots.x {
                             let collapsed = self.node_folded(&head.project_key);
+                            // TP-MOD-38: measured when the menu opens, like
+                            // `deletable` beside it.
+                            let needs_git_init = matches!(
+                                crate::ui::module_branch_source(self, &head.project_key),
+                                crate::ui::ModuleBranchSource::UninitializedDirectory(_)
+                            );
                             self.context_menu = Some(ContextMenuState {
                                 kind: ContextMenuKind::NodeHeader {
                                     deletable: self.managed_node_keys.contains(&head.project_key),
                                     node_key: head.project_key,
                                     collapsed,
+                                    needs_git_init,
                                 },
                                 x: mouse.column,
                                 y: mouse.row,
@@ -1584,12 +1591,17 @@ impl AppState {
                     {
                         let has_move = self.chat_move_overrides.contains_key(&session_id);
                         let has_live = self.find_resumed_chat_tab(&session_id).is_some();
+                        // TP-CHAT-MOVE-11: resolved when the menu opens, like
+                        // its siblings, so a config reload underneath an open
+                        // menu cannot turn the offer into a no-op.
+                        let has_modules = !self.module_move_target_entries().is_empty();
                         self.context_menu = Some(ContextMenuState {
                             kind: ContextMenuKind::WorkspaceChat {
                                 ws_idx: None,
                                 session_id,
                                 has_move,
                                 has_live,
+                                has_modules,
                             },
                             x: mouse.column,
                             y: mouse.row,
@@ -1621,12 +1633,15 @@ impl AppState {
                         // TP-AGPANEL-05: the close verb is offered only when
                         // this chat still has a tab running behind it.
                         let has_live = self.find_resumed_chat_tab(&session_id).is_some();
+                        // TP-CHAT-MOVE-11
+                        let has_modules = !self.module_move_target_entries().is_empty();
                         self.context_menu = Some(ContextMenuState {
                             kind: ContextMenuKind::WorkspaceChat {
                                 ws_idx: Some(hit.ws_idx),
                                 session_id,
                                 has_move,
                                 has_live,
+                                has_modules,
                             },
                             x: mouse.column,
                             y: mouse.row,
@@ -1689,11 +1704,17 @@ impl AppState {
                     .cloned()
                 {
                     let collapsed = self.node_folded(&head.project_key);
+                    // TP-MOD-38
+                    let needs_git_init = matches!(
+                        crate::ui::module_branch_source(self, &head.project_key),
+                        crate::ui::ModuleBranchSource::UninitializedDirectory(_)
+                    );
                     self.context_menu = Some(ContextMenuState {
                         kind: ContextMenuKind::NodeHeader {
                             deletable: self.managed_node_keys.contains(&head.project_key),
                             node_key: head.project_key,
                             collapsed,
+                            needs_git_init,
                         },
                         x: mouse.column,
                         y: mouse.row,

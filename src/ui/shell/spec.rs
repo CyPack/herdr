@@ -47,6 +47,11 @@ pub(crate) struct ShellSpec {
     pub action_kinds: Vec<KindSpec>,
     /// What a second gesture can ask for.
     pub secondary_presentations: Vec<&'static str>,
+    /// The colour names any `color`, `gradient` stop or picture palette may
+    /// write. Published because nothing else can teach them: an unrecognised
+    /// colour is not refused, so no refusal ever names the set, and a reader
+    /// who has only seen `"mauve"` in an example has no way to learn `teal`.
+    pub colors: Vec<&'static str>,
     pub metrics: MetricSpec,
     pub icon_art: Vec<ArtSpec>,
     /// Switches outside the bars that change what a bar may do.
@@ -179,6 +184,7 @@ pub(crate) fn shell_spec() -> ShellSpec {
         widget_kinds: kinds(source::widget_kind_facts()),
         action_kinds: kinds(source::action_kind_facts()),
         secondary_presentations: source::secondary_presentation_names(),
+        colors: source::bar_color_tokens(),
         metrics: MetricSpec {
             names: ResourceMetric::ACCEPTED.to_vec(),
             aliases: ResourceMetric::ALIASES
@@ -252,6 +258,12 @@ pub(crate) fn render_text(spec: &ShellSpec) -> String {
     ));
 
     out.push_str(&format!(
+        "\ncolours (color, gradient stops, picture palettes): {}\n",
+        list(&spec.colors)
+    ));
+    out.push_str("  or a literal: #cba6f7, #fa8, rgb(203, 166, 247)\n");
+
+    out.push_str(&format!(
         "\nmetrics (widget.metric = …): {}\n",
         list(&spec.metrics.names)
     ));
@@ -265,10 +277,12 @@ pub(crate) fn render_text(spec: &ShellSpec) -> String {
     out.push_str("\nbundled art (widget.art = …)\n");
     for art in &spec.icon_art {
         out.push_str(&format!(
-            "  {name}: {cells} cells by {rows} rows\n",
+            "  {name}: {cells} cell{cell_s} by {rows} row{row_s}\n",
             name = art.name,
             cells = art.cells,
-            rows = art.rows
+            cell_s = if art.cells == 1 { "" } else { "s" },
+            rows = art.rows,
+            row_s = if art.rows == 1 { "" } else { "s" }
         ));
     }
 
@@ -364,6 +378,7 @@ mod tests {
             !spec.secondary_presentations.is_empty(),
             "the secondary presentations emptied out"
         );
+        assert!(spec.colors.len() >= 8, "the colour names thinned out");
         assert!(spec.metrics.names.len() >= 3, "a metric went missing");
         // Two, not "some". Deleting a bundled picture was measured to break
         // nothing at all: every other check walks the catalogue, so a name
@@ -535,6 +550,14 @@ mod tests {
             spec.icon_art.iter().map(|art| art.name).collect::<Vec<_>>(),
             icon::builtin_names(),
             "a bundled picture is listed in one place and not the other"
+        );
+        // TP-SPEC-14: the spec publishes the colour vocabulary, and publishes
+        // the same set the parser resolves. Nothing else can teach it — an
+        // unknown colour is not refused, so no message ever names the set.
+        assert_eq!(
+            spec.colors,
+            source::bar_color_tokens(),
+            "a colour name is listed in one place and not the other"
         );
     }
 
@@ -795,6 +818,60 @@ mod tests {
             text.contains("ram also works"),
             "the text rendering stopped explaining the alias"
         );
+
+        // TP-SPEC-14: the colour vocabulary reaches the text rendering too, so
+        // the reader who is not parsing JSON learns the same set.
+        //
+        // Colours are read off their own line rather than searched for in the
+        // whole rendering. `text` and `red` and `blue` are ordinary words in a
+        // grammar dump — `text` is a widget key — so `contains` would answer
+        // yes for names this rendering never printed. That is the exact way the
+        // guide's picture check used to pass without checking anything.
+        let colours = text
+            .lines()
+            .find_map(|line| line.strip_prefix("colours ("))
+            .and_then(|rest| rest.split_once(": "))
+            .map(|(_, names)| names.to_string())
+            .expect("the text rendering still prints a colours line");
+        let printed = colours.split(", ").collect::<Vec<_>>();
+        for name in &spec.colors {
+            assert!(
+                printed.contains(name),
+                "the text rendering never names the colour {name:?}; it printed {printed:?}"
+            );
+        }
+    }
+
+    /// Every bundled picture paints with a colour this build resolves.
+    ///
+    /// The bar holds a person's own colours loosely on purpose: an
+    /// unrecognised one is not refused, it warns into the log and comes back
+    /// cyan, because refusing would mean a config that loads today and not
+    /// tomorrow. That tolerance is right for a colour somebody wrote and can
+    /// see, and wrong for one this build ships: a typo in a bundled palette
+    /// would draw cyan on every machine, and the person looking at it never
+    /// wrote the line that produced it.
+    ///
+    /// A palette token rather than a literal, too. A bundled picture that
+    /// baked `#cba6f7` would be the one mark on the bar that kept its colour
+    /// when somebody switched theme.
+    #[test]
+    fn every_bundled_picture_paints_with_a_colour_this_build_knows() {
+        // TP-ART-07: a bundled palette names colours the bar resolves, so no
+        // shipped picture can arrive as the unknown-colour fallback.
+        let known = source::bar_color_tokens();
+        for name in icon::builtin_names() {
+            let (_, palette) = icon::builtin(name).expect("the name came from the catalogue");
+            assert!(!palette.is_empty(), "{name} paints with no colours at all");
+            for (key, colour) in palette {
+                assert!(
+                    known.contains(&colour.as_str()),
+                    "the bundled picture {name} paints key {key:?} with {colour:?}, which is \
+                     not a colour this build names; it would reach the screen as cyan and \
+                     nobody would have written it. Known: {known:?}"
+                );
+            }
+        }
     }
 
     /// TP-SPEC-10: the whole catalogue is readable.

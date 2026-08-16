@@ -490,17 +490,39 @@ pub(super) fn apply_closed_agent_action(state: &mut AppState, agent_id: String, 
 }
 
 pub(super) fn start_branch_from_module(state: &mut AppState, module_key: String) {
-    match crate::ui::worktree_source_for_module(state, &module_key) {
-        Some(ws_idx) => {
+    use crate::ui::ModuleBranchSource;
+
+    match crate::ui::module_branch_source(state, &module_key) {
+        ModuleBranchSource::Workspace(ws_idx) => {
             state.pending_branch_module = Some(module_key);
             state.request_new_linked_worktree = Some(ws_idx);
             state.context_menu = None;
         }
-        None => {
+        // TP-MOD-37: the module stands in a repository of its own but nothing
+        // has it open yet. Opening it is the missing step, not an error to
+        // report — the person stated this directory so the module would have
+        // somewhere to branch from.
+        ModuleBranchSource::Repository(_) => {
+            state.request_module_branch_workspace = Some(module_key);
+            state.context_menu = None;
+        }
+        // TP-MOD-38: a real directory that is not a repository yet. Saying so
+        // and naming the verb that fixes it is the difference between an
+        // explanation and a dead end.
+        ModuleBranchSource::UninitializedDirectory(dir) => {
             state.config_diagnostic = Some(format!(
-                "no repository under module {module_key:?} yet — move a branch \
-                 under it first, then branch from there"
+                "module {module_key:?} points at {} which is not a git repository yet — \
+                 use \"Initialize git repository\" on the module to set one up",
+                dir.display()
             ));
+            state.context_menu = None;
+        }
+        ModuleBranchSource::NoDirectory => {
+            state.config_diagnostic = Some(format!(
+                "module {module_key:?} has no directory yet — use \"Set directory...\" \
+                 to point it at one, or move a branch under it"
+            ));
+            state.context_menu = None;
         }
     }
 }
@@ -1178,6 +1200,15 @@ pub(super) fn apply_context_menu_action(
                 open_module_dir_input(state, node_key, current);
             }
         }
+        // TP-MOD-38: the step that was missing between "Set directory..." and
+        // "New branch...". The key travels, not the path — the App loop
+        // re-resolves and re-measures before it writes anything, because a
+        // directory can become a repository between the menu opening and this
+        // item being picked.
+        (ContextMenuKind::NodeHeader { node_key, .. }, Some("Initialize git repository")) => {
+            state.request_module_git_init = Some(node_key);
+            leave_modal(state);
+        }
         (ContextMenuKind::NodeHeader { node_key, .. }, Some("Rename module...")) => {
             let parent = state
                 .space_nodes
@@ -1269,6 +1300,22 @@ pub(super) fn apply_context_menu_action(
             Some("Move to branch..."),
         ) => {
             let targets = state.chat_move_target_entries(ws_idx);
+            state.context_menu = Some(crate::app::state::ContextMenuState {
+                kind: ContextMenuKind::ChatMoveTarget {
+                    session_id,
+                    targets,
+                },
+                x: menu_x,
+                y: menu_y,
+                list: crate::app::state::MenuListState::new(0),
+            });
+        }
+        // TP-CHAT-MOVE-11: the module road. It opens the very same target menu
+        // the branch road opens — one picker, two source lists — so a chat
+        // filed into a module travels exactly the path a chat filed into a
+        // branch does, down to the ledger write.
+        (ContextMenuKind::WorkspaceChat { session_id, .. }, Some("Move to module...")) => {
+            let targets = state.module_move_target_entries();
             state.context_menu = Some(crate::app::state::ContextMenuState {
                 kind: ContextMenuKind::ChatMoveTarget {
                     session_id,
@@ -1965,6 +2012,12 @@ impl App {
                     open_module_dir_input(&mut self.state, node_key, current);
                 }
             }
+            // TP-MOD-38: the production twin, for the reason the comment above
+            // "Set directory..." already gives.
+            (ContextMenuKind::NodeHeader { node_key, .. }, Some("Initialize git repository")) => {
+                self.state.request_module_git_init = Some(node_key);
+                leave_modal(&mut self.state);
+            }
             (ContextMenuKind::NodeHeader { node_key, .. }, Some("Rename module...")) => {
                 let parent = self
                     .state
@@ -2055,6 +2108,22 @@ impl App {
                 Some("Move to branch..."),
             ) => {
                 let targets = self.state.chat_move_target_entries(ws_idx);
+                self.state.context_menu = Some(crate::app::state::ContextMenuState {
+                    kind: ContextMenuKind::ChatMoveTarget {
+                        session_id,
+                        targets,
+                    },
+                    x: menu_x,
+                    y: menu_y,
+                    list: crate::app::state::MenuListState::new(0),
+                });
+            }
+            // TP-CHAT-MOVE-11: the same verb on the road the mouse actually
+            // takes. The sibling body above is `#[cfg(test)]`; a menu answered
+            // only there is a menu that works in tests and does nothing in the
+            // product.
+            (ContextMenuKind::WorkspaceChat { session_id, .. }, Some("Move to module...")) => {
+                let targets = self.state.module_move_target_entries();
                 self.state.context_menu = Some(crate::app::state::ContextMenuState {
                     kind: ContextMenuKind::ChatMoveTarget {
                         session_id,
@@ -3330,6 +3399,7 @@ mod tests {
 
         let managed = ContextMenuState {
             kind: ContextMenuKind::NodeHeader {
+                needs_git_init: false,
                 node_key: "group:docs".into(),
                 collapsed: false,
                 deletable: true,
@@ -3373,6 +3443,7 @@ mod tests {
         // module.
         let hand_written = ContextMenuState {
             kind: ContextMenuKind::NodeHeader {
+                needs_git_init: false,
                 node_key: "group:docs".into(),
                 collapsed: false,
                 deletable: false,
@@ -3459,6 +3530,230 @@ mod tests {
             ),
             "the verb hands off to the agent menu; got {:?}",
             app.state.context_menu.as_ref().map(|menu| &menu.kind)
+        );
+    }
+
+    // M1.6 / TP-CHAT-MOVE-11: the module verb appears when the tree declares
+    // any module at all. Its absence when there is none is M1.5 below.
+    #[test]
+    fn a_chat_menu_offers_the_module_verb_when_modules_exist() {
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::WorkspaceChat {
+                ws_idx: Some(0),
+                session_id: "s".to_string(),
+                has_move: false,
+                has_live: false,
+                has_modules: true,
+            },
+            x: 0,
+            y: 0,
+            list: crate::app::state::MenuListState::new(0),
+        };
+
+        assert_eq!(
+            menu.items(),
+            vec!["Rename chat...", "Move to branch...", "Move to module..."],
+            "the module road sits beside the branch road, named for what it does"
+        );
+    }
+
+    // M1.5 / TP-CHAT-MOVE-11: with no module declared the verb would open an
+    // empty picker — a button that does nothing.
+    #[test]
+    fn a_chat_menu_without_modules_offers_no_module_verb() {
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::WorkspaceChat {
+                ws_idx: Some(0),
+                session_id: "s".to_string(),
+                has_move: false,
+                has_live: false,
+                has_modules: false,
+            },
+            x: 0,
+            y: 0,
+            list: crate::app::state::MenuListState::new(0),
+        };
+
+        assert_eq!(menu.items(), vec!["Rename chat...", "Move to branch..."]);
+    }
+
+    // M1.7 / TP-CHAT-MOVE-11 / constraint 31: BOTH bodies answer the module
+    // verb, and both open the same target picker. #91 shipped a menu entry
+    // wired into only the `#[cfg(test)]` body: green tests, dead affordance.
+    #[test]
+    fn both_context_menu_bodies_open_the_module_picker() {
+        let mut app = app_with_test_workspaces(&["main"]);
+        app.state.space_nodes = vec![crate::spaces::SpaceNode {
+            key: "docs".to_string(),
+            name: "Docs".to_string(),
+            icon: None,
+            parent: None,
+            dir: None,
+        }];
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::WorkspaceChat {
+                ws_idx: Some(0),
+                session_id: "s".to_string(),
+                has_move: false,
+                has_live: false,
+                has_modules: true,
+            },
+            x: 0,
+            y: 0,
+            list: crate::app::state::MenuListState::new(0),
+        };
+        let idx = menu
+            .items()
+            .iter()
+            .position(|item| *item == "Move to module...")
+            .expect("the verb is on the menu");
+
+        app.apply_context_menu_action_via_api(menu.clone(), idx);
+        assert!(
+            matches!(
+                app.state.context_menu.as_ref().map(|m| &m.kind),
+                Some(ContextMenuKind::ChatMoveTarget { .. })
+            ),
+            "the production body must open the target picker; got {:?}",
+            app.state.context_menu.as_ref().map(|m| &m.kind)
+        );
+
+        app.state.context_menu = None;
+        let mut terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
+        apply_context_menu_action(&mut app.state, &mut terminal_runtimes, menu, idx);
+        assert!(
+            matches!(
+                app.state.context_menu.as_ref().map(|m| &m.kind),
+                Some(ContextMenuKind::ChatMoveTarget { .. })
+            ),
+            "and so must the test body"
+        );
+    }
+
+    // M2.7 / TP-MOD-37: a module with no directory is told which verb fixes
+    // that. The old answer named a road ("move a branch under it first") that
+    // does not exist for a module the person gave a directory to instead.
+    #[test]
+    fn branching_a_module_with_no_directory_points_at_set_directory() {
+        let mut app = app_with_test_workspaces(&["main"]);
+        app.state.space_nodes = vec![crate::spaces::SpaceNode {
+            key: "docs".to_string(),
+            name: "Docs".to_string(),
+            icon: None,
+            parent: None,
+            dir: None,
+        }];
+
+        start_branch_from_module(&mut app.state, "docs".to_string());
+
+        let diagnostic = app
+            .state
+            .config_diagnostic
+            .as_deref()
+            .expect("the refusal says something");
+        assert!(
+            diagnostic.contains("Set directory"),
+            "a refusal must name the next step; got {diagnostic:?}"
+        );
+    }
+
+    // M2.8-pre / TP-MOD-38: a module whose directory is not a repository yet
+    // is told about the verb that makes it one, rather than about a road that
+    // does not apply.
+    #[test]
+    fn branching_an_uninitialised_module_points_at_the_init_verb() {
+        let dir =
+            std::env::temp_dir().join(format!("herdr-modgap-init-hint-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch directory");
+        let mut app = app_with_test_workspaces(&["main"]);
+        app.state.space_nodes = vec![crate::spaces::SpaceNode {
+            key: "docs".to_string(),
+            name: "Docs".to_string(),
+            icon: None,
+            parent: None,
+            dir: Some(dir.clone()),
+        }];
+
+        start_branch_from_module(&mut app.state, "docs".to_string());
+
+        let diagnostic = app
+            .state
+            .config_diagnostic
+            .as_deref()
+            .expect("the refusal says something");
+        assert!(
+            diagnostic.contains("Initialize git repository"),
+            "the refusal must name the verb that fixes it; got {diagnostic:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // TP-MOD-38: the menu offers the init verb only in the state it can fix.
+    #[test]
+    fn the_init_verb_is_offered_only_when_it_has_work() {
+        let offered = ContextMenuState {
+            kind: ContextMenuKind::NodeHeader {
+                node_key: "docs".to_string(),
+                collapsed: false,
+                deletable: false,
+                needs_git_init: true,
+            },
+            x: 0,
+            y: 0,
+            list: crate::app::state::MenuListState::new(0),
+        };
+        assert!(offered.items().contains(&"Initialize git repository"));
+
+        let withheld = ContextMenuState {
+            kind: ContextMenuKind::NodeHeader {
+                node_key: "docs".to_string(),
+                collapsed: false,
+                deletable: false,
+                needs_git_init: false,
+            },
+            x: 0,
+            y: 0,
+            list: crate::app::state::MenuListState::new(0),
+        };
+        assert!(!withheld.items().contains(&"Initialize git repository"));
+    }
+
+    // TP-MOD-38 / constraint 31: both bodies arm the init request.
+    #[test]
+    fn both_context_menu_bodies_request_the_git_init() {
+        let mut app = app_with_test_workspaces(&["main"]);
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::NodeHeader {
+                node_key: "docs".to_string(),
+                collapsed: false,
+                deletable: false,
+                needs_git_init: true,
+            },
+            x: 0,
+            y: 0,
+            list: crate::app::state::MenuListState::new(0),
+        };
+        let idx = menu
+            .items()
+            .iter()
+            .position(|item| *item == "Initialize git repository")
+            .expect("the verb is on the menu");
+
+        app.apply_context_menu_action_via_api(menu.clone(), idx);
+        assert_eq!(
+            app.state.request_module_git_init.as_deref(),
+            Some("docs"),
+            "the production body must arm the request"
+        );
+
+        app.state.request_module_git_init = None;
+        let mut terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
+        apply_context_menu_action(&mut app.state, &mut terminal_runtimes, menu, idx);
+        assert_eq!(
+            app.state.request_module_git_init.as_deref(),
+            Some("docs"),
+            "and so must the test body"
         );
     }
 
@@ -3824,6 +4119,7 @@ mod tests {
         app.state.mode = Mode::ContextMenu;
         let menu = ContextMenuState {
             kind: ContextMenuKind::WorkspaceChat {
+                has_modules: false,
                 ws_idx: Some(0),
                 session_id: "s1".into(),
                 has_move: false,
@@ -3872,6 +4168,7 @@ mod tests {
         app.state.mode = Mode::ContextMenu;
         let menu = ContextMenuState {
             kind: ContextMenuKind::WorkspaceChat {
+                has_modules: false,
                 ws_idx: Some(0),
                 session_id: "s1".into(),
                 has_move: true,
@@ -3923,6 +4220,7 @@ mod tests {
     fn header_menus_offer_creation_and_the_right_fold_verb() {
         let node_menu = |collapsed| ContextMenuState {
             kind: ContextMenuKind::NodeHeader {
+                needs_git_init: false,
                 node_key: "group:docs".into(),
                 collapsed,
                 deletable: false,
@@ -3982,6 +4280,7 @@ mod tests {
     fn a_node_menu(key: &str, deletable: bool) -> ContextMenuState {
         ContextMenuState {
             kind: ContextMenuKind::NodeHeader {
+                needs_git_init: false,
                 node_key: key.into(),
                 collapsed: false,
                 deletable,
@@ -4057,6 +4356,7 @@ mod tests {
     fn module_menus_lead_with_new_branch() {
         let node_menu = ContextMenuState {
             kind: ContextMenuKind::NodeHeader {
+                needs_git_init: false,
                 node_key: "group:docs".into(),
                 collapsed: false,
                 deletable: false,
@@ -4118,6 +4418,7 @@ mod tests {
 
         let menu = ContextMenuState {
             kind: ContextMenuKind::NodeHeader {
+                needs_git_init: false,
                 node_key: "group:docs".into(),
                 collapsed: false,
                 deletable: true,
@@ -4232,6 +4533,7 @@ mod tests {
     fn a_chat_row_offers_to_be_renamed() {
         let chat_menu = |ws_idx: Option<usize>| ContextMenuState {
             kind: ContextMenuKind::WorkspaceChat {
+                has_modules: false,
                 ws_idx,
                 session_id: "s1".into(),
                 has_move: false,
@@ -4393,6 +4695,7 @@ mod tests {
         let mut app = app_with_movable_branch();
         let menu = ContextMenuState {
             kind: ContextMenuKind::NodeHeader {
+                needs_git_init: false,
                 node_key: "group:ui".into(),
                 collapsed: false,
                 deletable: false,
@@ -4441,6 +4744,7 @@ mod tests {
         ];
         let menu_for = |key: &str| ContextMenuState {
             kind: ContextMenuKind::NodeHeader {
+                needs_git_init: false,
                 node_key: key.into(),
                 collapsed: false,
                 deletable: false,
@@ -4503,6 +4807,7 @@ mod tests {
 
         let node_menu = |collapsed| ContextMenuState {
             kind: ContextMenuKind::NodeHeader {
+                needs_git_init: false,
                 node_key: "group:ui".into(),
                 collapsed,
                 deletable: false,
@@ -4616,6 +4921,7 @@ mod tests {
     fn node_menu(node_key: &str, deletable: bool) -> ContextMenuState {
         ContextMenuState {
             kind: ContextMenuKind::NodeHeader {
+                needs_git_init: false,
                 node_key: node_key.into(),
                 collapsed: false,
                 deletable,
@@ -4771,6 +5077,7 @@ mod tests {
 
         let menu = ContextMenuState {
             kind: ContextMenuKind::WorkspaceChat {
+                has_modules: false,
                 ws_idx: None,
                 session_id: "daily-a".to_string(),
                 has_move: false,
@@ -4919,6 +5226,7 @@ mod tests {
     fn a_chat_row_offers_close_only_while_something_is_running() {
         let live = ContextMenuState {
             kind: ContextMenuKind::WorkspaceChat {
+                has_modules: false,
                 ws_idx: Some(0),
                 session_id: "s1".into(),
                 has_move: false,
@@ -4938,6 +5246,7 @@ mod tests {
 
         let finished = ContextMenuState {
             kind: ContextMenuKind::WorkspaceChat {
+                has_modules: false,
                 ws_idx: Some(0),
                 session_id: "s1".into(),
                 has_move: true,
@@ -4969,6 +5278,7 @@ mod tests {
 
         let menu = |session: &str| ContextMenuState {
             kind: ContextMenuKind::WorkspaceChat {
+                has_modules: false,
                 ws_idx: Some(0),
                 session_id: session.into(),
                 has_move: false,
