@@ -2976,14 +2976,15 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
         };
         assert_eq!(log.status, PluginCommandStatus::Running);
 
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while std::time::Instant::now() < deadline {
+        let wait = LoadAwareDeadline::new(5, "a plugin command to stop running");
+        loop {
             app.drain_all_internal_events();
             if app.state.plugin_command_logs.iter().any(|entry| {
                 entry.log_id == log.log_id && entry.status != PluginCommandStatus::Running
             }) {
                 break;
             }
+            wait.check();
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
 
@@ -3123,14 +3124,15 @@ command = ["sh", "-c", "printf '%s\n%s\n%s' \"$HERDR_PLUGIN_ROOT\" \"$HERDR_PLUG
             panic!("expected plugin action invocation: {invoke}");
         };
 
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while std::time::Instant::now() < deadline {
+        let wait = LoadAwareDeadline::new(5, "a plugin command to stop running");
+        loop {
             app.drain_all_internal_events();
             if app.state.plugin_command_logs.iter().any(|entry| {
                 entry.log_id == log.log_id && entry.status != PluginCommandStatus::Running
             }) {
                 break;
             }
+            wait.check();
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
 
@@ -3509,14 +3511,15 @@ action = "open"
             .expect("plugin command log should be recorded")
             .clone();
 
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while std::time::Instant::now() < deadline {
+        let wait = LoadAwareDeadline::new(5, "a plugin command to stop running");
+        loop {
             app.drain_all_internal_events();
             if app.state.plugin_command_logs.iter().any(|entry| {
                 entry.log_id == log.log_id && entry.status != PluginCommandStatus::Running
             }) {
                 break;
             }
+            wait.check();
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
 

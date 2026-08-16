@@ -1889,6 +1889,10 @@ mod tests {
             "styled Unicode and hyperlink text should survive history replay"
         );
 
+        // Best effort, and deliberately not a `LoadAwareDeadline`: this waits only
+        // so the shell is up before being told to exit, and a cwd that never
+        // arrives is a slower machine rather than a broken product. Turning it
+        // into a panic would invent a failure the test was never about.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         while runtime.cwd().is_none() && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -1928,6 +1932,10 @@ mod tests {
             "pane history should not restore unless a history snapshot is supplied"
         );
 
+        // Best effort, and deliberately not a `LoadAwareDeadline`: this waits only
+        // so the shell is up before being told to exit, and a cwd that never
+        // arrives is a slower machine rather than a broken product. Turning it
+        // into a panic would invent a failure the test was never about.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         while runtime.cwd().is_none() && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(10));

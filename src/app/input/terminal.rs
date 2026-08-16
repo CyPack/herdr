@@ -377,6 +377,7 @@ impl App {
 
 #[cfg(test)]
 mod tests {
+    use crate::app::test_wait::LoadAwareDeadline;
     use crossterm::event::{KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
     use ratatui::layout::Rect;
 
@@ -1457,12 +1458,13 @@ mod tests {
             wait_for_file(&output_path),
             format!("unset|{focused_pane_id}")
         );
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        while std::time::Instant::now() < deadline {
+        let wait = LoadAwareDeadline::new(2, "the popup pane to close");
+        loop {
             app.drain_internal_events();
             if app.state.popup_pane.is_none() {
                 break;
             }
+            wait.check();
         }
 
         assert!(app.state.popup_pane.is_none());
