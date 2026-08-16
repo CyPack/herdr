@@ -122,7 +122,7 @@ pub(crate) use self::{
         agent_panel_scroll_for_target, agent_panel_scroll_metrics, agent_panel_scrollbar_rect,
         agent_panel_toggle_rect, all_agent_panel_entries, closed_agent_row_slots,
         collapsed_sidebar_sections, collapsed_sidebar_toggle_rect, compute_workspace_card_areas,
-        daily_new_chat_cell, effective_space, expanded_sidebar_sections,
+        daily_chat_rows, daily_new_chat_cell, effective_space, expanded_sidebar_sections,
         expanded_sidebar_toggle_rect, header_menu_cell, header_new_branch_cell,
         normalized_workspace_scroll, projects_scroll_metrics, projects_scrollbar_rect,
         sidebar_section_divider_rect, space_owner_for_key, workspace_chat_rows_for,
@@ -454,6 +454,7 @@ fn compute_view_internal(
         workspace_more_chats_areas,
         workspace_empty_module_areas,
         daily_areas,
+        module_chat_row_areas,
     ) = if app.sidebar_collapsed || !show_spaces_content {
         (
             Vec::new(),
@@ -463,6 +464,7 @@ fn compute_view_internal(
             Vec::new(),
             Vec::new(),
             sidebar::DailySectionAreas::default(),
+            Vec::new(),
         )
     } else {
         sidebar::compute_workspace_list_areas(app, sidebar_area)
@@ -576,6 +578,7 @@ fn compute_view_internal(
         workspace_empty_module_areas,
         daily_header_area: daily_areas.header,
         daily_chat_row_areas: daily_areas.chats,
+        module_chat_row_areas,
         daily_more_area: daily_areas.more,
         sidebar_tab_hit_areas,
         project_row_areas,
@@ -744,6 +747,7 @@ fn compute_mobile_view(
         workspace_more_chats_areas: Vec::new(),
         daily_header_area: None,
         daily_chat_row_areas: Vec::new(),
+        module_chat_row_areas: Vec::new(),
         daily_more_area: None,
         workspace_group_header_areas: Vec::new(),
         workspace_project_header_areas: Vec::new(),

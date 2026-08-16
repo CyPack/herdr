@@ -709,6 +709,19 @@ pub struct DailyChatRowArea {
     pub chat_idx: usize,
 }
 
+/// One laid-out chat row under a declared container.
+///
+/// TP-CHAT-MOVE-06: it names its container and its position in that
+/// container's list, and carries no `ws_idx` for the same reason the daily row
+/// carries none — a container is not a workspace and may have no directory at
+/// all, so a workspace index here would be invented.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModuleChatRowArea {
+    pub rect: Rect,
+    pub node_key: String,
+    pub chat_idx: usize,
+}
+
 /// The laid-out "… N older" / "… fewer" row of one drawer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceMoreChatsArea {
@@ -1651,6 +1664,8 @@ pub struct ViewState {
     /// switch answer three different gestures and so keep three vectors.
     pub daily_header_area: Option<Rect>,
     pub daily_chat_row_areas: Vec<DailyChatRowArea>,
+    /// TP-CHAT-MOVE-06: the laid-out chat rows of declared containers.
+    pub module_chat_row_areas: Vec<ModuleChatRowArea>,
     pub daily_more_area: Option<Rect>,
     /// Worktree-group header rows, kept apart for the same reason: a header is
     /// not a workspace, so it must never be resolvable through a ws_idx.
@@ -2313,7 +2328,13 @@ pub enum ContextMenuKind {
     /// (TP-CHAT-MOVE-04); `has_move` decides whether "Move back" shows and
     /// `has_live` whether the chat has a running tab to close (TP-AGPANEL-05).
     WorkspaceChat {
-        ws_idx: usize,
+        /// The drawer this row was pressed in, or `None` for a daily row.
+        ///
+        /// TP-CHAT-MOVE-08: the daily section is not a workspace and its chats
+        /// belong to no drawer, so there is nothing to exclude from the move
+        /// picker. Naming an arbitrary workspace here would silently drop a
+        /// legitimate destination from the list.
+        ws_idx: Option<usize>,
         session_id: String,
         has_move: bool,
         has_live: bool,
@@ -2326,6 +2347,15 @@ pub enum ContextMenuKind {
         ws_idx: usize,
         tab_idx: usize,
         pane_id: crate::layout::PaneId,
+        /// The chat this row is running, when the ledger knows it.
+        ///
+        /// TP-AGPANEL-28: carried in the menu rather than looked up when the
+        /// verb fires, for the reason TP-AGPANEL-06 already states — a menu
+        /// can outlive the panel it was opened from, and a late lookup would
+        /// answer for whatever moved into that slot. `None` when the tab was
+        /// never opened to resume a known session; such a chat has no identity
+        /// the ledger can file, so it cannot be moved.
+        session_id: Option<String>,
     },
     /// The drawer picker a chat move opens: open workspaces as
     /// `(ledger key, display name)`, resolved by index like MoveTarget.
@@ -2501,7 +2531,17 @@ impl ContextMenuState {
             }
             // TP-AGPANEL-03: the agents panel lists what is running, so the
             // single verb it owns is ending one.
-            ContextMenuKind::AgentEntry { .. } => vec!["Close agent"],
+            // TP-AGPANEL-28: the panel row can send its chat somewhere, when
+            // the ledger knows which chat it is. The move verb comes first and
+            // the close verb stays last — the one item here that cannot be
+            // undone belongs at the end (TP-AGPANEL-05's ordering).
+            ContextMenuKind::AgentEntry { session_id, .. } => {
+                if session_id.is_some() {
+                    vec!["Move to...", "Close agent"]
+                } else {
+                    vec!["Close agent"]
+                }
+            }
             ContextMenuKind::ChatMoveTarget { targets, .. } => {
                 targets.iter().map(|(_, label)| label.as_str()).collect()
             }
@@ -3332,6 +3372,15 @@ pub struct AppState {
     /// state layer needs it to build the chat menu; the ledger itself lives
     /// on the App and is the only writer.
     pub chat_move_overrides: std::collections::BTreeMap<String, String>,
+    /// Ledger keys this display filed a chat into, most recent first.
+    ///
+    /// TP-CHAT-MOVE-09: the request that started this feature said it should
+    /// take "a few clicks" because the work develops spontaneously. A list
+    /// that grows with every workspace and module answers that badly — the
+    /// place you filed something into a minute ago is overwhelmingly the place
+    /// you mean next. Client-local and not persisted: it is a convenience of
+    /// this session's hand, not a fact about the tree.
+    pub recent_move_targets: Vec<String>,
     /// A chat re-home decision waiting for the App loop, which owns the
     /// ledger: `(session_id, Some(target))` moves, `(session_id, None)`
     /// withdraws (TP-CHAT-MOVE-04).
@@ -4445,6 +4494,7 @@ impl AppState {
             pending_new_module: None,
             pending_branch_module: None,
             chat_move_overrides: Default::default(),
+            recent_move_targets: Vec::new(),
             request_chat_move: None,
             request_new_workspace_cwd: None,
             request_remove_linked_worktree: None,
@@ -4522,6 +4572,7 @@ impl AppState {
                 workspace_more_chats_areas: Vec::new(),
                 daily_header_area: None,
                 daily_chat_row_areas: Vec::new(),
+                module_chat_row_areas: Vec::new(),
                 daily_more_area: None,
                 workspace_group_header_areas: Vec::new(),
                 workspace_project_header_areas: Vec::new(),
@@ -4966,9 +5017,16 @@ impl AppState {
                 ContextMenuKind::Workspace { ws_idx }
                 | ContextMenuKind::GitWorkspace { ws_idx, .. }
                 | ContextMenuKind::MoveWorkspace { ws_idx, .. }
-                | ContextMenuKind::MoveTarget { ws_idx, .. }
-                | ContextMenuKind::WorkspaceChat { ws_idx, .. } => {
+                | ContextMenuKind::MoveTarget { ws_idx, .. } => {
                     assert_workspace_index(ws_idx, "context menu workspace")
+                }
+                // TP-CHAT-MOVE-08: a chat row names a drawer only when it was
+                // pressed in one; a daily row was not, and there is no index
+                // to check.
+                ContextMenuKind::WorkspaceChat { ws_idx, .. } => {
+                    if let Some(ws_idx) = ws_idx {
+                        assert_workspace_index(ws_idx, "context menu chat workspace");
+                    }
                 }
                 ContextMenuKind::ChatMoveTarget { .. } => {
                     // Carries a session id and pre-resolved ledger keys; no
@@ -5034,6 +5092,7 @@ impl AppState {
                     ws_idx,
                     tab_idx,
                     pane_id,
+                    ..
                 } => {
                     // TP-AGPANEL-03: the row's target is the menu's identity —
                     // it must still name a live pane, or the close would fire
@@ -6188,7 +6247,7 @@ mod tests {
     fn the_chat_menu_offers_move_and_conditionally_back() {
         let plain = ContextMenuState {
             kind: ContextMenuKind::WorkspaceChat {
-                ws_idx: 0,
+                ws_idx: Some(0),
                 session_id: "s1".into(),
                 has_move: false,
                 has_live: false,
@@ -6201,7 +6260,7 @@ mod tests {
 
         let moved = ContextMenuState {
             kind: ContextMenuKind::WorkspaceChat {
-                ws_idx: 0,
+                ws_idx: Some(0),
                 session_id: "s1".into(),
                 has_move: true,
                 has_live: false,

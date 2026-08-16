@@ -383,6 +383,34 @@ impl AppState {
     /// at whatever workspace happens to be active — that substitution is
     /// exactly how #46 opened an agent in `$HOME` instead of the checkout,
     /// with the roles reversed.
+    /// Take a press on a container's chat row where it can actually go.
+    ///
+    /// TP-CHAT-MOVE-07: a live chat is switched to, exactly as every other
+    /// chat row does. A chat that is *not* running does nothing here, and that
+    /// is deliberate rather than unfinished: a declared container has no
+    /// directory, and the ledger records where a chat was moved *to*, never
+    /// where it came from — so there is no honest cwd to resume it into.
+    /// Guessing one would resume the conversation in whatever checkout
+    /// happened to be active, which is #46 with the roles reversed. Giving a
+    /// container a directory is what unlocks the rest, and that is its own
+    /// piece of work.
+    pub(crate) fn open_module_chat(&mut self, node_key: &str, chat_idx: usize) {
+        let key = crate::persist::workspace_chats::module_ledger_key(node_key);
+        // A stale index is a race, not a bug — same contract as the daily row.
+        let Some(session_id) = self
+            .workspace_chat_rows
+            .get(&key)
+            .and_then(|rows| rows.get(chat_idx))
+            .map(|row| row.session_id.clone())
+        else {
+            return;
+        };
+        if let Some((live_ws, live_tab)) = self.find_resumed_chat_tab(&session_id) {
+            self.switch_workspace_tab(live_ws, live_tab);
+            self.mode = crate::app::Mode::Terminal;
+        }
+    }
+
     pub(crate) fn open_daily_chat(&mut self, chat_idx: usize) {
         let Some(project_path) = self.daily_chat_cwd.clone() else {
             return;
