@@ -11,9 +11,9 @@
 //! live session is impossible by construction), 20 panes each producing ~20
 //! lines/second, N handshaked app clients draining frames, an 8 s warmup, and
 //! a 25 s measurement window. Reported per point: server CPU (utime+stime
-//! delta over the window), bytes written by the server process (wchar delta),
-//! frames received per client, and the machine's 1-minute load average as a
-//! noise disclosure.
+//! delta over the window), wire bytes drained by the clients (summed from the
+//! per-message counters each drain thread keeps), frames received per client,
+//! and the machine's 1-minute load average as a noise disclosure.
 
 mod support;
 
@@ -252,15 +252,6 @@ fn proc_cpu_ticks(pid: u32) -> u64 {
     utime + stime
 }
 
-fn proc_wchar(pid: u32) -> u64 {
-    fs::read_to_string(format!("/proc/{pid}/io"))
-        .unwrap_or_default()
-        .lines()
-        .find_map(|line| line.strip_prefix("wchar: "))
-        .and_then(|v| v.trim().parse().ok())
-        .unwrap_or(0)
-}
-
 fn loadavg_1m() -> String {
     fs::read_to_string("/proc/loadavg")
         .unwrap_or_default()
@@ -278,7 +269,7 @@ fn render_cost_curve() {
     let window = Duration::from_secs(25);
 
     println!();
-    println!("| clients | cpu % | MB/s written | frames/s/client | load1m |");
+    println!("| clients | cpu % | MB/s to clients | frames/s/client | load1m |");
     println!("|---|---|---|---|---|");
 
     for &n_clients in &[0usize, 1, 2, 4, 8, 10] {
@@ -310,7 +301,10 @@ fn render_cost_curve() {
         thread::sleep(warmup);
 
         let cpu_before = proc_cpu_ticks(server_pid);
-        let wchar_before = proc_wchar(server_pid);
+        let bytes_before: u64 = clients
+            .iter()
+            .map(|c| c.bytes.load(Ordering::Relaxed))
+            .sum();
         let frames_before: u64 = clients
             .iter()
             .map(|c| c.frames.load(Ordering::Relaxed))
@@ -319,14 +313,21 @@ fn render_cost_curve() {
         thread::sleep(window);
         let elapsed = started.elapsed().as_secs_f64();
         let cpu_after = proc_cpu_ticks(server_pid);
-        let wchar_after = proc_wchar(server_pid);
+        let bytes_after: u64 = clients
+            .iter()
+            .map(|c| c.bytes.load(Ordering::Relaxed))
+            .sum();
         let frames_after: u64 = clients
             .iter()
             .map(|c| c.frames.load(Ordering::Relaxed))
             .sum();
 
         let cpu_pct = (cpu_after - cpu_before) as f64 / clk_tck / elapsed * 100.0;
-        let mbps = (wchar_after - wchar_before) as f64 / elapsed / 1_048_576.0;
+        // Wire bytes counted on the client side of the socket: the first run
+        // read the server's /proc wchar for this column and it came back 0 —
+        // the drained frames were already counted per-message in each client
+        // thread, so that counter is the measurement, not a debug leftover.
+        let mbps = (bytes_after - bytes_before) as f64 / elapsed / 1_048_576.0;
         let frames_per_client = if n_clients == 0 {
             0.0
         } else {
@@ -343,7 +344,6 @@ fn render_cost_curve() {
         }
         for client in clients {
             let _ = client.handle.join();
-            let _ = client.bytes; // counted via frames table; kept for debugging
         }
         let _ = request(
             &api_socket,
