@@ -1691,6 +1691,12 @@ pub struct ExperimentalConfig {
     pub kitty_graphics: bool,
     /// Persist pane screen history to session-history.json. Default: false.
     pub pane_history: bool,
+    /// Automatically put retired panes to sleep: a pane whose child process
+    /// has exited and that no display is watching gets its scrollback written
+    /// to disk and its runtime released after a quiet period. Touching the
+    /// pane wakes it with its history replayed. Panes with a running process
+    /// are never touched. Default: false.
+    pub pane_dormancy: bool,
     /// Expose the focused pane's cursor anchor to the outer terminal even when
     /// the pane requested `?25l`, so macOS native input methods keep tracking
     /// the candidate window when TUIs paint their own cursor (Claude Code, pi,

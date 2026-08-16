@@ -21,6 +21,7 @@ mod file_manager_locations;
 #[cfg(test)]
 pub(crate) use file_manager_locations::FileManagerLocationLoadError;
 pub(crate) use file_manager_locations::FileManagerLocationsFocus;
+mod dormancy;
 mod file_manager_locations_model;
 mod file_manager_miller;
 mod file_manager_watcher;
@@ -124,6 +125,14 @@ pub struct App {
     pub(crate) event_hub: crate::api::EventHub,
     pub(crate) last_focus: Option<(usize, crate::layout::PaneId)>,
     pub(crate) no_session: bool,
+    /// Test override for where dormant scrollback files go; `None` means the
+    /// session data directory decides.
+    pub(crate) dormant_dir: Option<std::path::PathBuf>,
+    /// `[experimental] pane_dormancy` — whether the periodic sweep runs.
+    pub(crate) pane_dormancy_enabled: bool,
+    pub(crate) next_dormancy_sweep_at: Option<Instant>,
+    /// When each terminal's child was first seen exited, for the quiet clock.
+    pub(crate) pane_retired_since: HashMap<crate::terminal::TerminalId, Instant>,
     pub(crate) input_rx: Option<mpsc::Receiver<crate::raw_input::RawInputEvent>>,
     file_manager_watcher: per_display::PerDisplay<file_manager_watcher::NativeFileManagerWatcher>,
     file_manager_io_worker: per_display::PerDisplay<file_manager_io_worker::FileManagerIoWorker>,
@@ -1210,6 +1219,10 @@ impl App {
             event_hub,
             last_focus,
             no_session,
+            dormant_dir: None,
+            pane_dormancy_enabled: config.experimental.pane_dormancy,
+            next_dormancy_sweep_at: None,
+            pane_retired_since: HashMap::new(),
             input_rx: None,
             file_manager_watcher: per_display::PerDisplay::default(),
             file_manager_io_worker: per_display::PerDisplay::default(),
@@ -1984,6 +1997,7 @@ impl App {
             self.state.switch_ascii_input_source_in_prefix =
                 config.experimental.switch_ascii_input_source_in_prefix;
             self.persist_pane_history = config.experimental.pane_history;
+            self.pane_dormancy_enabled = config.experimental.pane_dormancy;
             self.state.pane_history_persistence = config.experimental.pane_history;
             if !self.persist_pane_history {
                 crate::persist::clear_history();

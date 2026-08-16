@@ -4239,6 +4239,8 @@ impl HeadlessServer {
         changed |= self.app.sync_file_operation_worker();
         changed |= self.app.sync_file_manager_agent_handoff_send();
         changed |= self.app.sync_agent_attachment_delivery();
+        changed |= self.app.sync_pane_dormancy_sweep(now);
+        changed |= self.app.wake_dormant_panes_on_watched_tabs();
         // Each display browses its own directory, so the file workers run
         // once per display, inside that display's view. TP-SUR-FM-02
         changed |= self.app.for_each_display(|app| {

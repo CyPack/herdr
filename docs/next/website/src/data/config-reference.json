@@ -1251,6 +1251,12 @@
           "description": "Persist pane screen history to session-history.json."
         },
         {
+          "key": "experimental.pane_dormancy",
+          "type": "boolean",
+          "default": "false",
+          "description": "Automatically put retired panes to sleep: a pane whose child process has exited and that no display is watching gets its scrollback written to disk and its runtime released after a quiet period. Touching the pane wakes it with its history replayed. Panes with a running process are never touched."
+        },
+        {
           "key": "experimental.reveal_hidden_cursor_for_cjk_ime",
           "type": "boolean",
           "default": "false",
