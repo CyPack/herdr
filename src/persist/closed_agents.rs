@@ -105,6 +105,16 @@ pub fn prune(
     // Newest first: the panel draws in this order and the truncation below
     // must drop the oldest, not whatever happened to be written last.
     records.sort_by_key(|record| std::cmp::Reverse(record.closed_at));
+    // TP-AGPANEL-41: one identity, one headstone. Seeding walks the drawer's
+    // rows per directory key, and one conversation can appear under two of
+    // them — `$HOME` and a checkout inside it both list it — so the same chat
+    // was derived twice and stood in the panel twice. Deduped here rather than
+    // at the seeding site because this is the single gate every record passes,
+    // whether it was witnessed, derived, or read back from disk. Newest wins:
+    // the list is already sorted, so the first sighting of an id is its most
+    // recent one.
+    let mut seen = std::collections::HashSet::new();
+    records.retain(|record| seen.insert(record.agent_id.clone()));
     records.retain(|record| now_ms.saturating_sub(record.closed_at) <= retention_ms);
     records.truncate(MAX_RECORDS);
     records
@@ -367,6 +377,28 @@ mod tests {
                 .iter()
                 .any(|r| r.agent_id == format!("g{}", MAX_RECORDS + 4)),
             "the oldest is the one evicted"
+        );
+    }
+
+    // TP-AGPANEL-41: one identity, one headstone — and the surviving row is
+    // the most recent sighting. Seeding walks the drawer per directory key and
+    // one conversation can appear under two of them, which is how the live
+    // panel came back with the same title twice.
+    #[test]
+    fn one_identity_leaves_one_headstone() {
+        let now = RETENTION_MS * 2;
+
+        let kept = prune(
+            vec![record("twin", now - 5_000), record("twin", now - 1_000)],
+            now,
+            RETENTION_MS,
+        );
+
+        assert_eq!(kept.len(), 1, "the same chat cannot stand twice");
+        assert_eq!(
+            kept[0].closed_at,
+            now - 1_000,
+            "the most recent sighting is the one that survives"
         );
     }
 
