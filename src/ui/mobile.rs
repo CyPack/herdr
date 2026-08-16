@@ -69,7 +69,7 @@ pub(crate) struct MobileDrawerAreas {
     pub footer: Rect,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum MobileSwitcherTarget {
     NewWorkspace,
     Workspace(usize),
@@ -918,7 +918,7 @@ pub(crate) fn mobile_drawer_default_cursor(app: &AppState) -> usize {
         .and_then(|target| {
             spans
                 .iter()
-                .find(|(_, row)| row.target == Some(target))
+                .find(|(_, row)| row.target.as_ref() == Some(&target))
                 .map(|(span, _)| span.start)
         })
         .or_else(|| mobile_drawer_cursor_stops(app).first().copied())
@@ -931,7 +931,7 @@ pub(crate) fn mobile_drawer_cursor_target(app: &AppState) -> Option<MobileSwitch
     drawer_row_spans(&rows)
         .into_iter()
         .find(|(span, _)| span.contains(&app.mobile_drawer_cursor))
-        .and_then(|(_, row)| row.target)
+        .and_then(|(_, row)| row.target.clone())
 }
 
 /// The document range the cursor's row occupies.
@@ -962,7 +962,7 @@ pub(crate) fn mobile_drawer_target_at(
         return drawer_row_spans(&rows)
             .into_iter()
             .find(|(span, _)| span.contains(&doc_row))
-            .and_then(|(_, r)| r.target);
+            .and_then(|(_, r)| r.target.clone());
     }
 
     // The title band: on the left drawer it is the segment switcher, split
@@ -998,7 +998,7 @@ pub(crate) fn mobile_drawer_target_at(
     let hit = drawer_row_spans(&rows)
         .into_iter()
         .find(|(span, _)| span.contains(&doc_row))
-        .map(|(_, r)| (r.target, r.content.clone()));
+        .map(|(_, r)| (r.target.clone(), r.content.clone()));
     let (target, row_content) = hit?;
     // A workspace row carries three tap zones. The head cells are the chat
     // disclosure — looking at a branch's history is not travelling to it —
@@ -1007,14 +1007,14 @@ pub(crate) fn mobile_drawer_target_at(
     // real taps missed even a five-cell target, so anything narrower is a
     // decoration, not a control (TP-MOB-84).
     if let (Some(MobileSwitcherTarget::Workspace(ws_idx)), DrawerRowContent::Space { .. }) =
-        (target, &row_content)
+        (target.as_ref(), &row_content)
     {
         let offset = col.saturating_sub(content.x);
         if offset < 3 {
-            return Some(MobileSwitcherTarget::ToggleBranchChats { ws_idx });
+            return Some(MobileSwitcherTarget::ToggleBranchChats { ws_idx: *ws_idx });
         }
         if content.width >= 10 && offset >= content.width.saturating_sub(3) {
-            return Some(MobileSwitcherTarget::NewChatIn { ws_idx });
+            return Some(MobileSwitcherTarget::NewChatIn { ws_idx: *ws_idx });
         }
         // The three cells before `+`: the row's own menu (TP-MOB-94). Only
         // when the label still keeps its floor — on a narrow panel the menu
@@ -1024,7 +1024,7 @@ pub(crate) fn mobile_drawer_target_at(
             && offset >= content.width.saturating_sub(6)
             && offset < content.width.saturating_sub(3)
         {
-            return Some(MobileSwitcherTarget::RowMenu { ws_idx });
+            return Some(MobileSwitcherTarget::RowMenu { ws_idx: *ws_idx });
         }
     }
     // A project header carries the same trailing `+` a workspace row does:
@@ -1033,11 +1033,13 @@ pub(crate) fn mobile_drawer_target_at(
     if let (
         Some(MobileSwitcherTarget::ToggleProject { proj_idx }),
         DrawerRowContent::Project { .. },
-    ) = (target, &row_content)
+    ) = (target.as_ref(), &row_content)
     {
         let offset = col.saturating_sub(content.x);
         if content.width >= 10 && offset >= content.width.saturating_sub(3) {
-            return Some(MobileSwitcherTarget::NewChatInProject { proj_idx });
+            return Some(MobileSwitcherTarget::NewChatInProject {
+                proj_idx: *proj_idx,
+            });
         }
     }
     target
@@ -3053,7 +3055,7 @@ mod tests {
         let target_for = |ws: usize| {
             rows.iter()
                 .find(|row| matches!(row.content, DrawerRowContent::Space { ws_idx, .. } if ws_idx == ws))
-                .and_then(|row| row.target)
+                .and_then(|row| row.target.clone())
         };
         // Every row carries the same target: the two intents live in the
         // activation, because the consumers that identify a workspace row do
