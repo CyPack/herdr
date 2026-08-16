@@ -567,6 +567,19 @@ widget = { kind = "meter", metric = "mem" }
 
 `metric` is one of `cpu`, `mem` (`ram` is accepted as the same thing) or `swap`. A metric this build does not know is refused where it is written rather than drawn as an empty section: a typo that renders as blank cannot be told from a section left blank on purpose.
 
+How often the machine is re-read is one setting for all of them:
+
+```toml
+[shell]
+resource_interval_ms = 500   # default: 2000
+```
+
+Nothing is read at all unless a section asks for it, so a bar without a `resource` or `meter` costs nothing whatever this says.
+
+Accepted between 250 and 60000. The floor is not a preference: a CPU percentage is the difference between two cumulative readings, and the kernel counts in jiffies — a hundred a second, so ten milliseconds each. At 250 ms a single-core machine has twenty-five of them to tell apart; at 100 ms it has ten, and the figure on screen starts reporting the counter's resolution rather than the machine's load. The ceiling is a typo guard — a reading once a minute describes history.
+
+A value outside the range is reported by `herdr config check` and the default pace is kept. A bad number leaves you with a working meter and a sentence about the number, rather than a bar that quietly stopped.
+
 #### A picture
 
 An `icon` names its picture exactly one way. Writing two is refused rather than ranked, because a precedence rule between them is not something the config file can show:

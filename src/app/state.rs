@@ -3767,6 +3767,12 @@ pub struct AppState {
     pub shell_mode: crate::config::ShellModeConfig,
     pub new_terminal_cwd: NewTerminalCwdConfig,
     pub pane_scrollback_limit_bytes: usize,
+    /// How often a resource section re-reads the machine.
+    ///
+    /// Held as a `Duration` rather than the config's milliseconds because every
+    /// reader compares it against an `Instant`, and converting at each of them
+    /// is three chances to convert differently.
+    pub resource_sample_interval: std::time::Duration,
     #[allow(dead_code)] // kept for backward compat; palette.accent is the source of truth
     pub accent: Color,
     pub sound: SoundConfig,
@@ -4762,6 +4768,9 @@ impl AppState {
             shell_mode: crate::config::ShellModeConfig::Auto,
             new_terminal_cwd: NewTerminalCwdConfig::Follow,
             pane_scrollback_limit_bytes: crate::config::DEFAULT_SCROLLBACK_LIMIT_BYTES,
+            resource_sample_interval: std::time::Duration::from_millis(
+                crate::config::ShellConfig::resource_interval_ms_default(),
+            ),
             accent: Color::Cyan,
             sound: SoundConfig {
                 enabled: false,

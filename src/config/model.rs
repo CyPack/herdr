@@ -839,12 +839,46 @@ pub struct ShellConfig {
     /// Defaults on: shipping this must not change a screen anyone already has.
     #[serde(default = "ShellConfig::glyph_icons_default")]
     pub glyph_icons: bool,
+    /// How often a `resource` or `meter` section re-reads the machine, in
+    /// milliseconds.
+    ///
+    /// Two seconds by default: slow enough that the cost is unmeasurable next to
+    /// a single keystroke's worth of terminal work, fast enough that a build
+    /// starting is visible before it finishes. Nothing is read at all unless a
+    /// section asks for it, so a bar without one pays nothing whatever this
+    /// says.
+    ///
+    /// Not per edge, because the machine's counters do not differ by edge. It
+    /// sits beside `glyph_icons` for the same reason that one does: outside the
+    /// bars, changing what a bar may do.
+    ///
+    /// Bounded rather than free. A CPU percentage is the difference between two
+    /// cumulative readings, and the kernel counts in jiffies — a hundred a
+    /// second, so ten milliseconds each. At 250 ms a single-core machine has
+    /// twenty-five of them to tell apart, which is about four per cent of
+    /// granularity; at a hundred it has ten, and the number on screen starts
+    /// reporting the counter's resolution rather than the machine's load. The
+    /// ceiling is a typo guard: a reading once a minute describes history.
+    #[serde(default = "ShellConfig::resource_interval_ms_default")]
+    pub resource_interval_ms: u64,
 }
 
 impl ShellConfig {
     fn glyph_icons_default() -> bool {
         true
     }
+
+    pub(crate) const fn resource_interval_ms_default() -> u64 {
+        2_000
+    }
+
+    /// The narrowest window in which a CPU percentage still measures the machine
+    /// rather than the counter's resolution. See `resource_interval_ms`.
+    pub(crate) const RESOURCE_INTERVAL_MS_MIN: u64 = 250;
+
+    /// A typo guard rather than a judgement about slow bars: a number this far
+    /// out is nearly always a digit too many.
+    pub(crate) const RESOURCE_INTERVAL_MS_MAX: u64 = 60_000;
 }
 
 // Written out rather than derived: `bool`'s own default is `false`, and a
@@ -856,6 +890,7 @@ impl Default for ShellConfig {
         Self {
             bars: ShellBarsConfig::default(),
             glyph_icons: Self::glyph_icons_default(),
+            resource_interval_ms: Self::resource_interval_ms_default(),
         }
     }
 }

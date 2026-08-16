@@ -154,12 +154,20 @@ const BAR_KEYS: &[KeySpec] = &[
 ];
 
 /// Switches that live outside `[shell.bars]` and change what a bar may do.
-const SWITCHES: &[KeySpec] = &[KeySpec {
-    key: "shell.glyph_icons",
-    value_type: "boolean",
-    range: "",
-    default: "true",
-}];
+const SWITCHES: &[KeySpec] = &[
+    KeySpec {
+        key: "shell.glyph_icons",
+        value_type: "boolean",
+        range: "",
+        default: "true",
+    },
+    KeySpec {
+        key: "shell.resource_interval_ms",
+        value_type: "integer",
+        range: "250-60000",
+        default: "2000",
+    },
+];
 
 /// The bar grammar this build actually implements.
 pub(crate) fn shell_spec() -> ShellSpec {
@@ -636,6 +644,59 @@ mod tests {
             listed, documented,
             "the spec and the config reference disagree about what `[shell.bars.<edge>]` takes"
         );
+    }
+
+    /// TP-SPEC-13: a switch that states a range states the one this build enforces.
+    ///
+    /// The ranges are hand-written text, which is exactly the surface a
+    /// staleness gate exists for. Reading the bounds back out of the sentence
+    /// and putting them to the checker means the spec cannot promise a range
+    /// nobody honours — the same shape as the examples, applied to the half of
+    /// the grammar that is a number rather than a name.
+    #[test]
+    fn every_range_a_switch_states_is_the_one_this_build_enforces() {
+        let spec = shell_spec();
+        let ranged = spec
+            .switches
+            .iter()
+            .filter(|switch| !switch.range.is_empty())
+            .collect::<Vec<_>>();
+        assert!(
+            !ranged.is_empty(),
+            "no switch states a range any more, so this check reads nothing"
+        );
+
+        for switch in ranged {
+            let (low, high) = switch
+                .range
+                .split_once('-')
+                .expect("a range reads as low-high");
+            let low: u64 = low.trim().parse().expect("a numeric lower bound");
+            let high: u64 = high.trim().parse().expect("a numeric upper bound");
+
+            for (millis, accepted) in [
+                (low, true),
+                (high, true),
+                (low - 1, false),
+                (high + 1, false),
+            ] {
+                let shell = crate::config::ShellConfig {
+                    resource_interval_ms: millis,
+                    ..Default::default()
+                };
+                let refused = super::super::source::shell_config_problems(&shell)
+                    .iter()
+                    .any(|problem| problem.to_string().contains(switch.key));
+                assert_eq!(
+                    !refused,
+                    accepted,
+                    "{key} says its range is {range}, but {millis} was {verdict}",
+                    key = switch.key,
+                    range = switch.range,
+                    verdict = if refused { "refused" } else { "accepted" }
+                );
+            }
+        }
     }
 
     /// TP-SPEC-06: every bar key is one this build reads.

@@ -367,6 +367,14 @@ impl BarTrack {
 /// rather than a seat in this enum.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum BarConfigProblem {
+    /// The one member that is not about a bar. It sits here because it is
+    /// reported through the same path and read by the same person: a number
+    /// outside `[shell.bars]` that decides what a section inside one can show.
+    ResourceIntervalOutOfRange {
+        millis: u64,
+        min: u64,
+        max: u64,
+    },
     SizeOutOfRange {
         edge: &'static str,
         size: u16,
@@ -532,6 +540,12 @@ impl std::fmt::Display for BarConfigProblem {
         // too: telling somebody that "a section is wrong" when a bar may hold
         // eight of them sends them looking through all eight.
         match self {
+            Self::ResourceIntervalOutOfRange { millis, min, max } => write!(
+                formatter,
+                "shell.resource_interval_ms is {millis}; it must be between {min} and {max}, \
+                 so readings keep their {default}ms default",
+                default = crate::config::ShellConfig::resource_interval_ms_default()
+            ),
             Self::SizeOutOfRange { edge, size, max } => write!(
                 formatter,
                 "shell.bars.{edge}.size is {size}; a bar must be between 1 and {max} cells, \
@@ -772,6 +786,33 @@ fn section_count_problem(
         sections,
         max: budget,
     })
+}
+
+/// Everything under `[shell]` this build will refuse, bars and switches alike.
+///
+/// One call rather than two. A second collector that a caller had to remember
+/// to also invoke would be a refusal that disappears the day somebody forgets,
+/// and a refusal nobody sees is the same as no refusal at all.
+// TP-RES-15: a switch outside the bars is refused through the same path a bar
+// is, so `herdr config check` sees it without being told to look.
+pub(crate) fn shell_config_problems(config: &crate::config::ShellConfig) -> Vec<BarConfigProblem> {
+    let mut problems = shell_switch_problems(config);
+    problems.extend(shell_bar_config_problems(&config.bars, config.glyph_icons));
+    problems
+}
+
+/// What is wrong with the switches that sit outside `[shell.bars]`.
+fn shell_switch_problems(config: &crate::config::ShellConfig) -> Vec<BarConfigProblem> {
+    let min = crate::config::ShellConfig::RESOURCE_INTERVAL_MS_MIN;
+    let max = crate::config::ShellConfig::RESOURCE_INTERVAL_MS_MAX;
+    if (min..=max).contains(&config.resource_interval_ms) {
+        return Vec::new();
+    }
+    vec![BarConfigProblem::ResourceIntervalOutOfRange {
+        millis: config.resource_interval_ms,
+        min,
+        max,
+    }]
 }
 
 // TP-CHROME-35/36: the checker and the deriver read one predicate, so a

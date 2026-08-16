@@ -1449,6 +1449,12 @@
           "type": "boolean",
           "default": "true",
           "description": "Let bar sections draw their glyph icons. Off, a section that names a glyph draws its text instead, and one that names no text is reported rather than left blank. Pictures made of cells (art, pixels) are unaffected. Turn this off for a terminal whose font has no icon glyphs, where they would otherwise render as tofu."
+        },
+        {
+          "key": "shell.resource_interval_ms",
+          "type": "integer",
+          "default": "2000",
+          "description": "How often a resource or meter section re-reads the machine, in milliseconds. Nothing is read at all unless a section asks for it, so a bar without one costs nothing whatever this says. Accepted between 250 and 60000: below 250 a CPU percentage starts reporting the kernel counter's resolution rather than the machine's load, because the counter ticks a hundred times a second. A value outside the range is reported and the default pace is kept."
         }
       ]
     }

@@ -666,12 +666,19 @@ impl App {
 
     /// How often the machine's counters are re-read.
     ///
-    /// Two seconds is slow enough that the cost is unmeasurable next to a
-    /// single keystroke's worth of terminal work, and fast enough that a build
-    /// starting is visible before it finishes. It is deliberately not
-    /// configurable yet: a number a person can set needs a floor, a refusal
-    /// message and a place in the config reference, and that is its own layer.
-    const RESOURCE_SAMPLE_INTERVAL: Duration = Duration::from_secs(2);
+    /// Two seconds by default: slow enough that the cost is unmeasurable next
+    /// to a single keystroke's worth of terminal work, fast enough that a build
+    /// starting is visible before it finishes. It became configurable once it
+    /// had the three things a settable number needs — a floor, a refusal
+    /// message and a place in the config reference — which is the layer
+    /// `shell.resource_interval_ms` added.
+    ///
+    /// Read from state rather than held as a constant so a config reload
+    /// changes the pace of a running herdr; a constant would have meant
+    /// restarting to try a number.
+    fn resource_sample_interval(&self) -> Duration {
+        self.state.resource_sample_interval
+    }
 
     /// When the next reading is due, or None when nothing on screen wants one.
     ///
@@ -693,7 +700,7 @@ impl App {
         // time the caller compared against it. It never fired.
         Some(
             self.last_resource_sample_at
-                .map_or_else(Instant::now, |last| last + Self::RESOURCE_SAMPLE_INTERVAL),
+                .map_or_else(Instant::now, |last| last + self.resource_sample_interval()),
         )
     }
 
@@ -710,7 +717,7 @@ impl App {
         }
         if self
             .last_resource_sample_at
-            .is_some_and(|last| now < last + Self::RESOURCE_SAMPLE_INTERVAL)
+            .is_some_and(|last| now < last + self.resource_sample_interval())
         {
             return false;
         }
@@ -937,6 +944,137 @@ mod tests {
         );
         app.state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config, true);
         app
+    }
+
+    /// An app whose shell config is whatever the caller wants it to be.
+    fn app_with_shell(shell: crate::config::ShellConfig) -> super::super::App {
+        let config = crate::config::Config {
+            shell,
+            ..Default::default()
+        };
+        let mut app = super::super::App::new(
+            &config,
+            true,
+            None,
+            tokio::sync::mpsc::unbounded_channel().1,
+            crate::api::EventHub::default(),
+        );
+        app.state.workspaces.push(Workspace::test_new("test"));
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app
+    }
+
+    // TP-RES-16: a config that says nothing keeps the pace it always had.
+    //
+    // Adding a setting must not change a machine nobody touched: every file
+    // written before this key existed has to go on meaning what it meant.
+    #[test]
+    fn a_config_that_never_mentions_the_interval_keeps_the_two_second_default() {
+        let app = app_with_shell(crate::config::ShellConfig::default());
+        assert_eq!(
+            app.state.resource_sample_interval,
+            Duration::from_secs(2),
+            "the default pace moved"
+        );
+    }
+
+    // TP-RES-12: a number inside the range is the pace, and it reaches the loop.
+    //
+    // The one test that proves the key is wired rather than merely stored. A
+    // setting parsed into a field nothing reads is the quietest way for a
+    // feature to be "done" and do nothing.
+    #[test]
+    fn an_interval_inside_the_range_is_the_pace_the_loop_keeps() {
+        let shell = crate::config::ShellConfig {
+            bars: resource_bars_config(),
+            resource_interval_ms: 500,
+            ..Default::default()
+        };
+        let mut app = app_with_shell(shell);
+        app.state.shell_bar_chrome =
+            crate::ui::shell::ShellBarChrome::from_config(&resource_bars_config(), true);
+
+        assert_eq!(
+            app.state.resource_sample_interval,
+            Duration::from_millis(500)
+        );
+
+        let start = Instant::now();
+        assert!(app.tick_resource_sample(start), "the first reading is owed");
+        assert!(
+            !app.tick_resource_sample(start + Duration::from_millis(499)),
+            "a reading was taken before the configured interval had passed"
+        );
+        assert!(
+            app.tick_resource_sample(start + Duration::from_millis(500)),
+            "no reading was taken once the configured interval had passed"
+        );
+    }
+
+    // TP-RES-13: a number outside the range is refused by name, and the meter
+    // keeps running at the default.
+    //
+    // Two halves that must both hold. Refusing without saying so would leave
+    // somebody reading their own file for a mistake herdr already found; and
+    // answering a bad number by stopping the meter would be a worse answer than
+    // a working meter and a sentence about the number.
+    #[test]
+    fn an_interval_outside_the_range_is_refused_and_the_default_keeps_running() {
+        for millis in [
+            crate::config::ShellConfig::RESOURCE_INTERVAL_MS_MIN - 1,
+            crate::config::ShellConfig::RESOURCE_INTERVAL_MS_MAX + 1,
+        ] {
+            let shell = crate::config::ShellConfig {
+                resource_interval_ms: millis,
+                ..Default::default()
+            };
+
+            let problems = crate::ui::shell::shell_config_problems(&shell)
+                .into_iter()
+                .map(|problem| problem.to_string())
+                .collect::<Vec<_>>();
+            assert!(
+                problems.iter().any(|problem| {
+                    problem.contains("shell.resource_interval_ms")
+                        && problem.contains(&millis.to_string())
+                }),
+                "{millis} was not refused by name: {problems:?}"
+            );
+
+            let app = app_with_shell(shell);
+            assert_eq!(
+                app.state.resource_sample_interval,
+                Duration::from_secs(2),
+                "a refused interval did not fall back to the default"
+            );
+        }
+    }
+
+    // TP-RES-14: the range's own edges are accepted.
+    //
+    // A bound stated in a message is a promise, and an off-by-one at either end
+    // makes the message a lie in the one place somebody is most likely to test
+    // it — right at the number the refusal just told them about.
+    #[test]
+    fn both_ends_of_the_accepted_range_are_accepted() {
+        for millis in [
+            crate::config::ShellConfig::RESOURCE_INTERVAL_MS_MIN,
+            crate::config::ShellConfig::RESOURCE_INTERVAL_MS_MAX,
+        ] {
+            let shell = crate::config::ShellConfig {
+                resource_interval_ms: millis,
+                ..Default::default()
+            };
+            assert!(
+                crate::ui::shell::shell_config_problems(&shell).is_empty(),
+                "{millis} is an edge of the accepted range and was refused"
+            );
+            assert_eq!(
+                app_with_shell(shell).state.resource_sample_interval,
+                Duration::from_millis(millis)
+            );
+        }
     }
 
     // TC-D1 · the seam, stated as the only thing that can be measured about it:
