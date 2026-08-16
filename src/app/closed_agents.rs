@@ -223,6 +223,66 @@ impl ClosedAgentLedger {
         self.records.iter()
     }
 
+    /// Rebuild from what the store kept, newest first.
+    ///
+    /// TP-AGPANEL-34: a loaded ghost is always `Dormant`. Revival state
+    /// describes *this* process — a spawn that was in flight when the server
+    /// was replaced did not survive the replacement, and a row that came back
+    /// claiming `Reviving` would be inert forever, because the claim it is
+    /// waiting on belongs to a process that no longer exists.
+    ///
+    /// Records that cannot be understood are skipped rather than fatal: this
+    /// runs at startup, and one malformed row must not cost the whole
+    /// graveyard.
+    pub fn load_stored(&mut self, stored: Vec<crate::persist::closed_agents::StoredClosedAgent>) {
+        self.records = stored
+            .into_iter()
+            .map(|row| ClosedAgentRecord {
+                agent_id: row.agent_id,
+                label: row.label,
+                cwd: row.cwd.map(PathBuf::from),
+                workspace_key: row.workspace_key,
+                session: row
+                    .session
+                    .map(|session| crate::agent_resume::PersistedAgentSession {
+                        source: session.source,
+                        agent: session.agent,
+                        session_ref: crate::agent_resume::AgentSessionRef {
+                            kind: session.ref_kind,
+                            value: session.ref_value,
+                        },
+                    }),
+                closed_at: row.closed_at,
+                revival: RevivalState::Dormant,
+            })
+            .collect();
+    }
+
+    /// Project to the disk shape, newest first.
+    pub fn to_stored(&self) -> Vec<crate::persist::closed_agents::StoredClosedAgent> {
+        self.records
+            .iter()
+            .map(|row| crate::persist::closed_agents::StoredClosedAgent {
+                agent_id: row.agent_id.clone(),
+                label: row.label.clone(),
+                cwd: row
+                    .cwd
+                    .as_ref()
+                    .map(|path| path.to_string_lossy().into_owned()),
+                workspace_key: row.workspace_key.clone(),
+                session: row.session.as_ref().map(|session| {
+                    crate::persist::closed_agents::StoredSession {
+                        source: session.source.clone(),
+                        agent: session.agent.clone(),
+                        ref_kind: session.session_ref.kind,
+                        ref_value: session.session_ref.value.clone(),
+                    }
+                }),
+                closed_at: row.closed_at,
+            })
+            .collect()
+    }
+
     /// Claim the right to revive a ghost — the atomic half of spam safety.
     ///
     /// Returns `true` exactly once per dormancy: the transition to `Reviving`
@@ -285,6 +345,65 @@ mod tests {
 
     fn ids(ledger: &ClosedAgentLedger) -> Vec<String> {
         ledger.entries().map(|r| r.agent_id.clone()).collect()
+    }
+
+    // TP-AGPANEL-34: revival state describes THIS process, so it must not
+    // survive one. A spawn that was in flight when the server was replaced did
+    // not survive the replacement, and a row that came back claiming
+    // `Reviving` would be inert forever — the claim it waits on belongs to a
+    // process that no longer exists, and the row would refuse every click with
+    // `RevivalInFlight`.
+    #[test]
+    fn a_loaded_ghost_starts_dormant_whatever_it_was_doing() {
+        let mut ledger = ClosedAgentLedger::default();
+        ledger.record_closed(record("a", 1));
+        assert!(
+            ledger.try_begin_revival("a"),
+            "precondition: the ghost is mid-revival when the store is written"
+        );
+
+        let mut restored = ClosedAgentLedger::default();
+        restored.load_stored(ledger.to_stored());
+
+        assert_eq!(
+            restored.entries().next().map(|r| r.revival),
+            Some(RevivalState::Dormant),
+            "a ghost that comes back mid-revival could never be clicked again"
+        );
+    }
+
+    // TP-AGPANEL-37: everything a revival needs crosses the disk. The cwd is
+    // the whole difference between reopening where the user worked and
+    // reopening in `$HOME` (#46), and the session ref is what reattaches the
+    // conversation instead of presenting a stranger — a ghost that survives a
+    // restart without them is a row that can only refuse.
+    #[test]
+    fn a_round_trip_keeps_what_a_revival_needs() {
+        let mut ledger = ClosedAgentLedger::default();
+        ledger.record_closed(record("keep", 42));
+
+        let mut restored = ClosedAgentLedger::default();
+        restored.load_stored(ledger.to_stored());
+
+        let before = ledger.entries().next().expect("written");
+        let after = restored.entries().next().expect("read back");
+        assert_eq!(after.agent_id, before.agent_id);
+        assert_eq!(after.label, before.label);
+        assert_eq!(
+            after.cwd, before.cwd,
+            "the revival directory crosses the disk"
+        );
+        assert_eq!(after.closed_at, before.closed_at);
+        assert_eq!(
+            after.session.as_ref().map(|s| s.session_ref.value.clone()),
+            before.session.as_ref().map(|s| s.session_ref.value.clone()),
+            "the resume key crosses the disk"
+        );
+        assert_eq!(
+            after.session.as_ref().map(|s| s.session_ref.kind),
+            before.session.as_ref().map(|s| s.session_ref.kind),
+            "an id and a transcript path resume differently; the kind must survive"
+        );
     }
 
     // TP-AGPANEL-07: the graveyard is newest first — "recently closed" is an

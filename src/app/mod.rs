@@ -1097,6 +1097,28 @@ impl App {
             }
         }
 
+        // TP-AGPANEL-36: the graveyard is read on the same terms. Until now it
+        // started empty on every run, and on this machine a run ends whenever
+        // a delivery replaces the server through `live-handoff` — so "restart"
+        // meant "roughly every time anything ships", and the panel forgot the
+        // agent the user had closed minutes earlier.
+        //
+        // Pruned at load rather than only at save: a store written a month ago
+        // by a version that never pruned still has to come back inside its
+        // window, and the window is measured from now, not from the write.
+        if !no_session {
+            let stored = crate::persist::closed_agents::load_from_path(
+                &crate::persist::closed_agents::default_store_path(),
+            );
+            state
+                .closed_agents
+                .load_stored(crate::persist::closed_agents::prune(
+                    stored.records,
+                    crate::persist::workspace_chats::now_ms(),
+                    crate::persist::closed_agents::RETENTION_MS,
+                ));
+        }
+
         Self {
             config_diagnostic_deadline: None,
             toast_deadline: None,
@@ -3043,6 +3065,85 @@ mod tests {
             "a clean start loads no history; it loaded: {:?}",
             app.state.workspace_chat_rows.keys().collect::<Vec<_>>()
         );
+    }
+
+    /// Point the config directory at a throwaway one and hand back the path
+    /// the store would live at, plus the guard that restores the environment.
+    ///
+    /// Goes through `config_dir()` rather than joining a literal name: the
+    /// directory is `herdr-dev` in a debug build and `herdr` in a release one,
+    /// and a test that hardcodes either would pass for the wrong reason on the
+    /// other.
+    fn with_temp_config_dir(
+        name: &str,
+    ) -> (
+        std::path::PathBuf,
+        std::path::PathBuf,
+        Option<std::ffi::OsString>,
+    ) {
+        let root = unique_temp_path(name);
+        let previous = std::env::var_os("XDG_CONFIG_HOME");
+        std::env::set_var("XDG_CONFIG_HOME", &root);
+        let store = crate::persist::closed_agents::default_store_path();
+        if let Some(parent) = store.parent() {
+            std::fs::create_dir_all(parent).expect("fake config dir");
+        }
+        (root, store, previous)
+    }
+
+    fn restore_config_dir(root: &std::path::Path, previous: Option<std::ffi::OsString>) {
+        match previous {
+            Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    // TP-AGPANEL-36: the graveyard is read on the same `--no-session` terms as
+    // the chat ledger and the transcript store. Without this, hundreds of
+    // fixtures would inherit whatever the machine's real graveyard happened to
+    // hold — the shape of defect TP-DRAW-13 was, one directory over.
+    #[test]
+    fn a_sessionless_start_does_not_read_the_graveyard() {
+        let (root, store, previous) = with_temp_config_dir("graveyard-read");
+        std::fs::write(
+            &store,
+            r#"{"version":1,"records":[{"agent_id":"ghost","label":"an older agent","closed_at":1}]}"#,
+        )
+        .expect("fake store");
+
+        let app = test_app();
+        let count = app.state.closed_agents.entries().count();
+        restore_config_dir(&root, previous);
+
+        assert_eq!(count, 0, "a clean start inherits no graveyard");
+    }
+
+    // TP-AGPANEL-35: and it writes nothing either. A run that promises to
+    // leave nothing on disk must not leave the newest death behind — and this
+    // is also what keeps every fixture that closes a pane off the real config
+    // directory.
+    #[test]
+    fn a_sessionless_run_does_not_write_the_graveyard() {
+        let (root, store, previous) = with_temp_config_dir("graveyard-write");
+        let mut app = test_app();
+        app.state
+            .closed_agents
+            .record_closed(crate::app::closed_agents::ClosedAgentRecord {
+                agent_id: "ghost".into(),
+                label: "an agent that closed".into(),
+                cwd: None,
+                workspace_key: None,
+                session: None,
+                closed_at: 1,
+                revival: crate::app::closed_agents::RevivalState::Dormant,
+            });
+
+        app.save_closed_agents();
+        let written = store.exists();
+        restore_config_dir(&root, previous);
+
+        assert!(!written, "a sessionless run leaves the disk untouched");
     }
 
     #[test]

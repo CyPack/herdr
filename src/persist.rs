@@ -8,6 +8,7 @@
 //! the LIVE layout and the restore contract depends on its shape, while the
 //! chat ledger is history that outlives the workspaces it describes.
 
+pub mod closed_agents;
 mod io;
 pub mod plugin_registry;
 mod restore;
