@@ -4770,6 +4770,7 @@ fn init_logging() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::test_wait::LoadAwareDeadline;
 
     use crate::app::AppState;
     use crate::protocol::CursorState;
@@ -6307,7 +6308,7 @@ next_tab = ""
             "headless scheduling must submit the pending exact-path preview"
         );
 
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let wait = LoadAwareDeadline::new(5, "the headless text preview to be applied");
         loop {
             let _ = server.handle_scheduled_tasks_headless(Instant::now(), false);
             let resolved = server
@@ -6327,10 +6328,7 @@ next_tab = ""
             if resolved {
                 break;
             }
-            assert!(
-                Instant::now() < deadline,
-                "timed out applying headless text preview"
-            );
+            wait.check();
             std::thread::yield_now();
         }
     }
@@ -7907,7 +7905,7 @@ next_tab = ""
     /// nothing; every image test needs this and none of them should re-invent
     /// the deadline.
     fn headless_pump_image_until_ready(server: &mut HeadlessServer) {
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let wait = LoadAwareDeadline::new(10, "an image decode");
         loop {
             let _ = server.handle_scheduled_tasks_headless(Instant::now(), false);
             if matches!(
@@ -7916,11 +7914,10 @@ next_tab = ""
             ) {
                 return;
             }
-            assert!(
-                Instant::now() < deadline,
-                "timed out waiting for the image decode; state {:?}",
+            wait.check_with(format_args!(
+                "state {:?}",
                 headless_image_preview_state(server)
-            );
+            ));
             std::thread::yield_now();
         }
     }
@@ -7973,7 +7970,7 @@ next_tab = ""
 
         // Decoding happens on a worker thread, so pump the scheduler until the
         // pixels land rather than assuming one round is enough.
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let wait = LoadAwareDeadline::new(10, "a server-mode image decode");
         loop {
             let _ = server.handle_scheduled_tasks_headless(Instant::now(), false);
             if matches!(
@@ -7982,11 +7979,10 @@ next_tab = ""
             ) {
                 break;
             }
-            assert!(
-                Instant::now() < deadline,
-                "timed out waiting for the server-mode image decode; state {:?}",
+            wait.check_with(format_args!(
+                "state {:?}",
                 headless_image_preview_state(&server)
-            );
+            ));
             std::thread::yield_now();
         }
 
@@ -8049,7 +8045,7 @@ next_tab = ""
 
         // Drive the decode to Ready, checking inside display 1's window: with
         // several displays the register holds no file manager between serves.
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let wait = LoadAwareDeadline::new(10, "an image decode with two displays");
         loop {
             let _ = server.handle_scheduled_tasks_headless(Instant::now(), false);
             let previous = server.app.state.enter_viewer(Some(1));
@@ -8061,10 +8057,7 @@ next_tab = ""
             if ready {
                 break;
             }
-            assert!(
-                Instant::now() < deadline,
-                "timed out waiting for the image decode with two displays"
-            );
+            wait.check();
             std::thread::yield_now();
         }
 
@@ -8177,7 +8170,7 @@ next_tab = ""
             });
         let root = headless_server_showing_one_png(&mut server, "image-menu", frame_area);
 
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let wait = LoadAwareDeadline::new(10, "a decode");
         loop {
             let _ = server.handle_scheduled_tasks_headless(Instant::now(), false);
             if matches!(
@@ -8186,10 +8179,7 @@ next_tab = ""
             ) {
                 break;
             }
-            assert!(
-                Instant::now() < deadline,
-                "timed out waiting for the decode"
-            );
+            wait.check();
             std::thread::yield_now();
         }
 
@@ -8394,7 +8384,7 @@ next_tab = ""
             .expect("the open Files surface owns a strip entry");
 
         let pump_until_ready = |server: &mut HeadlessServer| {
-            let deadline = Instant::now() + Duration::from_secs(10);
+            let wait = LoadAwareDeadline::new(10, "an image decode");
             loop {
                 let _ = server.handle_scheduled_tasks_headless(Instant::now(), false);
                 if matches!(
@@ -8403,11 +8393,10 @@ next_tab = ""
                 ) {
                     return;
                 }
-                assert!(
-                    Instant::now() < deadline,
-                    "timed out waiting for the image decode; state {:?}",
+                wait.check_with(format_args!(
+                    "state {:?}",
                     headless_image_preview_state(server)
-                );
+                ));
                 std::thread::yield_now();
             }
         };
