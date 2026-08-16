@@ -19,6 +19,7 @@ pub(super) fn run_space_command(args: &[String]) -> std::io::Result<i32> {
         Some("promote") => space_promote(&args[1..]),
         Some("move") => space_move(&args[1..]),
         Some("demote") => space_demote(&args[1..]),
+        Some("rename") => space_rename(&args[1..]),
         Some("list") => space_list(&args[1..]),
         Some("help" | "--help" | "-h") => {
             print_space_help();
@@ -31,15 +32,27 @@ pub(super) fn run_space_command(args: &[String]) -> std::io::Result<i32> {
     }
 }
 
+/// The usage lines, as data.
+///
+/// Kept apart from printing for the reason `space_list_lines` is: a verb the
+/// help never names is a verb nobody finds, and that is exactly the defect
+/// "Move to module..." was reported for on the sidebar side.
+pub(crate) fn space_help_lines() -> Vec<&'static str> {
+    vec![
+        "usage: herdr space promote <branch> [--repo <root>] [--as module|project]",
+        "                           [--label <text>] [--icon <glyph>] [--key <key>] [--dry-run]",
+        "       herdr space move <branch> (--under|--beside|--above <node-key> | --top |",
+        "                           --new-group <name>) [--repo <root>] [--dry-run]",
+        "       herdr space demote <key|branch> [--dry-run]",
+        "       herdr space rename <key> (<name> | --clear) [--dry-run]",
+        "       herdr space list",
+    ]
+}
+
 fn print_space_help() {
-    eprintln!("usage: herdr space promote <branch> [--repo <root>] [--as module|project]");
-    eprintln!(
-        "                           [--label <text>] [--icon <glyph>] [--key <key>] [--dry-run]"
-    );
-    eprintln!("       herdr space move <branch> (--under|--beside|--above <node-key> | --top |");
-    eprintln!("                           --new-group <name>) [--repo <root>] [--dry-run]");
-    eprintln!("       herdr space demote <key|branch> [--dry-run]");
-    eprintln!("       herdr space list");
+    for line in space_help_lines() {
+        eprintln!("{line}");
+    }
 }
 
 /// Where a move sends the checkout: relative to an existing node, to top
@@ -852,6 +865,127 @@ fn space_demote(args: &[String]) -> std::io::Result<i32> {
     Ok(0)
 }
 
+/// `herdr space rename <key> (<name> | --clear) [--dry-run]`
+///
+/// TP-MOD-39: the command road to the display name the header menu already
+/// writes. `promote`, `move`, `demote` and `list` all have one; rename was
+/// mouse-only, which means an agent could create a module and never name it —
+/// and `spaces.managed.toml` is a machine file nobody may hand-edit, so the
+/// menu was the single way in.
+///
+/// It calls the very functions the menu calls. A second writer is a second
+/// place for the overlay's rules to be got wrong, which is the reason
+/// `submit_module_dir_from_picker` routes through `submit_module_dir` rather
+/// than writing its own (TP-MOD-35).
+fn space_rename(args: &[String]) -> std::io::Result<i32> {
+    let mut key: Option<String> = None;
+    let mut name: Option<String> = None;
+    let mut clear = false;
+    let mut dry_run = false;
+    for arg in args {
+        match arg.as_str() {
+            "--dry-run" => dry_run = true,
+            "--clear" => clear = true,
+            other if other.starts_with("--") => {
+                eprintln!("unknown flag {other}");
+                return Ok(2);
+            }
+            _ if key.is_none() => key = Some(arg.clone()),
+            _ if name.is_none() => name = Some(arg.clone()),
+            other => {
+                eprintln!("unexpected argument {other}");
+                return Ok(2);
+            }
+        }
+    }
+    let Some(key) = key else {
+        print_space_help();
+        return Ok(2);
+    };
+    // A name AND `--clear` is two different intentions in one command, and
+    // guessing which one was meant is how a rename silently becomes a deletion.
+    if clear && name.is_some() {
+        eprintln!("give a name or --clear, not both");
+        return Ok(2);
+    }
+    if !clear && name.is_none() {
+        print_space_help();
+        return Ok(2);
+    }
+
+    let path = crate::config::managed_spaces_path();
+    let current = std::fs::read_to_string(&path).unwrap_or_default();
+
+    if clear {
+        let (updated, removed) = match remove_managed_display_name(&current, &key) {
+            Ok(result) => result,
+            Err(err) => {
+                eprintln!("{err}");
+                return Ok(1);
+            }
+        };
+        if removed == 0 {
+            println!("no display name recorded for {key:?}");
+            return Ok(1);
+        }
+        if dry_run {
+            print!("{updated}");
+            return Ok(0);
+        }
+        std::fs::write(&path, &updated)?;
+        println!("cleared the display name for {key}");
+        report_reload();
+        return Ok(0);
+    }
+
+    let name = name.unwrap_or_default();
+    // The key must name something the tree actually declares. Writing a
+    // display entry for a key nothing carries leaves a name with no header to
+    // wear it, and the overlay grows a line the person can never see or undo
+    // from the sidebar — the same class of silent orphan TP-MOD-30 cleans up
+    // after.
+    if !space_key_is_declared(&key) {
+        eprintln!("no module, bucket or project is declared with key {key:?}");
+        eprintln!("run `herdr space list` to see the keys this tree carries");
+        return Ok(1);
+    }
+    let updated = match upsert_managed_display_name(&current, &key, &name) {
+        Ok(updated) => updated,
+        Err(err) => {
+            eprintln!("{err}");
+            return Ok(1);
+        }
+    };
+    if dry_run {
+        print!("{updated}");
+        return Ok(0);
+    }
+    std::fs::write(&path, &updated)?;
+    println!("{key} now reads {name:?}");
+    report_reload();
+    Ok(0)
+}
+
+/// Whether any of the three module kinds declares this key.
+///
+/// TP-MOD-39: buckets are included because to the person using the tree they
+/// ARE modules (TP-DOTS-01/10) and the menu already renames them; a check that
+/// only knew nodes would refuse the rename for twenty of the twenty-four
+/// modules on the machine this was measured on.
+fn space_key_is_declared(key: &str) -> bool {
+    let loaded = crate::config::Config::load();
+    key_is_declared_in(&loaded.config, key)
+}
+
+/// The pure half, so the rule is testable without reading the machine's own
+/// configuration — a test that called `Config::load()` would answer differently
+/// on every machine, and on this one it would read the user's live tree.
+pub(crate) fn key_is_declared_in(config: &crate::config::Config, key: &str) -> bool {
+    let key = key.trim();
+    config.spaces.nodes().iter().any(|node| node.key == key)
+        || config.spaces.rules().iter().any(|rule| rule.key == key)
+}
+
 fn space_list(args: &[String]) -> std::io::Result<i32> {
     if !args.is_empty() {
         eprintln!("usage: herdr space list");
@@ -1577,5 +1711,117 @@ name = "Only"
             1,
             "no duplicate node entry"
         );
+    }
+}
+
+#[cfg(test)]
+mod rename_cli_tests {
+    use super::{
+        key_is_declared_in, remove_managed_display_name, space_help_lines,
+        upsert_managed_display_name,
+    };
+
+    /// Built from real TOML rather than from struct literals: the entry types
+    /// are private to the config module, and parsing what a user would actually
+    /// write is the stronger fixture anyway — it exercises the same road the
+    /// live file takes.
+    fn config_with(node_keys: &[&str], bucket_keys: &[&str]) -> crate::config::Config {
+        let mut text = String::new();
+        for key in node_keys {
+            text.push_str(&format!(
+                "[[spaces.node]]\nkey = \"{key}\"\nname = \"{key}\"\n\n"
+            ));
+        }
+        for key in bucket_keys {
+            text.push_str(&format!(
+                "[[spaces.split]]\nrepo = \"~/repo\"\nmatch = [\"*\"]\nkey = \"{key}\"\nlabel = \"{key}\"\n\n"
+            ));
+        }
+        toml::from_str(&text).expect("the fixture config parses")
+    }
+
+    // C1 / TP-MOD-39: the name lands as a display entry and the KEY is
+    // untouched. Deriving a new key from the name is how a rename becomes a
+    // second module whose children point at a key nothing declares any more.
+    #[test]
+    fn a_rename_writes_a_display_entry_and_leaves_the_key_alone() {
+        let updated = upsert_managed_display_name("", "group:x", "Yeni Ad").expect("rename writes");
+
+        assert!(updated.contains("[[spaces.display]]"));
+        assert!(updated.contains("key = \"group:x\""));
+        assert!(updated.contains("name = \"Yeni Ad\""));
+    }
+
+    // C2 / TP-MOD-39: renaming twice replaces rather than stacks. Stacked
+    // entries would grow the machine's file quietly and only the last would
+    // ever be read.
+    #[test]
+    fn renaming_twice_replaces_the_entry() {
+        let once = upsert_managed_display_name("", "group:x", "Bir").expect("first");
+        let twice = upsert_managed_display_name(&once, "group:x", "Iki").expect("second");
+
+        assert_eq!(twice.matches("[[spaces.display]]").count(), 1);
+        assert!(twice.contains("name = \"Iki\""));
+        assert!(!twice.contains("name = \"Bir\""));
+    }
+
+    // C3 / TP-MOD-39: `--clear` gives the name back to the rule. A rename you
+    // cannot undo is a rename you have to get right first time.
+    #[test]
+    fn clearing_a_rename_removes_the_entry() {
+        let named = upsert_managed_display_name("", "group:x", "Ad").expect("rename");
+        let (cleared, removed) = remove_managed_display_name(&named, "group:x").expect("clear");
+
+        assert_eq!(removed, 1);
+        assert!(!cleared.contains("group:x"));
+    }
+
+    // C3b / TP-MOD-39: clearing a name that was never there reports nothing
+    // rather than claiming a removal.
+    #[test]
+    fn clearing_an_unnamed_module_removes_nothing() {
+        let (_, removed) = remove_managed_display_name("", "group:x").expect("clear");
+
+        assert_eq!(removed, 0);
+    }
+
+    // C6 / TP-MOD-39: a blank name is refused. Writing one would put the module
+    // in the state TP-DAILY-15 had to guard against on the row side — "named,
+    // but with nothing" outranks a perfectly good fallback and draws empty.
+    #[test]
+    fn a_blank_name_is_refused() {
+        assert!(upsert_managed_display_name("", "group:x", "   ").is_err());
+        assert!(upsert_managed_display_name("", "  ", "Ad").is_err());
+    }
+
+    // C5 / TP-MOD-39: the key has to name something the tree declares, and all
+    // three kinds count. Twenty of the twenty-four modules on the reporting
+    // machine are buckets, so a check that only knew nodes would refuse most
+    // renames the menu already performs.
+    #[test]
+    fn a_key_is_recognised_whatever_kind_of_module_declares_it() {
+        let config = config_with(&["node-key"], &["bucket-key"]);
+
+        assert!(key_is_declared_in(&config, "node-key"));
+        assert!(key_is_declared_in(&config, "bucket-key"));
+        assert!(
+            !key_is_declared_in(&config, "nothing-declares-this"),
+            "an undeclared key must be refused, or the overlay grows a name no header can wear"
+        );
+    }
+
+    // C7 / TP-MOD-39: the help names the verb. A command the help never
+    // mentions is a command nobody finds — the same defect the chat menu was
+    // reported for.
+    #[test]
+    fn the_help_names_every_verb_the_dispatcher_answers() {
+        let help = space_help_lines().join("\n");
+
+        for verb in ["promote", "move", "demote", "rename", "list"] {
+            assert!(
+                help.contains(&format!("herdr space {verb}")),
+                "help must name {verb:?}"
+            );
+        }
     }
 }
