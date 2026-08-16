@@ -223,47 +223,91 @@ fn pixel_at(
     })
 }
 
+/// One bundled picture: what it is called, its pixel rows, and what its letters
+/// stand for.
+struct BuiltinArt {
+    name: &'static str,
+    rows: &'static [&'static str],
+    palette: &'static [(&'static str, &'static str)],
+}
+
+/// The bundled pictures, in the order a refusal offers them.
+///
+/// A table rather than a match, for the same reason the section kinds became
+/// one: a match can be asked whether it knows a name but never asked what names
+/// it knows, so the refusal had no way to say what it would have accepted. That
+/// left this the one closed set in the bar grammar that turned a config down
+/// without telling anybody what to write instead.
+const BUILTIN_ART: &[BuiltinArt] = &[
+    // Agents converging into one runtime: two chevrons narrowing into a stem.
+    // Ten pixels wide by six tall, which is ten cells by three rows — the
+    // smallest size where the two halves still read as one mark.
+    BuiltinArt {
+        name: "herd",
+        rows: &[
+            "..a....a..",
+            "...a..a...",
+            "....aa....",
+            "....bb....",
+            "...bbbb...",
+            "..bb..bb..",
+        ],
+        palette: &[("a", "mauve"), ("b", "teal")],
+    },
+    // A filled dot, for the one-cell-row case: two pixel rows, four wide.
+    BuiltinArt {
+        name: "dot",
+        rows: &["a..a", ".aa."],
+        palette: &[("a", "accent")],
+    },
+];
+
 /// The bundled pictures, by name.
 ///
 /// Closed on purpose. A name that resolves to nothing draws an empty section,
 /// which is indistinguishable from a section meant to be empty, so an unknown
 /// name is refused where it is written rather than discovered on screen.
 pub(crate) fn builtin(name: &str) -> Option<(Vec<String>, BTreeMap<String, String>)> {
-    match name {
-        // Agents converging into one runtime: two chevrons narrowing into a
-        // stem. Ten pixels wide by six tall, which is ten cells by three rows —
-        // the smallest size where the two halves still read as one mark.
-        "herd" => Some((
-            [
-                "..a....a..",
-                "...a..a...",
-                "....aa....",
-                "....bb....",
-                "...bbbb...",
-                "..bb..bb..",
-            ]
-            .iter()
-            .map(|row| (*row).to_string())
-            .collect(),
-            [
-                ("a".to_string(), "mauve".to_string()),
-                ("b".to_string(), "teal".to_string()),
-            ]
-            .into_iter()
-            .collect(),
-        )),
-        // A filled dot, for the one-cell-row case: two pixel rows, four wide.
-        "dot" => Some((
-            ["a..a", ".aa."]
+    BUILTIN_ART.iter().find(|art| art.name == name).map(|art| {
+        (
+            art.rows.iter().map(|row| (*row).to_string()).collect(),
+            art.palette
+                .iter()
+                .map(|(key, colour)| ((*key).to_string(), (*colour).to_string()))
+                .collect(),
+        )
+    })
+}
+
+/// The names of the bundled pictures, in the order a refusal offers them.
+pub(crate) fn builtin_names() -> Vec<&'static str> {
+    BUILTIN_ART.iter().map(|art| art.name).collect()
+}
+
+/// Every bundled picture with the size it draws at, in cells.
+///
+/// A picture that cannot be read is left out rather than panicked over: the
+/// table is compiled in, so an unreadable entry is a mistake made here and a
+/// test says so, while a person running the CLI should not be the one who finds
+/// out. `builtin_catalogue_is_complete` is that test.
+pub(crate) fn builtin_catalogue() -> Vec<(&'static str, u16, u16)> {
+    BUILTIN_ART
+        .iter()
+        .filter_map(|entry| {
+            let rows = entry
+                .rows
                 .iter()
                 .map(|row| (*row).to_string())
-                .collect(),
-            [("a".to_string(), "accent".to_string())]
-                .into_iter()
-                .collect(),
-        )),
-        _ => None,
-    }
+                .collect::<Vec<_>>();
+            let palette = entry
+                .palette
+                .iter()
+                .map(|(key, colour)| ((*key).to_string(), (*colour).to_string()))
+                .collect::<BTreeMap<_, _>>();
+            let art = art_from_pixels(&rows, &palette).ok()?;
+            Some((entry.name, art.width(), art.height()))
+        })
+        .collect()
 }
 
 #[cfg(test)]
