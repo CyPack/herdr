@@ -522,6 +522,22 @@ impl App {
         })
     }
 
+    /// Read the transcript store into the drawer's rows.
+    ///
+    /// TP-DRAW-13 put this behind `no_session`, which was right for what that
+    /// flag means on a normal start and on a fixture: leave the machine's
+    /// history alone. It is wrong for a handoff, which passes the same flag to
+    /// mean something narrower — restore the session from a snapshot instead
+    /// of from disk — and lost the chat history with it.
+    ///
+    /// TP-DRAW-14: so it is a named step both roads call, rather than a line
+    /// inside a condition that answers two different questions with one word.
+    fn load_chat_history(state: &mut AppState) {
+        if let Some(dir) = crate::claude_sessions::default_claude_projects_dir() {
+            state.merge_workspace_chat_rows_in(dir.as_path());
+        }
+    }
+
     /// Load the graveyard from disk and seed it from the transcript rows.
     ///
     /// TP-AGPANEL-40: extracted because this codebase has more than one
@@ -1131,20 +1147,8 @@ impl App {
             )
         };
         state.workspace_chat_rows = crate::persist::workspace_chats::project_rows(&ledger);
-        // TP-DRAW-13: the same promise covers the transcript store. The ledger
-        // honoured `no_session` and this read did not, so a clean start still
-        // loaded the machine's history — and every fixture built on
-        // `App::new(.., true, ..)` read the live `~/.claude/projects`
-        // directory, which orders rows by transcript mtime and therefore moved
-        // under any agent writing its own transcript.
         if !no_session {
-            if let Some(dir) = crate::claude_sessions::default_claude_projects_dir() {
-                state.merge_workspace_chat_rows_in(&dir);
-            }
-        }
-
-        // TP-AGPANEL-36/39: read on the same `--no-session` terms.
-        if !no_session {
+            Self::load_chat_history(&mut state);
             Self::seed_closed_agents(&mut state);
         }
 
@@ -1314,6 +1318,16 @@ impl App {
         // constructor correctly passes. Seeded AFTER the restore, because the
         // live filter reads the tabs the handoff just brought back — before
         // it, every restored chat would be given a headstone of its own.
+        // TP-DRAW-14: a handoff restores its SESSION from the snapshot, not the
+        // chat history — that lives in the ledger and the transcript store and
+        // outlives every handoff. Read here because `new` skipped it: the flag
+        // this constructor passes means "not the session file", and the drawer
+        // came back empty when it was read as "nothing at all".
+        let ledger = crate::persist::workspace_chats::load_from_path(
+            &crate::persist::workspace_chats::default_ledger_path(),
+        );
+        app.state.workspace_chat_rows = crate::persist::workspace_chats::project_rows(&ledger);
+        Self::load_chat_history(&mut app.state);
         Self::seed_closed_agents(&mut app.state);
         Ok(app)
     }
@@ -3159,6 +3173,37 @@ mod tests {
         restore_config_dir(&root, previous);
 
         assert_eq!(count, 0, "a clean start inherits no graveyard");
+    }
+
+    // TP-DRAW-14: a handed-off server keeps its chat history. The flag it
+    // passes means "not the session file", not "nothing at all" — and on this
+    // machine every delivery is a handoff, so this is the only path that
+    // matters for the drawer.
+    #[test]
+    fn a_handed_off_server_loads_the_chat_history() {
+        let home = unique_temp_path("handoff-chats-home");
+        let slug = crate::claude_sessions::encode_project_path(&home.to_string_lossy());
+        let project_dir = home.join(".claude").join("projects").join(slug);
+        std::fs::create_dir_all(&project_dir).expect("fake transcript store");
+        std::fs::write(
+            project_dir.join("22222222-3333-4444-8555-666666666666.jsonl"),
+            "{\"type\":\"ai-title\",\"aiTitle\":\"an earlier conversation\"}\n",
+        )
+        .expect("fake transcript");
+
+        let previous_home = std::env::var_os("HOME");
+        std::env::set_var("HOME", &home);
+        let mut state = AppState::test_new();
+        state.daily_chat_cwd = Some(home.clone());
+        App::load_chat_history(&mut state);
+        let loaded = !state.workspace_chat_rows.is_empty();
+        match previous_home {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&home);
+
+        assert!(loaded, "the handoff road reads the transcript store");
     }
 
     // TP-AGPANEL-40: a handed-off server loads the graveyard too. It calls
