@@ -500,6 +500,32 @@ pub(crate) enum BarConfigProblem {
     },
 }
 
+/// The accepted names of a closed set, phrased the way the refusals below already
+/// phrase them: quoted, separated by commas, and joined by `or` before the last.
+///
+/// Six refusals carry such a list and each one is written out by hand beside the
+/// match that decides. Writing the phrase once is the first half of holding the two
+/// together; the second half is that the list itself comes from the same place the
+/// match does, which is what the tables are for.
+///
+/// The wording is not a matter of taste here. It is what the guide quotes, what the
+/// tests read and what people have learned to expect, so this reproduces today's
+/// sentence exactly rather than improving on it.
+fn accepted_names(names: &[&str]) -> String {
+    match names {
+        [] => String::new(),
+        [only] => format!("{only:?}"),
+        [rest @ .., last] => {
+            let listed = rest
+                .iter()
+                .map(|name| format!("{name:?}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{listed} or {last:?}")
+        }
+    }
+}
+
 impl std::fmt::Display for BarConfigProblem {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Each message names the edge, and a section's message names its index
@@ -532,8 +558,9 @@ impl std::fmt::Display for BarConfigProblem {
             ),
             Self::UnknownSectionKind { edge, index, kind } => write!(
                 formatter,
-                "shell.bars.{edge}.sections[{index}].kind is \"{kind}\"; expected \"fixed\", \
-                 \"fill\" or \"content\", so this bar is drawn undivided"
+                "shell.bars.{edge}.sections[{index}].kind is \"{kind}\"; expected {offered}, \
+                 so this bar is drawn undivided",
+                offered = accepted_names(&SectionKind::offered(SIZING_KINDS))
             ),
             Self::FixedSectionWithoutCells { edge, index } => write!(
                 formatter,
@@ -561,7 +588,8 @@ impl std::fmt::Display for BarConfigProblem {
             Self::UnknownSectionActionKind { edge, index, kind } => write!(
                 formatter,
                 "shell.bars.{edge}.sections[{index}].action.kind is \"{kind}\"; expected \
-                 \"popup\" or \"plugin\", so this section does nothing when clicked"
+                 {offered}, so this section does nothing when clicked",
+                offered = accepted_names(&SectionKind::offered(ACTION_KINDS))
             ),
             Self::PopupActionWithoutCommand { edge, index } => write!(
                 formatter,
@@ -580,7 +608,13 @@ impl std::fmt::Display for BarConfigProblem {
             } => write!(
                 formatter,
                 "shell.bars.{edge}.sections[{index}].action.secondary is \"{presentation}\"; \
-                 expected \"tab\", so a right press on this section does nothing"
+                 expected {offered}, so a right press on this section does nothing",
+                offered = accepted_names(
+                    &SECONDARY_PRESENTATIONS
+                        .iter()
+                        .map(|(name, _)| *name)
+                        .collect::<Vec<_>>()
+                )
             ),
             Self::SecondaryWithoutAction { edge, index } => write!(
                 formatter,
@@ -626,7 +660,8 @@ impl std::fmt::Display for BarConfigProblem {
             Self::UnknownSectionWidgetKind { edge, index, kind } => write!(
                 formatter,
                 "shell.bars.{edge}.sections[{index}].widget.kind is \"{kind}\"; expected \
-                 \"label\", \"resource\", \"icon\" or \"meter\", so this section shows nothing"
+                 {offered}, so this section shows nothing",
+                offered = accepted_names(&SectionKind::offered(WIDGET_KINDS))
             ),
             Self::UnknownSectionWidgetMetric {
                 edge,
@@ -635,7 +670,8 @@ impl std::fmt::Display for BarConfigProblem {
             } => write!(
                 formatter,
                 "shell.bars.{edge}.sections[{index}].widget.metric is \"{metric}\"; expected \
-                 \"cpu\", \"mem\" or \"swap\", so this section shows nothing"
+                 {offered}, so this section shows nothing",
+                offered = accepted_names(crate::resource::ResourceMetric::ACCEPTED)
             ),
             Self::IconWithoutPicture { edge, index } => write!(
                 formatter,
@@ -851,6 +887,114 @@ fn section_policies(
         .collect()
 }
 
+/// One accepted name and the thing it builds.
+///
+/// `build` is a function pointer rather than data, and that is the whole point:
+/// adding a name to a table forces somebody to write the code that builds it, and
+/// deleting the code breaks the table at compile time. The state this file kept
+/// drifting into — a list that offers a name nothing builds, or a match arm no list
+/// mentions — stops being expressible.
+struct SectionKind<T> {
+    name: &'static str,
+    build: fn(SectionAt<'_>) -> Result<T, BarConfigProblem>,
+}
+
+/// A section, where it sits, and the switches that reach it.
+///
+/// The three surfaces do not all want the same inputs — sizing never asks about
+/// glyphs and widgets always do — and giving every builder the union of them as
+/// loose arguments would put a parameter in front of `fixed` that means nothing
+/// there. One shape carries them instead, so the tables stay one type and the
+/// functions that surround them keep the signatures their callers already use.
+#[derive(Clone, Copy)]
+struct SectionAt<'a> {
+    config: &'a ShellBarSectionConfig,
+    edge: &'static str,
+    index: usize,
+    glyph_icons: bool,
+}
+
+impl<'a> SectionAt<'a> {
+    /// For the surfaces that never ask about glyphs.
+    ///
+    /// Sizing and actions do not read the switch, and spelling that out once here is
+    /// better than each of them choosing a value and the next reader wondering which
+    /// choice mattered.
+    fn plain(config: &'a ShellBarSectionConfig, edge: &'static str, index: usize) -> Self {
+        Self {
+            config,
+            edge,
+            index,
+            glyph_icons: true,
+        }
+    }
+}
+
+impl<T> SectionKind<T> {
+    /// The names, in the order the refusal offers them.
+    ///
+    /// Order is the table's, not the dispatch's: lookup is by name, so the sequence
+    /// exists only to be read aloud in a message somebody has already learned.
+    fn offered(table: &'static [Self]) -> Vec<&'static str> {
+        table.iter().map(|entry| entry.name).collect()
+    }
+
+    fn find(table: &'static [Self], name: &str) -> Option<&'static Self> {
+        table.iter().find(|entry| entry.name == name)
+    }
+}
+
+/// The three ways a section can ask for space.
+const SIZING_KINDS: &[SectionKind<TrackPolicy>] = &[
+    SectionKind {
+        name: "fixed",
+        build: fixed_policy,
+    },
+    SectionKind {
+        name: "fill",
+        build: fill_policy,
+    },
+    SectionKind {
+        name: "content",
+        build: content_policy,
+    },
+];
+
+fn fixed_policy(at: SectionAt<'_>) -> Result<TrackPolicy, BarConfigProblem> {
+    if at.config.cells == 0 {
+        return Err(BarConfigProblem::FixedSectionWithoutCells {
+            edge: at.edge,
+            index: at.index,
+        });
+    }
+    Ok(TrackPolicy::Fixed {
+        cells: at.config.cells,
+    })
+}
+
+/// A fill with no weight is the common shape of "just take the rest", and refusing
+/// it would make the simplest section the one that needs the most typing.
+fn fill_policy(at: SectionAt<'_>) -> Result<TrackPolicy, BarConfigProblem> {
+    Ok(TrackPolicy::Fill {
+        weight: at.config.weight.max(1),
+    })
+}
+
+fn content_policy(at: SectionAt<'_>) -> Result<TrackPolicy, BarConfigProblem> {
+    if at.config.max < at.config.min {
+        return Err(BarConfigProblem::ContentSectionMaxBelowMin {
+            edge: at.edge,
+            index: at.index,
+            min: at.config.min,
+            max: at.config.max,
+        });
+    }
+    Ok(TrackPolicy::ContentBounded {
+        min: at.config.min,
+        max: at.config.max,
+    })
+}
+
 /// One section's table as a sizing policy, or what is wrong with it.
 ///
 /// Returning the problem rather than swallowing it is what lets `herdr config
@@ -860,39 +1004,12 @@ fn section_policy(
     edge: &'static str,
     index: usize,
 ) -> Result<TrackPolicy, BarConfigProblem> {
-    match config.kind.as_str() {
-        "fixed" => {
-            if config.cells == 0 {
-                return Err(BarConfigProblem::FixedSectionWithoutCells { edge, index });
-            }
-            Ok(TrackPolicy::Fixed {
-                cells: config.cells,
-            })
-        }
-        // A fill with no weight is the common shape of "just take the rest",
-        // and refusing it would make the simplest section the one that needs
-        // the most typing.
-        "fill" => Ok(TrackPolicy::Fill {
-            weight: config.weight.max(1),
-        }),
-        "content" => {
-            if config.max < config.min {
-                return Err(BarConfigProblem::ContentSectionMaxBelowMin {
-                    edge,
-                    index,
-                    min: config.min,
-                    max: config.max,
-                });
-            }
-            Ok(TrackPolicy::ContentBounded {
-                min: config.min,
-                max: config.max,
-            })
-        }
-        other => Err(BarConfigProblem::UnknownSectionKind {
+    match SectionKind::find(SIZING_KINDS, config.kind.as_str()) {
+        Some(entry) => (entry.build)(SectionAt::plain(config, edge, index)),
+        None => Err(BarConfigProblem::UnknownSectionKind {
             edge,
             index,
-            kind: other.to_string(),
+            kind: config.kind.clone(),
         }),
     }
 }
@@ -1225,43 +1342,81 @@ fn section_widget(
     index: usize,
     glyph_icons: bool,
 ) -> Result<SectionWidget, BarConfigProblem> {
-    match config.widget.kind.as_str() {
-        // Text with no widget to put it in is the same half-finished shape a
-        // leftover popup size is: it will never appear, and a person reading
-        // the file back would believe it does.
-        "" if !config.widget.text.is_empty() => {
+    // Naming nothing is not one of the choices below; it is the absence of a
+    // choice, and the only question left is whether anything was written for a
+    // widget that is not there. Text with nothing to put it in is the same
+    // half-finished shape a leftover popup size is: it will never appear, and a
+    // person reading the file back would believe it does.
+    if config.widget.kind.is_empty() {
+        return if config.widget.text.is_empty() {
+            Ok(SectionWidget::None)
+        } else {
             Err(BarConfigProblem::WidgetTextWithoutWidget { edge, index })
-        }
-        "" => Ok(SectionWidget::None),
-        "label" => Ok(SectionWidget::Label {
-            text: config.widget.text.clone(),
-        }),
-        // A resource section names its metric, and a metric this build does
-        // not know is refused here rather than drawn as an empty section. The
-        // same reasoning as an unknown widget kind: a typo that renders as
-        // blank is indistinguishable from one that renders as nothing on
-        // purpose.
-        "icon" => section_icon(config, edge, index, glyph_icons),
-        "meter" => crate::resource::ResourceMetric::parse(&config.widget.metric)
-            .map(|metric| SectionWidget::Meter { metric })
-            .ok_or(BarConfigProblem::UnknownSectionWidgetMetric {
-                edge,
-                index,
-                metric: config.widget.metric.clone(),
-            }),
-        "resource" => crate::resource::ResourceMetric::parse(&config.widget.metric)
-            .map(|metric| SectionWidget::Resource { metric })
-            .ok_or(BarConfigProblem::UnknownSectionWidgetMetric {
-                edge,
-                index,
-                metric: config.widget.metric.clone(),
-            }),
-        other => Err(BarConfigProblem::UnknownSectionWidgetKind {
+        };
+    }
+
+    let at = SectionAt {
+        config,
+        edge,
+        index,
+        glyph_icons,
+    };
+    match SectionKind::find(WIDGET_KINDS, config.widget.kind.as_str()) {
+        Some(entry) => (entry.build)(at),
+        None => Err(BarConfigProblem::UnknownSectionWidgetKind {
             edge,
             index,
-            kind: other.to_string(),
+            kind: config.widget.kind.clone(),
         }),
     }
+}
+
+/// The four things a section can show, in the order a refusal offers them.
+const WIDGET_KINDS: &[SectionKind<SectionWidget>] = &[
+    SectionKind {
+        name: "label",
+        build: label_widget,
+    },
+    SectionKind {
+        name: "resource",
+        build: resource_widget,
+    },
+    SectionKind {
+        name: "icon",
+        build: section_icon,
+    },
+    SectionKind {
+        name: "meter",
+        build: meter_widget,
+    },
+];
+
+fn label_widget(at: SectionAt<'_>) -> Result<SectionWidget, BarConfigProblem> {
+    Ok(SectionWidget::Label {
+        text: at.config.widget.text.clone(),
+    })
+}
+
+fn resource_widget(at: SectionAt<'_>) -> Result<SectionWidget, BarConfigProblem> {
+    named_metric(at).map(|metric| SectionWidget::Resource { metric })
+}
+
+fn meter_widget(at: SectionAt<'_>) -> Result<SectionWidget, BarConfigProblem> {
+    named_metric(at).map(|metric| SectionWidget::Meter { metric })
+}
+
+/// A section that shows a number names its metric, and a metric this build does not
+/// know is refused here rather than drawn as an empty section. The same reasoning as
+/// an unknown widget kind: a typo that renders as blank is indistinguishable from one
+/// that renders as nothing on purpose.
+fn named_metric(at: SectionAt<'_>) -> Result<crate::resource::ResourceMetric, BarConfigProblem> {
+    crate::resource::ResourceMetric::parse(&at.config.widget.metric).ok_or(
+        BarConfigProblem::UnknownSectionWidgetMetric {
+            edge: at.edge,
+            index: at.index,
+            metric: at.config.widget.metric.clone(),
+        },
+    )
 }
 
 /// One section's picture, or what is wrong with it.
@@ -1278,12 +1433,13 @@ fn section_widget(
 /// label already does when the window narrows.
 // TP-ART-03/05: one picture per icon; a declared width that cannot hold it is
 // refused where it is written, and a section sized by the terminal is not.
-fn section_icon(
-    config: &ShellBarSectionConfig,
-    edge: &'static str,
-    index: usize,
-    glyph_icons: bool,
-) -> Result<SectionWidget, BarConfigProblem> {
+fn section_icon(at: SectionAt<'_>) -> Result<SectionWidget, BarConfigProblem> {
+    let SectionAt {
+        config,
+        edge,
+        index,
+        glyph_icons,
+    } = at;
     let widget = &config.widget;
     let named = usize::from(!widget.glyph.trim().is_empty())
         + usize::from(!widget.art.trim().is_empty())
@@ -1356,86 +1512,122 @@ fn section_action(
     edge: &'static str,
     index: usize,
 ) -> Result<SectionAction, BarConfigProblem> {
-    match config.action.kind.as_str() {
-        // A size with nothing to size is the shape a half-finished edit leaves
-        // behind: the command was removed and the geometry stayed. Saying so is
-        // cheap; leaving it silent means the next person reads a popup size that
-        // has never once been used and believes it.
-        //
-        // Only asked on this arm. An unreadable action kind already reports its
-        // own cause, and a second complaint about the size it also carries would
-        // send somebody to fix the wrong line.
-        "" if config.action.width.is_some() || config.action.height.is_some() => {
-            Err(BarConfigProblem::PopupSizeWithoutPopup { edge, index })
-        }
-        // A presentation with nothing to present is the same half-finished
-        // shape, one gesture along: the command was removed and the second
-        // answer stayed behind. Refused here, where the line that is wrong can
-        // still be found, rather than discovered by somebody pressing.
-        "" if !config.action.secondary.is_empty() => {
-            Err(BarConfigProblem::SecondaryWithoutAction { edge, index })
-        }
-        // The third shape of the same half-finished edit: the plugin action was
-        // removed and the id it named stayed behind. Silence here would leave a
-        // file that reads as though this section still launches something.
-        "" if !config.action.command.trim().is_empty() => {
-            Err(BarConfigProblem::PluginCommandWithoutAction { edge, index })
-        }
-        "" => Ok(SectionAction::None),
-        "popup" => {
-            // The mirror of the arm below. Without both directions, one of the
-            // two ways to leave a plugin id somewhere it can never be read
-            // stays silent — and a silent leftover is precisely the kind the
-            // next reader trusts.
-            if !config.action.command.trim().is_empty() {
-                return Err(BarConfigProblem::PopupActionWithPluginCommand { edge, index });
-            }
-            // An empty argv, or one made only of blanks, would ask the runtime
-            // to execute nothing. Disk is untrusted input (CL1): refuse it here
-            // rather than discovering it at the moment somebody clicks.
-            if config
-                .action
-                .argv
-                .iter()
-                .all(|argument| argument.trim().is_empty())
-            {
-                return Err(BarConfigProblem::PopupActionWithoutCommand { edge, index });
-            }
-            Ok(SectionAction::OpenPopup {
-                argv: config.action.argv.clone(),
-                width: config.action.width,
-                height: config.action.height,
-                secondary: secondary_presentation(&config.action.secondary, edge, index)?,
-            })
-        }
-        "plugin" => {
-            // The leftover popup fields are asked about first. When both a
-            // leftover and a missing id are present the leftover is the better
-            // complaint: it names a line that exists and is wrong, while the
-            // missing id names a line that is not there to look at.
-            if let Some(field) = plugin_action_popup_field(config) {
-                return Err(BarConfigProblem::PluginActionWithPopupField { edge, index, field });
-            }
-            if !config.action.secondary.is_empty() {
-                return Err(BarConfigProblem::PluginActionWithSecondary { edge, index });
-            }
-            // Trimmed only to decide whether anything was named. The stored id
-            // stays verbatim: the resolver trims for itself, and reshaping a
-            // value here to make a check convenient is how a config comes to
-            // mean something other than what it says.
-            if config.action.command.trim().is_empty() {
-                return Err(BarConfigProblem::PluginActionWithoutId { edge, index });
-            }
-            Ok(SectionAction::InvokePlugin {
-                action: config.action.command.clone(),
-            })
-        }
-        other => Err(BarConfigProblem::UnknownSectionActionKind {
+    // Naming no action is not one of the choices below; it is the absence of a
+    // choice, and what is left to ask is whether a deleted action left anything
+    // behind. That question belongs before the table rather than in it: it has no
+    // action to build and no name a person could write.
+    if config.action.kind.is_empty() {
+        return no_action(config, edge, index);
+    }
+
+    match SectionKind::find(ACTION_KINDS, config.action.kind.as_str()) {
+        Some(entry) => (entry.build)(SectionAt::plain(config, edge, index)),
+        None => Err(BarConfigProblem::UnknownSectionActionKind {
             edge,
             index,
-            kind: other.to_string(),
+            kind: config.action.kind.clone(),
         }),
     }
+}
+
+/// A section that opens nothing, and the three ways a removed action leaves
+/// something behind.
+///
+/// Each is the same half-finished edit seen from a different field: the command was
+/// deleted and the geometry, the second gesture or the plugin id stayed. Saying so is
+/// cheap; leaving it silent means the next person reads a setting that has never once
+/// been used and believes it.
+///
+/// Asked only here. An unreadable action kind already reports its own cause, and a
+/// second complaint about a field it also carries would send somebody to fix the
+/// wrong line.
+fn no_action(
+    config: &ShellBarSectionConfig,
+    edge: &'static str,
+    index: usize,
+) -> Result<SectionAction, BarConfigProblem> {
+    if config.action.width.is_some() || config.action.height.is_some() {
+        return Err(BarConfigProblem::PopupSizeWithoutPopup { edge, index });
+    }
+    if !config.action.secondary.is_empty() {
+        return Err(BarConfigProblem::SecondaryWithoutAction { edge, index });
+    }
+    if !config.action.command.trim().is_empty() {
+        return Err(BarConfigProblem::PluginCommandWithoutAction { edge, index });
+    }
+    Ok(SectionAction::None)
+}
+
+/// The two things a press can do, in the order a refusal offers them.
+const ACTION_KINDS: &[SectionKind<SectionAction>] = &[
+    SectionKind {
+        name: "popup",
+        build: popup_action,
+    },
+    SectionKind {
+        name: "plugin",
+        build: plugin_action,
+    },
+];
+
+fn popup_action(at: SectionAt<'_>) -> Result<SectionAction, BarConfigProblem> {
+    let SectionAt {
+        config,
+        edge,
+        index,
+        ..
+    } = at;
+    // The mirror of the builder below. Without both directions, one of the two ways
+    // to leave a plugin id somewhere it can never be read stays silent — and a silent
+    // leftover is precisely the kind the next reader trusts.
+    if !config.action.command.trim().is_empty() {
+        return Err(BarConfigProblem::PopupActionWithPluginCommand { edge, index });
+    }
+    // An empty argv, or one made only of blanks, would ask the runtime to execute
+    // nothing. Disk is untrusted input (CL1): refuse it here rather than discovering
+    // it at the moment somebody clicks.
+    if config
+        .action
+        .argv
+        .iter()
+        .all(|argument| argument.trim().is_empty())
+    {
+        return Err(BarConfigProblem::PopupActionWithoutCommand { edge, index });
+    }
+    Ok(SectionAction::OpenPopup {
+        argv: config.action.argv.clone(),
+        width: config.action.width,
+        height: config.action.height,
+        secondary: secondary_presentation(&config.action.secondary, edge, index)?,
+    })
+}
+
+fn plugin_action(at: SectionAt<'_>) -> Result<SectionAction, BarConfigProblem> {
+    let SectionAt {
+        config,
+        edge,
+        index,
+        ..
+    } = at;
+    // The leftover popup fields are asked about first. When both a leftover and a
+    // missing id are present the leftover is the better complaint: it names a line
+    // that exists and is wrong, while the missing id names a line that is not there
+    // to look at.
+    if let Some(field) = plugin_action_popup_field(config) {
+        return Err(BarConfigProblem::PluginActionWithPopupField { edge, index, field });
+    }
+    if !config.action.secondary.is_empty() {
+        return Err(BarConfigProblem::PluginActionWithSecondary { edge, index });
+    }
+    // Trimmed only to decide whether anything was named. The stored id stays verbatim:
+    // the resolver trims for itself, and reshaping a value here to make a check
+    // convenient is how a config comes to mean something other than what it says.
+    if config.action.command.trim().is_empty() {
+        return Err(BarConfigProblem::PluginActionWithoutId { edge, index });
+    }
+    Ok(SectionAction::InvokePlugin {
+        action: config.action.command.clone(),
+    })
 }
 
 /// The first popup-only field a plugin action left behind, if it left one.
@@ -1474,16 +1666,32 @@ fn secondary_presentation(
     edge: &'static str,
     index: usize,
 ) -> Result<Option<SecondaryPresentation>, BarConfigProblem> {
-    match raw {
-        "" => Ok(None),
-        "tab" => Ok(Some(SecondaryPresentation::Tab)),
-        other => Err(BarConfigProblem::UnknownSecondaryPresentation {
+    // Naming nothing is the absence of a second gesture rather than one of the
+    // choices below, and unlike the other surfaces there is no leftover to ask
+    // about: whatever a deleted presentation left behind belongs to the action
+    // that carried it.
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    SECONDARY_PRESENTATIONS
+        .iter()
+        .find(|(name, _)| *name == raw)
+        .map(|(_, presentation)| Some(*presentation))
+        .ok_or_else(|| BarConfigProblem::UnknownSecondaryPresentation {
             edge,
             index,
-            presentation: other.to_string(),
-        }),
-    }
+            presentation: raw.to_string(),
+        })
 }
+
+/// The presentations a second gesture can ask for, in the order a refusal offers
+/// them.
+///
+/// A pair rather than a builder: nothing is constructed here beyond the variant
+/// itself, and a function pointer that only returns a constant would be ceremony
+/// around a lookup.
+const SECONDARY_PRESENTATIONS: &[(&str, SecondaryPresentation)] =
+    &[("tab", SecondaryPresentation::Tab)];
 
 /// The four edges, as the tree builder sees them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -2023,6 +2231,329 @@ mod tests {
             sections: Vec::new(),
             ..Default::default()
         }
+    }
+
+    // A type in a bar config lives in six closed sets, and each one lives in two
+    // places: the match that builds it, and the message that lists what it accepts.
+    //
+    //   surface      built by                       listed by                       refusal costs
+    //   sizing       section_policy                 UnknownSectionKind              the whole bar
+    //   widget       section_widget                 UnknownSectionWidgetKind        one blank section
+    //   action       section_action                 UnknownSectionActionKind        one inert section
+    //   secondary    secondary_presentation         UnknownSecondaryPresentation    one inert right press
+    //   metric       resource::ResourceMetric       UnknownSectionWidgetMetric      one blank section
+    //   icon art     icon::builtin                  UnknownIconArt                  one blank section
+    //
+    // Nothing holds the two halves together, so they drift in either direction and
+    // both are silent: a name the parser takes but the message never mentions is a
+    // feature nobody can find, and a name the message offers but the parser refuses
+    // is a config somebody writes on the message's word.
+    //
+    // These pin today's answers before a type table moves them. The shape is the one
+    // the documentation gate already uses: harvest the list out of the text, then ask
+    // the product about every name in it. What differs is the source — a message the
+    // product writes about itself rather than a guide somebody else maintains.
+
+    /// The quoted names on the "expected" side of a refusal.
+    ///
+    /// The message carries the offending name in quotes too (`… is "gauge"; expected
+    /// …`), so the harvest starts after `expected`. Losing that split would let the
+    /// refused name count as an accepted one, and the check would agree with itself.
+    fn expected_names(message: &str) -> Vec<String> {
+        let tail = match message.split_once("expected ") {
+            Some((_, tail)) => tail,
+            None => return Vec::new(),
+        };
+        tail.split('"')
+            .skip(1)
+            .step_by(2)
+            .map(|name| name.to_string())
+            .collect()
+    }
+
+    /// One section in one bar, and whatever it is reported for.
+    fn problems_for(section: ShellBarSectionConfig) -> Vec<String> {
+        let config = ShellBarsConfig {
+            top: bar_with_sections(vec![section]),
+            ..Default::default()
+        };
+        shell_bar_config_problems(&config, true)
+            .into_iter()
+            .map(|problem| problem.to_string())
+            .collect()
+    }
+
+    /// The refusal a surface writes when it is handed a name it does not know.
+    fn message_naming(section: ShellBarSectionConfig, needle: &str) -> String {
+        problems_for(section)
+            .into_iter()
+            .find(|text| text.contains(needle))
+            .unwrap_or_else(|| panic!("no problem mentioned {needle:?}"))
+    }
+
+    /// Every name a message lists is a name its surface takes.
+    ///
+    /// The claim is not that nothing is reported — a resource still wants a metric, an
+    /// icon still wants a picture, a fixed section still wants cells. It is that the
+    /// name itself was recognised, which is the half a type table is about to own.
+    fn assert_every_listed_name_is_accepted(
+        message: &str,
+        at_least: usize,
+        refusal_shape: impl Fn(&str) -> String,
+        apply: impl Fn(&str) -> ShellBarSectionConfig,
+    ) {
+        let listed = expected_names(message);
+
+        // The harvest is pinned as well. Reword the message and it would find nothing,
+        // the loop below would never run, and the check would pass in silence — which
+        // is the failure mode this whole shape exists to prevent.
+        assert!(
+            listed.len() >= at_least,
+            "the message no longer lists what it accepts: {message}"
+        );
+
+        for name in &listed {
+            let refused = problems_for(apply(name))
+                .into_iter()
+                .any(|problem| problem.contains(&refusal_shape(name)));
+            assert!(
+                !refused,
+                "the message lists {name:?} but the parser refuses it"
+            );
+        }
+    }
+
+    // TP-CHROME-99: the sizing surface, whose refusal costs the whole bar rather than
+    // one section, so a message that offers a kind the parser will not take is the
+    // most expensive of the six to get wrong.
+    #[test]
+    fn the_section_kinds_the_message_lists_are_exactly_the_ones_accepted() {
+        let message = message_naming(plain_section("stretch"), "sections[0].kind is \"stretch\"");
+
+        // The anchor carries `sections[0].` because a bare `kind is "…"` is a substring
+        // of `widget.kind is "…"` and `action.kind is "…"` as well. Three surfaces share
+        // one sentence and only the prefix tells them apart.
+        assert_every_listed_name_is_accepted(
+            &message,
+            3,
+            |name| format!("sections[0].kind is \"{name}\""),
+            plain_section,
+        );
+
+        assert!(
+            !expected_names(&message)
+                .iter()
+                .any(|name| name == "stretch"),
+            "an unknown sizing kind leaked into the accepted list"
+        );
+    }
+
+    // TP-CHROME-96: the widget surface.
+    #[test]
+    fn the_widget_kinds_the_message_lists_are_exactly_the_ones_accepted() {
+        let mut unknown = plain_section("fill");
+        unknown.widget.kind = "gauge".to_string();
+        let message = message_naming(unknown, "widget.kind is \"gauge\"");
+
+        assert_every_listed_name_is_accepted(
+            &message,
+            4,
+            |name| format!("widget.kind is \"{name}\""),
+            |name| {
+                let mut section = plain_section("fill");
+                section.widget.kind = name.to_string();
+                section
+            },
+        );
+    }
+
+    // TP-CHROME-97: the action surface. A refused action costs only its own section,
+    // which makes this the quietest drift of the four: the bar still divides and the
+    // part simply stops answering.
+    #[test]
+    fn the_action_kinds_the_message_lists_are_exactly_the_ones_accepted() {
+        let mut unknown = plain_section("fill");
+        unknown.action.kind = "teleport".to_string();
+        let message = message_naming(unknown, "action.kind is \"teleport\"");
+
+        assert_every_listed_name_is_accepted(
+            &message,
+            2,
+            |name| format!("action.kind is \"{name}\""),
+            |name| {
+                let mut section = plain_section("fill");
+                section.action.kind = name.to_string();
+                section
+            },
+        );
+    }
+
+    // TP-CHROME-98: this pair crosses a module boundary. The message is written here
+    // and the parser lives in `crate::resource`, so a table gathered inside this file
+    // cannot close the gap — it can only keep it visible.
+    #[test]
+    fn the_metrics_the_message_lists_are_exactly_the_ones_resource_parses() {
+        let mut section = plain_section("fill");
+        section.widget.kind = "resource".to_string();
+        section.widget.metric = "flux".to_string();
+        let message = message_naming(section, "widget.metric is \"flux\"");
+
+        let listed = expected_names(&message);
+        assert!(
+            listed.len() >= 3,
+            "the message no longer lists the accepted metrics: {message}"
+        );
+        for metric in &listed {
+            assert!(
+                crate::resource::ResourceMetric::parse(metric).is_some(),
+                "the message lists {metric:?} but ResourceMetric does not parse it"
+            );
+        }
+        assert!(
+            crate::resource::ResourceMetric::parse("flux").is_none(),
+            "an unknown metric parsed"
+        );
+    }
+
+    // TP-CHROME-102: `ram` is taken and never advertised.
+    //
+    // This is characterisation, not endorsement. The alias works and the guide says so,
+    // but the refusal names only cpu, mem and swap, so somebody who mistypes it is told
+    // nothing about the spelling that would have worked. A type table has to carry
+    // aliases or it will drop this one without a word; adding it to the message instead
+    // is a decision with its own docs, and either way this test should be the thing
+    // that makes the change deliberate.
+    #[test]
+    fn the_mem_metric_answers_to_ram_without_advertising_it() {
+        assert_eq!(
+            crate::resource::ResourceMetric::parse("ram"),
+            crate::resource::ResourceMetric::parse("mem"),
+            "ram stopped being an alias for mem"
+        );
+
+        let mut section = plain_section("fill");
+        section.widget.kind = "resource".to_string();
+        section.widget.metric = "flux".to_string();
+        let message = message_naming(section, "widget.metric is \"flux\"");
+        assert!(
+            !expected_names(&message).iter().any(|name| name == "ram"),
+            "ram started being advertised, which is a behaviour change rather than a \
+             refactor: {message}"
+        );
+    }
+
+    // TP-CHROME-103: the secondary surface, and the only list with a single member.
+    //
+    // `expected "tab"` has no separator in it. A generated list pinned only against the
+    // longer forms could produce a broken sentence here and nothing else would notice.
+    //
+    // The presentation is only read on the popup arm, and an empty argv is refused
+    // before it, so reaching this refusal needs a popup that is otherwise valid.
+    #[test]
+    fn the_secondary_presentations_the_message_lists_are_exactly_the_ones_accepted() {
+        let mut unknown = section_with_action("fill", "popup", &["true"]);
+        unknown.action.secondary = "tabs".to_string();
+        let message = message_naming(unknown, "action.secondary is \"tabs\"");
+
+        assert_every_listed_name_is_accepted(
+            &message,
+            1,
+            |name| format!("action.secondary is \"{name}\""),
+            |name| {
+                let mut section = section_with_action("fill", "popup", &["true"]);
+                section.action.secondary = name.to_string();
+                section
+            },
+        );
+    }
+
+    // TP-CHROME-104: the icon catalogue is the one closed set that refuses without
+    // saying what it holds.
+    //
+    // Characterised as it stands rather than defended. Five surfaces tell a person what
+    // may be written and this one does not, which is a gap worth closing on purpose.
+    // When it is closed this test turns red, and that is the point: the change should
+    // arrive as a decision with its docs rather than as a side effect.
+    #[test]
+    fn the_icon_catalogue_refuses_without_saying_what_it_bundles() {
+        let mut section = plain_section("fill");
+        section.widget.kind = "icon".to_string();
+        section.widget.art = "hrd".to_string();
+        let message = message_naming(section, "widget.art is \"hrd\"");
+
+        assert!(
+            message.contains("does not bundle"),
+            "the icon refusal changed shape: {message}"
+        );
+        assert!(
+            expected_names(&message).is_empty(),
+            "the icon catalogue started listing what it bundles; if that is deliberate, \
+             update this test and the guide together: {message}"
+        );
+    }
+
+    // TP-CHROME-101: the empty kind is never offered as something to write.
+    //
+    // It is not a kind. It is where the leftover checks live, and they ask a different
+    // question — whether a width, a presentation or a plugin id outlived the action
+    // that gave them meaning. Listing `""` would invite people to write it, and a
+    // refactor that folded it into the kind table would lose those checks entirely.
+    #[test]
+    fn the_empty_kind_is_never_offered_as_something_to_write() {
+        let mut widget = plain_section("fill");
+        widget.widget.kind = "gauge".to_string();
+        let mut action = plain_section("fill");
+        action.action.kind = "teleport".to_string();
+
+        for message in [
+            message_naming(plain_section("stretch"), "sections[0].kind is \"stretch\""),
+            message_naming(widget, "widget.kind is \"gauge\""),
+            message_naming(action, "action.kind is \"teleport\""),
+        ] {
+            assert!(
+                !expected_names(&message).iter().any(|name| name.is_empty()),
+                "the empty kind was offered as something to write: {message}"
+            );
+        }
+    }
+
+    // The harvest reads only what follows `expected`, including the one-item form that
+    // has no separator to lean on.
+    #[test]
+    fn the_harvest_reads_only_what_comes_after_expected() {
+        let message = "shell.bars.top.sections[0].kind is \"stretch\"; expected \"fixed\", \
+                       \"fill\" or \"content\", so this bar is drawn undivided";
+        assert_eq!(expected_names(message), vec!["fixed", "fill", "content"]);
+        assert_eq!(expected_names("no such word here"), Vec::<String>::new());
+        assert_eq!(
+            expected_names("… action.secondary is \"tabs\"; expected \"tab\", so a right press …"),
+            vec!["tab"]
+        );
+    }
+
+    // TP-CHROME-105: the phrase a generated list has to reproduce, at every length the
+    // six refusals actually use. Pinning one arity would not pin the generator: the single-name
+    // form has no separator to get wrong, and the longer ones differ only in where
+    // the `or` falls. All four are taken from the messages as they read today.
+    #[test]
+    fn a_generated_list_reads_the_way_the_refusals_already_read() {
+        assert_eq!(accepted_names(&["tab"]), r#""tab""#);
+        assert_eq!(
+            accepted_names(&["popup", "plugin"]),
+            r#""popup" or "plugin""#
+        );
+        assert_eq!(
+            accepted_names(&["fixed", "fill", "content"]),
+            r#""fixed", "fill" or "content""#
+        );
+        assert_eq!(
+            accepted_names(&["label", "resource", "icon", "meter"]),
+            r#""label", "resource", "icon" or "meter""#
+        );
+
+        // An empty closed set cannot be written and would read as a missing sentence
+        // rather than a refusal, so it is named here rather than discovered later.
+        assert_eq!(accepted_names(&[]), "");
     }
 
     fn plain_section(kind: &str) -> ShellBarSectionConfig {
