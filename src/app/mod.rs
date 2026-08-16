@@ -42,6 +42,8 @@ pub(crate) mod tab_branches;
 mod tabs;
 mod terminal_targets;
 mod terminal_titles;
+#[cfg(test)]
+pub(crate) mod test_wait;
 mod theme_sync;
 mod worktrees;
 

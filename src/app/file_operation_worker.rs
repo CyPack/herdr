@@ -1494,6 +1494,7 @@ mod tests {
         FileManagerDeleteRequest, FileManagerHeaderAction, FileManagerOperationItemStatus,
         FileManagerOperationKind, FileManagerOperationState, FileManagerOperationStatus,
     };
+    use crate::app::test_wait::LoadAwareDeadline;
     use crate::fm::delete::{
         execute_delete_operation, execute_delete_operation_with_host, DeleteBackendError,
         DeleteOperationHost, DeleteOperationKind, DeleteOperationPlan, DeleteOperationRequest,
@@ -1513,118 +1514,8 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{mpsc, Arc};
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
     use tokio::sync::Notify;
-
-    /// How much longer a wait may take on a machine that is busy.
-    ///
-    /// Twelve, measured rather than chosen: #72 clocked a cold start at 17.6
-    /// seconds against the second and a half the same wait takes on an idle
-    /// machine. A budget costs nothing until a wait fails to finish, so the
-    /// number buys room on a loaded machine and charges nothing for it on a
-    /// quiet one.
-    const LOAD_SLACK: u64 = 12;
-
-    /// Checked where it cannot be skipped. Lowering the slack below what a cold
-    /// start was measured to need is a decision, and a decision is better made
-    /// against a build that refuses than against a test somebody can rerun.
-    const _: () = assert!(LOAD_SLACK >= 12);
-
-    /// A wait's budget, and what it is waiting for.
-    ///
-    /// An object rather than a closure, deliberately. The waits in this file are
-    /// not one shape — some are `loop` with a `break`, some are `while` on a
-    /// condition — and folding them into one closure would mean rewriting
-    /// eighteen loops in a change whose entire purpose is that the loops keep
-    /// meaning what they meant. Here only two lines move.
-    ///
-    /// What it replaces read `assert!(Instant::now() < deadline, "worker
-    /// completion timed out")`, which names neither how long it waited nor what
-    /// the budget was. A wait that ran out because three other builds were
-    /// running then reads exactly like a product that is broken, and a bigger
-    /// budget does not fix that — it only delays the same wrong sentence.
-    struct LoadAwareDeadline {
-        started: Instant,
-        budget: Duration,
-        what: &'static str,
-    }
-
-    impl LoadAwareDeadline {
-        fn new(budget_secs: u64, what: &'static str) -> Self {
-            Self {
-                started: Instant::now(),
-                budget: Duration::from_secs(budget_secs * LOAD_SLACK),
-                what,
-            }
-        }
-
-        /// Fail, saying what was awaited, for how long, and against what budget.
-        ///
-        /// `track_caller` is not decoration. Every wait in this file shares this
-        /// one function, so without it they would all report the same line here,
-        /// pointing a reader at the helper rather than at the wait that ran out
-        /// — the very "the message sends you to the wrong place" fault this type
-        /// exists to remove.
-        #[track_caller]
-        fn check(&self) {
-            assert!(
-                self.started.elapsed() < self.budget,
-                "timed out waiting for {} after {:?} of a {:?} budget",
-                self.what,
-                self.started.elapsed(),
-                self.budget
-            );
-        }
-    }
-
-    // TP-WAIT-01: a budget is the idle wait stretched by the slack.
-    #[test]
-    fn a_load_aware_budget_is_the_idle_wait_stretched_by_the_slack() {
-        let wait = LoadAwareDeadline::new(5, "something");
-        assert_eq!(wait.budget, Duration::from_secs(5 * LOAD_SLACK));
-    }
-
-    // TP-WAIT-02: a wait with time left says nothing, so the happy path stays
-    // free. A forgiving budget that cost anything would have made every test in
-    // this file slower — a regression wearing a fix's clothes.
-    #[test]
-    fn a_wait_with_time_left_does_not_complain() {
-        let wait = LoadAwareDeadline::new(5, "something");
-        for _ in 0..1000 {
-            wait.check();
-        }
-    }
-
-    // TP-WAIT-03: a wait that runs out says what, how long, and against what.
-    // All three, because with any one missing the message still cannot tell a
-    // busy machine from a broken product.
-    #[test]
-    fn a_wait_that_runs_out_says_what_it_awaited_and_for_how_long() {
-        // Zero seconds times any slack is still zero, so this runs out on its
-        // first check and the test does not spend a real budget to prove what
-        // the message says.
-        let wait = LoadAwareDeadline::new(0, "a thing that never happens");
-        std::thread::sleep(Duration::from_millis(1));
-
-        let panic = std::panic::catch_unwind(|| wait.check()).expect_err("an expired wait fails");
-        let message = panic
-            .downcast_ref::<String>()
-            .map(String::as_str)
-            .unwrap_or_default();
-
-        assert!(
-            message.contains("a thing that never happens"),
-            "the message does not say what was awaited: {message}"
-        );
-        assert!(
-            message.contains("budget"),
-            "the message does not say what the budget was: {message}"
-        );
-        assert!(
-            message.contains("after"),
-            "the message does not say how long it waited: {message}"
-        );
-    }
 
     fn unique() -> u64 {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
