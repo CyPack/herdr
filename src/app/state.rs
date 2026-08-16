@@ -3677,6 +3677,13 @@ pub struct AppState {
     /// a draw that could sample would sample once per frame, which is the cost
     /// this whole seam exists to avoid.
     pub(crate) resources: crate::resource::ResourceSample,
+    /// What each metric has recently been, for a section that draws a shape
+    /// rather than a number.
+    ///
+    /// Beside the current sample rather than inside it: a `ResourceSample` is
+    /// one reading and is copied freely, and giving it a growing tail would make
+    /// every copy of a reading carry the history of every other.
+    pub(crate) resource_history: crate::resource::ResourceHistory,
     pub(crate) drag: Option<DragState>,
     pub(crate) workspace_press: Option<WorkspacePressState>,
     pub(crate) tab_press: Option<TabPressState>,
@@ -4709,6 +4716,7 @@ impl AppState {
             shell_presentation: crate::ui::shell::ShellPresentationState::new(26),
             shell_bar_chrome: crate::ui::shell::ShellBarChrome::default(),
             resources: crate::resource::ResourceSample::default(),
+            resource_history: crate::resource::ResourceHistory::default(),
             drag: None,
             workspace_press: None,
             tab_press: None,

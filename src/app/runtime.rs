@@ -737,6 +737,13 @@ impl App {
         let (mem, swap) = crate::platform::read_memory();
         self.state.resources.mem = mem;
         self.state.resources.swap = swap;
+        // Recorded here rather than where a sparkline draws, for the same reason
+        // the sample itself is: the loop reads the machine and the renderer
+        // never does. A history filled at draw time would have one entry per
+        // frame and none at all while nothing was being redrawn.
+        // TP-SPARK-07: the loop feeds the history, once per reading.
+        let sample = self.state.resources;
+        self.state.resource_history.push(&sample);
         true
     }
 
@@ -963,6 +970,44 @@ mod tests {
         app.state.active = Some(0);
         app.state.selected = 0;
         app
+    }
+
+    // TP-SPARK-07: the loop feeds the history, once per reading.
+    //
+    // A sparkline with nothing behind it draws an empty section, which looks
+    // exactly like a section that is meant to be empty. Nothing else here would
+    // notice that the widget shipped and the data never arrived.
+    #[test]
+    fn sampling_the_machine_records_a_reading_in_the_history() {
+        let mut app = app_with_resource_section();
+        let before = app
+            .state
+            .resource_history
+            .series(crate::resource::ResourceMetric::Cpu)
+            .len();
+
+        let start = Instant::now();
+        assert!(app.tick_resource_sample(start), "the first reading is owed");
+        assert_eq!(
+            app.state
+                .resource_history
+                .series(crate::resource::ResourceMetric::Cpu)
+                .len(),
+            before + 1,
+            "a reading was taken and the history did not grow"
+        );
+
+        // A tick that takes no reading must not record one either, or the
+        // history would count frames rather than readings.
+        assert!(!app.tick_resource_sample(start));
+        assert_eq!(
+            app.state
+                .resource_history
+                .series(crate::resource::ResourceMetric::Cpu)
+                .len(),
+            before + 1,
+            "a tick that read nothing still recorded something"
+        );
     }
 
     // TP-RES-16: a config that says nothing keeps the pace it always had.

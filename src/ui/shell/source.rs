@@ -1276,6 +1276,16 @@ pub(crate) enum SectionWidget {
     Meter {
         metric: crate::resource::ResourceMetric,
     },
+    /// The same metric over time: one column per reading, newest on the right.
+    ///
+    /// A meter answers "how full is it now"; this answers "what has it been
+    /// doing", which is usually the question somebody glancing at a bar
+    /// actually has — did the build start, has it finished, was that a spike or
+    /// is it sustained. It names only the metric, like its two siblings; the
+    /// readings arrive already sampled and already recorded.
+    Sparkline {
+        metric: crate::resource::ResourceMetric,
+    },
     /// One grapheme the font already knows how to draw.
     Icon {
         glyph: String,
@@ -1529,6 +1539,15 @@ const WIDGET_KINDS: &[SectionKind<SectionWidget>] = &[
                   widget = { kind = \"meter\", metric = \"mem\" }\n",
         build: meter_widget,
     },
+    SectionKind {
+        name: "sparkline",
+        keys: &["metric"],
+        refuses: &[],
+        example: "[shell.bars.top]\nenabled = true\n\n\
+                  [[shell.bars.top.sections]]\nkind = \"fixed\"\ncells = 24\n\
+                  widget = { kind = \"sparkline\", metric = \"cpu\" }\n",
+        build: sparkline_widget,
+    },
 ];
 
 fn label_widget(at: SectionAt<'_>) -> Result<SectionWidget, BarConfigProblem> {
@@ -1539,6 +1558,10 @@ fn label_widget(at: SectionAt<'_>) -> Result<SectionWidget, BarConfigProblem> {
 
 fn resource_widget(at: SectionAt<'_>) -> Result<SectionWidget, BarConfigProblem> {
     named_metric(at).map(|metric| SectionWidget::Resource { metric })
+}
+
+fn sparkline_widget(at: SectionAt<'_>) -> Result<SectionWidget, BarConfigProblem> {
+    named_metric(at).map(|metric| SectionWidget::Sparkline { metric })
 }
 
 fn meter_widget(at: SectionAt<'_>) -> Result<SectionWidget, BarConfigProblem> {
@@ -3287,7 +3310,11 @@ mod tests {
     #[test]
     fn a_widget_this_build_cannot_show_is_reported_and_never_reaches_the_geometry() {
         let mut wrong_kind = plain_section("fill");
-        wrong_kind.widget.kind = "sparkline".to_string();
+        // Was "sparkline" until this build grew one. A test that needs a name
+        // nothing builds has to move whenever the name it borrowed becomes real
+        // -- a small price for the compiler-checked table that made adding the
+        // kind a two-line change everywhere else.
+        wrong_kind.widget.kind = "gauge".to_string();
         let mut orphan_text = plain_section("fill");
         orphan_text.widget.text = "CPU".to_string();
         let mut label = plain_section("fill");
@@ -3306,7 +3333,7 @@ mod tests {
 
         assert_eq!(reported.len(), 2, "{reported:?}");
         assert!(
-            reported[0].contains("sections[0].widget.kind is \"sparkline\""),
+            reported[0].contains("sections[0].widget.kind is \"gauge\""),
             "{reported:?}"
         );
         assert!(

@@ -145,6 +145,7 @@ pub(crate) fn render_section_widget(
     frame: &mut Frame,
     widget: &crate::ui::shell::SectionWidget,
     resources: &crate::resource::ResourceSample,
+    history: &crate::resource::ResourceHistory,
     palette: &Palette,
     area: Rect,
     style: Style,
@@ -164,6 +165,10 @@ pub(crate) fn render_section_widget(
         }
         crate::ui::shell::SectionWidget::Meter { metric } => {
             render_meter(frame, resources, *metric, palette, area);
+            return;
+        }
+        crate::ui::shell::SectionWidget::Sparkline { metric } => {
+            render_sparkline(frame, history, *metric, palette, area);
             return;
         }
         crate::ui::shell::SectionWidget::Icon { glyph } => {
@@ -265,6 +270,67 @@ fn render_icon_art(frame: &mut Frame, art: &crate::icon::IconArt, palette: &Pale
 /// and an unchanged bar costs nothing in the frame diff.
 // TP-METER-01/02: every row is filled, the bar never overruns its rectangle,
 // and a metric with no ratio draws nothing at all.
+/// One column per reading, newest on the right, growing from the bottom.
+///
+/// Right-aligned rather than left, and that is the whole reading order: the
+/// newest sample sits where the eye lands, and a herdr just opened grows its
+/// history leftward into the empty half instead of shunting the newest column
+/// sideways on every tick.
+///
+/// The arithmetic is `meter_cells`, unchanged — a bar filled upward is the same
+/// division as one filled sideways, with the section's height where its width
+/// would be. Only the glyph table differs.
+// TP-SPARK-03/04/05: newest at the right, short histories right-aligned, and
+// every column grows from the bottom of the section.
+fn render_sparkline(
+    frame: &mut Frame,
+    history: &crate::resource::ResourceHistory,
+    metric: crate::resource::ResourceMetric,
+    palette: &Palette,
+    area: Rect,
+) {
+    let series = history.series(metric);
+    let width = usize::from(area.width);
+    // Only what fits, and the newest end of it.
+    let shown = series.len().min(width);
+    let skipped = series.len() - shown;
+    let left_pad = u16::try_from(width - shown).unwrap_or(0);
+
+    for (offset, ratio) in series.iter().skip(skipped).enumerate() {
+        // A reading that could not be taken draws nothing at all. A reading of
+        // zero draws the thinnest mark there is, because "idle" and "no idea"
+        // must not look the same.
+        let Some(ratio) = ratio else {
+            continue;
+        };
+        let column = area.x + left_pad + u16::try_from(offset).unwrap_or(0);
+        let colour = super::shell::bar_color(crate::resource::meter_colour(*ratio), palette);
+        let (full, eighths) = crate::resource::meter_cells(*ratio, area.height);
+        let partial = crate::resource::lower_eighth_block(eighths);
+
+        let buffer = frame.buffer_mut();
+        // Full cells first, counted up from the bottom row.
+        for filled in 0..full {
+            let row = area.y + area.height - 1 - filled;
+            if let Some(cell) = buffer.cell_mut((column, row)) {
+                cell.set_symbol("\u{2588}");
+                cell.set_fg(colour);
+            }
+        }
+        // Then the partial cell sitting on top of them. A value of exactly zero
+        // has no full cells and no eighths, so it lands here as the first
+        // eighth rather than as nothing.
+        let symbol = partial.unwrap_or(if full == 0 { "\u{2581}" } else { "" });
+        if !symbol.is_empty() && full < area.height {
+            let row = area.y + area.height - 1 - full;
+            if let Some(cell) = buffer.cell_mut((column, row)) {
+                cell.set_symbol(symbol);
+                cell.set_fg(colour);
+            }
+        }
+    }
+}
+
 fn render_meter(
     frame: &mut Frame,
     resources: &crate::resource::ResourceSample,
@@ -665,6 +731,93 @@ mod tests {
 
     fn peach() -> BarTint {
         BarTint::solid(Color::Rgb(250, 179, 135))
+    }
+
+    /// A history whose readings are the ratios given, oldest first.
+    fn history_of(ratios: &[Option<f32>]) -> crate::resource::ResourceHistory {
+        let mut history = crate::resource::ResourceHistory::default();
+        for ratio in ratios {
+            history.push(&crate::resource::ResourceSample {
+                cpu: ratio.map(|ratio| ratio * 100.0),
+                ..Default::default()
+            });
+        }
+        history
+    }
+
+    /// One row of a drawn sparkline, as text.
+    fn sparkline_row(ratios: &[Option<f32>], width: u16, height: u16, row: u16) -> String {
+        let history = history_of(ratios);
+        let buffer = draw(width, height, |frame| {
+            render_sparkline(
+                frame,
+                &history,
+                crate::resource::ResourceMetric::Cpu,
+                &crate::app::state::Palette::catppuccin(),
+                Rect::new(0, 0, width, height),
+            );
+        });
+        (0..width)
+            .filter_map(|x| buffer.cell((x, row)).map(|c| c.symbol().to_string()))
+            .collect()
+    }
+
+    // TP-SPARK-02: a reading that could not be taken and a reading of zero must
+    // not draw the same thing.
+    //
+    // One pixel apart and opposite in meaning: "the machine was idle" against
+    // "we have no idea". If they collapsed, a bar would report an idle machine
+    // it had never measured, and nothing on screen would say so.
+    #[test]
+    fn an_unread_column_is_blank_and_a_zero_column_is_the_thinnest_mark() {
+        let row = sparkline_row(&[None, Some(0.0)], 2, 1, 0);
+        assert_eq!(row, " ▁", "unread and zero drew the same thing: {row:?}");
+    }
+
+    // TP-SPARK-03: with more readings than columns, the newest survive.
+    //
+    // A sparkline answers "what has it been doing lately". Keeping the oldest
+    // readings would answer a question nobody asked, and would look identical.
+    #[test]
+    fn a_history_longer_than_the_section_keeps_its_newest_readings() {
+        // Eight readings climbing to full, in a section three columns wide.
+        let ratios: Vec<Option<f32>> = (1..=8)
+            .map(|step| Some(f32::from(step as u8) / 8.0))
+            .collect();
+        let row = sparkline_row(&ratios, 3, 1, 0);
+        assert_eq!(
+            row, "▆▇█",
+            "the oldest readings were drawn instead of the newest: {row:?}"
+        );
+    }
+
+    // TP-SPARK-04: with fewer readings than columns, they sit on the right.
+    //
+    // A herdr just opened grows its history leftward into the empty half. Left
+    // alignment would shunt the newest column sideways on every reading, which
+    // reads as the whole graph sliding rather than as one new sample.
+    #[test]
+    fn a_history_shorter_than_the_section_is_right_aligned() {
+        let row = sparkline_row(&[Some(1.0), Some(1.0)], 5, 1, 0);
+        assert_eq!(
+            row, "   ██",
+            "a short history was not right-aligned: {row:?}"
+        );
+    }
+
+    // TP-SPARK-05: columns grow from the bottom.
+    //
+    // Gravity. A graph filled from the top is not a graph anybody reads, and the
+    // mistake is invisible in a one-row bar — which is exactly where this would
+    // otherwise have been tested.
+    #[test]
+    fn a_column_fills_upward_from_the_bottom_row() {
+        // Half full in a four-row section: two full cells at the bottom.
+        let ratios = [Some(0.5)];
+        assert_eq!(sparkline_row(&ratios, 1, 4, 3), "█", "bottom row unfilled");
+        assert_eq!(sparkline_row(&ratios, 1, 4, 2), "█", "second row unfilled");
+        assert_eq!(sparkline_row(&ratios, 1, 4, 1), " ", "third row filled");
+        assert_eq!(sparkline_row(&ratios, 1, 4, 0), " ", "top row filled");
     }
 
     // T51/T52 · a control has to stay readable inside the frame that makes it

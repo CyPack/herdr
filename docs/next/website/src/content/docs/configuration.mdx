@@ -534,6 +534,7 @@ A section is empty until it is given a widget. There are four kinds:
 | `label` | fixed text | `text` |
 | `resource` | a machine counter, as a figure | `metric` |
 | `meter` | the same counter, as a filled bar | `metric` |
+| `sparkline` | the same counter over time, one column per reading | `metric` |
 | `icon` | one picture | `glyph`, or `art`, or `pixels` + `palette` |
 
 No widget ever changes how wide its section is. The sizing rules above decide that, and content that does not fit is cut rather than pushing its neighbours around — clipping is by display width, so a two-cell emoji counts as two.
@@ -566,6 +567,19 @@ widget = { kind = "meter", metric = "mem" }
 ```
 
 `metric` is one of `cpu`, `mem` (`ram` is accepted as the same thing) or `swap`. A metric this build does not know is refused where it is written rather than drawn as an empty section: a typo that renders as blank cannot be told from a section left blank on purpose.
+
+A third widget shows the same metric **over time** — one column per reading, newest on the right:
+
+```toml
+[[shell.bars.top.sections]]
+kind   = "fixed"
+cells  = 24
+widget = { kind = "sparkline", metric = "cpu" }
+```
+
+`meter` answers "how full is it now"; `sparkline` answers "what has it been doing" — whether a build has started, whether it has finished, whether that was a spike or is sustained. Each column is coloured by its own value, so when the load rose is readable from the shape alone. Columns grow upward from the bottom of the section, and a taller section simply gives them more room.
+
+A section shows only as much history as it has columns, and a herdr just started grows its history leftward into the empty half. A reading that could not be taken is left blank; a reading of zero draws the thinnest mark there is, so an idle machine never looks like a missing one.
 
 How often the machine is re-read is one setting for all of them:
 

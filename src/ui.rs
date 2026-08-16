@@ -1043,6 +1043,7 @@ impl compose::Component for BaseLayer {
                         frame,
                         widget,
                         &app.resources,
+                        &app.resource_history,
                         &app.palette,
                         rect,
                         section_style,
