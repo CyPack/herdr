@@ -3645,7 +3645,8 @@ mod tests {
                 "New branch...",
                 "New sub-module...",
                 "New parallel module...",
-                "Collapse"
+                "Collapse",
+                "Set directory...",
             ]
         );
         assert_eq!(
@@ -3654,7 +3655,8 @@ mod tests {
                 "New branch...",
                 "New sub-module...",
                 "New parallel module...",
-                "Expand"
+                "Expand",
+                "Set directory...",
             ]
         );
 
@@ -3711,6 +3713,7 @@ mod tests {
                 // rewrite the file the machine owns, so both are offered on
                 // exactly the modules it can rewrite.
                 "Rename module...",
+                "Set directory...",
                 "Delete module",
             ]
         );
