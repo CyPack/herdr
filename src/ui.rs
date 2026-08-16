@@ -6,6 +6,9 @@ use ratatui::{
 };
 
 pub(crate) mod app_dock;
+#[cfg(test)]
+pub(crate) use sidebar::closed_agent_row_slots;
+
 mod compose;
 mod dialogs;
 mod file_manager;
@@ -120,7 +123,7 @@ pub(crate) use self::{
     sidebar::{
         agent_entry_gap, agent_entry_height_in_body, agent_panel_body_rect, agent_panel_entries,
         agent_panel_scroll_for_target, agent_panel_scroll_metrics, agent_panel_scrollbar_rect,
-        agent_panel_toggle_rect, all_agent_panel_entries, closed_agent_row_slots,
+        agent_panel_toggle_rect, all_agent_panel_entries, closed_agent_index_at,
         collapsed_sidebar_sections, collapsed_sidebar_toggle_rect, compute_workspace_card_areas,
         daily_chat_rows, daily_new_chat_cell, effective_space, expanded_sidebar_sections,
         expanded_sidebar_toggle_rect, header_menu_cell, header_new_branch_cell,

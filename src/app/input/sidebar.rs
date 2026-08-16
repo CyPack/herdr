@@ -915,8 +915,11 @@ impl AppState {
         if self.sidebar_collapsed {
             return None;
         }
-        let (_, ghost_rows) = crate::ui::closed_agent_row_slots(self, self.agent_panel_rect())?;
-        let hit = ghost_rows.iter().position(|y| *y == row)?;
+        // TP-AGPANEL-43: resolved from the same placement walk the painter
+        // uses, and across the ghost's whole card rather than only its first
+        // row — a headstone is a card now, and a press on its lower half must
+        // not fall through.
+        let hit = crate::ui::closed_agent_index_at(self, self.agent_panel_rect(), row)?;
         self.closed_agents
             .entries()
             .nth(hit)

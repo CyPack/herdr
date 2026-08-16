@@ -2325,7 +2325,73 @@ fn resolved_agent_rows(app: &AppState, entry: &AgentPanelEntry) -> Vec<Vec<Resol
         .get(agent_panel_status_key(entry.state, entry.seen))
         .map(String::as_str)
         .unwrap_or_else(|| state_label(entry.state, entry.seen));
-    tokens::agent_rows(&app.sidebar_agents, entry, label)
+    tokens::agent_rows(&app.sidebar_agents, entry.into(), label)
+}
+
+/// A ghost's rows, laid out by the very function the living use.
+///
+/// TP-AGPANEL-42: the user asked for the closed agents to be drawn "in the
+/// same format as the open ones, the only difference being that they are a
+/// faded grey". Calling the same layout is how that is kept true — a second
+/// drawing path would be free to drift, and the one it replaces had already
+/// drifted all the way to a bare `Paragraph` of one line.
+///
+/// Where a living row says what it is doing, a ghost says when it stopped. The
+/// state slot cannot stay empty (the layout would collapse) and cannot carry a
+/// live state (it has none), and the age is the one fact a graveyard exists to
+/// answer — "let me see the ones opened and closed in the last month" was the
+/// request that produced this section.
+// TP-AGPANEL-44
+fn resolved_ghost_rows(
+    app: &AppState,
+    record: &crate::app::closed_agents::ClosedAgentRecord,
+    now: std::time::SystemTime,
+) -> Vec<Vec<ResolvedToken>> {
+    let empty = std::collections::HashMap::new();
+    let name = ghost_display_label(record);
+    tokens::agent_rows(
+        &app.sidebar_agents,
+        tokens::AgentTokenContext {
+            agent: None,
+            primary_label: &name,
+            primary_tab_label: None,
+            pane_label: None,
+            agent_label: None,
+            terminal_title: None,
+            terminal_title_stripped: None,
+            tokens: &empty,
+        },
+        &ghost_age_label(record, now),
+    )
+}
+
+/// The name a headstone wears, with the static ellipsis a revival adds.
+///
+/// TP-AGPANEL-22 put the ellipsis on the name and it stays there: state, not
+/// animation — nothing ticks for a ghost. It rides the name rather than the
+/// age because the name is the one thing a headstone always has, so a row
+/// layout that asks for no state text still shows that a revival is under way.
+fn ghost_display_label(record: &crate::app::closed_agents::ClosedAgentRecord) -> String {
+    if record.revival == crate::app::closed_agents::RevivalState::Reviving {
+        format!("{} …", record.label)
+    } else {
+        record.label.clone()
+    }
+}
+
+/// How long ago a ghost closed, in the panel's own relative vocabulary.
+///
+/// TP-AGPANEL-44: where a living row says what it is doing, a headstone says
+/// when it stopped. The state slot cannot stay empty — the layout would
+/// collapse — and cannot carry a live state, because a ghost has none. "let me
+/// see the ones opened and closed in the last month" is the request this
+/// section exists to answer, and the age is the half of it the row can show.
+fn ghost_age_label(
+    record: &crate::app::closed_agents::ClosedAgentRecord,
+    now: std::time::SystemTime,
+) -> String {
+    let closed_at = std::time::UNIX_EPOCH + std::time::Duration::from_millis(record.closed_at);
+    format_relative_time(closed_at, now)
 }
 
 pub(crate) fn agent_entry_height_in_body(
@@ -2354,60 +2420,160 @@ fn agent_panel_visible_count_from(app: &AppState, area: Rect, scroll: usize) -> 
         return 0;
     }
 
+    let entries = agent_panel_entries(app);
+    let ghosts = ghost_row_layouts(app);
+    let rows = agent_panel_rows(app, entries.len());
     let mut used_rows = 0u16;
     let mut visible = 0usize;
-    let entries = agent_panel_entries(app);
-    for (index, entry) in entries.iter().enumerate().skip(scroll) {
-        let height = agent_entry_height_in_body(app, entry, body.height);
+    for index in scroll..rows.len() {
+        let height = agent_panel_row_height(app, rows[index], &entries, &ghosts, body.height);
         if used_rows.saturating_add(height) > body.height {
             break;
         }
         used_rows = used_rows.saturating_add(height);
         visible += 1;
         used_rows = used_rows
-            .saturating_add(agent_entry_gap(app, index, entries.len()))
+            .saturating_add(agent_panel_row_gap(app, &rows, index))
             .min(body.height);
     }
     visible
 }
 
-/// Rows the last screen keeps for the graveyard: one separator, one ghost.
+/// Where every row of the panel is painted, and how tall it is.
 ///
-/// TP-AGPANEL-29: a separator with nothing under it is the rendering bug the
-/// graveyard contract already forbids, so the reserve is never one row.
-const GRAVEYARD_MIN_ROWS: u16 = 2;
+/// TP-AGPANEL-43: one walk feeds the painter AND both hit tests, so a row's
+/// click box can never sit beside its paint — the rule TP-CHROME-15/16 pinned
+/// for the collapse control, applied to a list.
+pub(crate) fn agent_panel_placements(app: &AppState, area: Rect) -> Vec<(AgentPanelRow, u16, u16)> {
+    let metrics = agent_panel_scroll_metrics(app, area);
+    let body = agent_panel_body_rect(area, should_show_scrollbar(metrics));
+    if body == Rect::default() || body.height == 0 {
+        return Vec::new();
+    }
+    let entries = agent_panel_entries(app);
+    let ghosts = ghost_row_layouts(app);
+    let rows = agent_panel_rows(app, entries.len());
+    let scroll = app.agent_panel_scroll.min(metrics.max_offset_from_bottom);
+
+    let mut placements = Vec::new();
+    let mut row_y = body.y;
+    let body_bottom = body.y + body.height;
+    for index in scroll..rows.len() {
+        let height = agent_panel_row_height(app, rows[index], &entries, &ghosts, body.height);
+        if row_y.saturating_add(height) > body_bottom {
+            break;
+        }
+        placements.push((rows[index], row_y, height));
+        row_y = row_y
+            .saturating_add(height)
+            .saturating_add(agent_panel_row_gap(app, &rows, index))
+            .min(body_bottom);
+    }
+    placements
+}
+
+/// One thing the agents panel scrolls past: a running agent, the divider, or a
+/// closed one.
+///
+/// TP-AGPANEL-43: the graveyard used to be drawn into whatever space the
+/// living left over — it took no part in the scroll metrics, the ceiling
+/// reserved two rows for it, and the painter filled the remainder newest-first
+/// and clipped the rest. Measured on the reported machine that meant 62 ghosts
+/// of which at most a handful could ever be seen, and NO scroll position
+/// reached the others: the user asked to see them "one by one, in a scrollable
+/// area", and the panel was structurally incapable of it.
+///
+/// Making them rows of the same list is what makes them reachable. Scrolling,
+/// visible-count, hit testing and painting then all read one sequence, so a
+/// ghost cannot be reachable by one and invisible to another.
+#[derive(Clone, Copy)]
+pub(crate) enum AgentPanelRow {
+    Live(usize),
+    Separator,
+    Ghost(usize),
+}
+
+/// The panel's whole scrollable sequence: the living, then — only if there are
+/// any ghosts — a divider and the ghosts.
+///
+/// TP-AGPANEL-29 survives here rather than as a reserved-rows constant: the
+/// separator is emitted only alongside at least one ghost, so a divider
+/// dividing nothing remains impossible by construction.
+pub(crate) fn agent_panel_rows(app: &AppState, live_count: usize) -> Vec<AgentPanelRow> {
+    let mut rows: Vec<AgentPanelRow> = (0..live_count).map(AgentPanelRow::Live).collect();
+    let ghosts = app.closed_agents.entries().count();
+    if ghosts > 0 {
+        rows.push(AgentPanelRow::Separator);
+        rows.extend((0..ghosts).map(AgentPanelRow::Ghost));
+    }
+    rows
+}
+
+/// How tall one row of that sequence is, in the body it is drawn into.
+fn agent_panel_row_height(
+    app: &AppState,
+    row: AgentPanelRow,
+    entries: &[AgentPanelEntry],
+    ghost_rows: &[Vec<Vec<ResolvedToken>>],
+    body_height: u16,
+) -> u16 {
+    match row {
+        AgentPanelRow::Live(idx) => entries
+            .get(idx)
+            .map(|entry| agent_entry_height_in_body(app, entry, body_height))
+            .unwrap_or(0),
+        AgentPanelRow::Separator => 1.min(body_height),
+        AgentPanelRow::Ghost(idx) => ghost_rows
+            .get(idx)
+            .map(|rows| (rows.len().max(1) as u16).min(body_height))
+            .unwrap_or(0),
+    }
+}
+
+/// The gap under a row. Only the living carry one: the divider is already the
+/// separation the graveyard needs, and spacing the ghosts apart would spend
+/// the panel's scarcest resource — rows — on air.
+fn agent_panel_row_gap(app: &AppState, rows: &[AgentPanelRow], index: usize) -> u16 {
+    match rows.get(index) {
+        Some(AgentPanelRow::Live(_)) if index + 1 < rows.len() => app.sidebar_agents.row_gap,
+        _ => 0,
+    }
+}
+
+/// Every ghost's laid-out rows, computed once per frame.
+///
+/// `SystemTime::now()` is read here rather than inside the layout so the whole
+/// panel agrees on one instant; two ghosts closed a second apart must not be
+/// able to disagree about what "now" was.
+fn ghost_row_layouts(app: &AppState) -> Vec<Vec<Vec<ResolvedToken>>> {
+    let now = std::time::SystemTime::now();
+    app.closed_agents
+        .entries()
+        .map(|record| resolved_ghost_rows(app, record, now))
+        .collect()
+}
 
 fn agent_panel_bottom_start(app: &AppState, area: Rect) -> usize {
     let body = agent_panel_body_rect(area, false);
     let entries = agent_panel_entries(app);
-    // TP-AGPANEL-29: when there are ghosts, the last screen keeps room for the
-    // separator and at least one of them.
-    //
-    // Without this the ceiling packs the last screen with living rows, the
-    // graveyard is drawn only into space they leave over, and the two rules
-    // meet badly: on a panel that is always full there is never any leftover
-    // space and no scroll position reaches the ghosts at all. A section that
-    // cannot be reached is a section that is not there. Reserved only when a
-    // graveyard exists — growing the ceiling for an empty one would open a
-    // gap under the panel that says "more below" and means nothing.
-    let ghost_reserve = if app.closed_agents.entries().next().is_some() {
-        GRAVEYARD_MIN_ROWS.min(body.height)
-    } else {
-        0
-    };
-    let usable = body.height.saturating_sub(ghost_reserve);
+    let ghosts = ghost_row_layouts(app);
+    let rows = agent_panel_rows(app, entries.len());
+    if rows.is_empty() {
+        return 0;
+    }
     let mut used_rows = 0u16;
-    let mut start = entries.len();
-    for (index, entry) in entries.iter().enumerate().rev() {
-        let gap = agent_entry_gap(app, index, entries.len());
-        let needed = agent_entry_height_in_body(app, entry, body.height).saturating_add(gap);
-        if used_rows.saturating_add(needed) > usable {
+    let mut start = rows.len();
+    for index in (0..rows.len()).rev() {
+        let gap = agent_panel_row_gap(app, &rows, index);
+        let needed = agent_panel_row_height(app, rows[index], &entries, &ghosts, body.height)
+            .saturating_add(gap);
+        if used_rows.saturating_add(needed) > body.height {
             break;
         }
         used_rows = used_rows.saturating_add(needed);
         start = index;
     }
-    start.min(entries.len().saturating_sub(1))
+    start.min(rows.len().saturating_sub(1))
 }
 
 /// Where the graveyard paints: the separator row's y and each ghost row's y,
@@ -2417,37 +2583,41 @@ fn agent_panel_bottom_start(app: &AppState, area: Rect) -> usize {
 /// space is left under the live entries, newest first, and clip from the
 /// oldest end; a separator with no room for a single row under it is not
 /// drawn at all — a divider dividing nothing reads as a rendering bug.
+/// The graveyard's placements in the shape the tests that predate the unified
+/// list assert on: the separator's row, then each headstone's first row.
+///
+/// Test-facing on purpose. Production reads `agent_panel_placements` directly —
+/// this is the older, narrower view of the same walk, kept so the
+/// characterization tests written against the leftover-space graveyard keep
+/// guarding the behaviour they were written for.
+#[cfg(test)]
 pub(crate) fn closed_agent_row_slots(app: &AppState, area: Rect) -> Option<(u16, Vec<u16>)> {
-    let ghost_count = app.closed_agents.entries().count();
-    if ghost_count == 0 {
-        return None;
-    }
-    let metrics = agent_panel_scroll_metrics(app, area);
-    let body = agent_panel_body_rect(area, should_show_scrollbar(metrics));
-    if body == Rect::default() {
-        return None;
-    }
-    let entries = agent_panel_entries(app);
-    let scroll = app.agent_panel_scroll.min(metrics.max_offset_from_bottom);
-    let mut row_y = body.y;
-    let body_bottom = body.y + body.height;
-    for (index, entry) in entries.iter().enumerate().skip(scroll) {
-        let height = agent_entry_height_in_body(app, entry, body.height);
-        if row_y.saturating_add(height) > body_bottom {
-            // The living already fill the panel; the graveyard yields.
-            return None;
-        }
-        row_y = row_y
-            .saturating_add(height)
-            .saturating_add(agent_entry_gap(app, index, entries.len()))
-            .min(body_bottom);
-    }
-    if row_y.saturating_add(2) > body_bottom {
-        return None;
-    }
-    let separator_y = row_y;
-    let rows = (separator_y + 1..body_bottom).take(ghost_count).collect();
-    Some((separator_y, rows))
+    let placements = agent_panel_placements(app, area);
+    let separator_y = placements
+        .iter()
+        .find_map(|(row, y, _)| matches!(row, AgentPanelRow::Separator).then_some(*y))?;
+    let ghosts: Vec<u16> = placements
+        .iter()
+        .filter_map(|(row, y, _)| matches!(row, AgentPanelRow::Ghost(_)).then_some(*y))
+        .collect();
+    (!ghosts.is_empty()).then_some((separator_y, ghosts))
+}
+
+/// The ghost whose card covers `row`, by index.
+///
+/// TP-AGPANEL-43: a ghost is a card now, not a line, so a press anywhere on it
+/// counts. Matching only its first row would make the lower half of a two-row
+/// headstone silently dead — the class of defect the shared layout exists to
+/// prevent.
+pub(crate) fn closed_agent_index_at(app: &AppState, area: Rect, row: u16) -> Option<usize> {
+    agent_panel_placements(app, area)
+        .into_iter()
+        .find_map(|(kind, y, height)| match kind {
+            AgentPanelRow::Ghost(idx) if row >= y && row < y.saturating_add(height.max(1)) => {
+                Some(idx)
+            }
+            _ => None,
+        })
 }
 
 pub(crate) fn agent_panel_scroll_for_target(
@@ -4557,16 +4727,40 @@ fn render_agent_detail(
         return;
     }
 
-    let scroll = app.agent_panel_scroll.min(metrics.max_offset_from_bottom);
-    let mut row_y = body.y;
-    let body_bottom = body.y + body.height;
-    for (index, detail) in details.iter().enumerate().skip(scroll) {
+    // TP-AGPANEL-43: one walk, one sequence. The graveyard is no longer drawn
+    // into leftover space after this loop — it IS part of this loop, which is
+    // what makes every ghost reachable by scrolling.
+    let ghost_layouts = ghost_row_layouts(app);
+    let ghost_records: Vec<_> = app.closed_agents.entries().collect();
+    for (kind, row_y, height) in agent_panel_placements(app, area) {
+        let (index, detail) = match kind {
+            AgentPanelRow::Live(index) => match details.get(index) {
+                Some(detail) => (index, detail),
+                None => continue,
+            },
+            AgentPanelRow::Separator => {
+                let sep_line = "─".repeat(body.width as usize);
+                frame.render_widget(
+                    Paragraph::new(Span::styled(&sep_line, Style::default().fg(p.surface_dim))),
+                    Rect::new(body.x, row_y, body.width, 1),
+                );
+                continue;
+            }
+            AgentPanelRow::Ghost(idx) => {
+                render_ghost_card(
+                    app,
+                    frame,
+                    body,
+                    row_y,
+                    height,
+                    ghost_layouts.get(idx).map(Vec::as_slice).unwrap_or(&[]),
+                    ghost_records.get(idx).copied(),
+                );
+                continue;
+            }
+        };
         let label_color = state_label_color(detail.state, detail.seen, p);
         let rows = resolved_agent_rows(app, detail);
-        let height = (rows.len().max(1) as u16).min(body.height);
-        if row_y.saturating_add(height) > body_bottom {
-            break;
-        }
 
         let is_active = app.is_active_pane(detail.ws_idx, detail.tab_idx, detail.pane_id);
         // TP-AGPANEL-01: the active row speaks the active tab's language —
@@ -4619,39 +4813,65 @@ fn render_agent_detail(
                 Rect::new(body.x, row_y + row_index as u16, body.width, 1),
             );
         }
-        row_y = row_y
-            .saturating_add(height)
-            .saturating_add(agent_entry_gap(app, index, details.len()))
-            .min(body_bottom);
-    }
-
-    // TP-AGPANEL-22: after the living, the graveyard — a separator, then the
-    // recently closed agents as plain text. The third visual class must hold
-    // on one axis: the active card wears the accent, passive rows drop bold,
-    // and a ghost dims *and* leans (italic) — dim alone would collide with
-    // the passive agent token, which already dims. A reviving row wears a
-    // static ellipsis: state, not animation; nothing ticks for a ghost.
-    if let Some((separator_y, ghost_rows)) = closed_agent_row_slots(app, area) {
-        let sep_line = "─".repeat(body.width as usize);
-        frame.render_widget(
-            Paragraph::new(Span::styled(&sep_line, Style::default().fg(p.surface_dim))),
-            Rect::new(body.x, separator_y, body.width, 1),
-        );
-        let ghost_style = Style::default()
-            .fg(p.overlay0)
-            .add_modifier(Modifier::DIM | Modifier::ITALIC);
-        for (record, y) in app.closed_agents.entries().zip(ghost_rows) {
-            let reviving = record.revival == crate::app::closed_agents::RevivalState::Reviving;
-            let text = format!(" {}{}", record.label, if reviving { " …" } else { "" });
-            frame.render_widget(
-                Paragraph::new(Span::styled(text, ghost_style)),
-                Rect::new(body.x, y, body.width, 1),
-            );
-        }
+        let _ = index;
     }
 
     if let Some(track) = scrollbar_rect {
         render_scrollbar(frame, metrics, track, p.surface_dim, p.overlay0, "▕");
+    }
+}
+
+/// Draw one headstone, through the very span builder the living rows use.
+///
+/// TP-AGPANEL-22 keeps its third visual class here: the active card wears the
+/// accent, passive rows drop bold, and a ghost dims *and* leans — dim alone
+/// would collide with the passive agent token, which already dims. What
+/// changed is only that the dimming is applied to a card rather than to a
+/// bare line of text.
+// TP-AGPANEL-42/44
+fn render_ghost_card(
+    app: &AppState,
+    frame: &mut Frame,
+    body: Rect,
+    row_y: u16,
+    height: u16,
+    rows: &[Vec<ResolvedToken>],
+    record: Option<&crate::app::closed_agents::ClosedAgentRecord>,
+) {
+    let p = &app.palette;
+    let ghost_style = Style::default()
+        .fg(p.overlay0)
+        .add_modifier(Modifier::DIM | Modifier::ITALIC);
+    // Nothing ticks for a ghost: the icon is asked for a static glyph, never
+    // for a spinner frame.
+    let state_icon = ("·", ghost_style);
+
+    if rows.is_empty() {
+        let label = record.map(ghost_display_label).unwrap_or_default();
+        frame.render_widget(
+            Paragraph::new(Span::styled(format!(" {label}"), ghost_style)),
+            Rect::new(body.x, row_y, body.width, 1),
+        );
+        return;
+    }
+
+    for (row_index, resolved) in rows.iter().take(height.max(1) as usize).enumerate() {
+        let mut spans = vec![Span::raw(if row_index == 0 { " " } else { "   " })];
+        spans.extend(resolved_token_spans(
+            resolved,
+            state_icon,
+            ghost_style,
+            ghost_style,
+            ghost_style,
+            ghost_style,
+            p,
+            body.width
+                .saturating_sub(if row_index == 0 { 1 } else { 3 }) as usize,
+        ));
+        frame.render_widget(
+            Paragraph::new(Line::from(spans)),
+            Rect::new(body.x, row_y + row_index as u16, body.width, 1),
+        );
     }
 }
 
@@ -5030,6 +5250,126 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             ));
         }
         app
+    }
+
+    // T2.1 / TP-AGPANEL-43: the reported defect, stated as a property. Sixty-two
+    // headstones were on disk and at most a handful could ever be seen, because
+    // the graveyard was painted into whatever space the living left over — the
+    // rest were not merely below the fold, they were unreachable at every
+    // scroll position there was. "I want to see them one by one, in a
+    // scrollable area" is not satisfiable while that is true, whatever the rows
+    // look like.
+    #[test]
+    fn every_headstone_is_reachable_at_some_scroll_position() {
+        let ghosts = 20;
+        let mut app = app_with_a_full_panel_and_ghosts(24, ghosts);
+        let area = Rect::new(0, 0, 30, 12);
+
+        assert!(
+            agent_panel_bottom_start(&app, area) > 0,
+            "precondition: the panel scrolls at all"
+        );
+
+        let ceiling = agent_panel_bottom_start(&app, area);
+        let mut reached = std::collections::HashSet::new();
+        for scroll in 0..=ceiling {
+            app.agent_panel_scroll = scroll;
+            for (row, _, _) in agent_panel_placements(&app, area) {
+                if let AgentPanelRow::Ghost(idx) = row {
+                    reached.insert(idx);
+                }
+            }
+        }
+
+        assert_eq!(
+            reached.len(),
+            ghosts,
+            "every headstone must be reachable; reached {} of {ghosts}",
+            reached.len()
+        );
+    }
+
+    // T2.2 / TP-AGPANEL-42: a headstone is laid out by the living rows' own
+    // layout, so a two-row configuration gives it two rows. Drawn by a second
+    // path it would be free to drift — and the path it replaced had drifted all
+    // the way to one bare line of text.
+    #[test]
+    fn a_headstone_is_as_tall_as_the_row_layout_says() {
+        let mut app = app_with_a_full_panel_and_ghosts(1, 1);
+        app.sidebar_agents.rows = vec![
+            vec![crate::config::AgentSidebarToken::Workspace],
+            vec![crate::config::AgentSidebarToken::StateText],
+        ];
+        let area = Rect::new(0, 0, 30, 12);
+
+        let placements = agent_panel_placements(&app, area);
+        let ghost_height = placements
+            .iter()
+            .find_map(|(row, _, height)| matches!(row, AgentPanelRow::Ghost(_)).then_some(*height))
+            .expect("the graveyard is drawn");
+        let live_height = placements
+            .iter()
+            .find_map(|(row, _, height)| matches!(row, AgentPanelRow::Live(_)).then_some(*height))
+            .expect("a living row is drawn");
+
+        assert_eq!(
+            ghost_height, live_height,
+            "the only difference between the two must be colour"
+        );
+        assert_eq!(ghost_height, 2, "a two-row layout gives two rows");
+    }
+
+    // T2.4 / TP-AGPANEL-43: a headstone is a card, so a press on its lower half
+    // counts. Matching only its first row would leave the rest of the card
+    // silently dead — the class of defect one shared layout exists to prevent.
+    #[test]
+    fn a_press_on_the_lower_half_of_a_headstone_still_hits_it() {
+        let mut app = app_with_a_full_panel_and_ghosts(1, 1);
+        app.sidebar_agents.rows = vec![
+            vec![crate::config::AgentSidebarToken::Workspace],
+            vec![crate::config::AgentSidebarToken::StateText],
+        ];
+        let area = Rect::new(0, 0, 30, 12);
+        let (_, y, height) = agent_panel_placements(&app, area)
+            .into_iter()
+            .find(|(row, _, _)| matches!(row, AgentPanelRow::Ghost(_)))
+            .expect("the graveyard is drawn");
+        assert_eq!(height, 2, "precondition: the headstone is two rows tall");
+
+        assert_eq!(closed_agent_index_at(&app, area, y), Some(0));
+        assert_eq!(
+            closed_agent_index_at(&app, area, y + 1),
+            Some(0),
+            "the second row of the card belongs to the same headstone"
+        );
+    }
+
+    // T2.3 / TP-AGPANEL-22: the third visual class holds. A headstone dims and
+    // leans and never wears the accent — the accent means "this is where you
+    // are", and nowhere is where a closed agent is.
+    #[test]
+    fn a_headstone_never_wears_the_active_accent() {
+        let app = app_with_a_full_panel_and_ghosts(1, 1);
+        let area = Rect::new(0, 0, 30, 12);
+        let (_, ghost_y, _) = agent_panel_placements(&app, area)
+            .into_iter()
+            .find(|(row, _, _)| matches!(row, AgentPanelRow::Ghost(_)))
+            .expect("the graveyard is drawn");
+
+        let mut terminal = Terminal::new(TestBackend::new(30, 12)).unwrap();
+        terminal
+            .draw(|frame| render_agent_detail(&app, &TerminalRuntimeRegistry::new(), frame, area))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let body = agent_panel_body_rect(area, false);
+
+        for x in body.x..body.x + body.width {
+            assert_ne!(
+                buffer[(x, ghost_y)].style().bg,
+                Some(app.palette.accent),
+                "a headstone must never read as the row you are on"
+            );
+        }
     }
 
     // TP-AGPANEL-29 (R1): a panel the living rows fill can still be scrolled

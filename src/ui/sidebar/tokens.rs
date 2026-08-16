@@ -35,9 +35,48 @@ impl ResolvedToken {
     }
 }
 
+/// Everything the agent row layout reads, borrowed rather than owned.
+///
+/// TP-AGPANEL-42: the panel draws two kinds of thing — a running agent and a
+/// closed one — and they must come out in the same shape, because the only
+/// difference a person should be able to see is the colour. A closed agent has
+/// no pane, no tab and no workspace index, so it cannot be an `AgentPanelEntry`
+/// without inventing three identities that would then be one careless read away
+/// from resolving to a live pane. Taking the fields instead of the struct makes
+/// the shared format structural: there is exactly one row layout, and neither
+/// caller can drift from it because neither owns it.
+///
+/// Shaped after `SpaceTokenContext`, which solved the same problem for the
+/// tree.
+pub(super) struct AgentTokenContext<'a> {
+    pub agent: Option<crate::detect::Agent>,
+    pub primary_label: &'a str,
+    pub primary_tab_label: Option<&'a str>,
+    pub pane_label: Option<&'a str>,
+    pub agent_label: Option<&'a str>,
+    pub terminal_title: Option<&'a str>,
+    pub terminal_title_stripped: Option<&'a str>,
+    pub tokens: &'a std::collections::HashMap<String, String>,
+}
+
+impl<'a> From<&'a AgentPanelEntry> for AgentTokenContext<'a> {
+    fn from(entry: &'a AgentPanelEntry) -> Self {
+        Self {
+            agent: entry.agent,
+            primary_label: &entry.primary_label,
+            primary_tab_label: entry.primary_tab_label.as_deref(),
+            pane_label: entry.pane_label.as_deref(),
+            agent_label: entry.agent_label.as_deref(),
+            terminal_title: entry.terminal_title.as_deref(),
+            terminal_title_stripped: entry.terminal_title_stripped.as_deref(),
+            tokens: &entry.tokens,
+        }
+    }
+}
+
 pub(super) fn agent_rows(
     config: &AgentsSidebarConfig,
-    entry: &AgentPanelEntry,
+    entry: AgentTokenContext<'_>,
     state_text: &str,
 ) -> Vec<Vec<ResolvedToken>> {
     config
@@ -53,26 +92,24 @@ pub(super) fn agent_rows(
                         AgentSidebarToken::StateText => {
                             Some(ResolvedTokenKind::StateText(state_text.to_string()))
                         }
-                        AgentSidebarToken::Workspace => {
-                            Some(ResolvedTokenKind::Workspace(entry.primary_label.clone()))
-                        }
-                        AgentSidebarToken::Tab => {
-                            entry.primary_tab_label.clone().map(ResolvedTokenKind::Tab)
-                        }
-                        AgentSidebarToken::Pane => {
-                            entry.pane_label.clone().map(ResolvedTokenKind::Pane)
-                        }
-                        AgentSidebarToken::Agent => {
-                            entry.agent_label.clone().map(ResolvedTokenKind::Agent)
-                        }
+                        AgentSidebarToken::Workspace => Some(ResolvedTokenKind::Workspace(
+                            entry.primary_label.to_string(),
+                        )),
+                        AgentSidebarToken::Tab => entry
+                            .primary_tab_label
+                            .map(|label| ResolvedTokenKind::Tab(label.to_string())),
+                        AgentSidebarToken::Pane => entry
+                            .pane_label
+                            .map(|label| ResolvedTokenKind::Pane(label.to_string())),
+                        AgentSidebarToken::Agent => entry
+                            .agent_label
+                            .map(|label| ResolvedTokenKind::Agent(label.to_string())),
                         AgentSidebarToken::TerminalTitle => entry
                             .terminal_title
-                            .clone()
-                            .map(ResolvedTokenKind::TerminalTitle),
+                            .map(|title| ResolvedTokenKind::TerminalTitle(title.to_string())),
                         AgentSidebarToken::TerminalTitleStripped => entry
                             .terminal_title_stripped
-                            .clone()
-                            .map(ResolvedTokenKind::TerminalTitle),
+                            .map(|title| ResolvedTokenKind::TerminalTitle(title.to_string())),
                         AgentSidebarToken::Custom(name) => entry
                             .tokens
                             .get(name)
@@ -193,7 +230,7 @@ mod tests {
             ..Default::default()
         };
 
-        let rows = agent_rows(&config, &entry, "working");
+        let rows = agent_rows(&config, (&entry).into(), "working");
 
         assert_eq!(rows.len(), 2);
         assert_eq!(
@@ -223,7 +260,7 @@ mod tests {
         };
 
         assert_eq!(
-            agent_rows(&config, &entry, "deep in the mines"),
+            agent_rows(&config, (&entry).into(), "deep in the mines"),
             vec![vec![
                 ResolvedToken::unstyled(ResolvedTokenKind::StateText("deep in the mines".into())),
                 ResolvedToken::unstyled(ResolvedTokenKind::Custom("reviewing auth".into())),
@@ -249,7 +286,7 @@ mod tests {
         };
 
         assert_eq!(
-            agent_rows(&config, &entry, "working"),
+            agent_rows(&config, (&entry).into(), "working"),
             vec![vec![
                 ResolvedToken::unstyled(ResolvedTokenKind::TerminalTitle("⠋ raw title".into())),
                 ResolvedToken::unstyled(ResolvedTokenKind::TerminalTitle("raw title".into())),
@@ -271,7 +308,7 @@ mod tests {
         pi.agent_label = Some("renamed pi".into());
 
         assert_eq!(
-            agent_rows(&config, &pi, "working"),
+            agent_rows(&config, (&pi).into(), "working"),
             vec![vec![ResolvedToken::unstyled(ResolvedTokenKind::Agent(
                 "renamed pi".into()
             ))]]
@@ -279,7 +316,7 @@ mod tests {
 
         pi.agent = None;
         assert_eq!(
-            agent_rows(&config, &pi, "working"),
+            agent_rows(&config, (&pi).into(), "working"),
             vec![vec![ResolvedToken::unstyled(ResolvedTokenKind::Workspace(
                 "repo".into()
             ))]]
