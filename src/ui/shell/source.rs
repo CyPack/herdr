@@ -632,7 +632,7 @@ impl std::fmt::Display for BarConfigProblem {
             } => write!(
                 formatter,
                 "shell.bars.{edge}.sections[{index}].action.secondary is \"{presentation}\"; \
-                 expected {offered}, so a right press on this section does nothing",
+                 expected {offered}, so neither press on this section does anything",
                 offered = accepted_names(
                     &SECONDARY_PRESENTATIONS
                         .iter()
@@ -643,7 +643,7 @@ impl std::fmt::Display for BarConfigProblem {
             Self::SecondaryWithoutAction { edge, index } => write!(
                 formatter,
                 "shell.bars.{edge}.sections[{index}].action names a secondary presentation but \
-                 no command to present, so a right press on this section does nothing"
+                 no command to present, so neither press on this section does anything"
             ),
             Self::PluginActionWithoutId { edge, index } => write!(
                 formatter,
@@ -4724,6 +4724,16 @@ mod tests {
                     && reported[0].contains(spelling)
                     && reported[0].contains("sections[0]"),
                 "the message must name the field, the value and the index: {reported:?}"
+            );
+
+            // The message must not promise the left press still works. A
+            // refused `secondary` takes the whole action down — asserted two
+            // lines below — and a sentence naming only the right press sends
+            // somebody looking for a popup that will never open either.
+            assert!(
+                !reported[0].contains("a right press"),
+                "the refusal must describe what the section actually does, which \
+                 is nothing at all: {reported:?}"
             );
 
             // TC-67-5 · a refused action costs only its own section. Measured at
