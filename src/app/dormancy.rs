@@ -212,6 +212,7 @@ impl App {
                 let _ = std::fs::remove_file(path);
             }
             tracing::info!(terminal = %terminal_id, "dormant agent pane woke into a resume");
+            self.emit_pane_updated(ws_idx, pane_id);
             return true;
         }
 
@@ -256,6 +257,7 @@ impl App {
             let _ = std::fs::remove_file(path);
         }
         tracing::info!(terminal = %terminal_id, "dormant pane woke");
+        self.emit_pane_updated(ws_idx, pane_id);
         true
     }
 
@@ -360,7 +362,7 @@ impl App {
                     let quiet_enough =
                         now.saturating_duration_since(since) >= DORMANCY_QUIET_THRESHOLD;
                     if !watched && (memory_pressure_high || quiet_enough) {
-                        candidates.push(*pane_id);
+                        candidates.push((ws_idx, *pane_id));
                     }
                 }
             }
@@ -371,8 +373,11 @@ impl App {
             .retain(|terminal_id, _| retired_now.contains(terminal_id));
 
         let mut changed = false;
-        for pane_id in candidates {
-            changed |= self.make_pane_dormant(pane_id).is_ok();
+        for (ws_idx, pane_id) in candidates {
+            if self.make_pane_dormant(pane_id).is_ok() {
+                self.emit_pane_updated(ws_idx, pane_id);
+                changed = true;
+            }
         }
         changed
     }
@@ -845,6 +850,69 @@ mod tests {
             serde_json::Value::String("pane_not_found".into()),
             "{response}"
         );
+    }
+
+    fn pane_updated_after(
+        app: &App,
+        sequence: u64,
+    ) -> Option<crate::api::schema::PaneInfo> {
+        app.event_hub
+            .events_after(sequence)
+            .into_iter()
+            .find_map(|(_, envelope)| match envelope.data {
+                crate::api::schema::EventData::PaneUpdated { pane } => Some(pane),
+                _ => None,
+            })
+    }
+
+    #[tokio::test]
+    async fn the_pane_sleep_verb_announces_the_transition() {
+        // TP-DORMANT-14: the field is only half the observability — a watcher
+        // subscribed to pane.updated must hear the transition, not discover
+        // it on its next poll.
+        let (mut app, pane_id) = app_with_scrollback_pane(b"announce\r\n", true);
+        let public_id = public_pane_id_of(&app, pane_id);
+        let seq_before = app.event_hub.current_sequence();
+
+        let response = sleep_response(&mut app, &public_id);
+
+        assert_eq!(response["result"]["pane"]["dormant"], true, "{response}");
+        let announced = pane_updated_after(&app, seq_before)
+            .expect("the sleep transition emits pane.updated");
+        assert!(announced.dormant, "the announced pane carries the new state");
+        let _ = std::fs::remove_dir_all(app.dormant_history_dir());
+    }
+
+    #[tokio::test]
+    async fn the_dormancy_sweep_announces_each_pane_it_sleeps() {
+        // TP-DORMANT-14: the sweep is the transition nobody asked for — if it
+        // stays silent, an API watcher's picture of the session quietly rots.
+        let (mut app, _pane_id) = app_with_scrollback_pane(b"swept\r\n", true);
+        let seq_before = app.event_hub.current_sequence();
+
+        let changed = app.dormancy_sweep_with_pressure(std::time::Instant::now(), true);
+
+        assert!(changed, "the sweep slept the retired pane");
+        let announced = pane_updated_after(&app, seq_before)
+            .expect("the sweep transition emits pane.updated");
+        assert!(announced.dormant);
+        let _ = std::fs::remove_dir_all(app.dormant_history_dir());
+    }
+
+    #[tokio::test]
+    async fn waking_a_dormant_pane_announces_it() {
+        // TP-DORMANT-14: the wake is the other direction of the same promise;
+        // the announced pane is awake again, dormant field gone.
+        let (mut app, pane_id) = app_with_scrollback_pane(b"wake-announce\r\n", true);
+        app.make_pane_dormant(pane_id).expect("dormancy accepted");
+        let seq_before = app.event_hub.current_sequence();
+
+        assert!(app.wake_dormant_pane(pane_id), "the pane woke");
+
+        let announced = pane_updated_after(&app, seq_before)
+            .expect("the wake transition emits pane.updated");
+        assert!(!announced.dormant, "the announced pane is awake again");
+        let _ = std::fs::remove_dir_all(app.dormant_history_dir());
     }
 
     #[tokio::test]
