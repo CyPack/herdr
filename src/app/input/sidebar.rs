@@ -1517,6 +1517,7 @@ mod tests {
                 title: "t".to_string(),
                 last_modified: std::time::SystemTime::UNIX_EPOCH,
                 msg_count: 1,
+                opening: None,
             })
             .collect();
         app.state.projects_sessions = vec![
@@ -3526,6 +3527,7 @@ mod tests {
             title: format!("chat {id}"),
             last_modified: std::time::SystemTime::UNIX_EPOCH,
             msg_count: 3,
+            opening: None,
         }
     }
 

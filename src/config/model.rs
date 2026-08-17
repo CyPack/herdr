@@ -11,6 +11,17 @@ use super::{
 
 pub const MAX_TOAST_DELAY_SECONDS: u64 = 3600;
 
+/// How many chats must open the same way before the repetition is treated as
+/// a routine. Two is how often a person repeats themselves; three is where
+/// the measured automations start — the smallest repeated opening on the
+/// machine this was designed against appeared six times, and the largest
+/// seventy-three.
+pub const DEFAULT_ROUTINE_CHAT_REPEAT_THRESHOLD: usize = 3;
+
+/// The one label the daily section hides by default. Named once here so the
+/// config default and the classifier cannot drift into two spellings.
+pub const ROUTINE_CHAT_LABEL: &str = "routine";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum UpdateChannelConfig {
@@ -1756,6 +1767,24 @@ pub struct UiConfig {
     /// How workspace chat drawers open and close. Saved values are
     /// "all-active", "focused", or "manual". Default: "all-active".
     pub chat_drawer_mode: ChatDrawerModeConfig,
+    /// Structural markers that say a chat was opened by an automation rather
+    /// than by a person, matched against the START of the chat's first
+    /// message: a marker that only appears mid-sentence is a mention, not a
+    /// declaration. Default: ["<scheduled-task", "<command-name>"].
+    pub routine_chat_markers: Vec<String>,
+    /// Further openings that mark a chat as routine, matched as a prefix of
+    /// the first message once case and spacing are normalised. Which chores
+    /// repeat is a fact about your work rather than about Herdr, so this list
+    /// ships empty. Default: empty.
+    pub routine_chat_prompt_patterns: Vec<String>,
+    /// How many chats must share one opening before the repetition alone
+    /// marks them routine. 0 turns that rule off and leaves the markers and
+    /// patterns working. Default: 3.
+    pub routine_chat_repeat_threshold: usize,
+    /// Labels the daily chat section leaves out. Accepted labels are
+    /// "context", "project", and "routine"; an empty list brings every chat
+    /// back. Default: ["routine"].
+    pub daily_chat_hidden_labels: Vec<String>,
     /// Expanded sidebar row composition.
     pub sidebar: SidebarConfig,
     /// Accent color for highlights, borders, and navigation UI.
@@ -1974,6 +2003,18 @@ impl Default for UiConfig {
             hide_tab_bar_when_single_tab: false,
             agent_panel_sort: AgentPanelSortConfig::Spaces,
             chat_drawer_mode: ChatDrawerModeConfig::AllActive,
+            // The two openings a chat writes about itself: a scheduled task
+            // announces its own name and file, and a slash command announces
+            // the command. Both are declarations rather than guesses, which is
+            // why they can ship on by default. `<local-command-caveat>` is
+            // deliberately absent even though it is the single most common
+            // opening measured here (173 chats): the thing that writes it is
+            // the person's own `!` command, so hiding it by default would hide
+            // their own work.
+            routine_chat_markers: vec!["<scheduled-task".into(), "<command-name>".into()],
+            routine_chat_prompt_patterns: Vec::new(),
+            routine_chat_repeat_threshold: DEFAULT_ROUTINE_CHAT_REPEAT_THRESHOLD,
+            daily_chat_hidden_labels: vec![ROUTINE_CHAT_LABEL.to_string()],
             sidebar: SidebarConfig::default(),
             accent: "cyan".into(),
             toast: ToastConfig::default(),
@@ -2346,6 +2387,98 @@ mouse_wheel_host_scroll = "mobile"
         assert_eq!(
             config.ui.mouse_wheel_host_scroll,
             MouseWheelHostScrollConfig::Mobile
+        );
+    }
+
+    /// TP-DAILY-20 (C1a–C1e): the four keys are the whole configuration
+    /// surface of chat labelling, and each one fails in its own direction. A
+    /// default that does not hold means a fresh install classifies nothing. A
+    /// value that is written but not read means the reader edits the file and
+    /// the sidebar never changes — the failure D73 is named after. And a table
+    /// that names one key must leave its neighbours alone, or writing one line
+    /// silently unwrites the other three.
+    #[test]
+    fn routine_chat_keys_parse_and_default() {
+        let defaults = Config::default();
+        assert_eq!(
+            defaults.ui.routine_chat_markers,
+            vec!["<scheduled-task".to_string(), "<command-name>".to_string()],
+            "a fresh install must already know the two openings a chat writes about itself"
+        );
+        assert!(
+            defaults.ui.routine_chat_prompt_patterns.is_empty(),
+            "the patterns describe a person's own routines, so the shipped list starts empty"
+        );
+        assert_eq!(defaults.ui.routine_chat_repeat_threshold, 3);
+        assert_eq!(
+            defaults.ui.daily_chat_hidden_labels,
+            vec!["routine".to_string()]
+        );
+
+        // C1b: every key is read back exactly as it was written.
+        let toml = r#"
+[ui]
+routine_chat_markers = ["<scheduled-task", "<local-command-caveat"]
+routine_chat_prompt_patterns = ["claude code update"]
+routine_chat_repeat_threshold = 7
+daily_chat_hidden_labels = ["routine", "context"]
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(
+            config.ui.routine_chat_markers,
+            vec![
+                "<scheduled-task".to_string(),
+                "<local-command-caveat".to_string()
+            ]
+        );
+        assert_eq!(
+            config.ui.routine_chat_prompt_patterns,
+            vec!["claude code update".to_string()]
+        );
+        assert_eq!(config.ui.routine_chat_repeat_threshold, 7);
+        assert_eq!(
+            config.ui.daily_chat_hidden_labels,
+            vec!["routine".to_string(), "context".to_string()]
+        );
+
+        // C1c: zero is a value here, not a missing one — it turns the
+        // repetition layer off without turning the feature off.
+        let config: Config = toml::from_str(
+            r#"
+[ui]
+routine_chat_repeat_threshold = 0
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.ui.routine_chat_repeat_threshold, 0);
+
+        // C1d: an empty hidden list is how a reader asks for every chat back.
+        let config: Config = toml::from_str(
+            r#"
+[ui]
+daily_chat_hidden_labels = []
+"#,
+        )
+        .unwrap();
+        assert!(config.ui.daily_chat_hidden_labels.is_empty());
+
+        // C1e: naming one key must not unwrite the three beside it.
+        let config: Config = toml::from_str(
+            r#"
+[ui]
+routine_chat_repeat_threshold = 5
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.ui.routine_chat_repeat_threshold, 5);
+        assert_eq!(
+            config.ui.routine_chat_markers,
+            vec!["<scheduled-task".to_string(), "<command-name>".to_string()],
+            "a table that names one key must leave the other three at their defaults"
+        );
+        assert_eq!(
+            config.ui.daily_chat_hidden_labels,
+            vec!["routine".to_string()]
         );
     }
 

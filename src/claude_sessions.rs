@@ -30,6 +30,17 @@ pub struct ClaudeSession {
     pub last_modified: SystemTime,
     /// Number of user + assistant turns (a rough activity signal).
     pub msg_count: usize,
+    /// Normalised opening: the *shape* of the first user message.
+    ///
+    /// Separate from `title` on purpose. A title answers "what is this chat
+    /// called" and prefers whatever a human or the model named it; an opening
+    /// answers "how was this chat started", which is the only thing that tells
+    /// a scheduled task apart from a person typing. When a chat carries an
+    /// `ai-title`, the first user message never reaches the title at all — so
+    /// deriving one from the other would lose exactly the cases that matter.
+    ///
+    /// `None` when the chat has no readable first user message.
+    pub opening: Option<String>,
 }
 
 /// Placeholder shown when a session has no derivable title.
@@ -37,6 +48,137 @@ pub const UNTITLED: &str = "(untitled)";
 
 /// Maximum displayed title length (in characters) before truncation.
 const MAX_TITLE_CHARS: usize = 80;
+
+/// How much of the first user message is kept after normalising.
+///
+/// Long enough to separate two automations that share an opening word, short
+/// enough that a message which merely *starts* the same way still collapses to
+/// one shape — the measured scheduled tasks differ within their first line.
+const MAX_OPENING_CHARS: usize = 120;
+
+/// How much raw text is examined before normalising, so a pathological single
+/// line cannot make this scan expensive.
+const OPENING_SCAN_CHARS: usize = 400;
+
+/// Reduce a chat's first user message to the *shape* of how it was started.
+///
+/// Two runs of the same automation open with the same words and differ only in
+/// the parts that change every run: a timestamp, a uuid, a path, a counter.
+/// Masking those is what lets one shape be recognised across runs — measured on
+/// real data, a single scheduled task appeared as two distinct spellings (39
+/// and 32 occurrences) that differed only by a date.
+///
+/// The result is lowercase, whitespace-collapsed and truncated. It is a
+/// grouping key, never shown to anyone, and never reversed.
+pub fn normalise_opening(text: &str) -> String {
+    let scanned: String = text.chars().take(OPENING_SCAN_CHARS).collect();
+
+    let mut out = String::with_capacity(scanned.len());
+    let mut rest = scanned.as_str();
+
+    // Order matters: uuids before dates (a uuid contains dash groups a date
+    // pattern could bite into), paths before numbers (a path carries digits),
+    // numbers last. Each replacement writes a token that no later rule can
+    // match again, which is what keeps this idempotent.
+    while !rest.is_empty() {
+        if let Some(len) = uuid_prefix_len(rest) {
+            out.push_str("<id>");
+            rest = &rest[len..];
+        } else if let Some(len) = date_prefix_len(rest) {
+            out.push_str("<date>");
+            rest = &rest[len..];
+        } else if let Some(len) = path_prefix_len(rest) {
+            out.push_str("<path>");
+            rest = &rest[len..];
+        } else if let Some(len) = digits_prefix_len(rest) {
+            out.push_str("<n>");
+            rest = &rest[len..];
+        } else {
+            let ch = match rest.chars().next() {
+                Some(ch) => ch,
+                None => break,
+            };
+            out.push(ch);
+            rest = &rest[ch.len_utf8()..];
+        }
+    }
+
+    let collapsed = out.split_whitespace().collect::<Vec<_>>().join(" ");
+    collapsed
+        .to_lowercase()
+        .chars()
+        .take(MAX_OPENING_CHARS)
+        .collect()
+}
+
+/// Byte length of a `8-4-4-4-12` hex uuid at the start of `s`, if there is one.
+fn uuid_prefix_len(s: &str) -> Option<usize> {
+    const GROUPS: [usize; 5] = [8, 4, 4, 4, 12];
+    let bytes = s.as_bytes();
+    let mut at = 0usize;
+    for (index, group) in GROUPS.iter().enumerate() {
+        if index > 0 {
+            if bytes.get(at) != Some(&b'-') {
+                return None;
+            }
+            at += 1;
+        }
+        for _ in 0..*group {
+            match bytes.get(at) {
+                Some(byte) if byte.is_ascii_hexdigit() => at += 1,
+                _ => return None,
+            }
+        }
+    }
+    // A longer hex run means this was not a uuid but some other token.
+    match bytes.get(at) {
+        Some(byte) if byte.is_ascii_hexdigit() => None,
+        _ => Some(at),
+    }
+}
+
+/// Byte length of a `YYYY-MM-DD` date at the start of `s`, if there is one.
+fn date_prefix_len(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let digits = |at: usize, count: usize| {
+        (0..count).all(|offset| bytes.get(at + offset).is_some_and(u8::is_ascii_digit))
+    };
+    if digits(0, 4) && bytes.get(4) == Some(&b'-') && digits(5, 2) && bytes.get(7) == Some(&b'-')
+    // A date is exactly ten characters; anything longer is a different token.
+        && digits(8, 2)
+        && !bytes.get(10).is_some_and(u8::is_ascii_digit)
+    {
+        Some(10)
+    } else {
+        None
+    }
+}
+
+/// Byte length of an absolute path at the start of `s`, if there is one.
+///
+/// Requires at least one character after the leading slash so a bare `/` (a
+/// division sign, a sentence's slash) is left alone.
+fn path_prefix_len(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    if bytes.first() != Some(&b'/') {
+        return None;
+    }
+    let mut at = 1usize;
+    while let Some(byte) = bytes.get(at) {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'.' | b'_' | b'-') {
+            at += 1;
+        } else {
+            break;
+        }
+    }
+    (at > 1).then_some(at)
+}
+
+/// Byte length of a run of digits at the start of `s`, if there is one.
+fn digits_prefix_len(s: &str) -> Option<usize> {
+    let len = s.bytes().take_while(u8::is_ascii_digit).count();
+    (len > 0).then_some(len)
+}
 
 /// Encode an absolute project path into its Claude Code storage directory name.
 ///
@@ -240,12 +382,20 @@ fn parse_session_file(path: &Path) -> Option<ClaudeSession> {
         }
     }
 
+    // The opening is taken before `derive_title` consumes `first_user`: a chat
+    // with an `ai-title` never lets its first message reach the title, and
+    // those are precisely the chats an automation produces.
+    let opening = first_user
+        .as_deref()
+        .map(normalise_opening)
+        .filter(|opening| !opening.is_empty());
     let title = derive_title(custom_title, ai_title, first_user);
     Some(ClaudeSession {
         id,
         title,
         last_modified,
         msg_count,
+        opening,
     })
 }
 
@@ -515,5 +665,135 @@ mod tests {
     fn projects_dir_none_without_home() {
         assert_eq!(claude_projects_dir(|_| None), None);
         assert_eq!(claude_projects_dir(|_| Some(OsString::new())), None);
+    }
+
+    // ---- Opening extraction and normalisation (O1-O6) -----------------------
+
+    /// O4: the whole point of normalising. Two runs of one automation differ
+    /// only in the parts that change every run; masking those is what makes
+    /// them one shape. Measured on real data: a single scheduled task appeared
+    /// as two spellings, 39 and 32 times, differing only by a date.
+    #[test]
+    fn normalising_masks_the_parts_that_change_every_run() {
+        let first = normalise_opening(
+            "<scheduled-task name=\"sor\" file=\"/home/user/.claude/x.md\" at=\"2026-08-17\" run=42>",
+        );
+        let second = normalise_opening(
+            "<scheduled-task name=\"sor\" file=\"/home/user/.claude/x.md\" at=\"2026-07-03\" run=7>",
+        );
+        assert_eq!(first, second, "two runs of one task must share one shape");
+        assert!(first.contains("<date>"), "{first}");
+        assert!(first.contains("<path>"), "{first}");
+        assert!(first.contains("<n>"), "{first}");
+    }
+
+    /// O4b: a uuid is masked as one token rather than being chopped into a
+    /// date and several numbers, which would make two runs disagree.
+    #[test]
+    fn normalising_masks_a_uuid_as_one_token() {
+        let opening = normalise_opening("resume 3f33db7a-797d-4bcc-b60a-fabb4ada10ae now");
+        assert_eq!(opening, "resume <id> now");
+    }
+
+    /// O5: normalising is idempotent. If it were not, the same chat could
+    /// produce two different shapes depending on how often it was processed,
+    /// and the repeat counter would split one automation across two buckets.
+    #[test]
+    fn normalising_is_idempotent() {
+        for raw in [
+            "<scheduled-task name=\"x\" file=\"/a/b.md\" at=\"2026-08-17\">",
+            "resume 3f33db7a-797d-4bcc-b60a-fabb4ada10ae",
+            "plain words with 42 numbers",
+            "",
+        ] {
+            let once = normalise_opening(raw);
+            assert_eq!(normalise_opening(&once), once, "not idempotent for {raw:?}");
+        }
+    }
+
+    /// O4c: masking must not eat ordinary text. A guard that flattens prose
+    /// makes unrelated chats collide and hides real conversations.
+    #[test]
+    fn normalising_leaves_ordinary_prose_recognisable() {
+        let opening = normalise_opening("Bu sohbette neler yaptık? Özetle lütfen.");
+        assert_eq!(opening, "bu sohbette neler yaptık? özetle lütfen.");
+    }
+
+    /// O4d: a lone slash is a slash, not a path. Requiring a character after
+    /// it keeps division signs and sentence slashes out of the mask.
+    #[test]
+    fn a_bare_slash_is_not_a_path() {
+        assert_eq!(normalise_opening("a / b"), "a / b");
+        assert_eq!(normalise_opening("see /tmp/x now"), "see <path> now");
+    }
+
+    /// O1/O2: the opening is read from the first user message and survives an
+    /// `ai-title`. This is the case that matters most: an automation's chat is
+    /// titled by the model, so the first message never reaches the title, and
+    /// deriving the opening from the title would lose exactly those chats.
+    #[test]
+    fn the_opening_is_read_even_when_an_ai_title_wins_the_title() {
+        let temp = TempProjects::new("opening-ai-title");
+        temp.write_session(
+            "/p",
+            "s1",
+            &[
+                r#"{"type":"user","message":{"content":"<scheduled-task name=\"nightly\">"}}"#,
+                r#"{"type":"assistant","message":{"content":"ok"}}"#,
+                r#"{"type":"ai-title","aiTitle":"Nightly report"}"#,
+            ],
+        );
+
+        let sessions = read_sessions_for_project(&temp.root, "/p");
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(
+            sessions[0].title, "Nightly report",
+            "title precedence is unchanged"
+        );
+        assert_eq!(
+            sessions[0].opening.as_deref(),
+            Some("<scheduled-task name=\"nightly\">"),
+            "the opening must survive an ai-title"
+        );
+    }
+
+    /// O3: adding the opening must not move the title. Titles are what people
+    /// read; a silent change there would be a regression nobody asked for.
+    #[test]
+    fn adding_the_opening_does_not_move_the_title() {
+        assert_eq!(
+            derive_title(
+                Some("custom".into()),
+                Some("ai".into()),
+                Some("first".into())
+            ),
+            "custom"
+        );
+        assert_eq!(
+            derive_title(None, Some("ai".into()), Some("first".into())),
+            "ai"
+        );
+        assert_eq!(derive_title(None, None, Some("first".into())), "first");
+        assert_eq!(derive_title(None, None, None), UNTITLED);
+    }
+
+    /// O6: a chat with nothing readable gets no opening at all. Inventing a
+    /// shape for it would put unrelated chats in one bucket and let the repeat
+    /// rule hide them together.
+    #[test]
+    fn a_chat_with_no_readable_first_message_has_no_opening() {
+        let temp = TempProjects::new("opening-none");
+        temp.write_session(
+            "/p",
+            "s1",
+            &[
+                r#"{"type":"assistant","message":{"content":"hi"}}"#,
+                r#"{"type":"user","message":{"content":"   "}}"#,
+            ],
+        );
+
+        let sessions = read_sessions_for_project(&temp.root, "/p");
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].opening, None);
     }
 }

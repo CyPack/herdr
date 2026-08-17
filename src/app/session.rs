@@ -192,6 +192,20 @@ impl App {
             &mut self.state.workspace_chat_rows,
             &self.workspace_chat_ledger.names,
         );
+        // TP-DAILY-24: and the labels last of all. The merge above ends by
+        // reclassifying every chat from its opening, so a label projected any
+        // earlier would be a person's decision sitting in a map that is about
+        // to be cleared — the same shape of mistake `moves` and `names` are
+        // applied late to avoid.
+        self.state.manual_chat_labels = self
+            .workspace_chat_ledger
+            .labels
+            .iter()
+            .filter_map(|(session_id, name)| {
+                crate::chat_labels::ChatLabel::from_config_name(name)
+                    .map(|label| (session_id.clone(), label))
+            })
+            .collect();
         self.state.chat_move_overrides = self.workspace_chat_ledger.moves.clone();
     }
 
@@ -202,6 +216,32 @@ impl App {
     /// fixture that renames a chat must not reach the machine's real ledger.
     pub(crate) fn apply_chat_rename(&mut self, session_id: &str, name: &str) {
         if !self.workspace_chat_ledger.set_name(session_id, name) {
+            return;
+        }
+        self.sync_workspace_chat_rows();
+        if self.no_session {
+            return;
+        }
+        let path = crate::persist::workspace_chats::default_ledger_path();
+        if let Err(err) =
+            crate::persist::workspace_chats::save_to_path(&path, &self.workspace_chat_ledger)
+        {
+            tracing::warn!(path = %path.display(), %err, "failed to save workspace chat ledger");
+        }
+    }
+
+    /// Write a labelling decision into the ledger and refresh the rows — the
+    /// App loop's answer to `request_chat_label` (TP-DAILY-24).
+    pub(crate) fn apply_chat_label(
+        &mut self,
+        session_id: &str,
+        label: Option<crate::chat_labels::ChatLabel>,
+    ) {
+        let changed = match label {
+            Some(label) => self.workspace_chat_ledger.set_label(session_id, label),
+            None => self.workspace_chat_ledger.clear_label(session_id),
+        };
+        if !changed {
             return;
         }
         self.sync_workspace_chat_rows();

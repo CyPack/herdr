@@ -895,6 +895,7 @@ impl App {
             chat_move_overrides: Default::default(),
             recent_move_targets: Vec::new(),
             request_chat_move: None,
+            request_chat_label: None,
             request_chat_rename: None,
             request_new_workspace_cwd: None,
             request_remove_linked_worktree: None,
@@ -931,6 +932,15 @@ impl App {
             preview_bindings: Vec::new(),
             collapsed_project_paths: std::collections::HashSet::new(),
             workspace_chat_rows: std::collections::HashMap::new(),
+            chat_openings: std::collections::HashMap::new(),
+            derived_chat_labels: std::collections::HashMap::new(),
+            manual_chat_labels: std::collections::HashMap::new(),
+            routine_chat_markers: config.ui.routine_chat_markers.clone(),
+            routine_chat_prompt_patterns: config.ui.routine_chat_prompt_patterns.clone(),
+            routine_chat_repeat_threshold: config.ui.routine_chat_repeat_threshold,
+            daily_chat_hidden_labels: crate::chat_labels::resolve_labels(
+                &config.ui.daily_chat_hidden_labels,
+            ),
             // The same directory `super+t` starts a chat in — the reading half
             // of a verb that already exists (`queue_home_chat_tab`). A client
             // with no home simply has no daily section.
@@ -1568,6 +1578,13 @@ impl App {
                 needs_render = true;
             }
 
+            // TP-DAILY-24: and so does the labelling decision. Same road, same
+            // reason: the ledger has exactly one writer.
+            if let Some((session_id, label)) = self.state.request_chat_label.take() {
+                self.apply_chat_label(&session_id, label);
+                needs_render = true;
+            }
+
             if let Some(cwd) = self.state.request_new_workspace_cwd.take() {
                 self.runtime_workspace_create(
                     "tui.workspace.create_cwd",
@@ -2032,6 +2049,17 @@ impl App {
                 self.loaded_host_cursor = config.ui.host_cursor;
                 self.state.mouse_scroll_lines = config.ui.mouse_scroll_lines();
                 self.state.mouse_wheel_host_scroll = config.ui.mouse_wheel_host_scroll;
+                // Reloading these has to re-run the rules as well as re-read
+                // them: the verdicts already in `derived_chat_labels` were
+                // reached under the old lists, and leaving them there would
+                // make the reload look like it did nothing.
+                self.state.routine_chat_markers = config.ui.routine_chat_markers.clone();
+                self.state.routine_chat_prompt_patterns =
+                    config.ui.routine_chat_prompt_patterns.clone();
+                self.state.routine_chat_repeat_threshold = config.ui.routine_chat_repeat_threshold;
+                self.state.daily_chat_hidden_labels =
+                    crate::chat_labels::resolve_labels(&config.ui.daily_chat_hidden_labels);
+                self.state.classify_chats();
                 self.state.right_click_passthrough_modifiers =
                     config.ui.right_click_passthrough_modifiers();
                 self.state.confirm_close = config.ui.confirm_close;

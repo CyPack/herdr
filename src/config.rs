@@ -24,7 +24,7 @@ pub use self::{
         NewTerminalCwdConfig, PreviewPlacement, ShellBarConfig, ShellBarSectionConfig,
         ShellBarsConfig, ShellConfig, ShellModeConfig, SidebarCollapsedModeConfig,
         SpaceIconsConfig, ToastClipboardPosition, ToastConfig, ToastDelivery, ToastHerdrPosition,
-        UpdateChannelConfig, MAX_TOAST_DELAY_SECONDS,
+        UpdateChannelConfig, MAX_TOAST_DELAY_SECONDS, ROUTINE_CHAT_LABEL,
     },
     sidebar::{
         AgentSidebarToken, AgentsSidebarConfig, SectionBorderConfig, SidebarConfig,

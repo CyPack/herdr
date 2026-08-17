@@ -605,6 +605,12 @@
           "description": "Copy text selected with the mouse."
         },
         {
+          "key": "ui.daily_chat_hidden_labels",
+          "type": "list of strings",
+          "default": "[\"routine\"]",
+          "description": "Labels the daily chat section leaves out. Accepted labels are \"context\", \"project\", and \"routine\"; an empty list brings every chat back."
+        },
+        {
           "key": "ui.hide_tab_bar_when_single_tab",
           "type": "boolean",
           "default": "false",
@@ -685,6 +691,24 @@
           "type": "string",
           "default": "\"\"",
           "description": "Modifier that lets right-click gestures pass through to pane apps. Empty disables it. Accepts ctrl, alt, cmd, super, meta, hyper, or a + separated combination; shift is rejected because many terminals reserve Shift+mouse."
+        },
+        {
+          "key": "ui.routine_chat_markers",
+          "type": "list of strings",
+          "default": "[\"<scheduled-task\", \"<command-name>\"]",
+          "description": "Structural markers that say a chat was opened by an automation rather than by a person, matched against the start of the chat's first message: a marker that only appears mid-sentence is a mention, not a declaration."
+        },
+        {
+          "key": "ui.routine_chat_prompt_patterns",
+          "type": "list of strings",
+          "default": "[]",
+          "description": "Further openings that mark a chat as routine, matched as a prefix of the first message once case and spacing are normalised. Which chores repeat is a fact about your work rather than about Herdr, so this list ships empty."
+        },
+        {
+          "key": "ui.routine_chat_repeat_threshold",
+          "type": "integer",
+          "default": "3",
+          "description": "How many chats must share one opening before the repetition alone marks them routine. 0 turns that rule off and leaves the markers and patterns working."
         },
         {
           "key": "ui.show_agent_labels_on_pane_borders",
