@@ -3710,6 +3710,7 @@ mod tests {
             title: title.to_string(),
             last_modified: std::time::SystemTime::now(),
             msg_count: 3,
+            opening: None,
         };
         app.projects_sessions = vec![
             crate::app::state::ProjectSessions {

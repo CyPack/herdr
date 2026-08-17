@@ -6638,6 +6638,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             title: title.to_string(),
             last_modified: std::time::SystemTime::UNIX_EPOCH,
             msg_count,
+            opening: None,
         }
     }
 

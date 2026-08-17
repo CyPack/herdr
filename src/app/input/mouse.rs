@@ -6955,6 +6955,7 @@ mod tests {
                 title: "a chat".to_string(),
                 last_modified: std::time::SystemTime::UNIX_EPOCH,
                 msg_count: 3,
+                opening: None,
             }],
             total_count: 1,
         }];
