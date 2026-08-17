@@ -1784,7 +1784,7 @@ pub struct UiConfig {
     /// Labels the daily chat section leaves out. Accepted labels are
     /// "context", "project", and "routine"; an empty list brings every chat
     /// back. Default: ["routine"].
-    pub daily_chat_hidden_labels: Vec<String>,
+    pub hidden_chat_labels: Vec<String>,
     /// Expanded sidebar row composition.
     pub sidebar: SidebarConfig,
     /// Accent color for highlights, borders, and navigation UI.
@@ -2014,7 +2014,7 @@ impl Default for UiConfig {
             routine_chat_markers: vec!["<scheduled-task".into(), "<command-name>".into()],
             routine_chat_prompt_patterns: Vec::new(),
             routine_chat_repeat_threshold: DEFAULT_ROUTINE_CHAT_REPEAT_THRESHOLD,
-            daily_chat_hidden_labels: vec![ROUTINE_CHAT_LABEL.to_string()],
+            hidden_chat_labels: vec![ROUTINE_CHAT_LABEL.to_string()],
             sidebar: SidebarConfig::default(),
             accent: "cyan".into(),
             toast: ToastConfig::default(),
@@ -2410,10 +2410,7 @@ mouse_wheel_host_scroll = "mobile"
             "the patterns describe a person's own routines, so the shipped list starts empty"
         );
         assert_eq!(defaults.ui.routine_chat_repeat_threshold, 3);
-        assert_eq!(
-            defaults.ui.daily_chat_hidden_labels,
-            vec!["routine".to_string()]
-        );
+        assert_eq!(defaults.ui.hidden_chat_labels, vec!["routine".to_string()]);
 
         // C1b: every key is read back exactly as it was written.
         let toml = r#"
@@ -2421,7 +2418,7 @@ mouse_wheel_host_scroll = "mobile"
 routine_chat_markers = ["<scheduled-task", "<local-command-caveat"]
 routine_chat_prompt_patterns = ["claude code update"]
 routine_chat_repeat_threshold = 7
-daily_chat_hidden_labels = ["routine", "context"]
+hidden_chat_labels = ["routine", "context"]
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(
@@ -2437,7 +2434,7 @@ daily_chat_hidden_labels = ["routine", "context"]
         );
         assert_eq!(config.ui.routine_chat_repeat_threshold, 7);
         assert_eq!(
-            config.ui.daily_chat_hidden_labels,
+            config.ui.hidden_chat_labels,
             vec!["routine".to_string(), "context".to_string()]
         );
 
@@ -2456,11 +2453,11 @@ routine_chat_repeat_threshold = 0
         let config: Config = toml::from_str(
             r#"
 [ui]
-daily_chat_hidden_labels = []
+hidden_chat_labels = []
 "#,
         )
         .unwrap();
-        assert!(config.ui.daily_chat_hidden_labels.is_empty());
+        assert!(config.ui.hidden_chat_labels.is_empty());
 
         // C1e: naming one key must not unwrite the three beside it.
         let config: Config = toml::from_str(
@@ -2476,10 +2473,7 @@ routine_chat_repeat_threshold = 5
             vec!["<scheduled-task".to_string(), "<command-name>".to_string()],
             "a table that names one key must leave the other three at their defaults"
         );
-        assert_eq!(
-            config.ui.daily_chat_hidden_labels,
-            vec!["routine".to_string()]
-        );
+        assert_eq!(config.ui.hidden_chat_labels, vec!["routine".to_string()]);
     }
 
     /// A hand-written tree of the shape measured on the reported machine: two

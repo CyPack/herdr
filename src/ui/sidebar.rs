@@ -1273,7 +1273,7 @@ pub(crate) fn daily_chat_rows(app: &AppState) -> Vec<&crate::app::state::Workspa
         .get(&key)
         .map(|rows| {
             rows.iter()
-                .filter(|row| !app.daily_chat_is_hidden(&row.session_id))
+                .filter(|row| !app.chat_is_hidden(&row.session_id))
                 .collect()
         })
         .unwrap_or_default()
@@ -7985,7 +7985,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         routine_count: usize,
     ) -> (AppState, std::path::PathBuf) {
         let (mut app, daily) = app_with_daily_chats(chat_count);
-        app.daily_chat_hidden_labels = vec![crate::chat_labels::ChatLabel::Routine];
+        app.hidden_chat_labels = vec![crate::chat_labels::ChatLabel::Routine];
         for idx in 0..routine_count {
             app.derived_chat_labels.insert(
                 format!("daily-session-{idx}"),
@@ -8015,7 +8015,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
     fn an_empty_hidden_list_draws_every_chat_again() {
         let (mut app, _) = app_with_routine_daily_chats(3, 3);
         assert!(daily_chat_rows(&app).is_empty());
-        app.daily_chat_hidden_labels.clear();
+        app.hidden_chat_labels.clear();
         assert_eq!(daily_chat_rows(&app).len(), 3);
     }
 

@@ -607,9 +607,16 @@ impl App {
             .workspace_chat_rows
             .iter()
             .flat_map(|(key, rows)| {
-                crate::persist::closed_agents::derive_from_chat_rows(&records, key, rows, &|id| {
-                    live.iter().any(|open| open == id)
-                })
+                crate::persist::closed_agents::derive_from_chat_rows(
+                    &records,
+                    key,
+                    rows,
+                    &|id| live.iter().any(|open| open == id),
+                    // TP-DAILY-25: the same verdict the daily section uses, so
+                    // a chore taken off one surface cannot reappear on the
+                    // other wearing a headstone.
+                    &|id| state.chat_is_hidden(id),
+                )
             })
             .collect();
         records.extend(derived);
@@ -938,9 +945,7 @@ impl App {
             routine_chat_markers: config.ui.routine_chat_markers.clone(),
             routine_chat_prompt_patterns: config.ui.routine_chat_prompt_patterns.clone(),
             routine_chat_repeat_threshold: config.ui.routine_chat_repeat_threshold,
-            daily_chat_hidden_labels: crate::chat_labels::resolve_labels(
-                &config.ui.daily_chat_hidden_labels,
-            ),
+            hidden_chat_labels: crate::chat_labels::resolve_labels(&config.ui.hidden_chat_labels),
             // The same directory `super+t` starts a chat in — the reading half
             // of a verb that already exists (`queue_home_chat_tab`). A client
             // with no home simply has no daily section.
@@ -2057,8 +2062,8 @@ impl App {
                 self.state.routine_chat_prompt_patterns =
                     config.ui.routine_chat_prompt_patterns.clone();
                 self.state.routine_chat_repeat_threshold = config.ui.routine_chat_repeat_threshold;
-                self.state.daily_chat_hidden_labels =
-                    crate::chat_labels::resolve_labels(&config.ui.daily_chat_hidden_labels);
+                self.state.hidden_chat_labels =
+                    crate::chat_labels::resolve_labels(&config.ui.hidden_chat_labels);
                 self.state.classify_chats();
                 self.state.right_click_passthrough_modifiers =
                     config.ui.right_click_passthrough_modifiers();
@@ -3354,6 +3359,59 @@ mod tests {
         restore_config_dir(&root, previous);
 
         assert_eq!(count, 1, "the handoff road reads the store like any other");
+    }
+
+    /// TP-DAILY-25: the seeding path passes the REAL verdict, not a stand-in.
+    ///
+    /// Written because a mutation proved it was missing: replacing the
+    /// predicate at the call site with "hide nothing" left every test green.
+    /// `derive_from_chat_rows` was correct and the wiring to it was unowned —
+    /// the same shape of gap as a menu verb that lives in one body, where the
+    /// piece works and the product does not.
+    #[test]
+    fn seeding_the_graveyard_asks_whether_the_chat_is_hidden() {
+        let (root, _store, previous) = with_temp_config_dir("graveyard-hidden");
+        let mut state = AppState::test_new();
+        state.hidden_chat_labels = vec![crate::chat_labels::ChatLabel::Routine];
+        state
+            .derived_chat_labels
+            .insert("chore".to_string(), crate::chat_labels::ChatLabel::Routine);
+        state.workspace_chat_rows.insert(
+            "/home/tester/project".to_string(),
+            vec![
+                crate::app::state::WorkspaceChatRow {
+                    session_id: "chore".to_string(),
+                    agent: "claude".to_string(),
+                    title: Some("nightly sweep".to_string()),
+                    last_seen_ms: crate::persist::workspace_chats::now_ms(),
+                    last_modified: None,
+                },
+                crate::app::state::WorkspaceChatRow {
+                    session_id: "real".to_string(),
+                    agent: "claude".to_string(),
+                    title: Some("kenar cizgisi".to_string()),
+                    last_seen_ms: crate::persist::workspace_chats::now_ms(),
+                    last_modified: None,
+                },
+            ],
+        );
+
+        App::seed_closed_agents(&mut state);
+        let ids: Vec<String> = state
+            .closed_agents
+            .entries()
+            .map(|entry| entry.agent_id.clone())
+            .collect();
+        restore_config_dir(&root, previous);
+
+        assert!(
+            !ids.iter().any(|id| id == "chore"),
+            "a chore must not come back as a headstone: {ids:?}"
+        );
+        assert!(
+            ids.iter().any(|id| id == "real"),
+            "and a real conversation still gets one: {ids:?}"
+        );
     }
 
     // TP-AGPANEL-35: and it writes nothing either. A run that promises to

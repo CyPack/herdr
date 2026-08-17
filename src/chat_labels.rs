@@ -63,7 +63,7 @@ impl ChatLabel {
     }
 
     /// Read a label written by a person. Unknown spellings are `None` rather
-    /// than an error: a typo in `daily_chat_hidden_labels` should hide nothing,
+    /// than an error: a typo in `hidden_chat_labels` should hide nothing,
     /// never everything.
     ///
     /// The three spellings are named as constants rather than written out

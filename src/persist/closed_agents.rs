@@ -136,6 +136,16 @@ pub fn prune(
 /// `live` decides which conversations are still open; those are not deaths and
 /// must not appear as such. Callers pass the same predicate the sidebar uses,
 /// so a chat cannot be both a live tab and a headstone.
+///
+/// TP-DAILY-25: `hidden` decides which conversations are chores. A chore that
+/// ends is not a death worth marking, and deriving one anyway is how the daily
+/// filter's work walked straight back onto the screen — under the user's own
+/// words for what they did not want, "agents that ran and closed".
+///
+/// It gates DERIVING only. A death the graveyard witnessed is already in
+/// `existing` and stays there: the filter is allowed to decline inventing a
+/// headstone, never to forget one, because a witnessed record is the only
+/// evidence that agent ran at all.
 /// Reads the rows the drawer already loaded rather than re-walking the store:
 /// `App::new` has just parsed that directory, and reading the same files twice
 /// on a startup path buys nothing.
@@ -144,9 +154,11 @@ pub fn derive_from_chat_rows(
     cwd: &str,
     rows: &[crate::app::state::WorkspaceChatRow],
     live: &dyn Fn(&str) -> bool,
+    hidden: &dyn Fn(&str) -> bool,
 ) -> Vec<StoredClosedAgent> {
     rows.iter()
         .filter(|row| !live(&row.session_id))
+        .filter(|row| !hidden(&row.session_id))
         .filter(|row| !existing.iter().any(|kept| kept.agent_id == row.session_id))
         .map(|row| StoredClosedAgent {
             agent_id: row.session_id.clone(),
@@ -270,6 +282,7 @@ mod tests {
             "/home/tester/project",
             &[chat_row("s1", "fixing the parser", 5_000)],
             &|_| false,
+            &|_| false,
         );
 
         assert_eq!(derived.len(), 1);
@@ -295,6 +308,7 @@ mod tests {
             "/home/tester/project",
             &[chat_row("open", "still going", 5_000)],
             &|id| id == "open",
+            &|_| false,
         );
 
         assert!(derived.is_empty());
@@ -312,9 +326,73 @@ mod tests {
             "/home/tester/project",
             &[chat_row("s1", "a different title", 5_000)],
             &|_| false,
+            &|_| false,
         );
 
         assert!(derived.is_empty());
+    }
+
+    /// TP-DAILY-25 (G1): a chat the rules call routine gets no headstone.
+    ///
+    /// This is the half of the request the daily filter could not reach: the
+    /// panel's ghosts are DERIVED from the same chat rows, so a chore that was
+    /// taken out of the daily section walked straight back in as "an agent
+    /// that closed" — which is the user's own wording for what they did not
+    /// want to see.
+    #[test]
+    fn a_routine_conversation_gets_no_headstone() {
+        let derived = derive_from_chat_rows(
+            &[],
+            "/home/tester/project",
+            &[chat_row("chore", "nightly sweep", 5_000)],
+            &|_| false,
+            &|id| id == "chore",
+        );
+
+        assert!(derived.is_empty(), "a chore is not a death worth marking");
+    }
+
+    /// TP-DAILY-25 (G3): a chat nothing hid is derived as before. The filter
+    /// adds a reason to skip; it must not become a reason to skip everything.
+    #[test]
+    fn a_chat_nothing_hides_still_gets_its_headstone() {
+        let derived = derive_from_chat_rows(
+            &[],
+            "/home/tester/project",
+            &[chat_row("real", "fixing the parser", 5_000)],
+            &|_| false,
+            &|_| false,
+        );
+
+        assert_eq!(derived.len(), 1);
+        assert_eq!(derived[0].agent_id, "real");
+    }
+
+    /// TP-DAILY-25 (G5): a death the graveyard WITNESSED stays, whatever the
+    /// rules make of that conversation.
+    ///
+    /// Deriving and remembering are different acts. The filter says "do not
+    /// invent a headstone for this"; it must never say "forget the one you
+    /// already have", because a witnessed death is the only record that an
+    /// agent ran at all — and losing it is losing history rather than tidying
+    /// a list.
+    #[test]
+    fn a_witnessed_death_survives_the_hidden_filter() {
+        let existing = vec![record("chore", 9_000)];
+        let kept = prune(existing.clone(), 9_500, RETENTION_MS);
+        assert_eq!(kept.len(), 1, "the store still holds it");
+
+        let derived = derive_from_chat_rows(
+            &existing,
+            "/home/tester/project",
+            &[chat_row("chore", "nightly sweep", 5_000)],
+            &|_| false,
+            &|id| id == "chore",
+        );
+        assert!(
+            derived.is_empty(),
+            "nothing new is derived, and the witnessed record above is untouched"
+        );
     }
 
     // TP-AGPANEL-30: the graveyard survives the process that wrote it.

@@ -605,7 +605,7 @@
           "description": "Copy text selected with the mouse."
         },
         {
-          "key": "ui.daily_chat_hidden_labels",
+          "key": "ui.hidden_chat_labels",
           "type": "list of strings",
           "default": "[\"routine\"]",
           "description": "Labels the daily chat section leaves out. Accepted labels are \"context\", \"project\", and \"routine\"; an empty list brings every chat back."

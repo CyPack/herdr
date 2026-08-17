@@ -3780,7 +3780,7 @@ pub struct AppState {
     /// spellings. A spelling nothing recognises is dropped here rather than
     /// carried as a string: an unreadable entry must hide nothing, and it can
     /// only do that if it never reaches the filter.
-    pub daily_chat_hidden_labels: Vec<crate::chat_labels::ChatLabel>,
+    pub hidden_chat_labels: Vec<crate::chat_labels::ChatLabel>,
     /// Ledger keys whose chat drawer is OPEN in the Spaces tab.
     ///
     /// The inverse of `collapsed_project_paths`, deliberately: the Projects tab
@@ -4614,11 +4614,11 @@ impl AppState {
     /// drawn, which is how emptying that list brings everything back. And a
     /// chat that is open in a tab right now is drawn whatever it is: hiding
     /// work that is running is how you lose track of it.
-    pub fn daily_chat_is_hidden(&self, session_id: &str) -> bool {
+    pub fn chat_is_hidden(&self, session_id: &str) -> bool {
         let Some(label) = self.chat_label(session_id) else {
             return false;
         };
-        if !self.daily_chat_hidden_labels.contains(&label) {
+        if !self.hidden_chat_labels.contains(&label) {
             return false;
         }
         self.find_resumed_chat_tab(session_id).is_none()
@@ -4994,7 +4994,7 @@ impl AppState {
             routine_chat_markers: Vec::new(),
             routine_chat_prompt_patterns: Vec::new(),
             routine_chat_repeat_threshold: 0,
-            daily_chat_hidden_labels: Vec::new(),
+            hidden_chat_labels: Vec::new(),
             // Tests point this at a scratch directory when they mean to; the
             // default is no daily section at all, so every existing fixture
             // keeps producing exactly the list it produced before.
@@ -6652,6 +6652,51 @@ mod tests {
                 "the same chore in a third directory is still the same chore"
             );
         }
+    }
+
+    /// TP-DAILY-25 (G2/G4/G6): the graveyard and the daily section ask ONE
+    /// question, so the three answers that keep a chat visible keep it visible
+    /// on both surfaces.
+    ///
+    /// G2: emptying the hidden list brings the headstones back, the same way
+    /// it brings the rows back. G4: a chat that is running is not hidden
+    /// anywhere — and it was never a ghost either, so the two rules must not
+    /// start disagreeing about it. G6: a person's own label outranks the rule
+    /// here as well, or labelling a chat `project` would rescue it from one
+    /// surface and not the other.
+    #[test]
+    fn the_graveyard_and_the_daily_section_hide_the_same_chats() {
+        let mut state = state_with_openings(&[
+            ("chore", "<scheduled-task name=\"nightly\">"),
+            ("real", "kenar cizgisi hakkinda konusalim"),
+        ]);
+        state.hidden_chat_labels = vec![crate::chat_labels::ChatLabel::Routine];
+
+        assert!(state.chat_is_hidden("chore"));
+        assert!(!state.chat_is_hidden("real"), "G3: nothing recognised it");
+
+        // G2: an empty list hides nothing at all.
+        state.hidden_chat_labels.clear();
+        assert!(!state.chat_is_hidden("chore"));
+        state.hidden_chat_labels = vec![crate::chat_labels::ChatLabel::Routine];
+
+        // G4: a chore that is OPEN in a tab is not hidden on either surface.
+        let mut workspace = crate::workspace::Workspace::test_new("w");
+        let tab_idx = workspace.active_tab_index();
+        workspace.tabs[tab_idx].resumed_session_id = Some("chore".to_string());
+        state.workspaces = vec![workspace];
+        assert!(
+            !state.chat_is_hidden("chore"),
+            "running work stays reachable however it is labelled"
+        );
+        state.workspaces.clear();
+
+        // G6: the person's own answer outranks the rule on this surface too.
+        assert!(state.chat_is_hidden("chore"));
+        state
+            .manual_chat_labels
+            .insert("chore".to_string(), crate::chat_labels::ChatLabel::Project);
+        assert!(!state.chat_is_hidden("chore"));
     }
 
     /// TP-DAILY-24 (K4a): a person's own answer outranks every rule. The rules
