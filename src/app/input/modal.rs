@@ -1885,6 +1885,46 @@ impl App {
                 self.state.request_file_manager_context_action = file_intent;
                 leave_modal(&mut self.state);
             }
+            // Matched on the row rather than its label, so a renamed item can
+            // never quietly stop working: the arms below are counted by the
+            // compiler against `BarSectionMenuItem`, and a label is only ever
+            // drawn (TP-CHROME-111).
+            (
+                ContextMenuKind::BarSection {
+                    argv,
+                    width,
+                    height,
+                    ..
+                },
+                _,
+            ) => {
+                let outcome = match crate::app::state::BarSectionMenuItem::at(idx) {
+                    Some(crate::app::state::BarSectionMenuItem::Popup) => self
+                        .spawn_popup_argv_command(
+                            &argv,
+                            None,
+                            Vec::new(),
+                            crate::app::popup::PopupGeometry { width, height },
+                        ),
+                    Some(crate::app::state::BarSectionMenuItem::Tab) => {
+                        self.open_argv_in_new_tab(&argv)
+                    }
+                    Some(crate::app::state::BarSectionMenuItem::Split) => {
+                        self.open_argv_in_split(&argv)
+                    }
+                    // A press past the end of the menu. `item_enabled` already
+                    // refuses it, so reaching here means the menu was applied
+                    // without that check — do nothing rather than guess a row.
+                    None => Ok(()),
+                };
+                if let Err(err) = outcome {
+                    self.warn_about_bar_section_action(
+                        "bar section action failed",
+                        err.to_string(),
+                    );
+                }
+                leave_modal(&mut self.state);
+            }
             // Worktree rows must match BEFORE the agent catch-all below, which
             // would otherwise persist "New worktree" as the default chat agent.
             (ContextMenuKind::ProjectNewChat { proj_idx, .. }, Some("New worktree")) => {

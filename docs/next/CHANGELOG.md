@@ -12,6 +12,8 @@
 - `shell.resource_interval_ms` sets how often a resource section reads the machine, between 250 and 60000 milliseconds, defaulting to 2000. Below 250 the number on screen would be drawing the counter's resolution rather than the machine's load.
 - Three more bundled pictures for `widget.art`: `herd-small` carries the Herdr mark on a bar with no room for three rows, `ring` is the hollow counterpart of `dot` for something waiting rather than happening, and `level` is three ascending bars to sit beside a `resource`, `meter` or `sparkline` section.
 - The colour names an edge bar may write — `accent`, `text`, `mauve`, `green`, `yellow`, `red`, `blue`, `teal`, `peach`, `orange`, `surface` and `dim` — are now listed in the configuration guide and published by `herdr shell spec`. They were a closed set nothing could tell you: an unrecognised colour is not refused, so no message ever named them. Unrecognised colours are still drawn rather than refused, so nothing that loaded before stops loading.
+- A right press on an edge bar section opens a menu offering the same command in all three places it can go: **Open in popup**, **Open in new tab** and **Open in split**. That is what a section does when `action.secondary` is left out, where a right press used to do nothing at all. "Open in popup" is shown but not selectable while a popup is already open, rather than dropping the one you have open.
+- `action.secondary` takes three more values: `"split"` runs the section's command beside the focused pane, `"menu"` names the new default explicitly, and `"none"` keeps the right press silent. A file that already says `"tab"` still opens a tab straight away rather than starting to ask.
 
 ### Changed
 - Relicensed Herdr from AGPL-3.0-or-later to Apache-2.0.

@@ -740,7 +740,24 @@ cells  = 12
 action = { kind = "popup", argv = ["btop"], secondary = "tab" }
 ```
 
-`secondary = "tab"` opens the same command in a tab instead of a popup, for the times you want to keep it around. It is the only presentation there is today; anything else is refused rather than quietly treated as the default, because a misspelling that silently opens a popup is indistinguishable from not having written the key at all.
+Left press always opens the popup. What the right press does is up to `action.secondary`:
+
+| `action.secondary` | What a right press does |
+| --- | --- |
+| `menu` | Opens a menu at the pointer and lets you pick. This is what happens when you leave the key out. |
+| `tab` | Opens the same command in a new tab of the current workspace, straight away. |
+| `split` | Splits the focused pane and runs the same command beside it, straight away. |
+| `none` | Nothing. The press still stops at the bar, as every press over chrome does. |
+
+The menu offers the same command in all three places, so one section reaches every presentation without you having to decide in the config which one you meant:
+
+| Menu item | Where the command opens |
+| --- | --- |
+| `Open in popup` | The popup, exactly as a left press would. Greyed out while a popup is already open: there is one popup at a time, and closing yours to make room for another is not something a stray click should do. |
+| `Open in new tab` | A new tab of the current workspace. |
+| `Open in split` | Beside the focused pane. |
+
+Anything else in `action.secondary` is refused rather than quietly treated as the default, because a misspelling that silently opened a menu is indistinguishable from not having written the key at all. Spelling is exact: `TAB` is a typo, not another way of writing `tab`.
 
 #### Running a plugin action
 

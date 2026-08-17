@@ -668,6 +668,37 @@ impl App {
                     );
                 }
             }
+            BarSectionClick::OpenSplit { argv } => {
+                if let Err(err) = self.open_argv_in_split(&argv) {
+                    self.warn_about_bar_section_action(
+                        "bar section action failed",
+                        err.to_string(),
+                    );
+                }
+            }
+            // The same two steps the dock's own right press takes, and in the
+            // same order: a menu that was placed but never took the overlay
+            // would be drawn while the surface underneath still owned the
+            // keyboard.
+            BarSectionClick::OpenMenu {
+                argv,
+                width,
+                height,
+                popup_open,
+            } => {
+                self.state.context_menu = Some(crate::app::state::ContextMenuState {
+                    kind: crate::app::state::ContextMenuKind::BarSection {
+                        argv,
+                        width,
+                        height,
+                        popup_open,
+                    },
+                    x: mouse.column,
+                    y: mouse.row,
+                    list: crate::app::state::MenuListState::new(0),
+                });
+                self.state.enter_overlay_mode(Mode::ContextMenu);
+            }
             BarSectionClick::InvokePlugin { action } => {
                 if let Err(err) = self.invoke_plugin_action_from_bar_section(action) {
                     self.warn_about_bar_section_action("bar section action failed", err);
@@ -1861,6 +1892,11 @@ mod tests {
     /// shut down by the caller before the test returns (C76's rule, in unit form).
     #[cfg(unix)]
     fn app_with_a_two_gesture_section(argv: &[&str]) -> App {
+        app_with_a_secondary_section(argv, "tab")
+    }
+
+    #[cfg(unix)]
+    fn app_with_a_secondary_section(argv: &[&str], presentation: &str) -> App {
         let mut section = crate::config::ShellBarSectionConfig {
             kind: "fixed".to_string(),
             cells: 10,
@@ -1868,7 +1904,7 @@ mod tests {
         };
         section.action.kind = "popup".to_string();
         section.action.argv = argv.iter().map(|argument| argument.to_string()).collect();
-        section.action.secondary = "tab".to_string();
+        section.action.secondary = presentation.to_string();
 
         let bars = crate::config::ShellBarsConfig {
             top: crate::config::ShellBarConfig {
@@ -1970,6 +2006,130 @@ mod tests {
 
         for (_, runtime) in app.terminal_runtimes.drain() {
             runtime.shutdown();
+        }
+    }
+
+    // TN-4.2 · THE WHOLE CHAIN for the presentation the grammar used to refuse.
+    //
+    // A right press over a `split` section divides the focused pane and runs
+    // the command in the half that appears. Asserted on the pane count inside
+    // the active tab rather than on a tab count, which is what tells a split
+    // apart from the tab path: both register a terminal, and a split that
+    // quietly opened a tab would pass every assertion the tab test makes.
+    // TP-CHROME-117: a right press over a `split` section opens its command
+    // beside the focused pane, in the same tab.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_right_press_over_a_split_section_opens_its_command_beside_the_focused_pane() {
+        let mut app = app_with_a_secondary_section(&["/bin/true"], "split");
+        let tabs_before = app.state.workspaces[0].tabs.len();
+        let active_tab = app.state.workspaces[0].active_tab_index();
+        let panes_before = app.state.workspaces[0].tabs[active_tab].panes.len();
+        let terminals_before = app.state.terminals.len();
+
+        let consumed = app.handle_bar_section_mouse(bar_mouse(
+            MouseEventKind::Down(MouseButton::Right),
+            4,
+            0,
+            KeyModifiers::NONE,
+        ));
+
+        assert!(consumed, "the press belongs to the bar");
+        assert_eq!(
+            app.state.workspaces[0].tabs.len(),
+            tabs_before,
+            "a split lands beside what is already there; a new tab would be a \
+             different gesture wearing this one's name"
+        );
+        assert_eq!(
+            app.state.workspaces[0].tabs[active_tab].panes.len(),
+            panes_before + 1,
+            "the focused pane must have been divided exactly once"
+        );
+        assert_eq!(
+            app.state.terminals.len(),
+            terminals_before + 1,
+            "an unregistered pane is one no surface can draw"
+        );
+        assert_eq!(
+            app.state.mode,
+            Mode::Terminal,
+            "focus without the mode to use it is focus in name only"
+        );
+        assert!(
+            app.state.popup_pane.is_none(),
+            "the secondary gesture must not also have opened the primary one"
+        );
+
+        for (_, runtime) in app.terminal_runtimes.drain() {
+            runtime.shutdown();
+        }
+    }
+
+    // TN-4.1/TN-4.3 · the menu is not a decoration: every row it draws does the
+    // thing it names, and picking one puts the person back in the terminal.
+    //
+    // Driven through `apply_context_menu_action_via_api`, which is the path the
+    // mouse and the keyboard both end at. Each row is exercised on its own app,
+    // because a tab and a split are told apart by *where* the new pane landed
+    // and running them in sequence would make the second answer for the first.
+    // TP-CHROME-111: each row of a bar section's menu opens the command where
+    // its label says, and closes the menu.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn every_row_of_a_bar_section_menu_opens_the_command_where_it_says() {
+        for (idx, label) in crate::app::state::BarSectionMenuItem::ALL
+            .iter()
+            .enumerate()
+            .map(|(idx, item)| (idx, item.label()))
+        {
+            let mut app = app_with_a_secondary_section(&["/bin/true"], "menu");
+
+            let consumed = app.handle_bar_section_mouse(bar_mouse(
+                MouseEventKind::Down(MouseButton::Right),
+                4,
+                0,
+                KeyModifiers::NONE,
+            ));
+            assert!(consumed, "{label}: the press belongs to the bar");
+            let menu =
+                app.state.context_menu.clone().unwrap_or_else(|| {
+                    panic!("{label}: the right press must have opened the menu")
+                });
+
+            let active_tab = app.state.workspaces[0].active_tab_index();
+            let tabs_before = app.state.workspaces[0].tabs.len();
+            let panes_before = app.state.workspaces[0].tabs[active_tab].panes.len();
+
+            app.state.context_menu = None;
+            app.apply_context_menu_action_via_api(menu, idx);
+
+            match crate::app::state::BarSectionMenuItem::at(idx) {
+                Some(crate::app::state::BarSectionMenuItem::Popup) => assert!(
+                    app.state.popup_pane.is_some(),
+                    "{label}: the popup row must open the popup"
+                ),
+                Some(crate::app::state::BarSectionMenuItem::Tab) => assert_eq!(
+                    app.state.workspaces[0].tabs.len(),
+                    tabs_before + 1,
+                    "{label}: the tab row must create exactly one tab"
+                ),
+                Some(crate::app::state::BarSectionMenuItem::Split) => assert_eq!(
+                    app.state.workspaces[0].tabs[active_tab].panes.len(),
+                    panes_before + 1,
+                    "{label}: the split row must divide the focused pane"
+                ),
+                None => unreachable!("the loop walks the menu's own rows"),
+            }
+            assert!(
+                app.state.context_menu.is_none(),
+                "{label}: a menu that stays open after a pick is one the person \
+                 has to dismiss for a choice they already made"
+            );
+
+            for (_, runtime) in app.terminal_runtimes.drain() {
+                runtime.shutdown();
+            }
         }
     }
 

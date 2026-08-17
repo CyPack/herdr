@@ -97,6 +97,29 @@ pub(crate) enum BarSectionClick {
     /// replacing it would drop somebody's open work; tabs are not scarce, and
     /// refusing a second one would refuse something harmless.
     OpenTab { argv: Vec<String> },
+    /// Open the same command beside the focused pane.
+    ///
+    /// Which pane gets split is not carried here for the same reason the
+    /// directory is not carried in `OpenTab`: the focused pane is resolved
+    /// where the split happens, so a menu left open across a focus change
+    /// splits what is focused when the person picks, not what was focused when
+    /// they pressed. A pane id captured here would name a pane that may have
+    /// closed in between.
+    OpenSplit { argv: Vec<String> },
+    /// Ask which presentation, by opening a menu at the pointer.
+    ///
+    /// Carries the popup's size because one of the menu's items opens a popup,
+    /// and carries whether a popup is already open because that decides whether
+    /// that item can be picked. Both are read here, in the same pass that
+    /// resolved the section — a second lookup when the item fires would answer
+    /// for whatever the bar holds by then, and a menu can outlive the frame it
+    /// was opened from (the reason `AgentEntry` carries its session id).
+    OpenMenu {
+        argv: Vec<String>,
+        width: Option<crate::popup_size::PopupSize>,
+        height: Option<crate::popup_size::PopupSize>,
+        popup_open: bool,
+    },
     /// Over a popup action while a popup is already open. Named rather than
     /// folded into `Inert` because the two deserve different answers: this one
     /// is worth saying out loud, and neither may close the popup that is
@@ -174,15 +197,24 @@ impl AppState {
                         }
                     }
                 }
-                // A section that was never given a second answer stays inert
-                // rather than falling through: the bar is still chrome, and an
-                // event that reached the surface behind would act on something
-                // the person was not pointing at (CL12).
+                // A section whose second answer is `Inert` stays inert rather
+                // than falling through: the bar is still chrome, and an event
+                // that reached the surface behind would act on something the
+                // person was not pointing at (CL12).
                 SectionGesture::Secondary => match secondary {
-                    Some(crate::ui::shell::SecondaryPresentation::Tab) => {
+                    crate::ui::shell::SecondaryPresentation::Menu => BarSectionClick::OpenMenu {
+                        argv: argv.clone(),
+                        width: *width,
+                        height: *height,
+                        popup_open: self.popup_pane.is_some(),
+                    },
+                    crate::ui::shell::SecondaryPresentation::Tab => {
                         BarSectionClick::OpenTab { argv: argv.clone() }
                     }
-                    None => BarSectionClick::Inert,
+                    crate::ui::shell::SecondaryPresentation::Split => {
+                        BarSectionClick::OpenSplit { argv: argv.clone() }
+                    }
+                    crate::ui::shell::SecondaryPresentation::Inert => BarSectionClick::Inert,
                 },
             },
             Some(crate::ui::shell::SectionAction::InvokePlugin { action }) => match gesture {
@@ -1143,10 +1175,18 @@ mod tests {
         );
     }
 
-    fn two_gesture_section(cells: u16, argv: &[&str]) -> crate::config::ShellBarSectionConfig {
+    fn secondary_section(
+        cells: u16,
+        argv: &[&str],
+        presentation: &str,
+    ) -> crate::config::ShellBarSectionConfig {
         let mut section = popup_section(cells, argv);
-        section.action.secondary = "tab".to_string();
+        section.action.secondary = presentation.to_string();
         section
+    }
+
+    fn two_gesture_section(cells: u16, argv: &[&str]) -> crate::config::ShellBarSectionConfig {
+        secondary_section(cells, argv, "tab")
     }
 
     // TC-67-6/TC-67-7 · one section, two answers, and neither steals the other.
@@ -1178,20 +1218,141 @@ mod tests {
         );
     }
 
-    // TC-67-8 · a section that was never given a second answer consumes the
-    // press anyway. Falling through would run whatever is under the bar, which
-    // is the surface the person was demonstrably not pointing at.
-    // TP-CHROME-63: a secondary press on a one-answer section is consumed, not
+    // TC-67-8 · a section that answers the second gesture with nothing consumes
+    // the press anyway. Falling through would run whatever is under the bar,
+    // which is the surface the person was demonstrably not pointing at.
+    //
+    // Both spellings of "nothing happens" are pinned, because they arrive here
+    // by different roads and only one of them still exists. A section that
+    // names no presentation now opens the menu; the section that stays silent
+    // is the one whose file says `"none"`. Neither may reach `Elsewhere`.
+    // TP-CHROME-63: a secondary press that opens nothing is consumed, not
     // passed through.
     #[test]
     fn a_secondary_press_on_a_section_with_one_answer_is_consumed() {
-        let (state, _) = state_with_divided_top_bar(vec![popup_section(10, &["btop"])]);
+        let (unwritten, _) = state_with_divided_top_bar(vec![popup_section(10, &["btop"])]);
+        let (silenced, _) =
+            state_with_divided_top_bar(vec![secondary_section(10, &["btop"], "none")]);
+
+        assert!(
+            matches!(
+                unwritten.bar_section_click_at(Position::new(4, 0), SectionGesture::Secondary),
+                BarSectionClick::OpenMenu { .. }
+            ),
+            "a section that named no presentation asks rather than doing nothing"
+        );
+        assert_eq!(
+            silenced.bar_section_click_at(Position::new(4, 0), SectionGesture::Secondary),
+            BarSectionClick::Inert,
+            "inert, not Elsewhere: the bar still owns the event it does not act on"
+        );
+    }
+
+    // TN-2.2/TN-2.3/TN-2.4 · every presentation the grammar accepts reaches a
+    // different intent, from the same press on the same kind of section.
+    //
+    // Written as one table rather than four tests because the property is the
+    // mapping itself: a presentation that silently landed on its neighbour's
+    // intent would be a section that does the wrong thing while every
+    // individual test still passed. The `"tab"` row is the backward
+    // compatibility gate — a file written before the menu existed must keep
+    // opening a tab directly, not start asking.
+    // TP-CHROME-112: each secondary presentation resolves to its own intent,
+    // and `"tab"` keeps opening a tab without asking.
+    #[test]
+    fn each_secondary_presentation_reaches_its_own_intent() {
+        let argv = vec!["btop".to_string()];
+        let cases: &[(&str, BarSectionClick)] = &[
+            ("tab", BarSectionClick::OpenTab { argv: argv.clone() }),
+            ("split", BarSectionClick::OpenSplit { argv: argv.clone() }),
+            ("none", BarSectionClick::Inert),
+            (
+                "menu",
+                BarSectionClick::OpenMenu {
+                    argv: argv.clone(),
+                    width: None,
+                    height: None,
+                    popup_open: false,
+                },
+            ),
+        ];
+
+        for (presentation, expected) in cases {
+            let (state, _) =
+                state_with_divided_top_bar(vec![secondary_section(10, &["btop"], presentation)]);
+            assert_eq!(
+                &state.bar_section_click_at(Position::new(4, 0), SectionGesture::Secondary),
+                expected,
+                "`secondary = \"{presentation}\"` must reach its own intent and no other"
+            );
+        }
+    }
+
+    // TN-2.6 · the menu is told whether the popup slot was taken, at the moment
+    // the press resolved.
+    //
+    // Carried rather than looked up later, for the reason every other menu
+    // carries its own identity: a menu outlives the frame it was opened from,
+    // and a popup can close while it is still on screen. Reading the slot when
+    // the item fires would enable a row against a state nobody saw.
+    // TP-CHROME-113: a bar section menu records whether the popup slot was
+    // taken when it opened.
+    #[test]
+    fn a_bar_section_menu_records_whether_the_popup_slot_was_taken() {
+        let (mut state, _) = state_with_divided_top_bar(vec![popup_section(10, &["btop"])]);
+        let free = state.bar_section_click_at(Position::new(4, 0), SectionGesture::Secondary);
+        assert_eq!(
+            free,
+            BarSectionClick::OpenMenu {
+                argv: vec!["btop".to_string()],
+                width: None,
+                height: None,
+                popup_open: false,
+            },
+            "control: with the slot free, nothing in the menu is closed off"
+        );
+
+        state.popup_pane = Some(crate::app::state::PopupPaneState {
+            pane_id: crate::layout::PaneId::alloc(),
+            terminal_id: crate::terminal::TerminalId::alloc(),
+            width: None,
+            height: None,
+        });
 
         assert_eq!(
             state.bar_section_click_at(Position::new(4, 0), SectionGesture::Secondary),
-            BarSectionClick::Inert,
-            "inert, not Elsewhere: the bar still owns the event"
+            BarSectionClick::OpenMenu {
+                argv: vec!["btop".to_string()],
+                width: None,
+                height: None,
+                popup_open: true,
+            },
+            "the menu must learn the slot is taken, or it offers a popup it cannot open"
         );
+    }
+
+    // TN-2.7 · the primary gesture is untouched by all of the above.
+    //
+    // A control, and not a redundant one: every change in this file was made on
+    // the secondary arm of the same `match`, and nothing else asserts that the
+    // left press still means what it meant. A refactor that folded the two arms
+    // together would pass every test above.
+    // TP-CHROME-114: growing the second gesture leaves the first one alone.
+    #[test]
+    fn the_primary_gesture_is_unchanged_by_the_secondary_ones() {
+        for presentation in ["", "tab", "split", "menu", "none"] {
+            let (state, _) =
+                state_with_divided_top_bar(vec![secondary_section(10, &["btop"], presentation)]);
+            assert_eq!(
+                state.bar_section_click_at(Position::new(4, 0), SectionGesture::Primary),
+                BarSectionClick::OpenPopup {
+                    argv: vec!["btop".to_string()],
+                    width: None,
+                    height: None,
+                },
+                "a left press opens the popup whatever the right press was told to do"
+            );
+        }
     }
 
     // TC-67-9/TC-67-10 · the guarantees the primary gesture already had must

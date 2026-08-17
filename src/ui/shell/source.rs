@@ -1250,16 +1250,21 @@ pub(crate) enum SectionAction {
         /// geometry, in a derivation).
         width: Option<PopupSize>,
         height: Option<PopupSize>,
-        /// How a secondary press shows the same command, or `None` when the
-        /// section answers only one gesture.
+        /// How a secondary press shows the same command.
+        ///
+        /// Not an `Option`: every section answers the second gesture with
+        /// something now, even if that something is `Inert`. Two spellings of
+        /// absence — a missing key and a variant meaning nothing — would be two
+        /// ways to say one thing, and the reader would have to know which of
+        /// them the code meant.
         ///
         /// Deliberately a presentation of the command above rather than a
         /// command of its own. Two commands in one section could drift into
         /// running different programs from the same picture, and the person
-        /// pressing has no way to know which one they got. One command, two
+        /// pressing has no way to know which one they got. One command, several
         /// presentations, is also what makes the gesture rule true rather than
         /// decorative: the right press chooses how, never what.
-        secondary: Option<SecondaryPresentation>,
+        secondary: SecondaryPresentation,
     },
     /// Invoke an action an installed plugin declared, by the id its manifest
     /// gives it.
@@ -1286,17 +1291,43 @@ pub(crate) enum SectionAction {
 
 /// How a secondary press presents a section's command.
 ///
-/// One variant today, and closed like its neighbours. A "split the current
-/// pane" presentation was considered and left out: it needs a target pane, and
-/// a bar has no idea which pane the person meant. The enum being closed is what
-/// makes adding one later a cost the compiler counts.
+/// Closed like its neighbours, so adding one later is a cost the compiler
+/// counts rather than a guess made now.
+///
+/// An earlier version of this enum left `Split` out, on the grounds that it
+/// needs a target pane and a bar has no idea which pane the person meant. That
+/// was true when it was written and is not true now: `open_argv_in_new_tab`
+/// already resolves the focused pane to borrow its directory, and the pane
+/// menu's own "Split right" already splits whatever is focused. The bar's
+/// answer to "which pane" is the same answer the rest of the product gives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SecondaryPresentation {
+    /// Ask. A menu opens at the pointer listing what this section can do, and
+    /// the person picks one.
+    ///
+    /// The default, and deliberately so: a section that named no secondary
+    /// used to do *nothing* on a right press, so making the menu the default
+    /// takes nothing away from anybody. Somebody who wants the old silence can
+    /// now write it down as `"none"` — a preference that could not be
+    /// expressed before, only relied upon.
+    Menu,
     /// A new tab of the current workspace, running the command at full size.
     ///
     /// Full size needs no zoom: a tab's root pane already occupies the whole
     /// tab, so asking for one is asking for the other.
     Tab,
+    /// A split of the focused pane, running the command beside what is already
+    /// there.
+    ///
+    /// Direction is not a choice here. A bar section is a launcher, and the
+    /// surface that owns "which way" is the pane menu, which offers both. This
+    /// one splits the way every other launcher in the product splits.
+    Split,
+    /// Nothing, said out loud.
+    ///
+    /// Distinct from a section that carries no action at all: this one has a
+    /// command and a person who decided its second gesture should stay quiet.
+    Inert,
 }
 
 /// What one section of a bar shows.
@@ -1940,18 +1971,19 @@ fn secondary_presentation(
     raw: &str,
     edge: &'static str,
     index: usize,
-) -> Result<Option<SecondaryPresentation>, BarConfigProblem> {
-    // Naming nothing is the absence of a second gesture rather than one of the
-    // choices below, and unlike the other surfaces there is no leftover to ask
-    // about: whatever a deleted presentation left behind belongs to the action
-    // that carried it.
+) -> Result<SecondaryPresentation, BarConfigProblem> {
+    // Naming nothing asks the menu, which is the one answer that needs no
+    // guess about what the person wanted: it puts the choice in front of them.
+    // There is no leftover to complain about either, unlike the other
+    // surfaces — whatever a deleted presentation left behind belongs to the
+    // action that carried it.
     if raw.is_empty() {
-        return Ok(None);
+        return Ok(SecondaryPresentation::Menu);
     }
     SECONDARY_PRESENTATIONS
         .iter()
         .find(|(name, _)| *name == raw)
-        .map(|(_, presentation)| Some(*presentation))
+        .map(|(_, presentation)| *presentation)
         .ok_or_else(|| BarConfigProblem::UnknownSecondaryPresentation {
             edge,
             index,
@@ -1965,8 +1997,12 @@ fn secondary_presentation(
 /// A pair rather than a builder: nothing is constructed here beyond the variant
 /// itself, and a function pointer that only returns a constant would be ceremony
 /// around a lookup.
-const SECONDARY_PRESENTATIONS: &[(&str, SecondaryPresentation)] =
-    &[("tab", SecondaryPresentation::Tab)];
+const SECONDARY_PRESENTATIONS: &[(&str, SecondaryPresentation)] = &[
+    ("menu", SecondaryPresentation::Menu),
+    ("tab", SecondaryPresentation::Tab),
+    ("split", SecondaryPresentation::Split),
+    ("none", SecondaryPresentation::Inert),
+];
 
 /// The four edges, as the tree builder sees them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -3079,6 +3115,22 @@ mod tests {
             .collect()
     }
 
+    /// The guide's table of secondary presentations, by the name a file writes.
+    fn documented_secondary_presentations() -> Vec<String> {
+        guide_table_after("Left press always opens the popup.")
+            .into_iter()
+            .map(|columns| columns[0].clone())
+            .collect()
+    }
+
+    /// The guide's table of the menu's own rows, by the label it draws.
+    fn documented_bar_section_menu() -> Vec<String> {
+        guide_table_after("The menu offers the same command in all three places")
+            .into_iter()
+            .map(|columns| columns[0].clone())
+            .collect()
+    }
+
     /// Every example in the guide is a config this build accepts.
     ///
     /// A documented example is the first thing anyone copies, an agent most of
@@ -3277,6 +3329,73 @@ mod tests {
         assert_eq!(
             documented, known,
             "the guide's colour table and the colours this build resolves are different sets"
+        );
+    }
+
+    /// The guide's table of secondary presentations is the grammar's own table,
+    /// exactly.
+    ///
+    /// Both directions, and each direction fails differently. A presentation
+    /// this build accepts and the guide omits is one nobody will write, because
+    /// the only other place it appears is a refusal nobody sees until they have
+    /// already guessed the name. A presentation the guide offers and this build
+    /// refuses is worse: the person read it here, and their bar now reports a
+    /// config error against a line the manual told them to write.
+    ///
+    /// Written against the table rather than the prose it replaced. The prose
+    /// said `secondary = "tab"` and a search for `"tab"` in a configuration
+    /// manual finds it whether or not anybody documented anything — the same
+    /// trap the picture table below was rebuilt to escape.
+    #[test]
+    fn the_guide_lists_exactly_the_secondary_presentations_this_build_accepts() {
+        // TP-CHROME-115: the guide's presentation table and the accepted set are
+        // one set, in both directions.
+        let documented = documented_secondary_presentations();
+        assert!(
+            documented.len() >= 2,
+            "the guide's presentation table stopped parsing; found {documented:?}"
+        );
+
+        let documented = documented
+            .iter()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>();
+        let accepted = secondary_presentation_names()
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            documented, accepted,
+            "the guide's presentation table and the names this build accepts are different sets"
+        );
+    }
+
+    /// The guide's menu table is the menu.
+    ///
+    /// A menu row exists only after somebody has already right-pressed, so the
+    /// guide is the only place it can be read ahead of time. A row that is
+    /// drawn and undocumented cannot be found; a row that is documented and not
+    /// drawn sends somebody looking for an item that is not there.
+    #[test]
+    fn the_guide_lists_exactly_the_rows_the_bar_section_menu_draws() {
+        // TP-CHROME-116: the guide's menu table and the menu's own rows are one
+        // set, in both directions.
+        let documented = documented_bar_section_menu();
+        assert!(
+            documented.len() >= 2,
+            "the guide's menu table stopped parsing; found {documented:?}"
+        );
+
+        let documented = documented
+            .iter()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>();
+        let drawn = crate::app::state::BarSectionMenuItem::ALL
+            .iter()
+            .map(|item| item.label())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            documented, drawn,
+            "the guide's menu table and the rows the menu draws are different sets"
         );
     }
 
@@ -4057,7 +4176,7 @@ mod tests {
         actions: &ShellBarChrome,
         region: RegionId,
         index: u8,
-    ) -> Option<Option<SecondaryPresentation>> {
+    ) -> Option<SecondaryPresentation> {
         match actions.action_for(region, index) {
             Some(SectionAction::OpenPopup { secondary, .. }) => Some(*secondary),
             _ => None,
@@ -4243,17 +4362,26 @@ mod tests {
     }
 
     // TC-67-1/TC-67-4 · the presentation the person wrote survives the
-    // derivation, and its absence stays absent. The second half is the
-    // regression gate for every config file written before this field existed:
-    // those sections must keep meaning exactly what they meant.
+    // derivation, and an unwritten one becomes the menu.
+    //
+    // The second half was once "its absence stays absent", pinning `None` for a
+    // section written before this field existed. That was the right gate while
+    // the absence meant a right press did nothing at all. It now means the
+    // press asks, which takes nothing away from anybody — the only thing that
+    // changed is that a gesture which used to be silent now offers the choices
+    // it always had. Somebody who wants the silence back can write `"none"`,
+    // pinned below: a preference that could previously only be relied upon is
+    // now something the file can say.
     // TP-CHROME-57: a section carries the secondary presentation it was written
-    // with, and carries none when none was written.
+    // with, and asks when none was written.
     #[test]
     fn a_section_carries_the_secondary_presentation_it_was_written_with() {
         let config = ShellBarsConfig {
             top: bar_with_sections(vec![
                 secondary_section("popup", "tab"),
                 section_with_action("fill", "popup", &["btop"]),
+                secondary_section("popup", "split"),
+                secondary_section("popup", "none"),
             ]),
             ..Default::default()
         };
@@ -4262,17 +4390,27 @@ mod tests {
 
         assert_eq!(
             popup_secondary(&actions, RegionId::TopBar, 0),
-            Some(Some(SecondaryPresentation::Tab)),
+            Some(SecondaryPresentation::Tab),
             "the presentation must arrive as itself, not be re-derived downstream"
         );
         assert_eq!(
             popup_secondary(&actions, RegionId::TopBar, 1),
-            Some(None),
-            "a section written before this field existed must still mean what it meant"
+            Some(SecondaryPresentation::Menu),
+            "a section that named no presentation asks rather than doing nothing"
+        );
+        assert_eq!(
+            popup_secondary(&actions, RegionId::TopBar, 2),
+            Some(SecondaryPresentation::Split),
+            "the presentation the grammar refused yesterday must arrive today"
+        );
+        assert_eq!(
+            popup_secondary(&actions, RegionId::TopBar, 3),
+            Some(SecondaryPresentation::Inert),
+            "the old silence must stay reachable, now as something written down"
         );
         assert!(
             shell_bar_config_problems(&config, true).is_empty(),
-            "neither spelling is a problem worth reporting"
+            "none of the four spellings is a problem worth reporting"
         );
     }
 
@@ -4559,7 +4697,10 @@ mod tests {
     // refused by name, and costs only its own section.
     #[test]
     fn a_secondary_presentation_this_build_does_not_know_is_refused() {
-        for spelling in ["TAB", " tab ", "window", "split"] {
+        // `"split"` sat here until the grammar learned it, which is exactly
+        // what this row is for: the near-miss of an accepted name, so a build
+        // that grows a presentation cannot also quietly grow its typos.
+        for spelling in ["TAB", " tab ", "MENU", "window", "splits", "nothing"] {
             let config = ShellBarsConfig {
                 top: bar_with_sections(vec![
                     secondary_section("popup", spelling),

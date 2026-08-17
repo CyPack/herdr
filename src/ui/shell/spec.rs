@@ -47,6 +47,13 @@ pub(crate) struct ShellSpec {
     pub action_kinds: Vec<KindSpec>,
     /// What a second gesture can ask for.
     pub secondary_presentations: Vec<&'static str>,
+    /// The rows the menu offers when a second gesture asks rather than acts.
+    ///
+    /// Published for the same reason the colours are: nothing else can teach
+    /// them. A menu only exists once somebody has already pressed, so a reader
+    /// deciding whether `secondary = "menu"` is worth writing would otherwise
+    /// have to run the thing to find out what it offers.
+    pub bar_section_menu: Vec<&'static str>,
     /// The colour names any `color`, `gradient` stop or picture palette may
     /// write. Published because nothing else can teach them: an unrecognised
     /// colour is not refused, so no refusal ever names the set, and a reader
@@ -184,6 +191,10 @@ pub(crate) fn shell_spec() -> ShellSpec {
         widget_kinds: kinds(source::widget_kind_facts()),
         action_kinds: kinds(source::action_kind_facts()),
         secondary_presentations: source::secondary_presentation_names(),
+        bar_section_menu: crate::app::state::BarSectionMenuItem::ALL
+            .iter()
+            .map(|item| item.label())
+            .collect(),
         colors: source::bar_color_tokens(),
         metrics: MetricSpec {
             names: ResourceMetric::ACCEPTED.to_vec(),
@@ -255,6 +266,10 @@ pub(crate) fn render_text(spec: &ShellSpec) -> String {
     out.push_str(&format!(
         "\nsecondary presentations (action.secondary = …): {}\n",
         list(&spec.secondary_presentations)
+    ));
+    out.push_str(&format!(
+        "  the menu offers: {}\n",
+        list(&spec.bar_section_menu)
     ));
 
     out.push_str(&format!(
@@ -377,6 +392,14 @@ mod tests {
         assert!(
             !spec.secondary_presentations.is_empty(),
             "the secondary presentations emptied out"
+        );
+        // TP-SPEC-15: the menu the spec publishes is the menu the product
+        // draws. Three, not "some": the rows are a closed set and a spec that
+        // published two of them would teach that a section reaches two places.
+        assert_eq!(
+            spec.bar_section_menu.len(),
+            3,
+            "the published menu no longer has a row per presentation"
         );
         assert!(spec.colors.len() >= 8, "the colour names thinned out");
         assert!(spec.metrics.names.len() >= 3, "a metric went missing");
@@ -767,6 +790,7 @@ mod tests {
             "widget_kinds",
             "action_kinds",
             "secondary_presentations",
+            "bar_section_menu",
             "metrics",
             "icon_art",
             "switches",
