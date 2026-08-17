@@ -891,6 +891,7 @@ impl App {
             chat_move_overrides: Default::default(),
             recent_move_targets: Vec::new(),
             request_chat_move: None,
+            request_chat_label: None,
             request_chat_rename: None,
             request_new_workspace_cwd: None,
             request_remove_linked_worktree: None,
@@ -929,6 +930,7 @@ impl App {
             workspace_chat_rows: std::collections::HashMap::new(),
             chat_openings: std::collections::HashMap::new(),
             derived_chat_labels: std::collections::HashMap::new(),
+            manual_chat_labels: std::collections::HashMap::new(),
             routine_chat_markers: config.ui.routine_chat_markers.clone(),
             routine_chat_prompt_patterns: config.ui.routine_chat_prompt_patterns.clone(),
             routine_chat_repeat_threshold: config.ui.routine_chat_repeat_threshold,
@@ -1568,6 +1570,13 @@ impl App {
             // thing that touches the ledger.
             if let Some((session_id, name)) = self.state.request_chat_rename.take() {
                 self.apply_chat_rename(&session_id, &name);
+                needs_render = true;
+            }
+
+            // TP-DAILY-24: and so does the labelling decision. Same road, same
+            // reason: the ledger has exactly one writer.
+            if let Some((session_id, label)) = self.state.request_chat_label.take() {
+                self.apply_chat_label(&session_id, label);
                 needs_render = true;
             }
 

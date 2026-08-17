@@ -2425,6 +2425,13 @@ pub enum ContextMenuKind {
         session_id: String,
         targets: Vec<(String, String)>,
     },
+    /// TP-DAILY-24: the label picker a chat's "Label as..." opens. `labelled`
+    /// decides whether the withdrawal verb shows at all — offering "Clear
+    /// label" on a chat nobody labelled is an item that does nothing.
+    ChatLabelPick {
+        session_id: String,
+        labelled: bool,
+    },
     /// A node header's own menu — the module and project rows the tree draws
     /// from `[[spaces.node]]` / `[[spaces.project]]` entries. Creation lands
     /// here because the header IS the parent a new module would hang under;
@@ -2606,7 +2613,11 @@ impl ContextMenuState {
                 // yield — for a chat started outside a workspace's directory
                 // there is no resolvable title at all, which is how a row came
                 // to read `user` with nothing to say who spawned it or why.
-                let mut items = vec!["Rename chat...", "Move to branch..."];
+                // TP-DAILY-24: labelling sits beside naming because both are
+                // the person telling the sidebar what this conversation is —
+                // one in words, one in kind. It comes before the move verbs:
+                // those are about where a chat lives, this is about what it is.
+                let mut items = vec!["Rename chat...", "Label as...", "Move to branch..."];
                 // TP-CHAT-MOVE-11: modules are a second kind of destination and
                 // they get their own verb. They were already reachable through
                 // "Move to branch...", which is exactly the problem: on the
@@ -2648,6 +2659,20 @@ impl ContextMenuState {
             }
             ContextMenuKind::ChatMoveTarget { targets, .. } => {
                 targets.iter().map(|(_, label)| label.as_str()).collect()
+            }
+            // TP-DAILY-24: the three kinds a chat can be, in the order they
+            // were asked for, and the withdrawal last because it is the only
+            // one that takes something away.
+            ContextMenuKind::ChatLabelPick { labelled, .. } => {
+                let mut items = vec![
+                    crate::chat_labels::CONTEXT_CHAT_LABEL_ITEM,
+                    crate::chat_labels::PROJECT_CHAT_LABEL_ITEM,
+                    crate::chat_labels::ROUTINE_CHAT_LABEL_ITEM,
+                ];
+                if *labelled {
+                    items.push(crate::chat_labels::CLEAR_CHAT_LABEL_ITEM);
+                }
+                items
             }
             // TP-DOTS-01/10: every module header creates — the node header
             // and the bucket header alike, because to the person using the
@@ -3561,6 +3586,14 @@ pub struct AppState {
     /// ledger: `(session_id, Some(target))` moves, `(session_id, None)`
     /// withdraws (TP-CHAT-MOVE-04).
     pub request_chat_move: Option<(String, Option<String>)>,
+    /// TP-DAILY-24: a labelling decision waiting for the App loop. `None` as
+    /// the second half withdraws the label instead of setting one.
+    ///
+    /// The menu bodies set this and do nothing else, for the reason
+    /// TP-DAILY-19 records: one of them is handed an `AppState` and cannot
+    /// reach the ledger at all, so doing the work there would give the verb
+    /// two implementations and only one of them would be the product's.
+    pub request_chat_label: Option<(String, Option<crate::chat_labels::ChatLabel>)>,
     /// A chat naming decision waiting for the App loop to fold into the
     /// ledger: `(session_id, name)`. A blank name withdraws the name rather
     /// than storing one (TP-CHAT-NAME-01).
@@ -3654,6 +3687,14 @@ pub struct AppState {
     /// under a live server and a stale verdict is worse than none. A label a
     /// person set themselves lives elsewhere and outranks this.
     pub derived_chat_labels: std::collections::HashMap<String, crate::chat_labels::ChatLabel>,
+    /// What a person said each chat is, keyed by session id, projected from
+    /// the ledger.
+    ///
+    /// Kept apart from `derived_chat_labels` rather than written into it,
+    /// because the derived map is cleared and rebuilt on every sync: a
+    /// person's own decision living in that map would be erased by the next
+    /// refresh, which is TP-CHAT-MOVE-01 and TP-CHAT-NAME-01 exactly.
+    pub manual_chat_labels: std::collections::HashMap<String, crate::chat_labels::ChatLabel>,
     /// Structural openings that mark a chat as routine (`ui.routine_chat_markers`).
     pub routine_chat_markers: Vec<String>,
     /// Hand-written openings that mark a chat as routine
@@ -4454,8 +4495,14 @@ impl AppState {
 
     /// What a chat is, as far as anything here knows. `None` means no rule
     /// recognised it, which is its own answer and not a quiet `Context`.
+    ///
+    /// TP-DAILY-24: a person's own answer outranks every rule. The rules read
+    /// the shape of an opening and guess; a person read the conversation.
     pub fn chat_label(&self, session_id: &str) -> Option<crate::chat_labels::ChatLabel> {
-        self.derived_chat_labels.get(session_id).copied()
+        self.manual_chat_labels
+            .get(session_id)
+            .or_else(|| self.derived_chat_labels.get(session_id))
+            .copied()
     }
 
     /// TP-DAILY-23: whether the daily section leaves this chat out.
@@ -4807,6 +4854,7 @@ impl AppState {
             chat_move_overrides: Default::default(),
             recent_move_targets: Vec::new(),
             request_chat_move: None,
+            request_chat_label: None,
             request_chat_rename: None,
             request_new_workspace_cwd: None,
             request_remove_linked_worktree: None,
@@ -4841,6 +4889,7 @@ impl AppState {
             workspace_chat_rows: std::collections::HashMap::new(),
             chat_openings: std::collections::HashMap::new(),
             derived_chat_labels: std::collections::HashMap::new(),
+            manual_chat_labels: std::collections::HashMap::new(),
             routine_chat_markers: Vec::new(),
             routine_chat_prompt_patterns: Vec::new(),
             routine_chat_repeat_threshold: 0,
@@ -5357,6 +5406,9 @@ impl AppState {
                 ContextMenuKind::ChatMoveTarget { .. } => {
                     // Carries a session id and pre-resolved ledger keys; no
                     // index-shaped identity to validate.
+                }
+                ContextMenuKind::ChatLabelPick { .. } => {
+                    // Carries a session id and a flag; nothing index-shaped.
                 }
                 ContextMenuKind::Tab { ws_idx, tab_idx } => {
                     assert_tab_index(ws_idx, tab_idx, "context menu tab")
@@ -6494,6 +6546,65 @@ mod tests {
         }
     }
 
+    /// TP-DAILY-24 (K4a): a person's own answer outranks every rule. The rules
+    /// read the shape of an opening and guess; a person read the conversation.
+    ///
+    /// If this falls the failure is quiet and infuriating: the reader labels a
+    /// chat, the next refresh re-derives `routine`, and the row they just
+    /// rescued disappears again with no explanation.
+    #[test]
+    fn a_hand_written_label_outranks_the_rules() {
+        let mut state = state_with_openings(&[("a", "<scheduled-task name=\"nightly\">")]);
+        assert_eq!(
+            state.chat_label("a"),
+            Some(crate::chat_labels::ChatLabel::Routine)
+        );
+
+        state
+            .manual_chat_labels
+            .insert("a".to_string(), crate::chat_labels::ChatLabel::Project);
+        assert_eq!(
+            state.chat_label("a"),
+            Some(crate::chat_labels::ChatLabel::Project)
+        );
+    }
+
+    /// TP-DAILY-24 (L4): reclassifying does not touch what a person decided.
+    /// The derived map is cleared and rebuilt on every sync, so a decision
+    /// stored in it would be erased by the next refresh — the shape of
+    /// TP-CHAT-MOVE-01 and TP-CHAT-NAME-01.
+    #[test]
+    fn a_sync_never_takes_back_a_hand_written_label() {
+        let mut state = state_with_openings(&[("a", "<scheduled-task name=\"nightly\">")]);
+        state
+            .manual_chat_labels
+            .insert("a".to_string(), crate::chat_labels::ChatLabel::Project);
+
+        state.classify_chats();
+
+        assert_eq!(
+            state.chat_label("a"),
+            Some(crate::chat_labels::ChatLabel::Project),
+            "the rules ran again and the person's answer still stands"
+        );
+    }
+
+    /// TP-DAILY-24 (K4b): withdrawing the label hands the chat back to the
+    /// rules rather than leaving it unclassified. Anything else would make the
+    /// decision one-way.
+    #[test]
+    fn withdrawing_a_label_returns_the_chat_to_the_rules() {
+        let mut state = state_with_openings(&[("a", "<scheduled-task name=\"nightly\">")]);
+        state
+            .manual_chat_labels
+            .insert("a".to_string(), crate::chat_labels::ChatLabel::Project);
+        state.manual_chat_labels.remove("a");
+        assert_eq!(
+            state.chat_label("a"),
+            Some(crate::chat_labels::ChatLabel::Routine)
+        );
+    }
+
     // T5b: the wired-tab lookup finds the tab across workspaces and releases
     // the wiring when the tab closes (so the chat can be resumed again).
     #[test]
@@ -6710,7 +6821,10 @@ mod tests {
         };
         // TP-CHAT-NAME-01 put naming at the head of this list; the
         // move rule this test is about is unchanged.
-        assert_eq!(plain.items(), &["Rename chat...", "Move to branch..."]);
+        assert_eq!(
+            plain.items(),
+            &["Rename chat...", "Label as...", "Move to branch..."]
+        );
 
         let moved = ContextMenuState {
             kind: ContextMenuKind::WorkspaceChat {
@@ -6726,7 +6840,12 @@ mod tests {
         };
         assert_eq!(
             moved.items(),
-            &["Rename chat...", "Move to branch...", "Move back"]
+            &[
+                "Rename chat...",
+                "Label as...",
+                "Move to branch...",
+                "Move back"
+            ]
         );
 
         let picker = ContextMenuState {

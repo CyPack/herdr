@@ -87,6 +87,17 @@ pub struct WorkspaceChatLedger {
     /// to wear two different names.
     #[serde(default)]
     pub names: BTreeMap<String, String>,
+    /// User-chosen labels: session id → the label that chat wears
+    /// (TP-DAILY-24). Additive on the version-1 schema for the same reason
+    /// `moves` and `names` are, and kept beside the observations for the same
+    /// reason `names` is: what kind of conversation a chat is belongs to the
+    /// conversation, not to whichever workspace happened to see it.
+    ///
+    /// Stored as the config spelling rather than as a number so the file stays
+    /// readable and a label added later cannot renumber the ones already
+    /// written down.
+    #[serde(default)]
+    pub labels: BTreeMap<String, String>,
 }
 
 impl Default for WorkspaceChatLedger {
@@ -96,6 +107,7 @@ impl Default for WorkspaceChatLedger {
             workspaces: BTreeMap::new(),
             moves: BTreeMap::new(),
             names: BTreeMap::new(),
+            labels: BTreeMap::new(),
         }
     }
 }
@@ -263,6 +275,22 @@ impl WorkspaceChatLedger {
     /// Withdraw a name: the row goes back to whatever the transcript says.
     pub fn clear_name(&mut self, session_id: &str) -> bool {
         self.names.remove(session_id).is_some()
+    }
+
+    /// TP-DAILY-24: record what a person says this chat is. Returns whether
+    /// anything changed, so a menu press that decides nothing writes no file.
+    pub fn set_label(&mut self, session_id: &str, label: crate::chat_labels::ChatLabel) -> bool {
+        let name = label.as_config_name().to_string();
+        if self.labels.get(session_id) == Some(&name) {
+            return false;
+        }
+        self.labels.insert(session_id.to_string(), name);
+        true
+    }
+
+    /// Withdraw a label: the chat goes back to whatever the rules make of it.
+    pub fn clear_label(&mut self, session_id: &str) -> bool {
+        self.labels.remove(session_id).is_some()
     }
 }
 
@@ -889,6 +917,57 @@ mod tests {
         let old = TempPath(temp_ledger_path("old-schema"));
         std::fs::write(&old.0, br#"{"version":1,"workspaces":{}}"#).expect("write old fixture");
         assert_eq!(load_from_path(&old.0).moves.len(), 0);
+    }
+
+    /// TP-DAILY-24 (L1/L2/L3): the label survives a restart, a file written
+    /// before labels existed still loads, and adding the field leaves the
+    /// observations exactly where they were.
+    ///
+    /// L2 is the one that would hurt: a non-additive read makes a file written
+    /// by yesterday's binary unreadable, and that file is the only record of
+    /// which chats a person has been in. Losing a label is an annoyance;
+    /// losing the ledger is losing the history itself.
+    #[test]
+    fn labels_round_trip_and_an_old_file_loads_without_them() {
+        let path = TempPath(temp_ledger_path("labels"));
+        let mut ledger = WorkspaceChatLedger::default();
+        ledger.record_at("/repo", observation("s1"), 1_000);
+        assert!(ledger.set_label("s1", crate::chat_labels::ChatLabel::Project));
+
+        save_to_path(&path.0, &ledger).expect("ledger should save");
+        let loaded = load_from_path(&path.0);
+        assert_eq!(loaded, ledger);
+        assert_eq!(loaded.labels.get("s1").map(String::as_str), Some("project"));
+        // L3: the record's own fields are untouched — `kind` in particular is
+        // already taken and means something else entirely.
+        assert_eq!(
+            loaded.workspaces["/repo"].chats[0].kind,
+            ledger.workspaces["/repo"].chats[0].kind
+        );
+
+        let old = TempPath(temp_ledger_path("old-schema-labels"));
+        std::fs::write(&old.0, br#"{"version":1,"workspaces":{}}"#).expect("write old fixture");
+        let old_ledger = load_from_path(&old.0);
+        assert_eq!(old_ledger.labels.len(), 0);
+        assert_eq!(old_ledger.version, 1, "reading it must not rewrite it");
+    }
+
+    /// TP-DAILY-24: set and clear answer honestly, so a menu press that
+    /// decides nothing writes no file.
+    #[test]
+    fn set_and_clear_label_report_change_honestly() {
+        let mut ledger = WorkspaceChatLedger::default();
+        assert!(ledger.set_label("s1", crate::chat_labels::ChatLabel::Routine));
+        assert!(
+            !ledger.set_label("s1", crate::chat_labels::ChatLabel::Routine),
+            "the same decision again changes nothing"
+        );
+        assert!(
+            ledger.set_label("s1", crate::chat_labels::ChatLabel::Context),
+            "a different label is a new decision"
+        );
+        assert!(ledger.clear_label("s1"), "withdrawing an existing label");
+        assert!(!ledger.clear_label("s1"), "withdrawing nothing");
     }
 
     // TP-CHAT-MOVE-03: set and clear answer honestly — an identical decision

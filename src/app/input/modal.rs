@@ -1341,6 +1341,23 @@ pub(super) fn apply_context_menu_action(
                 list: crate::app::state::MenuListState::new(0),
             });
         }
+        (ContextMenuKind::WorkspaceChat { session_id, .. }, Some("Label as...")) => {
+            let labelled = state.manual_chat_labels.contains_key(&session_id);
+            state.context_menu = Some(crate::app::state::ContextMenuState {
+                kind: ContextMenuKind::ChatLabelPick {
+                    session_id,
+                    labelled,
+                },
+                x: menu_x,
+                y: menu_y,
+                list: crate::app::state::MenuListState::new(0),
+            });
+        }
+        (ContextMenuKind::ChatLabelPick { session_id, .. }, Some(item)) => {
+            state.request_chat_label =
+                Some((session_id, crate::chat_labels::label_for_menu_item(item)));
+            leave_modal(state);
+        }
         (ContextMenuKind::WorkspaceChat { session_id, .. }, Some("Move back")) => {
             state.request_chat_move = Some((session_id, None));
             leave_modal(state);
@@ -2148,6 +2165,23 @@ impl App {
                     y: menu_y,
                     list: crate::app::state::MenuListState::new(0),
                 });
+            }
+            (ContextMenuKind::WorkspaceChat { session_id, .. }, Some("Label as...")) => {
+                let labelled = self.state.manual_chat_labels.contains_key(&session_id);
+                self.state.context_menu = Some(crate::app::state::ContextMenuState {
+                    kind: ContextMenuKind::ChatLabelPick {
+                        session_id,
+                        labelled,
+                    },
+                    x: menu_x,
+                    y: menu_y,
+                    list: crate::app::state::MenuListState::new(0),
+                });
+            }
+            (ContextMenuKind::ChatLabelPick { session_id, .. }, Some(item)) => {
+                self.state.request_chat_label =
+                    Some((session_id, crate::chat_labels::label_for_menu_item(item)));
+                leave_modal(&mut self.state);
             }
             (ContextMenuKind::WorkspaceChat { session_id, .. }, Some("Move back")) => {
                 self.state.request_chat_move = Some((session_id, None));
@@ -3567,7 +3601,12 @@ mod tests {
 
         assert_eq!(
             menu.items(),
-            vec!["Rename chat...", "Move to branch...", "Move to module..."],
+            vec![
+                "Rename chat...",
+                "Label as...",
+                "Move to branch...",
+                "Move to module..."
+            ],
             "the module road sits beside the branch road, named for what it does"
         );
     }
@@ -3589,7 +3628,10 @@ mod tests {
             list: crate::app::state::MenuListState::new(0),
         };
 
-        assert_eq!(menu.items(), vec!["Rename chat...", "Move to branch..."]);
+        assert_eq!(
+            menu.items(),
+            vec!["Rename chat...", "Label as...", "Move to branch..."]
+        );
     }
 
     // M1.7 / TP-CHAT-MOVE-11 / constraint 31: BOTH bodies answer the module
@@ -3892,6 +3934,146 @@ mod tests {
             app.state.request_merge_daily_workspaces,
             "the test body must request the very same thing"
         );
+    }
+
+    /// A chat menu on a chat with the given manual label, if any.
+    fn chat_menu_for(session_id: &str) -> ContextMenuState {
+        ContextMenuState {
+            kind: ContextMenuKind::WorkspaceChat {
+                ws_idx: Some(0),
+                session_id: session_id.to_string(),
+                has_move: false,
+                has_live: false,
+                has_modules: false,
+            },
+            x: 0,
+            y: 0,
+            list: crate::app::state::MenuListState::new(0),
+        }
+    }
+
+    /// TP-DAILY-24 (M1/M3): the chat menu offers labelling, and it offers it
+    /// on an unlabelled chat too — that is where the first label is ever set,
+    /// so a verb that only appeared on already-labelled chats could never be
+    /// reached at all.
+    #[test]
+    fn the_chat_menu_offers_labelling_on_any_chat() {
+        let menu = chat_menu_for("s1");
+        assert!(
+            menu.items().contains(&"Label as..."),
+            "an unlabelled chat must still be labellable"
+        );
+
+        let pick = ContextMenuState {
+            kind: ContextMenuKind::ChatLabelPick {
+                session_id: "s1".to_string(),
+                labelled: false,
+            },
+            x: 0,
+            y: 0,
+            list: crate::app::state::MenuListState::new(0),
+        };
+        assert_eq!(pick.items(), &["Context", "Project", "Routine"]);
+
+        let labelled = ContextMenuState {
+            kind: ContextMenuKind::ChatLabelPick {
+                session_id: "s1".to_string(),
+                labelled: true,
+            },
+            x: 0,
+            y: 0,
+            list: crate::app::state::MenuListState::new(0),
+        };
+        assert_eq!(
+            labelled.items(),
+            &["Context", "Project", "Routine", "Clear label"],
+            "the withdrawal only appears where there is something to withdraw"
+        );
+    }
+
+    /// TP-DAILY-24 (M2): BOTH menu bodies open the picker and BOTH record the
+    /// decision. This is the failure #91 was: a verb implemented in the
+    /// `#[cfg(test)]` body alone is green in the suite and dead in the
+    /// product, and it has already been shipped twice in this file.
+    #[test]
+    fn both_context_menu_bodies_carry_the_labelling_verb() {
+        let mut app = app_with_test_workspaces(&["main"]);
+        let menu = chat_menu_for("s1");
+        let idx = menu
+            .items()
+            .iter()
+            .position(|item| *item == "Label as...")
+            .expect("the verb is on the chat menu");
+
+        // The production road opens the picker.
+        app.apply_context_menu_action_via_api(menu.clone(), idx);
+        assert!(
+            matches!(
+                app.state.context_menu.as_ref().map(|m| &m.kind),
+                Some(ContextMenuKind::ChatLabelPick { session_id, .. }) if session_id == "s1"
+            ),
+            "the production body must open the label picker"
+        );
+
+        // The `#[cfg(test)]` sibling opens the very same picker.
+        app.state.context_menu = None;
+        let mut terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
+        apply_context_menu_action(&mut app.state, &mut terminal_runtimes, menu, idx);
+        let Some(pick) = app.state.context_menu.clone() else {
+            panic!("the test body must open the same picker");
+        };
+        assert!(matches!(pick.kind, ContextMenuKind::ChatLabelPick { .. }));
+
+        // And both bodies record the same decision from that picker.
+        let routine_idx = pick
+            .items()
+            .iter()
+            .position(|item| *item == "Routine")
+            .expect("the picker offers routine");
+        app.apply_context_menu_action_via_api(pick.clone(), routine_idx);
+        assert_eq!(
+            app.state.request_chat_label,
+            Some((
+                "s1".to_string(),
+                Some(crate::chat_labels::ChatLabel::Routine)
+            )),
+            "the production body must record the decision"
+        );
+
+        app.state.request_chat_label = None;
+        apply_context_menu_action(&mut app.state, &mut terminal_runtimes, pick, routine_idx);
+        assert_eq!(
+            app.state.request_chat_label,
+            Some((
+                "s1".to_string(),
+                Some(crate::chat_labels::ChatLabel::Routine)
+            )),
+            "the test body must record the very same thing"
+        );
+    }
+
+    /// TP-DAILY-24: the withdrawal item asks for a withdrawal rather than for
+    /// a fourth label. Reading it as a label would leave the chat wearing
+    /// whatever "Clear label" happened to parse as.
+    #[test]
+    fn the_clear_item_withdraws_instead_of_labelling() {
+        let mut app = app_with_test_workspaces(&["main"]);
+        let pick = ContextMenuState {
+            kind: ContextMenuKind::ChatLabelPick {
+                session_id: "s1".to_string(),
+                labelled: true,
+            },
+            x: 0,
+            y: 0,
+            list: crate::app::state::MenuListState::new(0),
+        };
+        let idx = pick
+            .items()
+            .iter()
+            .position(|item| *item == "Clear label")
+            .expect("a labelled chat can be cleared");
+        app.apply_context_menu_action_via_api(pick, idx);
+        assert_eq!(app.state.request_chat_label, Some(("s1".to_string(), None)));
     }
 
     // G2 / TP-AGPANEL-45: two verbs, and the one that takes something away
@@ -5314,7 +5496,12 @@ mod tests {
             // TP-CHAT-NAME-01 put naming at the head of this list; the close
             // verb's own rule — last, and only while something is running —
             // is what this test is about and is unchanged.
-            vec!["Rename chat...", "Move to branch...", "Close agent"]
+            vec![
+                "Rename chat...",
+                "Label as...",
+                "Move to branch...",
+                "Close agent"
+            ]
         );
 
         let finished = ContextMenuState {
@@ -5331,7 +5518,12 @@ mod tests {
         };
         assert_eq!(
             finished.items(),
-            vec!["Rename chat...", "Move to branch...", "Move back"],
+            vec![
+                "Rename chat...",
+                "Label as...",
+                "Move to branch...",
+                "Move back"
+            ],
             "a finished chat is never offered a close it cannot perform"
         );
     }

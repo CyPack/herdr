@@ -29,7 +29,39 @@ pub const CONTEXT_CHAT_LABEL: &str = "context";
 /// The spelling of [`ChatLabel::Project`] in config files and in the ledger.
 pub const PROJECT_CHAT_LABEL: &str = "project";
 
+/// The label picker's items, written the way a menu writes things.
+///
+/// Kept apart from the config spellings on purpose: a config file is read by a
+/// parser and a menu is read by a person, and tying them together would mean
+/// either a lowercase menu or a capitalised config key.
+pub const CONTEXT_CHAT_LABEL_ITEM: &str = "Context";
+/// See [`CONTEXT_CHAT_LABEL_ITEM`].
+pub const PROJECT_CHAT_LABEL_ITEM: &str = "Project";
+/// See [`CONTEXT_CHAT_LABEL_ITEM`].
+pub const ROUTINE_CHAT_LABEL_ITEM: &str = "Routine";
+/// See [`CONTEXT_CHAT_LABEL_ITEM`].
+pub const CLEAR_CHAT_LABEL_ITEM: &str = "Clear label";
+
+/// The label a picker item stands for, or `None` for the withdrawal item.
+pub fn label_for_menu_item(item: &str) -> Option<ChatLabel> {
+    match item {
+        CONTEXT_CHAT_LABEL_ITEM => Some(ChatLabel::Context),
+        PROJECT_CHAT_LABEL_ITEM => Some(ChatLabel::Project),
+        ROUTINE_CHAT_LABEL_ITEM => Some(ChatLabel::Routine),
+        _ => None,
+    }
+}
+
 impl ChatLabel {
+    /// The spelling written into config files and into the ledger.
+    pub fn as_config_name(self) -> &'static str {
+        match self {
+            Self::Context => CONTEXT_CHAT_LABEL,
+            Self::Project => PROJECT_CHAT_LABEL,
+            Self::Routine => crate::config::ROUTINE_CHAT_LABEL,
+        }
+    }
+
     /// Read a label written by a person. Unknown spellings are `None` rather
     /// than an error: a typo in `daily_chat_hidden_labels` should hide nothing,
     /// never everything.
