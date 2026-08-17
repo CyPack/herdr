@@ -19,6 +19,7 @@
 - Relicensed Herdr from AGPL-3.0-or-later to Apache-2.0.
 
 ### Fixed
+- A bar holding a `sparkline` section and no `resource` or `meter` beside it now reads the machine. It never did: the sampling loop only woke for the other two live widgets, and the sparkline's own history is filled by the reading that loop takes, so the section drew an empty run for as long as it was on screen. A bar with no live section at all still reads nothing.
 - The bundled `dot` picture draws a filled dot. It was drawing a shallow valley, which is what neither its description nor the configuration guide said it was.
 - A picture in an edge bar is measured against the axis each number actually governs: `cells` runs along the bar and `size` less the border runs across it, which on a left or right bar is the other way round from a top or bottom one. A picture that fitted a side bar exactly was refused for a width it had, and one taller than its bar was accepted and then clipped without a word — the configuration guide already said the second of those was refused.
 - Overlays now lay themselves out for the width they are given on narrow terminals: the keybind help stacks each label under its shortcut instead of wrapping it into the key column, the settings popup budgets its height against the width it is actually granted, and every popup takes the full width on a phone-sized viewport instead of spending a tenth of the screen on margins.

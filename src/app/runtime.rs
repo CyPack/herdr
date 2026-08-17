@@ -934,6 +934,90 @@ mod tests {
         }
     }
 
+    /// A bar holding one live widget of the caller's choosing, and nothing else.
+    fn app_with_only_widget(widget_kind: &str) -> super::super::App {
+        let mut config = resource_bars_config();
+        config.top.sections[0].widget.kind = widget_kind.to_string();
+        let mut app = super::super::App::new(
+            &crate::config::Config::default(),
+            true,
+            None,
+            tokio::sync::mpsc::unbounded_channel().1,
+            crate::api::EventHub::default(),
+        );
+        app.state.workspaces.push(Workspace::test_new("test"));
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config, true);
+        app
+    }
+
+    /// A live widget standing on its own is enough to make the loop sample.
+    ///
+    /// `sparkline` was not. Its history is filled inside `tick_resource_sample`,
+    /// which returns early unless the gate says somebody is waiting — and the
+    /// gate listed `resource` and `meter` only. A bar holding a sparkline and
+    /// nothing else therefore took no samples at all and drew an empty run
+    /// forever. Every sparkline test in the suite either fills the history by
+    /// hand or configures a `resource` section beside it, so all of them walked
+    /// past the gate and none of them could see this.
+    ///
+    /// Each kind gets its own app, because the failure is a widget that cannot
+    /// open the gate *alone* and two live sections in one bar would let either
+    /// one answer for both.
+    // TP-RES-17: every live widget opens the sampling gate, sparkline included.
+    #[test]
+    fn any_live_widget_on_its_own_makes_the_loop_read_the_machine() {
+        for kind in ["resource", "meter", "sparkline"] {
+            let mut app = app_with_only_widget(kind);
+            let now = Instant::now();
+
+            assert!(
+                app.resource_sample_deadline().is_some(),
+                "a bar holding only a {kind} widget must ask the loop to wake"
+            );
+            app.tick_resource_sample(now);
+            assert_eq!(
+                app.resource_samples_taken, 1,
+                "a bar holding only a {kind} widget must have been read once"
+            );
+            assert_eq!(
+                app.state
+                    .resource_history
+                    .series(crate::resource::ResourceMetric::Cpu)
+                    .len(),
+                1,
+                "the reading has to reach the history a {kind} widget draws from"
+            );
+        }
+    }
+
+    /// The control for the test above: widening the gate must not open it.
+    ///
+    /// Without this row, a gate rewritten to answer `true` for everything would
+    /// satisfy every assertion above and hand the sampling cost back to every
+    /// person who never asked for a live widget — which is the whole property
+    /// TP-RES-08 exists to hold.
+    // TP-RES-18: a bar of still widgets still asks for nothing.
+    #[test]
+    fn a_bar_of_still_widgets_still_reads_nothing() {
+        for kind in ["label", "icon"] {
+            let mut app = app_with_only_widget(kind);
+            let now = Instant::now();
+
+            assert_eq!(
+                app.resource_sample_deadline(),
+                None,
+                "a bar holding only a {kind} widget must not wake the loop"
+            );
+            app.tick_resource_sample(now);
+            assert_eq!(
+                app.resource_samples_taken, 0,
+                "a bar holding only a {kind} widget must never open /proc"
+            );
+        }
+    }
+
     fn app_with_resource_section() -> super::super::App {
         let mut app = super::super::App::new(
             &crate::config::Config::default(),

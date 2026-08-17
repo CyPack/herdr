@@ -1392,6 +1392,22 @@ pub(crate) enum SectionWidget {
     },
 }
 
+impl SectionWidget {
+    /// Whether drawing this needs a reading somebody has to go and take.
+    ///
+    /// Exhaustive on purpose, with no `_` arm: a new variant that needs a
+    /// sample must not be able to arrive as a `false` nobody wrote. The one
+    /// this method exists to catch — `sparkline` — was missing from the gate's
+    /// `matches!` for exactly as long as it took somebody to read the gate
+    /// instead of the enum.
+    pub(crate) const fn reads_the_machine(&self) -> bool {
+        match self {
+            Self::Resource { .. } | Self::Meter { .. } | Self::Sparkline { .. } => true,
+            Self::None | Self::Label { .. } | Self::Icon { .. } | Self::Art { .. } => false,
+        }
+    }
+}
+
 /// What one section shows and what a click on it does.
 ///
 /// The two are held together rather than in two parallel lists on purpose.
@@ -1479,22 +1495,27 @@ impl ShellBarChrome {
 
     /// Whether anything on screen is waiting on a machine counter.
     ///
-    /// This is what keeps the feature free for the people not using it. No
-    /// resource section means no deadline, which means the loop never wakes to
-    /// sample and never opens `/proc` at all — rather than sampling always and
-    /// throwing the answer away, which is the shape this kind of widget
-    /// usually arrives in.
+    /// This is what keeps the feature free for the people not using it. No live
+    /// section means no deadline, which means the loop never wakes to sample
+    /// and never opens `/proc` at all — rather than sampling always and
+    /// throwing the answer away, which is the shape this kind of widget usually
+    /// arrives in.
+    ///
+    /// The answer is delegated to the widget rather than matched here. This
+    /// gate shipped listing two of the three live widgets, and the third —
+    /// `sparkline`, whose history is filled inside the very function this gate
+    /// guards — drew an empty run forever on any bar that had no `resource` or
+    /// `meter` beside it. Nothing saw it: every sparkline test either fills the
+    /// history itself or configures a `resource` section too, and both walk
+    /// past the gate. A method on the widget puts the question where the
+    /// variants are, so the next live widget answers it by existing.
     // TP-RES-07: sampling is demand-driven; an unused feature costs nothing.
+    // TP-RES-17: every live widget opens the gate, sparkline included.
     pub(crate) fn wants_resources(&self) -> bool {
         [&self.top, &self.bottom, &self.left, &self.right]
             .into_iter()
             .flat_map(|bar| bar.entries.iter())
-            .any(|chrome| {
-                matches!(
-                    chrome.widget,
-                    SectionWidget::Resource { .. } | SectionWidget::Meter { .. }
-                )
-            })
+            .any(|chrome| chrome.widget.reads_the_machine())
     }
 }
 
@@ -3986,6 +4007,62 @@ mod tests {
             chrome.wants_resources(),
             "one good live section is enough to make the loop sample"
         );
+    }
+
+    /// Every widget that needs a reading opens the sampling gate, and nothing
+    /// else does.
+    ///
+    /// `sparkline` shipped outside this gate. Its history is filled inside the
+    /// very function the gate guards, so a bar holding a sparkline and nothing
+    /// else took no samples at all and drew an empty run forever — on screen,
+    /// and in no test, because every sparkline test either fills the history
+    /// itself or puts a `resource` section beside it.
+    ///
+    /// Written as a table over all six widgets rather than one assertion per
+    /// live kind: the failure was a list of variants that was one short, and a
+    /// test that names only the kinds it remembers can be short in the same
+    /// way. The negative half is not decoration — a gate that answered `true`
+    /// for a label would satisfy every positive row here and hand the cost back
+    /// to everybody who never asked for a live widget.
+    #[test]
+    fn exactly_the_live_widgets_make_the_loop_sample() {
+        // TP-RES-17: every live widget opens the sampling gate, sparkline
+        // included, and no still widget opens it.
+        let metric = crate::resource::ResourceMetric::Cpu;
+        let cases: &[(&str, SectionWidget, bool)] = &[
+            ("resource", SectionWidget::Resource { metric }, true),
+            ("meter", SectionWidget::Meter { metric }, true),
+            ("sparkline", SectionWidget::Sparkline { metric }, true),
+            ("none", SectionWidget::None, false),
+            (
+                "label",
+                SectionWidget::Label {
+                    text: "CPU".to_string(),
+                },
+                false,
+            ),
+            (
+                "icon",
+                SectionWidget::Icon {
+                    glyph: "*".to_string(),
+                },
+                false,
+            ),
+        ];
+
+        for (name, widget, wants) in cases {
+            let mut chrome = ShellBarChrome::default();
+            chrome.top.entries.push(SectionChrome {
+                widget: widget.clone(),
+                action: SectionAction::None,
+            });
+            assert_eq!(
+                chrome.wants_resources(),
+                *wants,
+                "a bar holding only a {name} widget must {} make the loop sample",
+                if *wants { "" } else { "not" }
+            );
+        }
     }
 
     #[test]
