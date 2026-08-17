@@ -220,7 +220,7 @@ pub(crate) fn shell_spec() -> ShellSpec {
             .collect(),
         colors: source::bar_color_tokens(),
         metrics: MetricSpec {
-            names: ResourceMetric::ACCEPTED.to_vec(),
+            names: ResourceMetric::accepted(),
             aliases: ResourceMetric::ALIASES
                 .iter()
                 .map(|(alias, means)| AliasSpec { alias, means })

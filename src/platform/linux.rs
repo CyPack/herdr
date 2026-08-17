@@ -928,6 +928,88 @@ pub(crate) fn read_memory() -> (
     crate::resource::parse_proc_meminfo(&text)
 }
 
+/// Space on the filesystem herdr is running from.
+///
+/// The filesystem holding the current directory, not `/`: somebody watching
+/// disk space is watching the one their work is on, and on a machine with
+/// `/home` mounted separately those are different numbers.
+pub(crate) fn read_disk() -> Option<crate::resource::Usage> {
+    let path = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
+    let c_path = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()).ok()?;
+    let mut stats: libc::statvfs = unsafe { std::mem::zeroed() };
+    // SAFETY: `c_path` is a NUL-terminated C string that outlives the call, and
+    // `stats` is a live, correctly aligned `statvfs` this thread owns
+    // exclusively. `statvfs` writes only into it and reports failure through its
+    // return value, which is checked before anything is read back out.
+    let ok = unsafe { libc::statvfs(c_path.as_ptr(), &mut stats) } == 0;
+    if !ok {
+        return None;
+    }
+    // `f_frsize` is the unit the block counts are in. `f_bsize` is the
+    // preferred I/O size and is not always the same number.
+    let block = stats.f_frsize as u64;
+    let total = (stats.f_blocks as u64).checked_mul(block)?;
+    // Blocks available to us, not blocks free: the difference is the root
+    // reserve, which is neither ours to use nor in use by anybody. Counting it
+    // as used is what `df` does, and agreeing with `df` matters more here than
+    // any other definition of "used".
+    let available = (stats.f_bavail as u64).checked_mul(block)?;
+    Some(crate::resource::Usage {
+        used: total.saturating_sub(available),
+        total,
+    })
+}
+
+/// Charge remaining, from the first battery the kernel reports.
+///
+/// The first rather than a sum: a laptop with two batteries reports each
+/// separately, and averaging them would show a figure neither one is at. The
+/// name is sorted so `BAT0` wins whatever order the directory comes back in — a
+/// bar that showed a different battery between two boots would be reporting a
+/// different machine.
+pub(crate) fn read_battery() -> Option<f32> {
+    let entries = std::fs::read_dir("/sys/class/power_supply").ok()?;
+    let mut names = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name())
+        .filter(|name| name.to_string_lossy().starts_with("BAT"))
+        .collect::<Vec<_>>();
+    names.sort();
+    let name = names.first()?;
+    let text = std::fs::read_to_string(
+        std::path::Path::new("/sys/class/power_supply")
+            .join(name)
+            .join("capacity"),
+    )
+    .ok()?;
+    text.trim()
+        .parse::<f32>()
+        .ok()
+        .filter(|pct| (0.0..=100.0).contains(pct))
+}
+
+/// Bytes carried since boot, across every interface but loopback.
+pub(crate) fn read_net_total() -> Option<u64> {
+    let text = std::fs::read_to_string("/proc/net/dev").ok()?;
+    crate::resource::parse_proc_net_dev(&text)
+}
+
+/// The warmest thermal zone the kernel exposes.
+pub(crate) fn read_temperature() -> Option<f32> {
+    let entries = std::fs::read_dir("/sys/class/thermal").ok()?;
+    let readings = entries
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("thermal_zone")
+        })
+        .filter_map(|entry| std::fs::read_to_string(entry.path().join("temp")).ok())
+        .filter_map(|text| text.trim().parse::<i64>().ok());
+    crate::resource::warmest_millidegrees(readings)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

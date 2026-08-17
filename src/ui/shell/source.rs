@@ -715,7 +715,7 @@ impl std::fmt::Display for BarConfigProblem {
                 formatter,
                 "shell.bars.{edge}.sections[{index}].widget.metric is \"{metric}\"; expected \
                  {offered}, so this section shows nothing",
-                offered = accepted_names(crate::resource::ResourceMetric::ACCEPTED)
+                offered = accepted_names(&crate::resource::ResourceMetric::accepted())
             ),
             Self::IconWithoutPicture { edge, index } => write!(
                 formatter,
@@ -1439,6 +1439,24 @@ impl SectionWidget {
         }
     }
 
+    /// Which machine counter this widget draws, if it draws one.
+    ///
+    /// Exhaustive with no `_` arm, like its neighbour: a live widget added
+    /// later must not be able to answer `None` by omission and quietly stop its
+    /// metric being read.
+    pub(crate) const fn metric(&self) -> Option<crate::resource::ResourceMetric> {
+        match self {
+            Self::Resource { metric } | Self::Meter { metric } | Self::Sparkline { metric } => {
+                Some(*metric)
+            }
+            Self::None
+            | Self::Label { .. }
+            | Self::Icon { .. }
+            | Self::Art { .. }
+            | Self::Clock { .. } => None,
+        }
+    }
+
     /// How often this widget's text can change on its own, or `None` when it
     /// cannot.
     ///
@@ -1540,6 +1558,27 @@ impl ShellBarChrome {
 
     pub(crate) fn action_for(&self, region: RegionId, index: u8) -> Option<&SectionAction> {
         self.for_section(region, index).map(|chrome| &chrome.action)
+    }
+
+    /// Which metrics anything on screen is actually waiting on.
+    ///
+    /// `wants_resources` answers "does anybody want a reading"; this answers
+    /// "which readings", and the difference began to matter when the metrics
+    /// grew past the two files a sampler was reading anyway. `/proc/stat` and
+    /// `/proc/meminfo` are cheap enough to read whenever anything is live; a
+    /// `statvfs` every tick, a walk of `/sys/class/power_supply` and a scan of
+    /// every thermal zone are not, and a bar showing only CPU has no business
+    /// paying for them.
+    // TP-RES-21: only the metrics a section shows are read.
+    pub(crate) fn wanted_metrics(&self) -> Vec<crate::resource::ResourceMetric> {
+        let mut wanted = [&self.top, &self.bottom, &self.left, &self.right]
+            .into_iter()
+            .flat_map(|bar| bar.entries.iter())
+            .filter_map(|chrome| chrome.widget.metric())
+            .collect::<Vec<_>>();
+        wanted.sort_unstable();
+        wanted.dedup();
+        wanted
     }
 
     pub(crate) fn widget_for(&self, region: RegionId, index: u8) -> Option<&SectionWidget> {
@@ -3367,23 +3406,14 @@ mod tests {
         // to by accident. They are held to the guide's own table instead, by
         // name and by size, in `the_guide_lists_exactly_the_bundled_pictures_at_the_sizes_they_draw`.
         //
-        // Aliases as well as names: `ram` works, and a guide that omits it
-        // leaves the one spelling a refusal will never teach undocumented
-        // anywhere at all.
-        for metric in crate::resource::ResourceMetric::ACCEPTED
-            .iter()
-            .copied()
-            .chain(
-                crate::resource::ResourceMetric::ALIASES
-                    .iter()
-                    .map(|(alias, _)| *alias),
-            )
-        {
-            assert!(
-                guide.contains(metric),
-                "the guide never names the metric {metric:?}"
-            );
-        }
+        // Metrics are not checked here either, and for the same reason the
+        // pictures were moved out. Measured on this guide: `ram` occurs eleven
+        // times — inside "program" — `mem` thirteen inside "remember" and
+        // "implement", `temp` five inside "template". Every metric name and the
+        // one alias passed a `contains` check with no line written about them,
+        // and would have gone on passing after the metric was deleted from the
+        // build. They are held to the guide's own table instead, in
+        // `the_guide_lists_exactly_the_metrics_this_build_reads`.
 
         // The other direction, which this row has always claimed and never
         // actually checked. Everything above walks the tables and looks each
@@ -3506,6 +3536,55 @@ mod tests {
             documented, accepted,
             "the guide's presentation table and the names this build accepts are different sets"
         );
+    }
+
+    /// The guide's metric table is the set this build reads, both ways.
+    ///
+    /// This replaces a `guide.contains(name)` check that could not fail.
+    /// Measured on the configuration guide: `ram` occurs eleven times inside
+    /// the word "program", `mem` thirteen inside "remember" and "implement",
+    /// `temp` five inside "template". Every one of the seven names and the one
+    /// alias satisfied that check for free — including, had it existed, a
+    /// metric nobody had documented at all.
+    ///
+    /// The alias is checked as a whole sentence rather than a word, for the
+    /// same reason: it is the one spelling no refusal will ever teach, so the
+    /// guide is the only place it can be learned, and searching for `ram` in
+    /// prose finds "program".
+    #[test]
+    fn the_guide_lists_exactly_the_metrics_this_build_reads() {
+        // TP-RES-26: the guide's metric table and the metrics this build reads
+        // are one set, in both directions.
+        let documented = guide_table_after("There are seven metrics")
+            .into_iter()
+            .map(|columns| columns[0].clone())
+            .collect::<Vec<_>>();
+        assert!(
+            documented.len() >= 3,
+            "the guide's metric table stopped parsing; found {documented:?}"
+        );
+
+        let documented = documented
+            .iter()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>();
+        let read = crate::resource::ResourceMetric::accepted()
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            documented, read,
+            "the guide's metric table and the metrics this build reads differ"
+        );
+
+        for (alias, means) in crate::resource::ResourceMetric::ALIASES {
+            assert!(
+                edge_bars_section().contains(&format!(
+                    "`{alias}` is accepted as another word for `{means}`"
+                )),
+                "the guide has to say, in a sentence, that {alias:?} means \
+                 {means:?} — no refusal will ever teach it"
+            );
+        }
     }
 
     /// The guide's clock table is the field table, spelling and rendering both.

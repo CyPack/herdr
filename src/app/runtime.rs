@@ -774,21 +774,64 @@ impl App {
             return false;
         }
 
+        let elapsed = self
+            .last_resource_sample_at
+            .map(|last| now.saturating_duration_since(last));
         self.resource_samples_taken = self.resource_samples_taken.saturating_add(1);
         self.last_resource_sample_at = Some(now);
 
-        let times = crate::platform::read_cpu_times();
-        self.state.resources.cpu = match (self.previous_cpu_times, times) {
-            (Some(prev), Some(current)) => crate::resource::cpu_percent(prev, current),
-            _ => None,
-        };
-        if times.is_some() {
-            self.previous_cpu_times = times;
+        // Only what something on screen is waiting for. Reading a counter
+        // nobody is showing is the cost this product does not pay while nobody
+        // is looking, and for `disk`, `battery` and `temp` that cost is a
+        // syscall or a directory walk rather than one small file.
+        let wanted = self.state.shell_bar_chrome.wanted_metrics();
+        let wants = |metric| wanted.contains(&metric);
+
+        if wants(crate::resource::ResourceMetric::Cpu) {
+            let times = crate::platform::read_cpu_times();
+            self.state.resources.cpu = match (self.previous_cpu_times, times) {
+                (Some(prev), Some(current)) => crate::resource::cpu_percent(prev, current),
+                _ => None,
+            };
+            if times.is_some() {
+                self.previous_cpu_times = times;
+            }
         }
 
-        let (mem, swap) = crate::platform::read_memory();
-        self.state.resources.mem = mem;
-        self.state.resources.swap = swap;
+        if wants(crate::resource::ResourceMetric::Mem)
+            || wants(crate::resource::ResourceMetric::Swap)
+        {
+            // One file carries both, so asking for either reads both. Splitting
+            // the read to match the request would be two opens of `/proc/meminfo`
+            // to save nothing.
+            let (mem, swap) = crate::platform::read_memory();
+            self.state.resources.mem = mem;
+            self.state.resources.swap = swap;
+        }
+
+        if wants(crate::resource::ResourceMetric::Disk) {
+            self.state.resources.disk = crate::platform::read_disk();
+        }
+        if wants(crate::resource::ResourceMetric::Battery) {
+            self.state.resources.battery = crate::platform::read_battery();
+        }
+        if wants(crate::resource::ResourceMetric::Temp) {
+            self.state.resources.temp = crate::platform::read_temperature();
+        }
+        if wants(crate::resource::ResourceMetric::Net) {
+            // A rate, so like CPU it needs a previous reading and the time
+            // between them. The first tick can only establish the baseline.
+            let total = crate::platform::read_net_total();
+            self.state.resources.net = match (self.previous_net_total, total, elapsed) {
+                (Some(prev), Some(current), Some(elapsed)) => {
+                    crate::resource::byte_rate(prev, current, elapsed)
+                }
+                _ => None,
+            };
+            if total.is_some() {
+                self.previous_net_total = total;
+            }
+        }
         // Recorded here rather than where a sparkline draws, for the same reason
         // the sample itself is: the loop reads the machine and the renderer
         // never does. A history filled at draw time would have one entry per
@@ -986,8 +1029,18 @@ mod tests {
 
     /// A bar holding one live widget of the caller's choosing, and nothing else.
     fn app_with_only_widget(widget_kind: &str) -> super::super::App {
+        app_with_only_widget_metric(widget_kind, "cpu")
+    }
+
+    /// The same, naming which metric the widget shows.
+    ///
+    /// Only what a section shows is read, so a test about one metric has to say
+    /// which metric its bar is asking for — a bar showing `cpu` proves nothing
+    /// about whether memory can be read.
+    fn app_with_only_widget_metric(widget_kind: &str, metric: &str) -> super::super::App {
         let mut config = resource_bars_config();
         config.top.sections[0].widget.kind = widget_kind.to_string();
+        config.top.sections[0].widget.metric = metric.to_string();
         let mut app = super::super::App::new(
             &crate::config::Config::default(),
             true,
@@ -1125,6 +1178,49 @@ mod tests {
             app.state.clock_now, None,
             "a clock nobody is showing must not leave a time behind"
         );
+    }
+
+    /// Only the metrics on screen are read.
+    ///
+    /// Asserted on the sample rather than on a call counter, because the
+    /// readings are platform functions with no seam to count through — and the
+    /// observable consequence is the one that matters anyway: a metric nobody
+    /// asked for stays `None`, which means nothing went and looked for it.
+    ///
+    /// `cpu` and `mem` were read unconditionally for as long as they were the
+    /// only metrics, and that was fine: two small files. `disk` is a `statvfs`,
+    /// `battery` a directory walk and `temp` a scan of every thermal zone, and
+    /// a bar showing CPU has no business paying for those every two seconds.
+    // TP-RES-21: only the metrics a section shows are read.
+    #[test]
+    fn a_section_showing_one_metric_does_not_read_the_others() {
+        let mut app = app_with_only_widget("resource"); // metric = "cpu"
+        assert_eq!(
+            app.state.shell_bar_chrome.wanted_metrics(),
+            vec![crate::resource::ResourceMetric::Cpu],
+            "control: this bar asks for exactly one metric"
+        );
+
+        app.tick_resource_sample(Instant::now());
+
+        assert_eq!(
+            app.resource_samples_taken, 1,
+            "control: a reading was taken at all, or nothing below means anything"
+        );
+        for (name, unread) in [
+            ("mem", app.state.resources.mem.is_some()),
+            ("swap", app.state.resources.swap.is_some()),
+            ("disk", app.state.resources.disk.is_some()),
+            ("battery", app.state.resources.battery.is_some()),
+            ("temp", app.state.resources.temp.is_some()),
+            ("net", app.state.resources.net.is_some()),
+        ] {
+            assert!(
+                !unread,
+                "a bar showing only cpu read {name} as well, which is a cost \
+                 nobody on screen asked for"
+            );
+        }
     }
 
     /// The control for the test above: widening the gate must not open it.
@@ -1438,12 +1534,25 @@ mod tests {
         // first reading already has it. This is also the only test that proves
         // the platform read works at all rather than silently returning None —
         // every other one feeds the parsers fixtures.
+        //
+        // Its own app, because the bar above asks for `cpu` and only what a
+        // section shows is read now. Reusing that one would have asserted that
+        // memory is readable while nothing had gone to read it, which is how
+        // this row would quietly stop meaning anything.
         #[cfg(target_os = "linux")]
-        assert!(
-            app.state.resources.mem.is_some_and(|mem| mem.total > 0),
-            "a Linux box has readable memory: {:?}",
-            app.state.resources.mem
-        );
+        {
+            let mut showing_memory = app_with_only_widget_metric("resource", "mem");
+            showing_memory.tick_resource_sample(start);
+            assert!(
+                showing_memory
+                    .state
+                    .resources
+                    .mem
+                    .is_some_and(|mem| mem.total > 0),
+                "a Linux box has readable memory: {:?}",
+                showing_memory.state.resources.mem
+            );
+        }
     }
 
     #[test]

@@ -200,6 +200,34 @@ pub(crate) fn read_memory() -> (
     (None, None)
 }
 
+/// The four metrics added after the first three, on the platforms with no
+/// reader for them yet.
+///
+/// `None` rather than a plausible number, for the same reason the two above
+/// return `None`: a section showing `--` says "herdr cannot read this here",
+/// and one showing `0%` says "your battery is flat". Only one of those is true,
+/// and the false one is the one somebody would act on.
+// TP-RES-06: a platform with no reader says so; it never reports zero.
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn read_disk() -> Option<crate::resource::Usage> {
+    None
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn read_battery() -> Option<f32> {
+    None
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn read_net_total() -> Option<u64> {
+    None
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn read_temperature() -> Option<f32> {
+    None
+}
+
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn available_pane_shell_from_job(child_pid: u32, job: ForegroundJob) -> Option<String> {
     if job.process_group_id != child_pid

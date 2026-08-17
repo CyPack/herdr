@@ -578,6 +578,22 @@ widget = { kind = "label", text = "  CPU" }
 
 `resource` writes the number; `meter` draws how full it is. Both name the same `metric`, and the value is sampled on the server's own clock rather than read by whatever draws it — so two sections showing the same metric always agree.
 
+There are seven metrics, and `ram` is accepted as another word for `mem`:
+
+| `metric` | Shows | Drawn as a bar? |
+| --- | --- | --- |
+| `cpu` | busy time since the last reading, as a percentage | yes |
+| `mem` | memory in use, against the total | yes |
+| `swap` | swap in use, against the total | yes |
+| `disk` | space used on the filesystem Herdr is running from, against its size | yes |
+| `battery` | charge remaining | yes |
+| `temp` | the warmest sensor the machine reports, in °C | yes, against 100 °C |
+| `net` | bytes per second in and out, loopback excluded | **no** — a rate has no ceiling to be a proportion of |
+
+A `net` section is a figure, never a bar or a sparkline: inventing a ceiling for it — the fastest seen so far, the link speed — would make a full bar mean something different on every machine and at every moment.
+
+Anything Herdr cannot read shows `--` rather than a number. A desktop has no battery and a virtual machine often has no thermal sensor, and both of those are `--`; `0%` would say the battery is flat, which is a different and false thing. Only the metrics a section actually shows are read at all, so a bar with a `cpu` meter never touches the disk or the battery.
+
 ```toml
 [[shell.bars.top.sections]]
 kind   = "fixed"

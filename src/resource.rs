@@ -36,56 +36,129 @@ pub(crate) struct Usage {
 }
 
 /// One reading of the machine. Any field may be missing on its own: a kernel
-/// that reports memory but not swap is a normal machine, not a broken one.
+/// that reports memory but not swap is a normal machine, not a broken one, and
+/// a desktop with no battery is not a broken laptop.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub(crate) struct ResourceSample {
     pub(crate) cpu: Option<f32>,
     pub(crate) mem: Option<Usage>,
     pub(crate) swap: Option<Usage>,
+    /// The filesystem herdr itself is running from, used and total.
+    pub(crate) disk: Option<Usage>,
+    /// Charge remaining, 0..=100.
+    pub(crate) battery: Option<f32>,
+    /// Bytes per second across every interface but loopback, in and out
+    /// together. A rate, so like CPU it does not exist until the second
+    /// reading — and unlike every other metric here it has no ceiling, so it
+    /// is a figure and never a proportion.
+    pub(crate) net: Option<f64>,
+    /// The warmest sensor the machine reports, in degrees Celsius.
+    pub(crate) temp: Option<f32>,
 }
 
 /// Which number a section shows. Closed, because config names map onto it and
 /// an open set would let a typo become a silently blank section.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum ResourceMetric {
     Cpu,
     Mem,
     Swap,
+    Disk,
+    Battery,
+    Net,
+    Temp,
 }
+
+/// One metric, and everything a config or a message needs to say about it.
+///
+/// A table rather than parallel `match`es. The set has to be printable — by the
+/// refusal, by `herdr shell spec`, by the guide's own gate — and a `match` can
+/// be asked whether it knows a name but never what names it knows (D70-7). The
+/// list of accepted spellings used to be written out beside the parser, which
+/// is two places to add a metric and one place to forget.
+pub(crate) struct MetricFacts {
+    /// The spelling to teach.
+    pub name: &'static str,
+    pub metric: ResourceMetric,
+    /// What a section prints in front of the number.
+    pub label: &'static str,
+}
+
+pub(crate) const METRICS: &[MetricFacts] = &[
+    MetricFacts {
+        name: "cpu",
+        metric: ResourceMetric::Cpu,
+        label: "CPU",
+    },
+    MetricFacts {
+        name: "mem",
+        metric: ResourceMetric::Mem,
+        label: "MEM",
+    },
+    MetricFacts {
+        name: "swap",
+        metric: ResourceMetric::Swap,
+        label: "SWP",
+    },
+    MetricFacts {
+        name: "disk",
+        metric: ResourceMetric::Disk,
+        label: "DSK",
+    },
+    MetricFacts {
+        name: "battery",
+        metric: ResourceMetric::Battery,
+        label: "BAT",
+    },
+    MetricFacts {
+        name: "net",
+        metric: ResourceMetric::Net,
+        label: "NET",
+    },
+    MetricFacts {
+        name: "temp",
+        metric: ResourceMetric::Temp,
+        label: "TMP",
+    },
+];
 
 impl ResourceMetric {
     /// The names a refusal offers, in the order it offers them.
     ///
-    /// It lives here rather than beside the message because the message is in another
-    /// module: a person adding a metric changes this file, and a list kept over there
-    /// would be the one thing they never think to open. `ram` is deliberately absent —
-    /// it is an alias `parse` honours, not a spelling to teach.
-    pub(crate) const ACCEPTED: &'static [&'static str] = &["cpu", "mem", "swap"];
+    /// Derived from the table rather than written beside it, so a metric that
+    /// exists is a metric the refusal names. `ram` is deliberately absent — it
+    /// is an alias `parse` honours, not a spelling to teach.
+    pub(crate) fn accepted() -> Vec<&'static str> {
+        METRICS.iter().map(|facts| facts.name).collect()
+    }
 
-    /// The spellings `parse` honours that `ACCEPTED` deliberately does not teach,
-    /// each beside the name it is another word for.
+    /// The spellings `parse` honours that `accepted()` deliberately does not
+    /// teach, each beside the name it is another word for.
     ///
-    /// Kept apart rather than folded in. A refusal that offered four names would
+    /// Kept apart rather than folded in. A refusal that offered both would
     /// present an alias as an equal citizen, and dropping the alias would break
     /// files that already say it — so the grammar has to be able to state
     /// "accepted, but not the spelling to learn", and this is where it states it.
     pub(crate) const ALIASES: &'static [(&'static str, &'static str)] = &[("ram", "mem")];
 
     pub(crate) fn parse(name: &str) -> Option<Self> {
-        match name {
-            "cpu" => Some(Self::Cpu),
-            "mem" | "ram" => Some(Self::Mem),
-            "swap" => Some(Self::Swap),
-            _ => None,
+        if let Some(facts) = METRICS.iter().find(|facts| facts.name == name) {
+            return Some(facts.metric);
         }
+        Self::ALIASES
+            .iter()
+            .find(|(alias, _)| *alias == name)
+            .and_then(|(_, means)| METRICS.iter().find(|facts| facts.name == *means))
+            .map(|facts| facts.metric)
     }
 
-    pub(crate) const fn label(self) -> &'static str {
-        match self {
-            Self::Cpu => "CPU",
-            Self::Mem => "MEM",
-            Self::Swap => "SWP",
-        }
+    pub(crate) fn label(self) -> &'static str {
+        METRICS
+            .iter()
+            .find(|facts| facts.metric == self)
+            // Unreachable while the table covers the enum, which
+            // `every_metric_has_a_row_in_the_table` is what makes true.
+            .map_or("???", |facts| facts.label)
     }
 }
 
@@ -207,6 +280,81 @@ pub(crate) fn parse_proc_meminfo(text: &str) -> (Option<Usage>, Option<Usage>) {
     (mem, swap)
 }
 
+/// Total bytes carried by every interface but loopback, from `/proc/net/dev`.
+///
+/// Cumulative since boot, so this is not a rate yet — the rate is the
+/// difference between two of these over the time between them, exactly as CPU
+/// is. Loopback is excluded because a process talking to itself is not traffic,
+/// and on a machine running a local server it dwarfs everything real.
+///
+/// Receive and transmit are summed. Two figures need two sections, and the
+/// question a bar answers is "is the network busy", which one number answers.
+// TP-RES-19: network totals exclude loopback and sum both directions.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn parse_proc_net_dev(text: &str) -> Option<u64> {
+    let mut total: u64 = 0;
+    let mut seen = false;
+    for line in text.lines() {
+        let Some((interface, counters)) = line.split_once(':') else {
+            continue; // the two header lines carry no colon
+        };
+        let interface = interface.trim();
+        if interface == "lo" {
+            continue;
+        }
+        let numbers = counters
+            .split_whitespace()
+            .map(str::parse::<u64>)
+            .collect::<Result<Vec<_>, _>>()
+            .ok()?;
+        // `receive bytes` is first and `transmit bytes` is the ninth of the
+        // sixteen columns. Indexed rather than summed, unlike `/proc/stat`:
+        // these columns are packets and errors as well as bytes, and adding
+        // them all would report a number that is not bytes at all.
+        let (Some(received), Some(transmitted)) = (numbers.first(), numbers.get(8)) else {
+            continue;
+        };
+        total = total.saturating_add(*received).saturating_add(*transmitted);
+        seen = true;
+    }
+    seen.then_some(total)
+}
+
+/// The warmest sensor reading, in degrees Celsius, from millidegree inputs.
+///
+/// The warmest rather than the first or an average: a person watching a
+/// temperature is watching for trouble, and trouble is whichever part of the
+/// machine is hottest. An average of a hot CPU and a cool chipset is a number
+/// nothing in the machine is actually at.
+// TP-RES-20: the temperature shown is the warmest sensor, in Celsius.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn warmest_millidegrees(readings: impl IntoIterator<Item = i64>) -> Option<f32> {
+    let warmest = readings.into_iter().max()?;
+    // Sensors that report a negative or absurd value are offline rather than
+    // freezing; a laptop is not at -273 °C and a bar saying so is worse than
+    // one saying nothing.
+    if !(0..=150_000).contains(&warmest) {
+        return None;
+    }
+    #[allow(clippy::cast_precision_loss)] // three significant digits at most
+    Some(warmest as f32 / 1000.0)
+}
+
+/// Bytes per second between two cumulative readings.
+///
+/// `None` when the counter went backwards — an interface that came up or a
+/// counter that wrapped — because the alternative is one enormous spike that
+/// looks exactly like real traffic.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn byte_rate(previous: u64, current: u64, elapsed: std::time::Duration) -> Option<f64> {
+    let seconds = elapsed.as_secs_f64();
+    if seconds <= 0.0 || current < previous {
+        return None;
+    }
+    #[allow(clippy::cast_precision_loss)] // a rate drawn in three digits
+    Some((current - previous) as f64 / seconds)
+}
+
 /// Bytes as a person reads them, in at most four characters plus the unit.
 pub(crate) fn format_bytes(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "K", "M", "G", "T"];
@@ -237,8 +385,21 @@ pub(crate) fn format_bytes(bytes: u64) -> String {
 pub(crate) fn meter_ratio(sample: &ResourceSample, metric: ResourceMetric) -> Option<f32> {
     let usage = match metric {
         ResourceMetric::Cpu => return sample.cpu.map(|pct| (pct / 100.0).clamp(0.0, 1.0)),
+        ResourceMetric::Battery => return sample.battery.map(|pct| (pct / 100.0).clamp(0.0, 1.0)),
+        // A ceiling somebody can argue with, and that is the point: 100 °C is
+        // where a machine is in trouble, so a full bar means the same thing a
+        // full memory bar means. Clamped rather than left to overflow, because
+        // a sensor reporting 127 would otherwise draw past its own section.
+        ResourceMetric::Temp => return sample.temp.map(|c| (c / 100.0).clamp(0.0, 1.0)),
+        // No ratio, on purpose. A rate has no ceiling to be a proportion of,
+        // and inventing one — the fastest seen so far, the link speed — would
+        // make a full bar mean something different on every machine and at
+        // every moment. A `net` meter therefore draws nothing, which is what
+        // this function already says about a pool with no capacity.
+        ResourceMetric::Net => return None,
         ResourceMetric::Mem => sample.mem?,
         ResourceMetric::Swap => sample.swap?,
+        ResourceMetric::Disk => sample.disk?,
     };
     if usage.total == 0 {
         return None;
@@ -324,25 +485,26 @@ pub(crate) const RESOURCE_HISTORY_CAPACITY: usize = 512;
 /// `Option` is carried through on purpose: a reading that could not be taken is
 /// not a reading of zero, and the two must not draw the same. That distinction
 /// is the whole reason this is a history of options rather than of numbers.
+/// One ring per metric, indexed by the metric's position in `METRICS`.
+///
+/// An array rather than a field per metric, and that is what stopped this
+/// growing a fourth arm in three places when the table grew from three metrics
+/// to seven. The index comes from the table, so a metric that exists has a ring
+/// and a ring belongs to a metric — neither can be added without the other.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct ResourceHistory {
-    cpu: std::collections::VecDeque<Option<f32>>,
-    mem: std::collections::VecDeque<Option<f32>>,
-    swap: std::collections::VecDeque<Option<f32>>,
+    series: [std::collections::VecDeque<Option<f32>>; METRICS.len()],
 }
 
 impl ResourceHistory {
     /// Record one reading of every metric.
     pub(crate) fn push(&mut self, sample: &ResourceSample) {
-        for (series, metric) in [
-            (&mut self.cpu, ResourceMetric::Cpu),
-            (&mut self.mem, ResourceMetric::Mem),
-            (&mut self.swap, ResourceMetric::Swap),
-        ] {
+        for (index, facts) in METRICS.iter().enumerate() {
+            let series = &mut self.series[index];
             if series.len() == RESOURCE_HISTORY_CAPACITY {
                 series.pop_front();
             }
-            series.push_back(meter_ratio(sample, metric));
+            series.push_back(meter_ratio(sample, facts.metric));
         }
     }
 
@@ -351,11 +513,17 @@ impl ResourceHistory {
         &self,
         metric: ResourceMetric,
     ) -> &std::collections::VecDeque<Option<f32>> {
-        match metric {
-            ResourceMetric::Cpu => &self.cpu,
-            ResourceMetric::Mem => &self.mem,
-            ResourceMetric::Swap => &self.swap,
-        }
+        static EMPTY: std::sync::OnceLock<std::collections::VecDeque<Option<f32>>> =
+            std::sync::OnceLock::new();
+        METRICS
+            .iter()
+            .position(|facts| facts.metric == metric)
+            .and_then(|index| self.series.get(index))
+            // Unreachable while the table covers the enum, and pinned by
+            // `every_metric_has_a_row_in_the_table`. An empty run draws as a
+            // section with no history yet, which is the honest answer to a
+            // metric nothing has recorded.
+            .unwrap_or_else(|| EMPTY.get_or_init(Default::default))
     }
 }
 
@@ -383,13 +551,44 @@ pub(crate) fn meter_colour(ratio: f32) -> &'static str {
 pub(crate) fn metric_text(sample: &ResourceSample, metric: ResourceMetric) -> String {
     let label = metric.label();
     match metric {
-        ResourceMetric::Cpu => match sample.cpu {
-            Some(pct) => format!("{label} {pct:>3.0}%"),
-            None => format!("{label}  --"),
-        },
+        ResourceMetric::Cpu => percent_text(label, sample.cpu),
+        ResourceMetric::Battery => percent_text(label, sample.battery),
         ResourceMetric::Mem => usage_text(label, sample.mem),
         ResourceMetric::Swap => usage_text(label, sample.swap),
+        ResourceMetric::Disk => usage_text(label, sample.disk),
+        ResourceMetric::Temp => match sample.temp {
+            Some(celsius) => format!("{label} {celsius:>3.0}C"),
+            None => format!("{label}  --"),
+        },
+        ResourceMetric::Net => match sample.net {
+            Some(rate) => format!("{label} {}", rate_text(rate)),
+            None => format!("{label}  --"),
+        },
     }
+}
+
+fn percent_text(label: &str, percent: Option<f32>) -> String {
+    match percent {
+        Some(pct) => format!("{label} {pct:>3.0}%"),
+        None => format!("{label}  --"),
+    }
+}
+
+/// Bytes per second, in the largest unit that leaves a number worth reading.
+///
+/// Three characters and a unit, so the section's width does not change as the
+/// rate does — a figure that grew a column when traffic picked up would push
+/// whatever sits beside it, and a bar that reflows while you watch it is harder
+/// to read than one that does not.
+fn rate_text(rate: f64) -> String {
+    const UNITS: [&str; 4] = ["B/s", "K/s", "M/s", "G/s"];
+    let mut value = rate.max(0.0);
+    let mut unit = 0;
+    while value >= 1000.0 && unit + 1 < UNITS.len() {
+        value /= 1024.0;
+        unit += 1;
+    }
+    format!("{value:>3.0}{}", UNITS[unit])
 }
 
 fn usage_text(label: &str, usage: Option<Usage>) -> String {
@@ -412,10 +611,177 @@ mod tests {
     // of one closed set, and they sit in different modules. Nothing but this holds them
     // together, so a metric added to the enum and forgotten here would be a feature
     // the message never mentions.
+    /// The table covers the enum, and nothing in it repeats.
+    ///
+    /// `label()` and `series()` both fall back when a metric has no row, and a
+    /// fallback nobody can reach is a fallback nobody notices going wrong. This
+    /// is what makes those two unreachable, so a metric added to the enum and
+    /// forgotten in the table turns this red instead of printing `???` on
+    /// somebody's bar.
+    // TP-RES-22: every metric has exactly one row, and every row a distinct name.
+    #[test]
+    fn every_metric_has_a_row_in_the_table() {
+        // Written out rather than iterated: a list derived from the table would
+        // agree with the table however wrong both were. This is the hand-written
+        // half the gate needs.
+        let all = [
+            ResourceMetric::Cpu,
+            ResourceMetric::Mem,
+            ResourceMetric::Swap,
+            ResourceMetric::Disk,
+            ResourceMetric::Battery,
+            ResourceMetric::Net,
+            ResourceMetric::Temp,
+        ];
+        assert_eq!(
+            all.len(),
+            METRICS.len(),
+            "the table and the enum are different sizes"
+        );
+        for metric in all {
+            let rows = METRICS
+                .iter()
+                .filter(|facts| facts.metric == metric)
+                .count();
+            assert_eq!(rows, 1, "{metric:?} has {rows} rows, not one");
+            assert_ne!(
+                metric.label(),
+                "???",
+                "{metric:?} fell through to the unreachable label"
+            );
+        }
+
+        let names = METRICS
+            .iter()
+            .map(|facts| facts.name)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(names.len(), METRICS.len(), "two rows share a name");
+        let labels = METRICS
+            .iter()
+            .map(|facts| facts.label)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            labels.len(),
+            METRICS.len(),
+            "two metrics print the same label, so a bar cannot say which is which"
+        );
+    }
+
+    /// A metric that could not be read renders `--`, never a number.
+    ///
+    /// The rule the whole module is built on, checked across every metric at
+    /// once because it is the kind of thing a new arm gets wrong on its own: a
+    /// battery reading `0%` on a desktop and a temperature reading `0C` on a
+    /// machine with no sensor are both false in a way nothing on screen
+    /// distinguishes from true.
+    // TP-RES-23: an unreadable metric renders `--`, and never zero.
+    #[test]
+    fn an_unreadable_metric_never_renders_as_zero() {
+        let nothing = ResourceSample::default();
+        for facts in METRICS {
+            let text = metric_text(&nothing, facts.metric);
+            assert!(
+                text.contains("--"),
+                "{} renders {text:?} when it could not be read",
+                facts.name
+            );
+            assert!(
+                !text.contains('0'),
+                "{} renders {text:?}, which reads as a real reading of zero",
+                facts.name
+            );
+        }
+    }
+
+    /// A rate has no ceiling, so it is never drawn as a proportion.
+    // TP-RES-24: `net` has no meter ratio, whatever it is reading.
+    #[test]
+    fn a_network_rate_is_never_a_proportion() {
+        let busy = ResourceSample {
+            net: Some(125_000_000.0),
+            ..Default::default()
+        };
+        assert_eq!(
+            meter_ratio(&busy, ResourceMetric::Net),
+            None,
+            "a full bar would have to mean something, and there is nothing for \
+             it to be full of"
+        );
+
+        // Control: the metrics that do have a ceiling still produce one, or the
+        // assertion above would hold for a `meter_ratio` that gave up entirely.
+        let charged = ResourceSample {
+            battery: Some(50.0),
+            temp: Some(50.0),
+            ..Default::default()
+        };
+        assert_eq!(meter_ratio(&charged, ResourceMetric::Battery), Some(0.5));
+        assert_eq!(meter_ratio(&charged, ResourceMetric::Temp), Some(0.5));
+    }
+
+    /// A counter that went backwards is not a spike.
+    // TP-RES-25: a rate needs two readings, forward in time.
+    #[test]
+    fn a_rate_refuses_a_counter_that_went_backwards_or_stood_still() {
+        let second = std::time::Duration::from_secs(1);
+        assert_eq!(byte_rate(1_000, 2_000, second), Some(1_000.0));
+        assert_eq!(
+            byte_rate(2_000, 1_000, second),
+            None,
+            "an interface that came up would otherwise read as an enormous burst"
+        );
+        assert_eq!(
+            byte_rate(1_000, 2_000, std::time::Duration::ZERO),
+            None,
+            "no time passed, so no rate exists"
+        );
+    }
+
+    /// Loopback is not traffic, and both directions are one number.
+    // TP-RES-19: network totals exclude loopback and sum both directions.
+    #[test]
+    fn network_totals_skip_loopback_and_add_both_directions() {
+        // Two header lines with no colon, then three interfaces. The columns
+        // are the kernel's sixteen: bytes first, transmit bytes ninth.
+        let text = "Inter-|   Receive                    |  Transmit\n\
+                    face |bytes packets errs drop fifo frame compressed multicast|bytes packets\n\
+                    \x20   lo:  5000      10    0    0    0     0          0         0   7000      10    0    0    0     0       0          0\n\
+                    \x20 eth0:  1000       5    0    0    0     0          0         0    500       3    0    0    0     0       0          0\n\
+                    \x20 wlan0:   30       1    0    0    0     0          0         0     20       1    0    0    0     0       0          0\n";
+        assert_eq!(
+            parse_proc_net_dev(text),
+            Some(1_550),
+            "1000+500 on eth0 and 30+20 on wlan0, with lo's 12000 left out"
+        );
+        assert_eq!(
+            parse_proc_net_dev("Inter-|\nface |bytes\n"),
+            None,
+            "a file with no interface at all is unreadable, not a machine at rest"
+        );
+    }
+
+    /// The warmest sensor wins, and an implausible one is offline.
+    // TP-RES-20: the temperature shown is the warmest sensor, in Celsius.
+    #[test]
+    fn the_temperature_is_the_warmest_plausible_sensor() {
+        assert_eq!(warmest_millidegrees([42_000, 61_500, 38_000]), Some(61.5));
+        assert_eq!(
+            warmest_millidegrees([-5_000, -1_000]),
+            None,
+            "a machine below freezing is a sensor that is off, not a cold laptop"
+        );
+        assert_eq!(
+            warmest_millidegrees([200_000]),
+            None,
+            "a reading above any real silicon is a sensor reporting nonsense"
+        );
+        assert_eq!(warmest_millidegrees([]), None);
+    }
+
     #[test]
     fn every_offered_metric_is_one_this_build_parses() {
-        assert!(!ResourceMetric::ACCEPTED.is_empty());
-        for name in ResourceMetric::ACCEPTED {
+        assert!(!ResourceMetric::accepted().is_empty());
+        for name in ResourceMetric::accepted() {
             assert!(
                 ResourceMetric::parse(name).is_some(),
                 "the refusal offers {name:?} but parse does not take it"
@@ -426,7 +792,7 @@ mod tests {
         // offered. Kept as a fact rather than a rule: see the shell-side test that
         // characterises it.
         assert_eq!(ResourceMetric::parse("ram"), Some(ResourceMetric::Mem));
-        assert!(!ResourceMetric::ACCEPTED.contains(&"ram"));
+        assert!(!ResourceMetric::accepted().contains(&"ram"));
     }
 
     // A real line from a running 6.x kernel, ten fields wide.
@@ -574,10 +940,26 @@ mod tests {
                 used: 0,
                 total: 8_589_934_592,
             }),
+            disk: Some(Usage {
+                used: 858_993_459_200,
+                total: 1_023_180_800_000,
+            }),
+            battery: Some(78.0),
+            net: Some(1_536_000.0),
+            temp: Some(54.0),
         };
         assert_eq!(metric_text(&sample, ResourceMetric::Cpu), "CPU  12%");
         assert_eq!(metric_text(&sample, ResourceMetric::Mem), "MEM 5.0G/31G");
         assert_eq!(metric_text(&sample, ResourceMetric::Swap), "SWP 0B/8.0G");
+        assert_eq!(metric_text(&sample, ResourceMetric::Disk), "DSK 800G/953G");
+        assert_eq!(metric_text(&sample, ResourceMetric::Battery), "BAT  78%");
+        assert_eq!(metric_text(&sample, ResourceMetric::Temp), "TMP  54C");
+        assert_eq!(
+            metric_text(&sample, ResourceMetric::Net),
+            "NET   1M/s",
+            "a rate is written in three digits and a unit, so the section does \
+             not change width as traffic does"
+        );
     }
 
     // TC-M1 · a pool that does not exist has no ratio. Drawing a swapless
