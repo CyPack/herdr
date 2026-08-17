@@ -705,6 +705,58 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_dormant_panes_api_info_says_so_and_an_awake_panes_does_not() {
+        // TP-DORMANT-14: without this field dormancy is invisible to API
+        // clients — a watcher polling the snapshot cannot tell a sleeping
+        // pane from an awake one, and the lifecycle runs unobserved. The
+        // false case stays unserialized so an awake pane's JSON is unchanged.
+        let (mut app, pane_id) = app_with_scrollback_pane(b"sleepy\r\n", true);
+
+        let awake = app.pane_info(0, pane_id).expect("awake pane info");
+        assert!(!awake.dormant, "an awake pane is not dormant");
+        let awake_json = serde_json::to_value(&awake).unwrap();
+        assert!(
+            awake_json.get("dormant").is_none(),
+            "false is not serialized, keeping the awake pane's JSON unchanged"
+        );
+
+        app.make_pane_dormant(pane_id).expect("dormancy accepted");
+
+        let dormant = app.pane_info(0, pane_id).expect("dormant pane info");
+        assert!(dormant.dormant, "a dormant pane says so");
+        let dormant_json = serde_json::to_value(&dormant).unwrap();
+        assert_eq!(
+            dormant_json.get("dormant"),
+            Some(&serde_json::Value::Bool(true))
+        );
+        let _ = std::fs::remove_dir_all(app.dormant_history_dir());
+    }
+
+    #[tokio::test]
+    async fn an_alt_screen_panes_api_info_says_so_and_a_primary_panes_does_not() {
+        // TP-DORMANT-14: the alternate_screen field lets an API watcher tell
+        // "no scrollback yet" from "a fullscreen app owns the viewport" — the
+        // intent form of the scroll guard, readable without a screen capture.
+        let (app, pane_id) = app_with_scrollback_pane(b"primary\r\n\x1b[?1049halt", true);
+        let info = app.pane_info(0, pane_id).expect("alt-screen pane info");
+        assert!(info.alternate_screen, "the alternate screen is visible");
+        let json = serde_json::to_value(&info).unwrap();
+        assert_eq!(
+            json.get("alternate_screen"),
+            Some(&serde_json::Value::Bool(true))
+        );
+
+        let (app, pane_id) = app_with_scrollback_pane(b"primary-only\r\n", true);
+        let info = app.pane_info(0, pane_id).expect("primary pane info");
+        assert!(!info.alternate_screen);
+        let json = serde_json::to_value(&info).unwrap();
+        assert!(
+            json.get("alternate_screen").is_none(),
+            "false is not serialized"
+        );
+    }
+
+    #[tokio::test]
     async fn an_alt_screen_pane_with_an_empty_primary_sleeps_without_a_file() {
         // The empty-pane contract survives the TP-DORMANT-10 semantics
         // change: a pane that went fullscreen without ever writing to the
