@@ -3640,6 +3640,33 @@ pub struct AppState {
     /// Presentation cache filled from the ledger outside render, mirroring
     /// `projects_sessions` — the render path never reads a file.
     pub workspace_chat_rows: std::collections::HashMap<String, Vec<WorkspaceChatRow>>,
+    /// The normalised opening of every chat this pass parsed, keyed by session
+    /// id rather than by row.
+    ///
+    /// A chat can be listed under more than one directory, but it was opened
+    /// once — so its shape is a fact about the chat, not about any row. Keying
+    /// it this way is also what makes the repetition rule honest: counting rows
+    /// would let a single chat listed twice carry itself over the threshold.
+    pub chat_openings: std::collections::HashMap<String, String>,
+    /// What the rules make of each chat, keyed by session id.
+    ///
+    /// Recomputed from scratch on every sync, because the rules can change
+    /// under a live server and a stale verdict is worse than none. A label a
+    /// person set themselves lives elsewhere and outranks this.
+    pub derived_chat_labels: std::collections::HashMap<String, crate::chat_labels::ChatLabel>,
+    /// Structural openings that mark a chat as routine (`ui.routine_chat_markers`).
+    pub routine_chat_markers: Vec<String>,
+    /// Hand-written openings that mark a chat as routine
+    /// (`ui.routine_chat_prompt_patterns`).
+    pub routine_chat_prompt_patterns: Vec<String>,
+    /// How many chats must share an opening before repetition alone marks them
+    /// routine; 0 turns that rule off (`ui.routine_chat_repeat_threshold`).
+    pub routine_chat_repeat_threshold: usize,
+    /// Labels the daily section leaves out, already resolved from their config
+    /// spellings. A spelling nothing recognises is dropped here rather than
+    /// carried as a string: an unreadable entry must hide nothing, and it can
+    /// only do that if it never reaches the filter.
+    pub daily_chat_hidden_labels: Vec<crate::chat_labels::ChatLabel>,
     /// Ledger keys whose chat drawer is OPEN in the Spaces tab.
     ///
     /// The inverse of `collapsed_project_paths`, deliberately: the Projects tab
@@ -4303,6 +4330,14 @@ impl AppState {
                 limit,
                 &mut self.sessions_parse_cache,
             );
+            for session in &sessions {
+                // Free: the parse already read the first message to derive a
+                // title, and threw it away afterwards. Kept by session id
+                // because the same chat can be listed under two directories.
+                if let Some(opening) = session.opening.clone() {
+                    self.chat_openings.insert(session.id.clone(), opening);
+                }
+            }
             let rows = self.workspace_chat_rows.entry(key.clone()).or_default();
             for session in &sessions {
                 match rows.iter_mut().find(|row| row.session_id == session.id) {
@@ -4370,6 +4405,75 @@ impl AppState {
         for rows in self.workspace_chat_rows.values_mut() {
             rows.sort_by(|a, b| b.sort_key().cmp(&a.sort_key()));
         }
+
+        self.classify_chats();
+    }
+
+    /// TP-DAILY-22: work out what each remembered chat is, from the openings
+    /// gathered so far.
+    ///
+    /// Recomputed whole rather than patched, because both inputs move: the
+    /// rules change when a config is reloaded, and the repetition count changes
+    /// every time a new chat is parsed. A verdict left over from an earlier
+    /// pass would be a fact nothing supports any more.
+    pub(crate) fn classify_chats(&mut self) {
+        self.derived_chat_labels.clear();
+
+        let rules = crate::chat_labels::RoutineRules {
+            markers: &self.routine_chat_markers,
+            patterns: &self.routine_chat_prompt_patterns,
+        };
+        for (session_id, opening) in &self.chat_openings {
+            if let Some(label) = crate::chat_labels::classify_opening(opening, &rules) {
+                self.derived_chat_labels.insert(session_id.clone(), label);
+            }
+        }
+
+        // The repetition rule counts chats, and it counts them across every
+        // directory at once: the automations this exists for are started by
+        // timers that do not care which checkout a person is standing in, so a
+        // per-directory count would find the same chore three times in three
+        // places and call none of them repeated.
+        if self.routine_chat_repeat_threshold == 0 {
+            return;
+        }
+        let mut seen: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        for opening in self.chat_openings.values() {
+            *seen.entry(opening.as_str()).or_default() += 1;
+        }
+        for (session_id, opening) in &self.chat_openings {
+            if seen.get(opening.as_str()).copied().unwrap_or(0)
+                >= self.routine_chat_repeat_threshold
+            {
+                self.derived_chat_labels
+                    .entry(session_id.clone())
+                    .or_insert(crate::chat_labels::ChatLabel::Routine);
+            }
+        }
+    }
+
+    /// What a chat is, as far as anything here knows. `None` means no rule
+    /// recognised it, which is its own answer and not a quiet `Context`.
+    pub fn chat_label(&self, session_id: &str) -> Option<crate::chat_labels::ChatLabel> {
+        self.derived_chat_labels.get(session_id).copied()
+    }
+
+    /// TP-DAILY-23: whether the daily section leaves this chat out.
+    ///
+    /// Three ways to answer no, and each one is a report someone made. A chat
+    /// nothing recognised is drawn, because not recognising a chat says
+    /// nothing about it. A chat whose label is not on the hidden list is
+    /// drawn, which is how emptying that list brings everything back. And a
+    /// chat that is open in a tab right now is drawn whatever it is: hiding
+    /// work that is running is how you lose track of it.
+    pub fn daily_chat_is_hidden(&self, session_id: &str) -> bool {
+        let Some(label) = self.chat_label(session_id) else {
+            return false;
+        };
+        if !self.daily_chat_hidden_labels.contains(&label) {
+            return false;
+        }
+        self.find_resumed_chat_tab(session_id).is_none()
     }
 
     pub(crate) fn refresh_project_sessions_in(&mut self, projects_dir: &std::path::Path) {
@@ -4735,6 +4839,12 @@ impl AppState {
             preview_placement: crate::config::PreviewPlacement::default(),
             collapsed_project_paths: std::collections::HashSet::new(),
             workspace_chat_rows: std::collections::HashMap::new(),
+            chat_openings: std::collections::HashMap::new(),
+            derived_chat_labels: std::collections::HashMap::new(),
+            routine_chat_markers: Vec::new(),
+            routine_chat_prompt_patterns: Vec::new(),
+            routine_chat_repeat_threshold: 0,
+            daily_chat_hidden_labels: Vec::new(),
             // Tests point this at a scratch directory when they mean to; the
             // default is no daily section at all, so every existing fixture
             // keeps producing exactly the list it produced before.
@@ -6263,6 +6373,125 @@ mod tests {
             .projects_sessions
             .iter()
             .all(|p| p.sessions.is_empty()));
+    }
+
+    /// A state whose rules are the shipped ones, holding the given
+    /// `(session id, opening)` pairs.
+    fn state_with_openings(openings: &[(&str, &str)]) -> AppState {
+        let mut state = AppState::test_new();
+        state.routine_chat_markers =
+            vec!["<scheduled-task".to_string(), "<command-name>".to_string()];
+        state.routine_chat_repeat_threshold = 3;
+        for (session_id, opening) in openings {
+            state
+                .chat_openings
+                .insert((*session_id).to_string(), (*opening).to_string());
+        }
+        state.classify_chats();
+        state
+    }
+
+    /// TP-DAILY-22 (K3a): the discriminator the user pointed at — chats whose
+    /// first prompt is the same one over and over. Measured here: twelve
+    /// openings repeated three times or more, covering 185 chats that no
+    /// structural marker describes.
+    #[test]
+    fn an_opening_repeated_across_enough_chats_is_routine() {
+        let state = state_with_openings(&[
+            ("a", "voorinfra-upload skill'lerini kullan"),
+            ("b", "voorinfra-upload skill'lerini kullan"),
+            ("c", "voorinfra-upload skill'lerini kullan"),
+        ]);
+        for session_id in ["a", "b", "c"] {
+            assert_eq!(
+                state.chat_label(session_id),
+                Some(crate::chat_labels::ChatLabel::Routine),
+                "{session_id} shares an opening with two other chats"
+            );
+        }
+    }
+
+    /// TP-DAILY-22 (K3b): below the threshold nothing is claimed. Saying the
+    /// same thing twice is how people talk, not how machines repeat.
+    #[test]
+    fn an_opening_repeated_below_the_threshold_is_left_alone() {
+        let state =
+            state_with_openings(&[("a", "bu hafta ne yaptık?"), ("b", "bu hafta ne yaptık?")]);
+        assert_eq!(state.chat_label("a"), None);
+        assert_eq!(state.chat_label("b"), None);
+    }
+
+    /// TP-DAILY-22 (K3c): zero switches the repetition rule off without
+    /// switching the declared ones off with it.
+    #[test]
+    fn a_zero_threshold_turns_repetition_off_but_not_the_markers() {
+        let mut state = state_with_openings(&[
+            ("a", "same thing"),
+            ("b", "same thing"),
+            ("c", "same thing"),
+            ("d", "<scheduled-task name=\"nightly\">"),
+        ]);
+        state.routine_chat_repeat_threshold = 0;
+        state.classify_chats();
+        for session_id in ["a", "b", "c"] {
+            assert_eq!(state.chat_label(session_id), None);
+        }
+        assert_eq!(
+            state.chat_label("d"),
+            Some(crate::chat_labels::ChatLabel::Routine),
+            "a chat that declares itself is still routine with repetition off"
+        );
+    }
+
+    /// TP-DAILY-22 (K3d): the count is over chats, not over rows. A chat
+    /// listed under two directories is one chat, and letting it count twice
+    /// would let a single conversation carry itself over the threshold.
+    #[test]
+    fn one_chat_listed_twice_still_counts_once() {
+        let mut state = state_with_openings(&[("a", "one of a kind"), ("b", "one of a kind")]);
+        // Both rows name the same chat as `a`; the opening map is keyed by
+        // session id, so re-inserting cannot inflate anything.
+        state
+            .chat_openings
+            .insert("a".to_string(), "one of a kind".to_string());
+        state.classify_chats();
+        assert_eq!(state.chat_label("a"), None);
+        assert_eq!(state.chat_label("b"), None);
+    }
+
+    /// TP-DAILY-22 (K3e): the count spans every directory at once. A timer
+    /// does not care which checkout a person is standing in, so counting per
+    /// directory would find one chore three times in three places and call
+    /// none of them repeated.
+    #[test]
+    fn repetition_is_counted_across_every_directory() {
+        let mut state = AppState::test_new();
+        state.routine_chat_repeat_threshold = 3;
+        // Three chats, three different ledger keys, one opening.
+        for (idx, key) in ["repo-a", "repo-b", "repo-c"].iter().enumerate() {
+            let session_id = format!("session-{idx}");
+            state.workspace_chat_rows.insert(
+                (*key).to_string(),
+                vec![WorkspaceChatRow {
+                    session_id: session_id.clone(),
+                    agent: "claude".to_string(),
+                    title: None,
+                    last_seen_ms: 0,
+                    last_modified: None,
+                }],
+            );
+            state
+                .chat_openings
+                .insert(session_id, "claude code update".to_string());
+        }
+        state.classify_chats();
+        for idx in 0..3 {
+            assert_eq!(
+                state.chat_label(&format!("session-{idx}")),
+                Some(crate::chat_labels::ChatLabel::Routine),
+                "the same chore in a third directory is still the same chore"
+            );
+        }
     }
 
     // T5b: the wired-tab lookup finds the tab across workspaces and releases

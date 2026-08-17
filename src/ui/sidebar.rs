@@ -1255,14 +1255,27 @@ pub(crate) fn visible_active_chat(app: &AppState) -> Option<(usize, usize)> {
 /// duplication that rule guarded against was already on screen seven times
 /// over, since each of those workspaces reads this very ledger key; all the
 /// rule removed was the one place the chats could be found on purpose.
-pub(crate) fn daily_chat_rows(app: &AppState) -> &[crate::app::state::WorkspaceChatRow] {
+pub(crate) fn daily_chat_rows(app: &AppState) -> Vec<&crate::app::state::WorkspaceChatRow> {
     let Some(daily) = app.daily_chat_cwd.as_deref() else {
-        return &[];
+        return Vec::new();
     };
     let key = crate::persist::workspace_chats::ledger_key(daily);
+    // TP-DAILY-23: the hidden ones are dropped HERE, where the section asks
+    // for its chats, and not where those chats are remembered. Filtering the
+    // remembered set instead would take the rows off every surface reading it
+    // — the failure the first TP-DAILY-13 shipped and had to be reverted for.
+    //
+    // Dropping them before the caller counts is the other half: the section
+    // shows five, so filtering after the count would spend those five slots on
+    // chats it then refuses to draw, and a person hiding chores would end up
+    // with a shorter list instead of a cleaner one.
     app.workspace_chat_rows
         .get(&key)
-        .map(Vec::as_slice)
+        .map(|rows| {
+            rows.iter()
+                .filter(|row| !app.daily_chat_is_hidden(&row.session_id))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -7963,6 +7976,119 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             .collect::<Vec<_>>();
         app.workspace_chat_rows.insert(key, rows);
         (app, daily)
+    }
+
+    /// A daily fixture whose first `routine_count` chats are labelled routine
+    /// and hidden by config, exactly as a live sync would leave them.
+    fn app_with_routine_daily_chats(
+        chat_count: usize,
+        routine_count: usize,
+    ) -> (AppState, std::path::PathBuf) {
+        let (mut app, daily) = app_with_daily_chats(chat_count);
+        app.daily_chat_hidden_labels = vec![crate::chat_labels::ChatLabel::Routine];
+        for idx in 0..routine_count {
+            app.derived_chat_labels.insert(
+                format!("daily-session-{idx}"),
+                crate::chat_labels::ChatLabel::Routine,
+            );
+        }
+        (app, daily)
+    }
+
+    /// TP-DAILY-23 (S1): the reported behaviour. A chat the rules call routine
+    /// is not drawn in the daily section, which is the whole request: "sol
+    /// altta rutin çalıştırılıp kapanan agentlar gösterilmesin".
+    #[test]
+    fn a_routine_chat_is_left_out_of_the_daily_section() {
+        let (app, _) = app_with_routine_daily_chats(3, 1);
+        let shown: Vec<&str> = daily_chat_rows(&app)
+            .iter()
+            .map(|row| row.session_id.as_str())
+            .collect();
+        assert_eq!(shown, vec!["daily-session-1", "daily-session-2"]);
+    }
+
+    /// TP-DAILY-23 (S2): emptying the hidden list brings every chat back. The
+    /// request was to show these somewhere else later, not to lose them, so
+    /// the setting has to be reversible with nothing else changing.
+    #[test]
+    fn an_empty_hidden_list_draws_every_chat_again() {
+        let (mut app, _) = app_with_routine_daily_chats(3, 3);
+        assert!(daily_chat_rows(&app).is_empty());
+        app.daily_chat_hidden_labels.clear();
+        assert_eq!(daily_chat_rows(&app).len(), 3);
+    }
+
+    /// TP-DAILY-23 (S3): a routine chat that is OPEN in a tab is still drawn.
+    /// Hiding work that is running is how a person loses track of it, and the
+    /// row is the only way back to that tab.
+    #[test]
+    fn a_routine_chat_that_is_running_is_still_drawn() {
+        let (mut app, _) = app_with_routine_daily_chats(3, 3);
+        assert!(daily_chat_rows(&app).is_empty());
+        let tab_idx = app.workspaces[0].active_tab_index();
+        app.workspaces[0].tabs[tab_idx].resumed_session_id = Some("daily-session-1".to_string());
+        let shown: Vec<&str> = daily_chat_rows(&app)
+            .iter()
+            .map(|row| row.session_id.as_str())
+            .collect();
+        assert_eq!(shown, vec!["daily-session-1"]);
+    }
+
+    /// TP-DAILY-23 (S4): a chat no rule recognised is drawn. Not recognising
+    /// a chat says nothing about what it is, and not drawing a real
+    /// conversation is a more expensive mistake than drawing a chore.
+    #[test]
+    fn an_unlabelled_chat_is_always_drawn() {
+        let (app, _) = app_with_routine_daily_chats(2, 0);
+        assert_eq!(daily_chat_rows(&app).len(), 2);
+    }
+
+    /// TP-DAILY-23 (S5): the filter belongs to the daily section and to
+    /// nothing else. The remembered set is shared, and filtering it at the
+    /// source takes rows off every surface that reads it — which shipped once
+    /// as the first TP-DAILY-13 and had to be reverted.
+    #[test]
+    fn hiding_a_daily_chat_leaves_the_shared_set_alone() {
+        let (app, daily) = app_with_routine_daily_chats(3, 3);
+        let key = crate::persist::workspace_chats::ledger_key(&daily);
+        assert!(daily_chat_rows(&app).is_empty());
+        assert_eq!(
+            app.workspace_chat_rows.get(&key).map(Vec::len),
+            Some(3),
+            "the rows are still remembered; only this section declines to draw them"
+        );
+    }
+
+    /// TP-DAILY-23 (S6): the section shows five chats, and the hidden ones are
+    /// dropped BEFORE that five is counted. Filter after the count and hiding
+    /// chores makes the list shorter instead of cleaner — the person asked for
+    /// the chores to move aside, not for their remaining chats to disappear
+    /// with them.
+    #[test]
+    fn hidden_chats_do_not_spend_the_sections_five_slots() {
+        let (app, _) = app_with_routine_daily_chats(12, 8);
+        let shown = daily_chat_rows(&app);
+        assert_eq!(shown.len(), 4, "twelve chats, eight of them chores");
+        let drawn = shown.len().min(WORKSPACE_CHAT_ROW_LIMIT);
+        assert_eq!(drawn, 4);
+
+        let (app, _) = app_with_routine_daily_chats(12, 4);
+        let shown = daily_chat_rows(&app);
+        assert_eq!(shown.len(), 8);
+        assert_eq!(
+            shown.len().min(WORKSPACE_CHAT_ROW_LIMIT),
+            WORKSPACE_CHAT_ROW_LIMIT,
+            "with eight real chats left the section is full again"
+        );
+    }
+
+    /// TP-DAILY-23 (S7): when everything is hidden the section has no chats,
+    /// which the existing empty-section rule already draws as nothing at all.
+    #[test]
+    fn a_section_whose_chats_are_all_hidden_has_no_chats() {
+        let (app, _) = app_with_routine_daily_chats(4, 4);
+        assert!(daily_chat_rows(&app).is_empty());
     }
 
     /// The shape the machine actually had: a workspace born in the daily
