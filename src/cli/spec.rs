@@ -621,6 +621,11 @@ fn pane_command() -> Command {
                 .arg(flag("no-focus")),
         )
         .subcommand(id_command("close", "pane_id", "Close a pane"))
+        .subcommand(id_command(
+            "sleep",
+            "pane_id",
+            "Put a retired, unwatched pane to sleep",
+        ))
         .subcommand(
             Command::new("send-text")
                 .about("Send literal text to a pane")

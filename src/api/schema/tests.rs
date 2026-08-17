@@ -191,6 +191,21 @@ fn request_round_trips_for_server_stop() {
 }
 
 #[test]
+fn request_round_trips_for_pane_sleep() {
+    let request = Request {
+        id: "req_sleep".into(),
+        method: Method::PaneSleep(PaneTarget {
+            pane_id: "w1:p1".into(),
+        }),
+    };
+
+    let json = serde_json::to_value(&request).unwrap();
+    assert_eq!(json["method"], "pane.sleep");
+    let restored: Request = serde_json::from_value(json).unwrap();
+    assert_eq!(restored, request);
+}
+
+#[test]
 fn request_round_trips_for_server_reload_config() {
     let request = Request {
         id: "req_reload".into(),
@@ -738,6 +753,8 @@ fn worktree_request_and_response_round_trip() {
                 tokens: HashMap::new(),
                 agent_session: None,
                 scroll: None,
+                dormant: false,
+                alternate_screen: false,
                 revision: 0,
             },
             worktree: WorktreeInfo {
@@ -1153,6 +1170,8 @@ fn create_response_round_trips_with_root_pane() {
                 tokens: HashMap::new(),
                 agent_session: None,
                 scroll: None,
+                dormant: false,
+                alternate_screen: false,
                 revision: 0,
             },
         },

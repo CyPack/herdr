@@ -423,6 +423,15 @@ pub(crate) enum BarConfigProblem {
         index: usize,
         presentation: String,
     },
+    /// A `clock` format naming a field this build cannot write.
+    ///
+    /// Carries the character rather than the whole format, because that is the
+    /// one glyph in the line that has to change.
+    UnknownClockField {
+        edge: &'static str,
+        index: usize,
+        field: char,
+    },
     SecondaryWithoutAction {
         edge: &'static str,
         index: usize,
@@ -632,7 +641,7 @@ impl std::fmt::Display for BarConfigProblem {
             } => write!(
                 formatter,
                 "shell.bars.{edge}.sections[{index}].action.secondary is \"{presentation}\"; \
-                 expected {offered}, so a right press on this section does nothing",
+                 expected {offered}, so neither press on this section does anything",
                 offered = accepted_names(
                     &SECONDARY_PRESENTATIONS
                         .iter()
@@ -640,10 +649,21 @@ impl std::fmt::Display for BarConfigProblem {
                         .collect::<Vec<_>>()
                 )
             ),
+            Self::UnknownClockField { edge, index, field } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}].widget.format writes \"%{field}\", which \
+                 this build cannot fill in; expected {offered}, or %% for a literal percent",
+                offered = accepted_names(
+                    &crate::clock::clock_field_names()
+                        .iter()
+                        .map(String::as_str)
+                        .collect::<Vec<_>>()
+                )
+            ),
             Self::SecondaryWithoutAction { edge, index } => write!(
                 formatter,
                 "shell.bars.{edge}.sections[{index}].action names a secondary presentation but \
-                 no command to present, so a right press on this section does nothing"
+                 no command to present, so neither press on this section does anything"
             ),
             Self::PluginActionWithoutId { edge, index } => write!(
                 formatter,
@@ -695,7 +715,7 @@ impl std::fmt::Display for BarConfigProblem {
                 formatter,
                 "shell.bars.{edge}.sections[{index}].widget.metric is \"{metric}\"; expected \
                  {offered}, so this section shows nothing",
-                offered = accepted_names(crate::resource::ResourceMetric::ACCEPTED)
+                offered = accepted_names(&crate::resource::ResourceMetric::accepted())
             ),
             Self::IconWithoutPicture { edge, index } => write!(
                 formatter,
@@ -1250,16 +1270,21 @@ pub(crate) enum SectionAction {
         /// geometry, in a derivation).
         width: Option<PopupSize>,
         height: Option<PopupSize>,
-        /// How a secondary press shows the same command, or `None` when the
-        /// section answers only one gesture.
+        /// How a secondary press shows the same command.
+        ///
+        /// Not an `Option`: every section answers the second gesture with
+        /// something now, even if that something is `Inert`. Two spellings of
+        /// absence — a missing key and a variant meaning nothing — would be two
+        /// ways to say one thing, and the reader would have to know which of
+        /// them the code meant.
         ///
         /// Deliberately a presentation of the command above rather than a
         /// command of its own. Two commands in one section could drift into
         /// running different programs from the same picture, and the person
-        /// pressing has no way to know which one they got. One command, two
+        /// pressing has no way to know which one they got. One command, several
         /// presentations, is also what makes the gesture rule true rather than
         /// decorative: the right press chooses how, never what.
-        secondary: Option<SecondaryPresentation>,
+        secondary: SecondaryPresentation,
     },
     /// Invoke an action an installed plugin declared, by the id its manifest
     /// gives it.
@@ -1286,17 +1311,43 @@ pub(crate) enum SectionAction {
 
 /// How a secondary press presents a section's command.
 ///
-/// One variant today, and closed like its neighbours. A "split the current
-/// pane" presentation was considered and left out: it needs a target pane, and
-/// a bar has no idea which pane the person meant. The enum being closed is what
-/// makes adding one later a cost the compiler counts.
+/// Closed like its neighbours, so adding one later is a cost the compiler
+/// counts rather than a guess made now.
+///
+/// An earlier version of this enum left `Split` out, on the grounds that it
+/// needs a target pane and a bar has no idea which pane the person meant. That
+/// was true when it was written and is not true now: `open_argv_in_new_tab`
+/// already resolves the focused pane to borrow its directory, and the pane
+/// menu's own "Split right" already splits whatever is focused. The bar's
+/// answer to "which pane" is the same answer the rest of the product gives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SecondaryPresentation {
+    /// Ask. A menu opens at the pointer listing what this section can do, and
+    /// the person picks one.
+    ///
+    /// The default, and deliberately so: a section that named no secondary
+    /// used to do *nothing* on a right press, so making the menu the default
+    /// takes nothing away from anybody. Somebody who wants the old silence can
+    /// now write it down as `"none"` — a preference that could not be
+    /// expressed before, only relied upon.
+    Menu,
     /// A new tab of the current workspace, running the command at full size.
     ///
     /// Full size needs no zoom: a tab's root pane already occupies the whole
     /// tab, so asking for one is asking for the other.
     Tab,
+    /// A split of the focused pane, running the command beside what is already
+    /// there.
+    ///
+    /// Direction is not a choice here. A bar section is a launcher, and the
+    /// surface that owns "which way" is the pane menu, which offers both. This
+    /// one splits the way every other launcher in the product splits.
+    Split,
+    /// Nothing, said out loud.
+    ///
+    /// Distinct from a section that carries no action at all: this one has a
+    /// command and a person who decided its second gesture should stay quiet.
+    Inert,
 }
 
 /// What one section of a bar shows.
@@ -1359,6 +1410,73 @@ pub(crate) enum SectionWidget {
     Art {
         art: crate::icon::IconArt,
     },
+    /// The wall clock, written the way this section asked for.
+    ///
+    /// Carries the parsed format rather than the string, so drawing walks a
+    /// list instead of re-reading a format on every frame — the same reason a
+    /// picture arrives as cells and a colour as a spec.
+    Clock {
+        format: crate::clock::ClockFormat,
+    },
+}
+
+impl SectionWidget {
+    /// Whether drawing this needs a reading somebody has to go and take.
+    ///
+    /// Exhaustive on purpose, with no `_` arm: a new variant that needs a
+    /// sample must not be able to arrive as a `false` nobody wrote. The one
+    /// this method exists to catch — `sparkline` — was missing from the gate's
+    /// `matches!` for exactly as long as it took somebody to read the gate
+    /// instead of the enum.
+    pub(crate) const fn reads_the_machine(&self) -> bool {
+        match self {
+            Self::Resource { .. } | Self::Meter { .. } | Self::Sparkline { .. } => true,
+            Self::None
+            | Self::Label { .. }
+            | Self::Icon { .. }
+            | Self::Art { .. }
+            | Self::Clock { .. } => false,
+        }
+    }
+
+    /// Which machine counter this widget draws, if it draws one.
+    ///
+    /// Exhaustive with no `_` arm, like its neighbour: a live widget added
+    /// later must not be able to answer `None` by omission and quietly stop its
+    /// metric being read.
+    pub(crate) const fn metric(&self) -> Option<crate::resource::ResourceMetric> {
+        match self {
+            Self::Resource { metric } | Self::Meter { metric } | Self::Sparkline { metric } => {
+                Some(*metric)
+            }
+            Self::None
+            | Self::Label { .. }
+            | Self::Icon { .. }
+            | Self::Art { .. }
+            | Self::Clock { .. } => None,
+        }
+    }
+
+    /// How often this widget's text can change on its own, or `None` when it
+    /// cannot.
+    ///
+    /// A separate question from `reads_the_machine`, and deliberately so: a
+    /// clock changes without anybody opening `/proc`, and a resource section
+    /// opens `/proc` on a pace of its own. Folding the two together would make
+    /// a bar with only a clock start sampling the machine, or a bar with only a
+    /// meter start waking on the clock's minute.
+    pub(crate) fn tick(&self) -> Option<std::time::Duration> {
+        match self {
+            Self::Clock { format } => Some(format.resolution()),
+            Self::None
+            | Self::Label { .. }
+            | Self::Icon { .. }
+            | Self::Art { .. }
+            | Self::Resource { .. }
+            | Self::Meter { .. }
+            | Self::Sparkline { .. } => None,
+        }
+    }
 }
 
 /// What one section shows and what a click on it does.
@@ -1442,28 +1560,73 @@ impl ShellBarChrome {
         self.for_section(region, index).map(|chrome| &chrome.action)
     }
 
+    /// Which metrics anything on screen is actually waiting on.
+    ///
+    /// `wants_resources` answers "does anybody want a reading"; this answers
+    /// "which readings", and the difference began to matter when the metrics
+    /// grew past the two files a sampler was reading anyway. `/proc/stat` and
+    /// `/proc/meminfo` are cheap enough to read whenever anything is live; a
+    /// `statvfs` every tick, a walk of `/sys/class/power_supply` and a scan of
+    /// every thermal zone are not, and a bar showing only CPU has no business
+    /// paying for them.
+    // TP-RES-21: only the metrics a section shows are read.
+    pub(crate) fn wanted_metrics(&self) -> Vec<crate::resource::ResourceMetric> {
+        let mut wanted = [&self.top, &self.bottom, &self.left, &self.right]
+            .into_iter()
+            .flat_map(|bar| bar.entries.iter())
+            .filter_map(|chrome| chrome.widget.metric())
+            .collect::<Vec<_>>();
+        wanted.sort_unstable();
+        wanted.dedup();
+        wanted
+    }
+
     pub(crate) fn widget_for(&self, region: RegionId, index: u8) -> Option<&SectionWidget> {
         self.for_section(region, index).map(|chrome| &chrome.widget)
     }
 
     /// Whether anything on screen is waiting on a machine counter.
     ///
-    /// This is what keeps the feature free for the people not using it. No
-    /// resource section means no deadline, which means the loop never wakes to
-    /// sample and never opens `/proc` at all — rather than sampling always and
-    /// throwing the answer away, which is the shape this kind of widget
-    /// usually arrives in.
+    /// This is what keeps the feature free for the people not using it. No live
+    /// section means no deadline, which means the loop never wakes to sample
+    /// and never opens `/proc` at all — rather than sampling always and
+    /// throwing the answer away, which is the shape this kind of widget usually
+    /// arrives in.
+    ///
+    /// The answer is delegated to the widget rather than matched here. This
+    /// gate shipped listing two of the three live widgets, and the third —
+    /// `sparkline`, whose history is filled inside the very function this gate
+    /// guards — drew an empty run forever on any bar that had no `resource` or
+    /// `meter` beside it. Nothing saw it: every sparkline test either fills the
+    /// history itself or configures a `resource` section too, and both walk
+    /// past the gate. A method on the widget puts the question where the
+    /// variants are, so the next live widget answers it by existing.
     // TP-RES-07: sampling is demand-driven; an unused feature costs nothing.
+    // TP-RES-17: every live widget opens the gate, sparkline included.
     pub(crate) fn wants_resources(&self) -> bool {
         [&self.top, &self.bottom, &self.left, &self.right]
             .into_iter()
             .flat_map(|bar| bar.entries.iter())
-            .any(|chrome| {
-                matches!(
-                    chrome.widget,
-                    SectionWidget::Resource { .. } | SectionWidget::Meter { .. }
-                )
-            })
+            .any(|chrome| chrome.widget.reads_the_machine())
+    }
+
+    /// The fastest pace any section needs to be redrawn at, or `None` when
+    /// nothing on screen changes by itself.
+    ///
+    /// The minimum, because one clock showing seconds beside another showing
+    /// only minutes has to leave both correct, and the slower one costs nothing
+    /// extra: it renders the same text on the ticks it did not need.
+    ///
+    /// `None` is the whole cost argument, the same as it is for the sampler: a
+    /// bar with no clock schedules no wakeup, so a herdr nobody is watching
+    /// sits as still as it did before this widget existed.
+    // TP-CLOCK-07: no clock section means no tick at all.
+    pub(crate) fn clock_tick(&self) -> Option<std::time::Duration> {
+        [&self.top, &self.bottom, &self.left, &self.right]
+            .into_iter()
+            .flat_map(|bar| bar.entries.iter())
+            .filter_map(|chrome| chrome.widget.tick())
+            .min()
     }
 }
 
@@ -1617,7 +1780,37 @@ const WIDGET_KINDS: &[SectionKind<SectionWidget>] = &[
                   widget = { kind = \"sparkline\", metric = \"cpu\" }\n",
         build: sparkline_widget,
     },
+    SectionKind {
+        name: "clock",
+        keys: &["format"],
+        refuses: &[],
+        example: "[shell.bars.top]\nenabled = true\n\n\
+                  [[shell.bars.top.sections]]\nkind = \"content\"\n\
+                  widget = { kind = \"clock\", format = \"%H:%M\" }\n",
+        build: clock_widget,
+    },
 ];
+
+/// A `clock` section's format, parsed here so the renderer never parses.
+///
+/// An unwritten format is `%H:%M` rather than a refusal: a clock with no format
+/// is a perfectly clear request, and the shape it asks for is the one nearly
+/// every bar clock has.
+fn clock_widget(at: SectionAt<'_>) -> Result<SectionWidget, BarConfigProblem> {
+    let raw = at.config.widget.format.trim();
+    let format = if raw.is_empty() {
+        crate::clock::ClockFormat::default()
+    } else {
+        crate::clock::ClockFormat::parse(raw).map_err(|field| {
+            BarConfigProblem::UnknownClockField {
+                edge: at.edge,
+                index: at.index,
+                field,
+            }
+        })?
+    };
+    Ok(SectionWidget::Clock { format })
+}
 
 fn label_widget(at: SectionAt<'_>) -> Result<SectionWidget, BarConfigProblem> {
     Ok(SectionWidget::Label {
@@ -1940,18 +2133,19 @@ fn secondary_presentation(
     raw: &str,
     edge: &'static str,
     index: usize,
-) -> Result<Option<SecondaryPresentation>, BarConfigProblem> {
-    // Naming nothing is the absence of a second gesture rather than one of the
-    // choices below, and unlike the other surfaces there is no leftover to ask
-    // about: whatever a deleted presentation left behind belongs to the action
-    // that carried it.
+) -> Result<SecondaryPresentation, BarConfigProblem> {
+    // Naming nothing asks the menu, which is the one answer that needs no
+    // guess about what the person wanted: it puts the choice in front of them.
+    // There is no leftover to complain about either, unlike the other
+    // surfaces — whatever a deleted presentation left behind belongs to the
+    // action that carried it.
     if raw.is_empty() {
-        return Ok(None);
+        return Ok(SecondaryPresentation::Menu);
     }
     SECONDARY_PRESENTATIONS
         .iter()
         .find(|(name, _)| *name == raw)
-        .map(|(_, presentation)| Some(*presentation))
+        .map(|(_, presentation)| *presentation)
         .ok_or_else(|| BarConfigProblem::UnknownSecondaryPresentation {
             edge,
             index,
@@ -1965,8 +2159,12 @@ fn secondary_presentation(
 /// A pair rather than a builder: nothing is constructed here beyond the variant
 /// itself, and a function pointer that only returns a constant would be ceremony
 /// around a lookup.
-const SECONDARY_PRESENTATIONS: &[(&str, SecondaryPresentation)] =
-    &[("tab", SecondaryPresentation::Tab)];
+const SECONDARY_PRESENTATIONS: &[(&str, SecondaryPresentation)] = &[
+    ("menu", SecondaryPresentation::Menu),
+    ("tab", SecondaryPresentation::Tab),
+    ("split", SecondaryPresentation::Split),
+    ("none", SecondaryPresentation::Inert),
+];
 
 /// The four edges, as the tree builder sees them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -3079,6 +3277,38 @@ mod tests {
             .collect()
     }
 
+    /// The guide's table of secondary presentations, by the name a file writes.
+    fn documented_secondary_presentations() -> Vec<String> {
+        guide_table_after("Left press always opens the popup.")
+            .into_iter()
+            .map(|columns| columns[0].clone())
+            .collect()
+    }
+
+    /// The guide's table of clock fields: the spelling, then what it renders.
+    fn documented_clock_fields() -> Vec<(String, String)> {
+        guide_table_after("so the table reads as a single clock taken apart")
+            .into_iter()
+            .map(|columns| {
+                (
+                    columns[0].clone(),
+                    columns
+                        .get(1)
+                        .map(|cell| cell.trim_matches('`').to_string())
+                        .unwrap_or_default(),
+                )
+            })
+            .collect()
+    }
+
+    /// The guide's table of the menu's own rows, by the label it draws.
+    fn documented_bar_section_menu() -> Vec<String> {
+        guide_table_after("The menu offers the same command in all three places")
+            .into_iter()
+            .map(|columns| columns[0].clone())
+            .collect()
+    }
+
     /// Every example in the guide is a config this build accepts.
     ///
     /// A documented example is the first thing anyone copies, an agent most of
@@ -3176,23 +3406,14 @@ mod tests {
         // to by accident. They are held to the guide's own table instead, by
         // name and by size, in `the_guide_lists_exactly_the_bundled_pictures_at_the_sizes_they_draw`.
         //
-        // Aliases as well as names: `ram` works, and a guide that omits it
-        // leaves the one spelling a refusal will never teach undocumented
-        // anywhere at all.
-        for metric in crate::resource::ResourceMetric::ACCEPTED
-            .iter()
-            .copied()
-            .chain(
-                crate::resource::ResourceMetric::ALIASES
-                    .iter()
-                    .map(|(alias, _)| *alias),
-            )
-        {
-            assert!(
-                guide.contains(metric),
-                "the guide never names the metric {metric:?}"
-            );
-        }
+        // Metrics are not checked here either, and for the same reason the
+        // pictures were moved out. Measured on this guide: `ram` occurs eleven
+        // times — inside "program" — `mem` thirteen inside "remember" and
+        // "implement", `temp` five inside "template". Every metric name and the
+        // one alias passed a `contains` check with no line written about them,
+        // and would have gone on passing after the metric was deleted from the
+        // build. They are held to the guide's own table instead, in
+        // `the_guide_lists_exactly_the_metrics_this_build_reads`.
 
         // The other direction, which this row has always claimed and never
         // actually checked. Everything above walks the tables and looks each
@@ -3277,6 +3498,154 @@ mod tests {
         assert_eq!(
             documented, known,
             "the guide's colour table and the colours this build resolves are different sets"
+        );
+    }
+
+    /// The guide's table of secondary presentations is the grammar's own table,
+    /// exactly.
+    ///
+    /// Both directions, and each direction fails differently. A presentation
+    /// this build accepts and the guide omits is one nobody will write, because
+    /// the only other place it appears is a refusal nobody sees until they have
+    /// already guessed the name. A presentation the guide offers and this build
+    /// refuses is worse: the person read it here, and their bar now reports a
+    /// config error against a line the manual told them to write.
+    ///
+    /// Written against the table rather than the prose it replaced. The prose
+    /// said `secondary = "tab"` and a search for `"tab"` in a configuration
+    /// manual finds it whether or not anybody documented anything — the same
+    /// trap the picture table below was rebuilt to escape.
+    #[test]
+    fn the_guide_lists_exactly_the_secondary_presentations_this_build_accepts() {
+        // TP-CHROME-115: the guide's presentation table and the accepted set are
+        // one set, in both directions.
+        let documented = documented_secondary_presentations();
+        assert!(
+            documented.len() >= 2,
+            "the guide's presentation table stopped parsing; found {documented:?}"
+        );
+
+        let documented = documented
+            .iter()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>();
+        let accepted = secondary_presentation_names()
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            documented, accepted,
+            "the guide's presentation table and the names this build accepts are different sets"
+        );
+    }
+
+    /// The guide's metric table is the set this build reads, both ways.
+    ///
+    /// This replaces a `guide.contains(name)` check that could not fail.
+    /// Measured on the configuration guide: `ram` occurs eleven times inside
+    /// the word "program", `mem` thirteen inside "remember" and "implement",
+    /// `temp` five inside "template". Every one of the seven names and the one
+    /// alias satisfied that check for free — including, had it existed, a
+    /// metric nobody had documented at all.
+    ///
+    /// The alias is checked as a whole sentence rather than a word, for the
+    /// same reason: it is the one spelling no refusal will ever teach, so the
+    /// guide is the only place it can be learned, and searching for `ram` in
+    /// prose finds "program".
+    #[test]
+    fn the_guide_lists_exactly_the_metrics_this_build_reads() {
+        // TP-RES-26: the guide's metric table and the metrics this build reads
+        // are one set, in both directions.
+        let documented = guide_table_after("There are seven metrics")
+            .into_iter()
+            .map(|columns| columns[0].clone())
+            .collect::<Vec<_>>();
+        assert!(
+            documented.len() >= 3,
+            "the guide's metric table stopped parsing; found {documented:?}"
+        );
+
+        let documented = documented
+            .iter()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>();
+        let read = crate::resource::ResourceMetric::accepted()
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            documented, read,
+            "the guide's metric table and the metrics this build reads differ"
+        );
+
+        for (alias, means) in crate::resource::ResourceMetric::ALIASES {
+            assert!(
+                edge_bars_section().contains(&format!(
+                    "`{alias}` is accepted as another word for `{means}`"
+                )),
+                "the guide has to say, in a sentence, that {alias:?} means \
+                 {means:?} — no refusal will ever teach it"
+            );
+        }
+    }
+
+    /// The guide's clock table is the field table, spelling and rendering both.
+    ///
+    /// Both columns, because a name alone is not a useful row: somebody chooses
+    /// `%I` over `%H` by reading what it produces, and a wrong rendering in the
+    /// right-hand column sends them to a bar that says something other than
+    /// what they read here. The renderings are checked against the table the
+    /// spec publishes, which `every_clock_field_renders_the_example_it_publishes`
+    /// has already tied to the real renderer — so a wrong number in the guide
+    /// cannot survive by matching a wrong number in the code.
+    #[test]
+    fn the_guide_lists_exactly_the_clock_fields_this_build_can_write() {
+        // TP-CLOCK-11: the guide's clock table and the fields this build writes
+        // are one set, in both directions, renderings included.
+        let documented = documented_clock_fields();
+        assert!(
+            documented.len() >= 5,
+            "the guide's clock table stopped parsing; found {documented:?}"
+        );
+
+        let documented = documented
+            .into_iter()
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let built = crate::clock::CLOCK_FIELDS
+            .iter()
+            .map(|field| (format!("%{}", field.spec), field.example.to_string()))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(
+            documented, built,
+            "the guide's clock table and the fields this build writes differ"
+        );
+    }
+
+    /// The guide's menu table is the menu.
+    ///
+    /// A menu row exists only after somebody has already right-pressed, so the
+    /// guide is the only place it can be read ahead of time. A row that is
+    /// drawn and undocumented cannot be found; a row that is documented and not
+    /// drawn sends somebody looking for an item that is not there.
+    #[test]
+    fn the_guide_lists_exactly_the_rows_the_bar_section_menu_draws() {
+        // TP-CHROME-116: the guide's menu table and the menu's own rows are one
+        // set, in both directions.
+        let documented = documented_bar_section_menu();
+        assert!(
+            documented.len() >= 2,
+            "the guide's menu table stopped parsing; found {documented:?}"
+        );
+
+        let documented = documented
+            .iter()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>();
+        let drawn = crate::app::state::BarSectionMenuItem::ALL
+            .iter()
+            .map(|item| item.label())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            documented, drawn,
+            "the guide's menu table and the rows the menu draws are different sets"
         );
     }
 
@@ -3869,6 +4238,62 @@ mod tests {
         );
     }
 
+    /// Every widget that needs a reading opens the sampling gate, and nothing
+    /// else does.
+    ///
+    /// `sparkline` shipped outside this gate. Its history is filled inside the
+    /// very function the gate guards, so a bar holding a sparkline and nothing
+    /// else took no samples at all and drew an empty run forever — on screen,
+    /// and in no test, because every sparkline test either fills the history
+    /// itself or puts a `resource` section beside it.
+    ///
+    /// Written as a table over all six widgets rather than one assertion per
+    /// live kind: the failure was a list of variants that was one short, and a
+    /// test that names only the kinds it remembers can be short in the same
+    /// way. The negative half is not decoration — a gate that answered `true`
+    /// for a label would satisfy every positive row here and hand the cost back
+    /// to everybody who never asked for a live widget.
+    #[test]
+    fn exactly_the_live_widgets_make_the_loop_sample() {
+        // TP-RES-17: every live widget opens the sampling gate, sparkline
+        // included, and no still widget opens it.
+        let metric = crate::resource::ResourceMetric::Cpu;
+        let cases: &[(&str, SectionWidget, bool)] = &[
+            ("resource", SectionWidget::Resource { metric }, true),
+            ("meter", SectionWidget::Meter { metric }, true),
+            ("sparkline", SectionWidget::Sparkline { metric }, true),
+            ("none", SectionWidget::None, false),
+            (
+                "label",
+                SectionWidget::Label {
+                    text: "CPU".to_string(),
+                },
+                false,
+            ),
+            (
+                "icon",
+                SectionWidget::Icon {
+                    glyph: "*".to_string(),
+                },
+                false,
+            ),
+        ];
+
+        for (name, widget, wants) in cases {
+            let mut chrome = ShellBarChrome::default();
+            chrome.top.entries.push(SectionChrome {
+                widget: widget.clone(),
+                action: SectionAction::None,
+            });
+            assert_eq!(
+                chrome.wants_resources(),
+                *wants,
+                "a bar holding only a {name} widget must {} make the loop sample",
+                if *wants { "" } else { "not" }
+            );
+        }
+    }
+
     #[test]
     fn a_widget_this_build_cannot_show_is_reported_and_never_reaches_the_geometry() {
         let mut wrong_kind = plain_section("fill");
@@ -4057,7 +4482,7 @@ mod tests {
         actions: &ShellBarChrome,
         region: RegionId,
         index: u8,
-    ) -> Option<Option<SecondaryPresentation>> {
+    ) -> Option<SecondaryPresentation> {
         match actions.action_for(region, index) {
             Some(SectionAction::OpenPopup { secondary, .. }) => Some(*secondary),
             _ => None,
@@ -4243,17 +4668,26 @@ mod tests {
     }
 
     // TC-67-1/TC-67-4 · the presentation the person wrote survives the
-    // derivation, and its absence stays absent. The second half is the
-    // regression gate for every config file written before this field existed:
-    // those sections must keep meaning exactly what they meant.
+    // derivation, and an unwritten one becomes the menu.
+    //
+    // The second half was once "its absence stays absent", pinning `None` for a
+    // section written before this field existed. That was the right gate while
+    // the absence meant a right press did nothing at all. It now means the
+    // press asks, which takes nothing away from anybody — the only thing that
+    // changed is that a gesture which used to be silent now offers the choices
+    // it always had. Somebody who wants the silence back can write `"none"`,
+    // pinned below: a preference that could previously only be relied upon is
+    // now something the file can say.
     // TP-CHROME-57: a section carries the secondary presentation it was written
-    // with, and carries none when none was written.
+    // with, and asks when none was written.
     #[test]
     fn a_section_carries_the_secondary_presentation_it_was_written_with() {
         let config = ShellBarsConfig {
             top: bar_with_sections(vec![
                 secondary_section("popup", "tab"),
                 section_with_action("fill", "popup", &["btop"]),
+                secondary_section("popup", "split"),
+                secondary_section("popup", "none"),
             ]),
             ..Default::default()
         };
@@ -4262,17 +4696,27 @@ mod tests {
 
         assert_eq!(
             popup_secondary(&actions, RegionId::TopBar, 0),
-            Some(Some(SecondaryPresentation::Tab)),
+            Some(SecondaryPresentation::Tab),
             "the presentation must arrive as itself, not be re-derived downstream"
         );
         assert_eq!(
             popup_secondary(&actions, RegionId::TopBar, 1),
-            Some(None),
-            "a section written before this field existed must still mean what it meant"
+            Some(SecondaryPresentation::Menu),
+            "a section that named no presentation asks rather than doing nothing"
+        );
+        assert_eq!(
+            popup_secondary(&actions, RegionId::TopBar, 2),
+            Some(SecondaryPresentation::Split),
+            "the presentation the grammar refused yesterday must arrive today"
+        );
+        assert_eq!(
+            popup_secondary(&actions, RegionId::TopBar, 3),
+            Some(SecondaryPresentation::Inert),
+            "the old silence must stay reachable, now as something written down"
         );
         assert!(
             shell_bar_config_problems(&config, true).is_empty(),
-            "neither spelling is a problem worth reporting"
+            "none of the four spellings is a problem worth reporting"
         );
     }
 
@@ -4559,7 +5003,10 @@ mod tests {
     // refused by name, and costs only its own section.
     #[test]
     fn a_secondary_presentation_this_build_does_not_know_is_refused() {
-        for spelling in ["TAB", " tab ", "window", "split"] {
+        // `"split"` sat here until the grammar learned it, which is exactly
+        // what this row is for: the near-miss of an accepted name, so a build
+        // that grows a presentation cannot also quietly grow its typos.
+        for spelling in ["TAB", " tab ", "MENU", "window", "splits", "nothing"] {
             let config = ShellBarsConfig {
                 top: bar_with_sections(vec![
                     secondary_section("popup", spelling),
@@ -4583,6 +5030,16 @@ mod tests {
                     && reported[0].contains(spelling)
                     && reported[0].contains("sections[0]"),
                 "the message must name the field, the value and the index: {reported:?}"
+            );
+
+            // The message must not promise the left press still works. A
+            // refused `secondary` takes the whole action down — asserted two
+            // lines below — and a sentence naming only the right press sends
+            // somebody looking for a popup that will never open either.
+            assert!(
+                !reported[0].contains("a right press"),
+                "the refusal must describe what the section actually does, which \
+                 is nothing at all: {reported:?}"
             );
 
             // TC-67-5 · a refused action costs only its own section. Measured at

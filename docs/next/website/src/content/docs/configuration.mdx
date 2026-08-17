@@ -550,7 +550,7 @@ Writing more sections than the bar allows, asking for a `max_sections` of zero o
 
 ### Putting something in a section
 
-A section is empty until it is given a widget. There are four kinds:
+A section is empty until it is given a widget. There are six kinds:
 
 | `widget.kind` | Draws | Names |
 |---|---|---|
@@ -559,6 +559,7 @@ A section is empty until it is given a widget. There are four kinds:
 | `meter` | the same counter, as a filled bar | `metric` |
 | `sparkline` | the same counter over time, one column per reading | `metric` |
 | `icon` | one picture | `glyph`, or `art`, or `pixels` + `palette` |
+| `clock` | the time | `format` |
 
 No widget ever changes how wide its section is. The sizing rules above decide that, and content that does not fit is cut rather than pushing its neighbours around — clipping is by display width, so a two-cell emoji counts as two.
 
@@ -576,6 +577,22 @@ widget = { kind = "label", text = "  CPU" }
 #### A machine counter
 
 `resource` writes the number; `meter` draws how full it is. Both name the same `metric`, and the value is sampled on the server's own clock rather than read by whatever draws it — so two sections showing the same metric always agree.
+
+There are seven metrics, and `ram` is accepted as another word for `mem`:
+
+| `metric` | Shows | Drawn as a bar? |
+| --- | --- | --- |
+| `cpu` | busy time since the last reading, as a percentage | yes |
+| `mem` | memory in use, against the total | yes |
+| `swap` | swap in use, against the total | yes |
+| `disk` | space used on the filesystem Herdr is running from, against its size | yes |
+| `battery` | charge remaining | yes |
+| `temp` | the warmest sensor the machine reports, in °C | yes, against 100 °C |
+| `net` | bytes per second in and out, loopback excluded | **no** — a rate has no ceiling to be a proportion of |
+
+A `net` section is a figure, never a bar or a sparkline: inventing a ceiling for it — the fastest seen so far, the link speed — would make a full bar mean something different on every machine and at every moment.
+
+Anything Herdr cannot read shows `--` rather than a number. A desktop has no battery and a virtual machine often has no thermal sensor, and both of those are `--`; `0%` would say the battery is flat, which is a different and false thing. Only the metrics a section actually shows are read at all, so a bar with a `cpu` meter never touches the disk or the battery.
 
 ```toml
 [[shell.bars.top.sections]]
@@ -611,11 +628,41 @@ How often the machine is re-read is one setting for all of them:
 resource_interval_ms = 500   # default: 2000
 ```
 
-Nothing is read at all unless a section asks for it, so a bar without a `resource` or `meter` costs nothing whatever this says.
+Nothing is read at all unless a section asks for it, so a bar without a `resource`, `meter` or `sparkline` costs nothing whatever this says.
 
 Accepted between 250 and 60000. The floor is not a preference: a CPU percentage is the difference between two cumulative readings, and the kernel counts in jiffies — a hundred a second, so ten milliseconds each. At 250 ms a single-core machine has twenty-five of them to tell apart; at 100 ms it has ten, and the figure on screen starts reporting the counter's resolution rather than the machine's load. The ceiling is a typo guard — a reading once a minute describes history.
 
 A value outside the range is reported by `herdr config check` and the default pace is kept. A bad number leaves you with a working meter and a sentence about the number, rather than a bar that quietly stopped.
+
+#### The time
+
+A `clock` section writes the time however `format` asks for it:
+
+```toml
+[[shell.bars.top.sections]]
+kind   = "content"
+widget = { kind = "clock", format = "%a %d %b  %H:%M" }
+```
+
+Leave `format` out and you get `%H:%M`. Every field is written below as it renders at one moment — Monday 17 August 2026, at 13:05:09 — so the table reads as a single clock taken apart:
+
+| Field | Renders |
+|---|---|
+| `%H` | `13` |
+| `%I` | `01` |
+| `%M` | `05` |
+| `%S` | `09` |
+| `%p` | `PM` |
+| `%a` | `Mon` |
+| `%d` | `17` |
+| `%b` | `Aug` |
+| `%m` | `08` |
+| `%Y` | `2026` |
+| `%y` | `26` |
+
+Anything that is not a field is carried through as written, and `%%` is a literal percent. A field Herdr cannot fill in is reported by `herdr config check` rather than drawn as itself — `%Q` on a bar is indistinguishable from a field that exists and rendered wrongly.
+
+**The format also decides how often the clock is redrawn.** A format naming `%S` is refreshed every second; one without it once a minute, on the minute. There is no separate interval setting, because the format already says which resolution you asked for, and two settings that can disagree only raise the question of which one wins. A bar with no clock schedules nothing at all.
 
 #### A picture
 
@@ -740,7 +787,24 @@ cells  = 12
 action = { kind = "popup", argv = ["btop"], secondary = "tab" }
 ```
 
-`secondary = "tab"` opens the same command in a tab instead of a popup, for the times you want to keep it around. It is the only presentation there is today; anything else is refused rather than quietly treated as the default, because a misspelling that silently opens a popup is indistinguishable from not having written the key at all.
+Left press always opens the popup. What the right press does is up to `action.secondary`:
+
+| `action.secondary` | What a right press does |
+| --- | --- |
+| `menu` | Opens a menu at the pointer and lets you pick. This is what happens when you leave the key out. |
+| `tab` | Opens the same command in a new tab of the current workspace, straight away. |
+| `split` | Splits the focused pane and runs the same command beside it, straight away. |
+| `none` | Nothing. The press still stops at the bar, as every press over chrome does. |
+
+The menu offers the same command in all three places, so one section reaches every presentation without you having to decide in the config which one you meant:
+
+| Menu item | Where the command opens |
+| --- | --- |
+| `Open in popup` | The popup, exactly as a left press would. Greyed out while a popup is already open: there is one popup at a time, and closing yours to make room for another is not something a stray click should do. |
+| `Open in new tab` | A new tab of the current workspace. |
+| `Open in split` | Beside the focused pane. |
+
+Anything else in `action.secondary` is refused rather than quietly treated as the default, because a misspelling that silently opened a menu is indistinguishable from not having written the key at all. Spelling is exact: `TAB` is a typo, not another way of writing `tab`.
 
 #### Running a plugin action
 

@@ -10,7 +10,7 @@ exists, measured**, what is missing, and the shape the missing parts should take
 
 ---
 
-## SP0 · The measured platform (2026-08-13)
+## SP0 · The measured platform (2026-08-17)
 
 The app-store-shaped question — *"do we build this from zero?"* — is answered **no**. herdr
 already carries a plugin system with an install path, a manifest, declared actions, and pane
@@ -27,14 +27,22 @@ ownership. What is missing is the **bridge** from a plugin to a bar section.
 | open something in a new tab | **exists** | `Method::TabCreate` |
 | bar section draws a picture | **exists** | `SectionWidget::Icon` / `Art` (`e1eaa92a`) |
 | bar section opens a popup on left click | **exists** | `SectionAction::OpenPopup` (`5771dfc6`, `f8df7485`) |
-| bar section answers a right press | **exists** | `SectionGesture::Secondary`, `action.secondary = "tab"` (`b4d37959`) |
-| open a command in a new tab of the current workspace | **exists** | `App::open_argv_in_new_tab` |
+| bar section answers a right press | **exists** | `SectionGesture::Secondary` (`b4d37959`) |
+| a right press offers a **menu** of presentations | **exists** | `ContextMenuKind::BarSection`, `action.secondary = "menu"` — the default |
+| open a command in a new tab of the current workspace | **exists** | `App::open_argv_in_new_tab`, `secondary = "tab"` |
+| open a command **beside the focused pane** | **exists** | `App::open_argv_in_split`, `secondary = "split"` |
 | bar section runs a plugin action | **exists** | `SectionAction::InvokePlugin`, `action = { kind = "plugin", command = "…" }` |
-| **icon by name rather than raw codepoint** | **MISSING** | config takes a literal grapheme |
+| the grammar can be **read without running it** | **exists** | `herdr shell spec [--json]` — kinds, keys, refusals, colours, pictures, menu rows |
+| **icon by name rather than raw codepoint** | **MISSING** | `glyph` still takes a literal grapheme; `art` takes a name, an icon-font symbol does not |
+| more than one popup at a time | **MISSING** | `BarSectionClick::PopupAlreadyOpen`; the menu greys the row instead |
 | more than 8 sections in one bar | **exists** | `shell.bars.<edge>.max_sections`, default 8, up to 16 (`267c8496`) |
 
 Read that table before proposing anything. Two rows are missing; the rest is plumbing that
 already works and must be reused rather than reinvented.
+
+> ⚠ **This table is a claim about the code, and it has been wrong twice.** Both times the
+> failure was the same: a row written from what the surrounding design implied rather than
+> from the struct. Before you trust a row, `search_graph` the symbol it names.
 
 > ⚠ One correction worth carrying: an earlier draft of this document said the right press was
 > "just wiring" because `Method::TabCreate` already existed. Measured 2026-08-14 — it does not
@@ -104,8 +112,17 @@ that claim is false, in exactly the way a fabricated `0%` would be.
 |---|---|---|
 | *(absent)* | inert — consumes the press so it cannot leak to the surface behind | left |
 | `popup` | spawns `argv` in a floating pane, at `width`/`height` | left |
-| `secondary = "tab"` | opens **the same `argv`** in a new tab of the current workspace, full size | right |
 | `plugin` | invokes `command = "<plugin-id>.<action-id>"` in-process, through the same resolver a keybind uses | left |
+
+And what the *right* press does, on a `popup` section, by `action.secondary`:
+
+| `action.secondary` | today | note |
+|---|---|---|
+| *(absent)* | same as `"menu"` | the default changed on 2026-08-17; it used to be inert |
+| `menu` | opens `ContextMenuKind::BarSection` at the pointer: **Open in popup**, **Open in new tab**, **Open in split** | the popup row is disabled while a popup is open |
+| `tab` | opens **the same `argv`** in a new tab of the current workspace, full size | unchanged, and deliberately: a file written before the menu existed must keep acting, not start asking |
+| `split` | opens **the same `argv`** beside the focused pane | horizontal, matching every other launcher in the product |
+| `none` | nothing — but the press is still consumed | the old default, now something a file can say rather than only rely on |
 
 A `plugin` action answers **one** gesture. It carries no `argv`, no `width`, no `height` and no
 `secondary`, and each of those is refused by name rather than ignored: a plugin's command line and
@@ -135,7 +152,6 @@ can be installed after the config naming it was written, and refusing the line a
 forbid the icon of an app somebody has not downloaded yet. An id that resolves to nothing reports
 itself as a toast when pressed, with the resolver's own reason — "not found" and "disabled" stay
 different messages, because they need different answers from the person reading them.
-| `menu` | **not built** — a context menu of the section's own actions | right, once there is more than one |
 
 **The gesture rule that must hold:** left is *the* action, right is *choice about* the action.
 That is the convention every desktop the user compared us against follows, and breaking it
@@ -156,12 +172,27 @@ A `secondary` naming something this build does not know, or sitting on a section
 command, is refused at config time with its own message — the same treatment a popup size with
 no popup gets, and for the same reason: that is the shape a half-finished edit leaves behind.
 
-**Why not a context menu yet.** The fork's existing right-press idiom *is* a context menu
-(`ContextMenuKind::AppDock`), and reusing patterns is the house rule. It was rejected for this
-layer on measured grounds: a new `ContextMenuKind` variant touches **eleven files** including an
-exhaustive invariant arm and four fixtures, and a menu of one item is a click tax. It becomes
-the right answer when a section can carry a plugin's whole action list — which is what the
-`plugin` row above unlocks.
+**Why the context menu is here now** (2026-08-17). It was rejected once, on the grounds that a
+new `ContextMenuKind` variant touches "eleven files including an exhaustive invariant arm and
+four fixtures", and that a menu of one item is a click tax. Two of those three were wrong when
+measured, and the third stopped being true:
+
+| the estimate | what building it actually cost |
+|---|---|
+| eleven files | **seven source files**: `state.rs` (variant, rows, `item_enabled`, invariant arm), `input/shell.rs` (the decision), `input/mod.rs` (opening it), `input/modal.rs` (the picks), `tabs.rs` (`open_argv_in_split`), `ui/shell/source.rs` (the grammar), `ui/shell/spec.rs` (publishing it) — plus two behaviour-registry files and two documents |
+| four fixtures | **none.** No fixture in this repository enumerates `ContextMenuKind` |
+| an exhaustive invariant arm | **true**, and it cost four lines: a bar section menu carries a command line rather than an index, so it has no identity that can go stale and nothing to assert |
+| a menu of one item is a click tax | **true, and no longer the situation.** Three presentations exist now, and the enum being closed is what turned "should we?" into a cost the compiler could count |
+
+The lesson worth carrying is not "menus are cheap". It is that **a rejection recorded with an
+estimate has to be re-measured before it is cited**, because the estimate ages exactly like the
+capability table above it — and this one was cited for three days as though it were a finding.
+
+The other rejected reason aged the same way. `SecondaryPresentation` used to say, in the code,
+that a split presentation "needs a target pane, and a bar has no idea which pane the person
+meant". That was true the day it was written. It stopped being true when `open_argv_in_new_tab`
+started resolving the focused pane to borrow its directory: the bar's answer to *which pane* is
+now the same answer the pane menu's own "Split right" gives.
 
 ---
 
@@ -204,10 +235,20 @@ Sizing rules worth knowing before you write:
 
 ### Assigning behaviour
 
-Today, one shape: `action = { kind = "popup", argv = [...] }`. Everything else in SP1.b is
-unbuilt. When they land they must keep this property: **an action is declarative data**, never
-a script. A bar that could run arbitrary shell from a config file is a bar that cannot safely
-accept a third-party section.
+Two shapes: `action = { kind = "popup", argv = [...] }` and
+`action = { kind = "plugin", command = "…" }`. A `popup` section additionally chooses what its
+right press does, through `action.secondary` — see the second table in SP1.b.
+
+Whatever lands next must keep this property: **an action is declarative data**, never a script.
+A bar that could run arbitrary shell from a config file is a bar that cannot safely accept a
+third-party section. The menu does not weaken this: it offers presentations of the command the
+config already named, never a command of its own.
+
+You do not have to read this file to learn the vocabulary. `herdr shell spec` prints every
+accepted name — section kinds, widget kinds, action kinds, secondary presentations, the menu's
+rows, the colour tokens, the bundled pictures and their sizes — and `--json` makes it
+machine-readable. Each of those lists is gated against the parser in both directions, so the
+spec cannot advertise a name the build refuses or hide one it accepts.
 
 ### Adding a custom icon
 
@@ -241,10 +282,17 @@ That decomposes into four things, and three of them already exist.
   1. GET IT          PluginLink                                  ✅ exists
   2. DESCRIBE IT     plugin manifest + PluginActionList          ✅ exists
   3. PLACE IT        [[shell.bars.<edge>.sections]] + reload     ✅ exists
-  4. WIRE IT         SectionAction::Plugin { id, action }        ❌ MISSING  ← the bridge
+  4. WIRE IT         SectionAction::InvokePlugin { action }      ✅ exists  (2026-08-14)
 ```
 
-Only step 4 is new, and it is small. Everything else is reuse.
+All four steps exist. This block said step 4 was missing for three days after it shipped, while
+the capability table twenty lines above already recorded it — the same document disagreeing with
+itself, which is what a "what is missing" list does when it is written once and read many times.
+
+What a plugin section still cannot do is offer **its own** action list from the right press: the
+menu built here presents one command in three places, and a plugin action is not a command this
+layer knows how to re-present (`SectionGesture::Secondary` on a plugin action is deliberately
+inert). That is the next bridge, and the menu is the surface it will land on.
 
 **Why an external store is viable.** A third-party contribution is two inert files: a plugin
 manifest (already a defined format) and, optionally, an icon written as pixel rows. Neither
@@ -276,6 +324,9 @@ then just an index of manifests, which can live entirely outside this repository
 | Let a section run a plugin by shelling out to a CLI | The bridge is `PluginActionInvoke`, in-process |
 | Give the right press its own `argv` | `secondary` names a presentation; two commands in one section drift, and the person pressing cannot tell which they got |
 | Trust a capability table without opening the struct | `Method::TabCreate` was listed as "the wiring is already there" and cannot run a command at all |
+| Cite a recorded rejection without re-measuring it | The context menu was refused on an eleven-file, four-fixture estimate. Measured: seven source files, zero fixtures |
+| Believe a code comment about what is impossible | `SecondaryPresentation` said a split "needs a target pane, and a bar has no idea which pane"; the bar had been resolving the focused pane for its own `cwd` the whole time |
+| Guard a documented name with `guide.contains(name)` | The guide is prose: `bar` occurs 81 times in it. Parse the **table**, compare as a set, in both directions |
 | Write a screen detector from what you expect the product to draw | Derive it from a dump. A popup-frame detector looking for `╭` reported "no popup" while `┌ popup` sat in the middle of the screen |
 | Add a ninth section | The bar is refused entirely — it does not truncate |
 | Ship an icon-font glyph with no fallback | A machine without the font shows tofu, which reads as broken |

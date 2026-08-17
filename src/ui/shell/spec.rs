@@ -47,6 +47,20 @@ pub(crate) struct ShellSpec {
     pub action_kinds: Vec<KindSpec>,
     /// What a second gesture can ask for.
     pub secondary_presentations: Vec<&'static str>,
+    /// The fields a `clock` widget's `format` may name, each with what it
+    /// renders as.
+    ///
+    /// Published for the reason the colours are: an example in the guide shows
+    /// one spelling, and nothing else can teach the other ten. The examples are
+    /// all of one moment, so the list reads as a single clock taken apart.
+    pub clock_fields: Vec<ClockFieldSpec>,
+    /// The rows the menu offers when a second gesture asks rather than acts.
+    ///
+    /// Published for the same reason the colours are: nothing else can teach
+    /// them. A menu only exists once somebody has already pressed, so a reader
+    /// deciding whether `secondary = "menu"` is worth writing would otherwise
+    /// have to run the thing to find out what it offers.
+    pub bar_section_menu: Vec<&'static str>,
     /// The colour names any `color`, `gradient` stop or picture palette may
     /// write. Published because nothing else can teach them: an unrecognised
     /// colour is not refused, so no refusal ever names the set, and a reader
@@ -100,6 +114,15 @@ pub(crate) struct MetricSpec {
 pub(crate) struct AliasSpec {
     pub alias: &'static str,
     pub means: &'static str,
+}
+
+/// One clock format field, and what it renders as.
+#[derive(Debug, Serialize)]
+pub(crate) struct ClockFieldSpec {
+    /// As a format writes it, `%` included.
+    pub field: String,
+    /// What that field produces, for one fixed moment shared by every row.
+    pub renders: &'static str,
 }
 
 /// One bundled picture and the room it needs.
@@ -184,9 +207,20 @@ pub(crate) fn shell_spec() -> ShellSpec {
         widget_kinds: kinds(source::widget_kind_facts()),
         action_kinds: kinds(source::action_kind_facts()),
         secondary_presentations: source::secondary_presentation_names(),
+        clock_fields: crate::clock::CLOCK_FIELDS
+            .iter()
+            .map(|field| ClockFieldSpec {
+                field: format!("%{}", field.spec),
+                renders: field.example,
+            })
+            .collect(),
+        bar_section_menu: crate::app::state::BarSectionMenuItem::ALL
+            .iter()
+            .map(|item| item.label())
+            .collect(),
         colors: source::bar_color_tokens(),
         metrics: MetricSpec {
-            names: ResourceMetric::ACCEPTED.to_vec(),
+            names: ResourceMetric::accepted(),
             aliases: ResourceMetric::ALIASES
                 .iter()
                 .map(|(alias, means)| AliasSpec { alias, means })
@@ -256,6 +290,16 @@ pub(crate) fn render_text(spec: &ShellSpec) -> String {
         "\nsecondary presentations (action.secondary = …): {}\n",
         list(&spec.secondary_presentations)
     ));
+    out.push_str(&format!(
+        "  the menu offers: {}\n",
+        list(&spec.bar_section_menu)
+    ));
+
+    out.push_str("\nclock fields (widget.format = …), all shown at one moment:\n");
+    for field in &spec.clock_fields {
+        out.push_str(&format!("  {} → {}\n", field.field, field.renders));
+    }
+    out.push_str("  %% is a literal percent; anything else is carried through\n");
 
     out.push_str(&format!(
         "\ncolours (color, gradient stops, picture palettes): {}\n",
@@ -377,6 +421,14 @@ mod tests {
         assert!(
             !spec.secondary_presentations.is_empty(),
             "the secondary presentations emptied out"
+        );
+        // TP-SPEC-15: the menu the spec publishes is the menu the product
+        // draws. Three, not "some": the rows are a closed set and a spec that
+        // published two of them would teach that a section reaches two places.
+        assert_eq!(
+            spec.bar_section_menu.len(),
+            3,
+            "the published menu no longer has a row per presentation"
         );
         assert!(spec.colors.len() >= 8, "the colour names thinned out");
         assert!(spec.metrics.names.len() >= 3, "a metric went missing");
@@ -767,6 +819,8 @@ mod tests {
             "widget_kinds",
             "action_kinds",
             "secondary_presentations",
+            "bar_section_menu",
+            "clock_fields",
             "metrics",
             "icon_art",
             "switches",

@@ -2524,6 +2524,61 @@ pub enum ContextMenuKind {
     AppDock {
         app: crate::ui::surface_host::BuiltInAppId,
     },
+    /// An edge bar section's own menu: the presentations one command can be
+    /// opened in (TP-CHROME-108).
+    ///
+    /// Carries the command itself rather than an index into the bar, and that
+    /// is the whole reason this menu can be trusted. A bar is rebuilt whenever
+    /// its config reloads or its geometry generation turns over, so an index
+    /// captured here would name whatever section moved into that slot — the
+    /// failure `AgentEntry` and `WorkspaceChat` each carry their own identity
+    /// to avoid. A command line cannot go stale that way: at worst it runs the
+    /// thing the person pointed at, which is what they asked for.
+    BarSection {
+        argv: Vec<String>,
+        width: Option<crate::popup_size::PopupSize>,
+        height: Option<crate::popup_size::PopupSize>,
+        /// Whether the single popup slot was taken when the menu opened, which
+        /// decides whether "Open in popup" can be picked (TP-CHROME-109).
+        popup_open: bool,
+    },
+}
+
+/// One row of an edge bar section's menu.
+///
+/// An enum rather than a list of labels, for the reason the bar's own grammar
+/// keeps tables instead of `match` arms (D70-7): the handler matches on this
+/// type and the compiler counts the arms, so a row that is drawn but does
+/// nothing cannot be written. A `&[&str]` would let the two drift, and the
+/// person would meet a menu item that quietly did nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BarSectionMenuItem {
+    /// The same thing the primary press does.
+    ///
+    /// Offered even though a left press already reaches it: a menu that listed
+    /// only the other two would teach that a section has two presentations,
+    /// and the one it left out is the one it opens by default.
+    Popup,
+    Tab,
+    Split,
+}
+
+impl BarSectionMenuItem {
+    /// Every row, in the order the menu draws them, primary first.
+    pub const ALL: &'static [Self] = &[Self::Popup, Self::Tab, Self::Split];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Popup => "Open in popup",
+            Self::Tab => "Open in new tab",
+            Self::Split => "Open in split",
+        }
+    }
+
+    /// The row drawn at `idx`, or `None` past the end of the menu.
+    pub fn at(idx: usize) -> Option<Self> {
+        Self::ALL.get(idx).copied()
+    }
 }
 
 /// Right-click context menu state.
@@ -2791,6 +2846,15 @@ impl ContextMenuState {
                 crate::ui::surface_host::BuiltInAppId::Terminal => vec!["Terminal"],
                 crate::ui::surface_host::BuiltInAppId::Files => vec!["Files"],
             },
+            // TP-CHROME-108: the same three items whether or not the popup slot
+            // is free. Dropping the first one when a popup is open would shorten
+            // the menu, and then the same section's menu would have two shapes —
+            // the third item would sometimes be the second, and muscle memory
+            // would pick the wrong one. `item_enabled` says no instead.
+            ContextMenuKind::BarSection { .. } => BarSectionMenuItem::ALL
+                .iter()
+                .map(|item| item.label())
+                .collect(),
             ContextMenuKind::Pane {
                 has_manual_label: true,
                 source_pane_id: Some(_),
@@ -2847,6 +2911,15 @@ impl ContextMenuState {
             ContextMenuKind::File { model } => {
                 model.items.get(idx).is_some_and(|item| item.enabled)
             }
+            // TP-CHROME-109: the popup slot holds exactly one pane, so offering
+            // a second would either refuse after the fact or drop somebody's
+            // open work. The row stays visible and says no, which teaches the
+            // limit; removing it would only make the menu change shape.
+            ContextMenuKind::BarSection { popup_open, .. } => match BarSectionMenuItem::at(idx) {
+                Some(BarSectionMenuItem::Popup) => !popup_open,
+                Some(_) => true,
+                None => false,
+            },
             _ => idx < self.items().len(),
         }
     }
@@ -3845,6 +3918,16 @@ pub struct AppState {
     /// one reading and is copied freely, and giving it a growing tail would make
     /// every copy of a reading carry the history of every other.
     pub(crate) resource_history: crate::resource::ResourceHistory,
+    /// The wall clock a `clock` section draws, as the loop last read it.
+    ///
+    /// Held here rather than read at draw time for the reason a resource sample
+    /// is: the renderer formats what it is given and never takes a reading, so
+    /// a clock cannot make the bar repaint on every frame.
+    ///
+    /// `None` until the first tick, and again whenever the local zone cannot be
+    /// resolved. A clock quietly falling back to UTC would show another
+    /// country's time with nothing about it looking wrong.
+    pub(crate) clock_now: Option<time::OffsetDateTime>,
     pub(crate) drag: Option<DragState>,
     pub(crate) workspace_press: Option<WorkspacePressState>,
     pub(crate) tab_press: Option<TabPressState>,
@@ -4978,6 +5061,7 @@ impl AppState {
             shell_bar_chrome: crate::ui::shell::ShellBarChrome::default(),
             resources: crate::resource::ResourceSample::default(),
             resource_history: crate::resource::ResourceHistory::default(),
+            clock_now: None,
             drag: None,
             workspace_press: None,
             tab_press: None,
@@ -5493,6 +5577,12 @@ impl AppState {
                 ContextMenuKind::AppDock { .. } => {
                     // The dock popover references only a closed built-in app
                     // id; there is no index-shaped identity to validate.
+                }
+                ContextMenuKind::BarSection { .. } => {
+                    // A bar section's menu carries the command line itself, on
+                    // purpose (see the variant). Nothing here is an index into
+                    // anything, so there is no identity to go stale and none to
+                    // check.
                 }
                 ContextMenuKind::NodeHeader { .. } | ContextMenuKind::SpaceHeader { .. } => {
                     // Header menus carry config keys, not indices; a key that
@@ -6878,6 +6968,101 @@ mod tests {
             list: MenuListState::new(0),
         };
         assert_eq!(picker.items(), &["UI", "Ops"]);
+    }
+
+    fn bar_section_menu(popup_open: bool) -> ContextMenuState {
+        ContextMenuState {
+            kind: ContextMenuKind::BarSection {
+                argv: vec!["btop".to_string()],
+                width: None,
+                height: None,
+                popup_open,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        }
+    }
+
+    /// The menu draws one row per presentation, and keeps its shape.
+    ///
+    /// The labels are asserted literally rather than derived from
+    /// `BarSectionMenuItem`, which would compare the table to itself and pass
+    /// however it was rewritten. This is the one place the words are written
+    /// down twice on purpose.
+    // TP-CHROME-108: a bar section's menu offers the same three rows whether or
+    // not the popup slot is free.
+    #[test]
+    fn bar_section_context_menu_offers_every_presentation() {
+        assert_eq!(
+            bar_section_menu(false).items(),
+            &["Open in popup", "Open in new tab", "Open in split"]
+        );
+        assert_eq!(
+            bar_section_menu(true).items(),
+            bar_section_menu(false).items(),
+            "the menu must not change shape with the popup slot, or the row a \
+             person reaches for moves under their hand"
+        );
+    }
+
+    /// A taken popup slot closes the row that would need it, and only that row.
+    // TP-CHROME-109: "Open in popup" is refused while a popup is already open,
+    // and the other rows stay reachable.
+    #[test]
+    fn bar_section_context_menu_closes_the_popup_row_while_a_popup_is_open() {
+        let free = bar_section_menu(false);
+        assert!(
+            (0..free.items().len()).all(|idx| free.item_enabled(idx)),
+            "control: with the slot free every row must be reachable, or the \
+             assertion below would hold for the wrong reason"
+        );
+
+        let taken = bar_section_menu(true);
+        assert!(
+            !taken.item_enabled(0),
+            "a second popup would drop the open one's work"
+        );
+        assert!(
+            taken.item_enabled(1) && taken.item_enabled(2),
+            "a taken popup slot says nothing about tabs or splits"
+        );
+    }
+
+    /// A menu opened from the bottom bar opens upwards rather than off screen.
+    ///
+    /// Every other menu in the product is opened from somewhere with room
+    /// under it; a bar section is the one surface that sits on the last row by
+    /// design, so this is the first caller that can ask for a menu below the
+    /// screen. The clamp already existed and had never been asked this.
+    // TP-CHROME-118: a bar section menu opened at the bottom edge stays on
+    // screen.
+    #[test]
+    fn a_bar_section_menu_opened_at_the_bottom_edge_stays_on_screen() {
+        let mut state = AppState::test_new();
+        let screen = ratatui::layout::Rect::new(0, 0, 80, 24);
+        state.view.terminal_area = screen;
+        state.view.sidebar_rect = ratatui::layout::Rect::new(0, 0, 0, 0);
+
+        let mut menu = bar_section_menu(false);
+        // The last row of the screen: where a bottom bar's only row is.
+        menu.y = screen.height - 1;
+        menu.x = 4;
+        state.context_menu = Some(menu);
+
+        let rect = state
+            .context_menu_rect()
+            .expect("an open menu must have a rectangle");
+        assert!(
+            rect.height > 1,
+            "control: a menu clamped down to nothing would satisfy the bound \
+             below without being visible; found {rect:?}"
+        );
+        assert!(
+            rect.y + rect.height <= screen.y + screen.height,
+            "a menu that runs off the bottom is one the person cannot read, \
+             and the row they want is the one that fell off: {rect:?}"
+        );
     }
 
     #[test]

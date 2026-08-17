@@ -1521,6 +1521,65 @@ impl App {
         encode_success(id, ResponseResult::Ok {})
     }
 
+    pub(in crate::app) fn handle_pane_sleep(&mut self, id: String, target: PaneTarget) -> String {
+        let Some((ws_idx, pane_id)) = self.parse_pane_id(&target.pane_id) else {
+            return pane_not_found(id, &target.pane_id);
+        };
+        let already_dormant = self
+            .state
+            .terminal_id_for_pane(ws_idx, pane_id)
+            .and_then(|terminal_id| self.state.terminals.get(&terminal_id))
+            .is_some_and(|terminal| terminal.dormant.is_some());
+        if !already_dormant {
+            use crate::app::dormancy::DormancyRefusal;
+            if let Err(refusal) = self.make_pane_dormant(pane_id) {
+                return match refusal {
+                    DormancyRefusal::NoSuchPane => pane_not_found(id, &target.pane_id),
+                    DormancyRefusal::NoRuntime => encode_error(
+                        id,
+                        "pane_not_sleepable",
+                        format!("pane {} has no runtime to release", target.pane_id),
+                    ),
+                    DormancyRefusal::ChildStillRunning => encode_error(
+                        id,
+                        "child_still_running",
+                        format!(
+                            "pane {} still has a running child; dormancy never touches live work",
+                            target.pane_id
+                        ),
+                    ),
+                    DormancyRefusal::Watched => encode_error(
+                        id,
+                        "pane_watched",
+                        format!("pane {} is on a watched tab", target.pane_id),
+                    ),
+                    DormancyRefusal::HistoryWriteFailed => encode_error(
+                        id,
+                        "history_write_failed",
+                        format!(
+                            "pane {} kept its runtime: its scrollback could not be written",
+                            target.pane_id
+                        ),
+                    ),
+                    #[cfg(not(unix))]
+                    DormancyRefusal::HistoryUnavailable => encode_error(
+                        id,
+                        "history_unavailable",
+                        format!(
+                            "pane {} is on the alternate screen and its primary history cannot be captured on this platform",
+                            target.pane_id
+                        ),
+                    ),
+                };
+            }
+            self.emit_pane_updated(ws_idx, pane_id);
+        }
+        match self.pane_info(ws_idx, pane_id) {
+            Some(pane) => encode_success(id, ResponseResult::PaneInfo { pane }),
+            None => pane_not_found(id, &target.pane_id),
+        }
+    }
+
     pub(super) fn handle_pane_close(&mut self, id: String, target: PaneTarget) -> String {
         match self.close_pane(id.clone(), &target) {
             Ok(()) => encode_success(id, ResponseResult::Ok {}),

@@ -1,4 +1,10 @@
-//! Opening a command in a new tab of the current workspace.
+//! Opening a command somewhere other than the popup: a new tab of the current
+//! workspace, or a split beside the focused pane.
+//!
+//! Both live here because they answer the same question — a bar section was
+//! pressed, where does the command go — and because they must agree on the
+//! directory. A section that opened btop in the focused pane's directory one
+//! way and in herdr's own the other way would be one control with two meanings.
 //!
 //! One place, because the same seven steps of bookkeeping already exist twice —
 //! `projects.rs` opens a project chat this way and `api/plugins/panes.rs` opens
@@ -132,4 +138,102 @@ impl App {
         self.announce_new_tab(ws_idx, tab_idx, root_pane);
         Ok(())
     }
+
+    /// Run `argv` beside the focused pane, and go there.
+    ///
+    /// The focused pane is resolved here rather than carried from wherever the
+    /// gesture started, because a menu can stay open across a focus change and
+    /// a pane id captured earlier could name one that has since closed. What
+    /// gets split is what is focused when the person picks, which is also what
+    /// they are looking at.
+    ///
+    /// The direction is not a parameter. A bar section is a launcher and the
+    /// surface that owns "which way" is the pane menu, which offers both; the
+    /// one used here is the one every other launcher in the product uses, so a
+    /// person cannot learn two different defaults for the same word.
+    // TP-CHROME-110: a command opened in a split lands beside the focused pane,
+    // is registered and announced, and takes focus.
+    pub(crate) fn open_argv_in_split(&mut self, argv: &[String]) -> std::io::Result<()> {
+        let Some(ws_idx) = self.state.active else {
+            return Err(std::io::Error::other("no active workspace"));
+        };
+        let Some(target_pane) = self
+            .state
+            .workspaces
+            .get(ws_idx)
+            .and_then(|workspace| workspace.focused_pane_id())
+        else {
+            return Err(std::io::Error::other("no focused pane to split"));
+        };
+
+        // The same directory `open_argv_in_new_tab` borrows, for the same
+        // reason: one section, one place.
+        let cwd = self
+            .state
+            .workspaces
+            .get(ws_idx)
+            .and_then(|workspace| {
+                let tab = workspace.active_tab()?;
+                tab.cwd_for_pane(target_pane, &self.state.terminals, &self.terminal_runtimes)
+            })
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| "/".into()));
+
+        let (rows, cols) = self.state.estimate_pane_size();
+        let scrollback_limit_bytes = self.state.pane_scrollback_limit_bytes;
+        let host_terminal_theme = self.state.host_terminal_theme;
+        let previous_focus = self.state.current_pane_focus_target();
+        let Some(workspace) = self.state.workspaces.get_mut(ws_idx) else {
+            return Err(std::io::Error::other("active workspace disappeared"));
+        };
+        // The same floors the tab path uses. A pane smaller than this is one no
+        // terminal program can draw in.
+        let split = workspace.split_pane_argv_command(
+            target_pane,
+            BAR_SECTION_SPLIT_DIRECTION,
+            rows.max(4),
+            cols.max(10),
+            Some(cwd),
+            argv,
+            Vec::new(),
+            scrollback_limit_bytes,
+            host_terminal_theme,
+            true,
+        );
+        let (tab_idx, new_pane) = match split {
+            Some(result) => result?,
+            None => return Err(std::io::Error::other("the pane to split disappeared")),
+        };
+
+        self.state.switch_workspace_tab(ws_idx, tab_idx);
+        self.state
+            .record_pane_focus_change(previous_focus, ws_idx, new_pane.pane_id);
+        self.state.settle_terminal_mode_after_focus();
+        self.terminal_runtimes
+            .insert(new_pane.terminal.id.clone(), new_pane.runtime);
+        // Before the terminal goes in, because an alias that outlived its pane
+        // would otherwise be live for the moment in between.
+        self.state
+            .remove_alias_shadowed_by_new_pane(new_pane.pane_id);
+        self.state
+            .terminals
+            .insert(new_pane.terminal.id.clone(), new_pane.terminal);
+        self.schedule_session_save();
+
+        if let Some(pane) = self.pane_info(ws_idx, new_pane.pane_id) {
+            self.emit_event(crate::api::schema::EventEnvelope {
+                event: crate::api::schema::EventKind::PaneCreated,
+                data: crate::api::schema::EventData::PaneCreated { pane },
+            });
+        }
+        self.emit_layout_updated_event(ws_idx, tab_idx);
+        Ok(())
+    }
 }
+
+/// Which way a bar section's split opens.
+///
+/// Named rather than written inline so the two places that must agree — this
+/// one and the API's own default for a plugin pane — can be compared by
+/// reading rather than by remembering.
+const BAR_SECTION_SPLIT_DIRECTION: ratatui::layout::Direction =
+    ratatui::layout::Direction::Horizontal;

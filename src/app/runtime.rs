@@ -384,6 +384,9 @@ impl App {
         // — and the only reason. The screen follows the data's clock, not the
         // other way round.
         changed |= self.tick_resource_sample(now);
+        // Same rule, other clock: a minute turning over changes what a clock
+        // section says, and nothing else about it is a reason to draw.
+        changed |= self.tick_clock();
 
         self.start_git_status_refresh_if_due(now);
 
@@ -707,6 +710,52 @@ impl App {
         )
     }
 
+    /// When the clock next has something new to show, or `None` when no
+    /// section shows one.
+    ///
+    /// Aligned to the boundary rather than to a fixed interval from the last
+    /// tick. A `%H:%M` clock woken every sixty seconds from whenever it started
+    /// would show a minute that changed up to fifty-nine seconds ago; woken at
+    /// the boundary, it changes when the minute does. The alignment costs one
+    /// modulo and buys the difference between a clock and a stopwatch.
+    // TP-CLOCK-08: a clock wakes on the boundary of the unit it shows.
+    pub(crate) fn clock_deadline(&self) -> Option<Instant> {
+        let tick = self.state.shell_bar_chrome.clock_tick()?;
+        let period = tick.as_secs().max(1);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?;
+        // Whole seconds until the next multiple of the period. Never zero: a
+        // deadline already in the past would make the loop spin.
+        let past = now.as_secs() % period;
+        let until = period - past;
+        let sub = u64::from(now.subsec_nanos());
+        Some(Instant::now() + Duration::from_nanos(until * 1_000_000_000 - sub))
+    }
+
+    /// Re-reads the wall clock, if a section is showing one.
+    ///
+    /// Returns whether the text a clock would draw has changed, so the loop can
+    /// leave the screen alone when it has not. Reading is cheap; repainting a
+    /// region every tick is what the resolution rule exists to avoid, and a
+    /// clock woken on the boundary can still find the same minute if the loop
+    /// woke early for some other reason.
+    // TP-CLOCK-09: the loop reads the clock, the renderer never does.
+    pub(crate) fn tick_clock(&mut self) -> bool {
+        if self.state.shell_bar_chrome.clock_tick().is_none() {
+            // A bar that lost its clock must not keep a stale reading around to
+            // draw if one comes back.
+            return self.state.clock_now.take().is_some();
+        }
+        let previous = self.state.clock_now;
+        self.state.clock_now = crate::clock::local_now();
+        previous.map(|at| (at.hour(), at.minute(), at.second()))
+            != self
+                .state
+                .clock_now
+                .map(|at| (at.hour(), at.minute(), at.second()))
+    }
+
     /// Reads the machine, if a reading is due.
     ///
     /// Called from the loop and from nowhere else. The first call can only
@@ -725,21 +774,64 @@ impl App {
             return false;
         }
 
+        let elapsed = self
+            .last_resource_sample_at
+            .map(|last| now.saturating_duration_since(last));
         self.resource_samples_taken = self.resource_samples_taken.saturating_add(1);
         self.last_resource_sample_at = Some(now);
 
-        let times = crate::platform::read_cpu_times();
-        self.state.resources.cpu = match (self.previous_cpu_times, times) {
-            (Some(prev), Some(current)) => crate::resource::cpu_percent(prev, current),
-            _ => None,
-        };
-        if times.is_some() {
-            self.previous_cpu_times = times;
+        // Only what something on screen is waiting for. Reading a counter
+        // nobody is showing is the cost this product does not pay while nobody
+        // is looking, and for `disk`, `battery` and `temp` that cost is a
+        // syscall or a directory walk rather than one small file.
+        let wanted = self.state.shell_bar_chrome.wanted_metrics();
+        let wants = |metric| wanted.contains(&metric);
+
+        if wants(crate::resource::ResourceMetric::Cpu) {
+            let times = crate::platform::read_cpu_times();
+            self.state.resources.cpu = match (self.previous_cpu_times, times) {
+                (Some(prev), Some(current)) => crate::resource::cpu_percent(prev, current),
+                _ => None,
+            };
+            if times.is_some() {
+                self.previous_cpu_times = times;
+            }
         }
 
-        let (mem, swap) = crate::platform::read_memory();
-        self.state.resources.mem = mem;
-        self.state.resources.swap = swap;
+        if wants(crate::resource::ResourceMetric::Mem)
+            || wants(crate::resource::ResourceMetric::Swap)
+        {
+            // One file carries both, so asking for either reads both. Splitting
+            // the read to match the request would be two opens of `/proc/meminfo`
+            // to save nothing.
+            let (mem, swap) = crate::platform::read_memory();
+            self.state.resources.mem = mem;
+            self.state.resources.swap = swap;
+        }
+
+        if wants(crate::resource::ResourceMetric::Disk) {
+            self.state.resources.disk = crate::platform::read_disk();
+        }
+        if wants(crate::resource::ResourceMetric::Battery) {
+            self.state.resources.battery = crate::platform::read_battery();
+        }
+        if wants(crate::resource::ResourceMetric::Temp) {
+            self.state.resources.temp = crate::platform::read_temperature();
+        }
+        if wants(crate::resource::ResourceMetric::Net) {
+            // A rate, so like CPU it needs a previous reading and the time
+            // between them. The first tick can only establish the baseline.
+            let total = crate::platform::read_net_total();
+            self.state.resources.net = match (self.previous_net_total, total, elapsed) {
+                (Some(prev), Some(current), Some(elapsed)) => {
+                    crate::resource::byte_rate(prev, current, elapsed)
+                }
+                _ => None,
+            };
+            if total.is_some() {
+                self.previous_net_total = total;
+            }
+        }
         // Recorded here rather than where a sparkline draws, for the same reason
         // the sample itself is: the loop reads the machine and the renderer
         // never does. A history filled at draw time would have one entry per
@@ -787,6 +879,7 @@ impl App {
             self.copy_feedback_deadline,
             self.next_animation_tick,
             self.resource_sample_deadline(),
+            self.clock_deadline(),
             include_git_refresh
                 .then(|| self.git_refresh_deadline())
                 .flatten(),
@@ -931,6 +1024,228 @@ mod tests {
                 ..Default::default()
             },
             ..Default::default()
+        }
+    }
+
+    /// A bar holding one live widget of the caller's choosing, and nothing else.
+    fn app_with_only_widget(widget_kind: &str) -> super::super::App {
+        app_with_only_widget_metric(widget_kind, "cpu")
+    }
+
+    /// The same, naming which metric the widget shows.
+    ///
+    /// Only what a section shows is read, so a test about one metric has to say
+    /// which metric its bar is asking for — a bar showing `cpu` proves nothing
+    /// about whether memory can be read.
+    fn app_with_only_widget_metric(widget_kind: &str, metric: &str) -> super::super::App {
+        let mut config = resource_bars_config();
+        config.top.sections[0].widget.kind = widget_kind.to_string();
+        config.top.sections[0].widget.metric = metric.to_string();
+        let mut app = super::super::App::new(
+            &crate::config::Config::default(),
+            true,
+            None,
+            tokio::sync::mpsc::unbounded_channel().1,
+            crate::api::EventHub::default(),
+        );
+        app.state.workspaces.push(Workspace::test_new("test"));
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config, true);
+        app
+    }
+
+    /// A live widget standing on its own is enough to make the loop sample.
+    ///
+    /// `sparkline` was not. Its history is filled inside `tick_resource_sample`,
+    /// which returns early unless the gate says somebody is waiting — and the
+    /// gate listed `resource` and `meter` only. A bar holding a sparkline and
+    /// nothing else therefore took no samples at all and drew an empty run
+    /// forever. Every sparkline test in the suite either fills the history by
+    /// hand or configures a `resource` section beside it, so all of them walked
+    /// past the gate and none of them could see this.
+    ///
+    /// Each kind gets its own app, because the failure is a widget that cannot
+    /// open the gate *alone* and two live sections in one bar would let either
+    /// one answer for both.
+    // TP-RES-17: every live widget opens the sampling gate, sparkline included.
+    #[test]
+    fn any_live_widget_on_its_own_makes_the_loop_read_the_machine() {
+        for kind in ["resource", "meter", "sparkline"] {
+            let mut app = app_with_only_widget(kind);
+            let now = Instant::now();
+
+            assert!(
+                app.resource_sample_deadline().is_some(),
+                "a bar holding only a {kind} widget must ask the loop to wake"
+            );
+            app.tick_resource_sample(now);
+            assert_eq!(
+                app.resource_samples_taken, 1,
+                "a bar holding only a {kind} widget must have been read once"
+            );
+            assert_eq!(
+                app.state
+                    .resource_history
+                    .series(crate::resource::ResourceMetric::Cpu)
+                    .len(),
+                1,
+                "the reading has to reach the history a {kind} widget draws from"
+            );
+        }
+    }
+
+    /// A bar with a clock wakes for one, and a bar without a clock does not.
+    ///
+    /// The negative half carries the whole cost argument, exactly as it does
+    /// for the sampler: a clock is the first thing in this product that changes
+    /// without anybody touching it, so a tick scheduled unconditionally would
+    /// wake every herdr on every machine once a minute for a widget almost
+    /// nobody has turned on. The `resource` row is there because the two live
+    /// clocks are separate on purpose — a meter must not start waking on the
+    /// minute, and a clock must not start opening `/proc`.
+    // TP-CLOCK-07: no clock section means no tick at all.
+    #[test]
+    fn only_a_bar_with_a_clock_asks_the_loop_to_wake_for_one() {
+        let with_clock = app_with_only_widget("clock");
+        assert!(
+            with_clock.clock_deadline().is_some(),
+            "a clock section must ask the loop to wake"
+        );
+        assert_eq!(
+            with_clock.resource_sample_deadline(),
+            None,
+            "a clock must not make the loop start reading the machine"
+        );
+
+        for kind in ["label", "resource"] {
+            let without = app_with_only_widget(kind);
+            assert_eq!(
+                without.clock_deadline(),
+                None,
+                "a bar holding only a {kind} widget must not wake for a clock"
+            );
+        }
+    }
+
+    /// A clock reading reaches state, and only a changed one asks for a draw.
+    ///
+    /// The second half keeps the wakeup cheap. A tick reporting a change every
+    /// time would repaint the clock's cells on every wakeup — the cost the
+    /// resolution rule exists to avoid, and one that looks perfectly correct on
+    /// screen.
+    // TP-CLOCK-09: the loop reads the clock, the renderer never does.
+    #[test]
+    fn ticking_the_clock_fills_state_and_reports_only_real_changes() {
+        let mut app = app_with_only_widget("clock");
+        assert!(
+            app.state.clock_now.is_none(),
+            "control: nothing has read the clock yet"
+        );
+
+        assert!(
+            app.tick_clock(),
+            "the first reading is a change from nothing"
+        );
+        assert!(
+            app.state.clock_now.is_some(),
+            "the reading has to reach the state the renderer draws from"
+        );
+        assert!(
+            !app.tick_clock(),
+            "a second tick inside the same second has nothing new to draw"
+        );
+    }
+
+    /// A bar that loses its clock drops the reading it was holding.
+    ///
+    /// A stale time is worse than no time: a config reload that removes the
+    /// clock and later brings it back would otherwise paint whatever moment the
+    /// last bar was showing, for as long as it took the next tick to arrive.
+    // TP-CLOCK-10: removing the clock clears the reading behind it.
+    #[test]
+    fn a_bar_that_loses_its_clock_forgets_the_time_it_was_holding() {
+        let mut app = app_with_only_widget("clock");
+        app.tick_clock();
+        assert!(app.state.clock_now.is_some(), "control: a reading is held");
+
+        app.state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::default();
+        assert!(
+            app.tick_clock(),
+            "dropping a held reading is itself a change worth drawing"
+        );
+        assert_eq!(
+            app.state.clock_now, None,
+            "a clock nobody is showing must not leave a time behind"
+        );
+    }
+
+    /// Only the metrics on screen are read.
+    ///
+    /// Asserted on the sample rather than on a call counter, because the
+    /// readings are platform functions with no seam to count through — and the
+    /// observable consequence is the one that matters anyway: a metric nobody
+    /// asked for stays `None`, which means nothing went and looked for it.
+    ///
+    /// `cpu` and `mem` were read unconditionally for as long as they were the
+    /// only metrics, and that was fine: two small files. `disk` is a `statvfs`,
+    /// `battery` a directory walk and `temp` a scan of every thermal zone, and
+    /// a bar showing CPU has no business paying for those every two seconds.
+    // TP-RES-21: only the metrics a section shows are read.
+    #[test]
+    fn a_section_showing_one_metric_does_not_read_the_others() {
+        let mut app = app_with_only_widget("resource"); // metric = "cpu"
+        assert_eq!(
+            app.state.shell_bar_chrome.wanted_metrics(),
+            vec![crate::resource::ResourceMetric::Cpu],
+            "control: this bar asks for exactly one metric"
+        );
+
+        app.tick_resource_sample(Instant::now());
+
+        assert_eq!(
+            app.resource_samples_taken, 1,
+            "control: a reading was taken at all, or nothing below means anything"
+        );
+        for (name, unread) in [
+            ("mem", app.state.resources.mem.is_some()),
+            ("swap", app.state.resources.swap.is_some()),
+            ("disk", app.state.resources.disk.is_some()),
+            ("battery", app.state.resources.battery.is_some()),
+            ("temp", app.state.resources.temp.is_some()),
+            ("net", app.state.resources.net.is_some()),
+        ] {
+            assert!(
+                !unread,
+                "a bar showing only cpu read {name} as well, which is a cost \
+                 nobody on screen asked for"
+            );
+        }
+    }
+
+    /// The control for the test above: widening the gate must not open it.
+    ///
+    /// Without this row, a gate rewritten to answer `true` for everything would
+    /// satisfy every assertion above and hand the sampling cost back to every
+    /// person who never asked for a live widget — which is the whole property
+    /// TP-RES-08 exists to hold.
+    // TP-RES-18: a bar of still widgets still asks for nothing.
+    #[test]
+    fn a_bar_of_still_widgets_still_reads_nothing() {
+        for kind in ["label", "icon"] {
+            let mut app = app_with_only_widget(kind);
+            let now = Instant::now();
+
+            assert_eq!(
+                app.resource_sample_deadline(),
+                None,
+                "a bar holding only a {kind} widget must not wake the loop"
+            );
+            app.tick_resource_sample(now);
+            assert_eq!(
+                app.resource_samples_taken, 0,
+                "a bar holding only a {kind} widget must never open /proc"
+            );
         }
     }
 
@@ -1219,12 +1534,25 @@ mod tests {
         // first reading already has it. This is also the only test that proves
         // the platform read works at all rather than silently returning None —
         // every other one feeds the parsers fixtures.
+        //
+        // Its own app, because the bar above asks for `cpu` and only what a
+        // section shows is read now. Reusing that one would have asserted that
+        // memory is readable while nothing had gone to read it, which is how
+        // this row would quietly stop meaning anything.
         #[cfg(target_os = "linux")]
-        assert!(
-            app.state.resources.mem.is_some_and(|mem| mem.total > 0),
-            "a Linux box has readable memory: {:?}",
-            app.state.resources.mem
-        );
+        {
+            let mut showing_memory = app_with_only_widget_metric("resource", "mem");
+            showing_memory.tick_resource_sample(start);
+            assert!(
+                showing_memory
+                    .state
+                    .resources
+                    .mem
+                    .is_some_and(|mem| mem.total > 0),
+                "a Linux box has readable memory: {:?}",
+                showing_memory.state.resources.mem
+            );
+        }
     }
 
     #[test]

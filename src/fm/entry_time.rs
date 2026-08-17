@@ -175,7 +175,7 @@ fn clock_label(datetime: OffsetDateTime) -> String {
     format!("{:02}:{:02}", datetime.hour(), datetime.minute())
 }
 
-fn month_abbreviation(datetime: OffsetDateTime) -> &'static str {
+pub(crate) fn month_abbreviation(datetime: OffsetDateTime) -> &'static str {
     match datetime.month() {
         time::Month::January => "Jan",
         time::Month::February => "Feb",
@@ -192,7 +192,7 @@ fn month_abbreviation(datetime: OffsetDateTime) -> &'static str {
     }
 }
 
-fn weekday_abbreviation(datetime: OffsetDateTime) -> &'static str {
+pub(crate) fn weekday_abbreviation(datetime: OffsetDateTime) -> &'static str {
     match datetime.weekday() {
         time::Weekday::Monday => "Mon",
         time::Weekday::Tuesday => "Tue",

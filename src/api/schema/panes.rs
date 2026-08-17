@@ -424,6 +424,14 @@ pub struct PaneInfo {
     pub agent_session: Option<AgentSessionInfo>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scroll: Option<PaneScrollInfo>,
+    /// The pane sleeps: its runtime is released and its scrollback sits on
+    /// disk. Serialized only when true so an awake pane's JSON is unchanged.
+    #[serde(default, skip_serializing_if = "super::is_false")]
+    pub dormant: bool,
+    /// The pane's terminal is on the alternate screen. Serialized only when
+    /// true; a dormant pane has no runtime to ask, which reads as false.
+    #[serde(default, skip_serializing_if = "super::is_false")]
+    pub alternate_screen: bool,
     pub revision: u64,
 }
 

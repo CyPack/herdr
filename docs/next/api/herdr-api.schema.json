@@ -745,6 +745,10 @@
             "agent_status": {
               "$ref": "#/schemas/event/$defs/AgentStatus"
             },
+            "alternate_screen": {
+              "description": "The pane's terminal is on the alternate screen. Serialized only when\ntrue; a dormant pane has no runtime to ask, which reads as false.",
+              "type": "boolean"
+            },
             "cwd": {
               "type": [
                 "string",
@@ -756,6 +760,10 @@
                 "string",
                 "null"
               ]
+            },
+            "dormant": {
+              "description": "The pane sleeps: its runtime is released and its scrollback sits on\ndisk. Serialized only when true so an awake pane's JSON is unchanged.",
+              "type": "boolean"
             },
             "focused": {
               "type": "boolean"
@@ -5507,6 +5515,22 @@
         {
           "properties": {
             "method": {
+              "const": "pane.sleep",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/PaneTarget"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
               "const": "closed_agent.revive",
               "type": "string"
             },
@@ -7335,6 +7359,10 @@
             "agent_status": {
               "$ref": "#/schemas/success_response/$defs/AgentStatus"
             },
+            "alternate_screen": {
+              "description": "The pane's terminal is on the alternate screen. Serialized only when\ntrue; a dormant pane has no runtime to ask, which reads as false.",
+              "type": "boolean"
+            },
             "cwd": {
               "type": [
                 "string",
@@ -7346,6 +7374,10 @@
                 "string",
                 "null"
               ]
+            },
+            "dormant": {
+              "description": "The pane sleeps: its runtime is released and its scrollback sits on\ndisk. Serialized only when true so an awake pane's JSON is unchanged.",
+              "type": "boolean"
             },
             "focused": {
               "type": "boolean"
