@@ -423,6 +423,16 @@ pub(crate) enum BarConfigProblem {
         index: usize,
         presentation: String,
     },
+    /// A `run` action with nothing to run.
+    ///
+    /// Its own variant rather than the popup's: that message says "opens a
+    /// popup but names no command", and a `run` section opens no popup. A
+    /// refusal that describes a different action sends somebody to look for a
+    /// key they never wrote.
+    RunActionWithoutCommand {
+        edge: &'static str,
+        index: usize,
+    },
     /// An action that opens nothing, carrying a key about how to open it.
     ActionWithUnusedPresentation {
         edge: &'static str,
@@ -669,6 +679,11 @@ impl std::fmt::Display for BarConfigProblem {
                         .map(|(name, _)| *name)
                         .collect::<Vec<_>>()
                 )
+            ),
+            Self::RunActionWithoutCommand { edge, index } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}].action runs a command but names no \
+                 command to run, so this section does nothing when clicked"
             ),
             Self::ActionWithUnusedPresentation { edge, index, field } => write!(
                 formatter,
@@ -2146,7 +2161,7 @@ fn run_action(at: SectionAt<'_>) -> Result<SectionAction, BarConfigProblem> {
         .iter()
         .all(|argument| argument.trim().is_empty())
     {
-        return Err(BarConfigProblem::PopupActionWithoutCommand { edge, index });
+        return Err(BarConfigProblem::RunActionWithoutCommand { edge, index });
     }
     Ok(SectionAction::Run {
         argv: config.action.argv.clone(),
@@ -3612,6 +3627,32 @@ mod tests {
         // build. They are held to the guide's own table instead, in
         // `the_guide_lists_exactly_the_metrics_this_build_reads`.
 
+        // The summary table gets its own pass, because the loop above is
+        // satisfied by an *example* and the table is a separate promise.
+        // Measured: deleting the `run` row from the summary broke nothing at
+        // all, since the `run` example three screens up still contained
+        // `kind = "run"`. A reader who scans the summary to learn what a
+        // section can do would have been told there were two actions.
+        let summary = guide_table_after("A section is three independent choices");
+        let documented_actions = summary
+            .iter()
+            .filter_map(|columns| columns.get(2))
+            .filter_map(|cell| {
+                // `` `run` — run `argv` and open nothing `` — the kind is the
+                // first backticked word, and an empty cell has none.
+                cell.split('`').nth(1).map(str::to_string)
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        let built_actions = SectionKind::offered(ACTION_KINDS)
+            .into_iter()
+            .map(str::to_string)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            documented_actions, built_actions,
+            "the guide's summary of what a press can do is not the set of \
+             actions this build offers"
+        );
+
         // The other direction, which this row has always claimed and never
         // actually checked. Everything above walks the tables and looks each
         // name up in the guide, so a name the guide invents — or one it keeps
@@ -3733,6 +3774,60 @@ mod tests {
             documented, accepted,
             "the guide's presentation table and the names this build accepts are different sets"
         );
+    }
+
+    /// A section that goes nowhere, and one that runs nothing, are refused.
+    ///
+    /// Both are the shape a half-finished edit leaves — a `workspace` action
+    /// whose name was deleted, a `run` whose argv was — and both would
+    /// otherwise reach the screen as a button that consumes a press and does
+    /// nothing, which reads as the bar being broken rather than the file being
+    /// wrong. The refusal costs only its own section, like every other action
+    /// refusal.
+    #[test]
+    fn an_action_with_nothing_to_act_on_is_refused() {
+        // TP-CHROME-123: an action missing the one key it needs is refused by
+        // name, and takes only its own section down.
+        for (kind, expected) in [
+            ("workspace", "with no name"),
+            ("run", "names no command to run"),
+        ] {
+            let mut section = section_with_action("fill", kind, &[]);
+            section.action.name = String::new();
+            section.action.kind = kind.to_string();
+            let config = ShellBarsConfig {
+                top: bar_with_sections(vec![section, section_with_action("fill", "popup", &["x"])]),
+                ..Default::default()
+            };
+
+            let reported = shell_bar_config_problems(&config, true)
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                reported.len(),
+                1,
+                "exactly one complaint, about the {kind} section: {reported:?}"
+            );
+            assert!(
+                reported[0].contains("sections[0]") && reported[0].contains(expected),
+                "the message must name the section and what is missing: {reported:?}"
+            );
+
+            let actions = ShellBarChrome::from_config(&config, true);
+            assert_eq!(
+                actions.action_for(RegionId::TopBar, 0),
+                Some(&SectionAction::None),
+                "the refused section stops answering rather than answering wrongly"
+            );
+            assert!(
+                matches!(
+                    actions.action_for(RegionId::TopBar, 1),
+                    Some(SectionAction::OpenPopup { .. })
+                ),
+                "and its neighbour is untouched"
+            );
+        }
     }
 
     /// The guide's metric table is the set this build reads, both ways.
