@@ -852,10 +852,7 @@ mod tests {
         );
     }
 
-    fn pane_updated_after(
-        app: &App,
-        sequence: u64,
-    ) -> Option<crate::api::schema::PaneInfo> {
+    fn pane_updated_after(app: &App, sequence: u64) -> Option<crate::api::schema::PaneInfo> {
         app.event_hub
             .events_after(sequence)
             .into_iter()
@@ -877,9 +874,12 @@ mod tests {
         let response = sleep_response(&mut app, &public_id);
 
         assert_eq!(response["result"]["pane"]["dormant"], true, "{response}");
-        let announced = pane_updated_after(&app, seq_before)
-            .expect("the sleep transition emits pane.updated");
-        assert!(announced.dormant, "the announced pane carries the new state");
+        let announced =
+            pane_updated_after(&app, seq_before).expect("the sleep transition emits pane.updated");
+        assert!(
+            announced.dormant,
+            "the announced pane carries the new state"
+        );
         let _ = std::fs::remove_dir_all(app.dormant_history_dir());
     }
 
@@ -893,8 +893,8 @@ mod tests {
         let changed = app.dormancy_sweep_with_pressure(std::time::Instant::now(), true);
 
         assert!(changed, "the sweep slept the retired pane");
-        let announced = pane_updated_after(&app, seq_before)
-            .expect("the sweep transition emits pane.updated");
+        let announced =
+            pane_updated_after(&app, seq_before).expect("the sweep transition emits pane.updated");
         assert!(announced.dormant);
         let _ = std::fs::remove_dir_all(app.dormant_history_dir());
     }
@@ -909,8 +909,8 @@ mod tests {
 
         assert!(app.wake_dormant_pane(pane_id), "the pane woke");
 
-        let announced = pane_updated_after(&app, seq_before)
-            .expect("the wake transition emits pane.updated");
+        let announced =
+            pane_updated_after(&app, seq_before).expect("the wake transition emits pane.updated");
         assert!(!announced.dormant, "the announced pane is awake again");
         let _ = std::fs::remove_dir_all(app.dormant_history_dir());
     }
