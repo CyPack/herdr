@@ -419,6 +419,7 @@ fn api_method_name(method: &Method) -> &'static str {
         Method::PaneClearAgentAuthority(_) => "pane.clear_agent_authority",
         Method::PaneReleaseAgent(_) => "pane.release_agent",
         Method::PaneClose(_) => "pane.close",
+        Method::PaneSleep(_) => "pane.sleep",
         Method::ClosedAgentRevive(_) => "closed_agent.revive",
         Method::PopupClose(_) => "popup.close",
         Method::EventsSubscribe(_) => "events.subscribe",
@@ -876,6 +877,8 @@ mod tests {
             tokens: HashMap::new(),
             agent_session: None,
             scroll: None,
+            dormant: false,
+            alternate_screen: false,
             revision: 0,
         }
     }

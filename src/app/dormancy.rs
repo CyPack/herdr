@@ -212,6 +212,7 @@ impl App {
                 let _ = std::fs::remove_file(path);
             }
             tracing::info!(terminal = %terminal_id, "dormant agent pane woke into a resume");
+            self.emit_pane_updated(ws_idx, pane_id);
             return true;
         }
 
@@ -256,6 +257,7 @@ impl App {
             let _ = std::fs::remove_file(path);
         }
         tracing::info!(terminal = %terminal_id, "dormant pane woke");
+        self.emit_pane_updated(ws_idx, pane_id);
         true
     }
 
@@ -360,7 +362,7 @@ impl App {
                     let quiet_enough =
                         now.saturating_duration_since(since) >= DORMANCY_QUIET_THRESHOLD;
                     if !watched && (memory_pressure_high || quiet_enough) {
-                        candidates.push(*pane_id);
+                        candidates.push((ws_idx, *pane_id));
                     }
                 }
             }
@@ -371,8 +373,11 @@ impl App {
             .retain(|terminal_id, _| retired_now.contains(terminal_id));
 
         let mut changed = false;
-        for pane_id in candidates {
-            changed |= self.make_pane_dormant(pane_id).is_ok();
+        for (ws_idx, pane_id) in candidates {
+            if self.make_pane_dormant(pane_id).is_ok() {
+                self.emit_pane_updated(ws_idx, pane_id);
+                changed = true;
+            }
         }
         changed
     }
@@ -702,6 +707,264 @@ mod tests {
         assert!(written.contains("primary-history"));
         assert!(!written.contains("alt-screen"));
         assert!(app.terminal_runtimes.get(&terminal_id).is_none());
+    }
+
+    fn public_pane_id_of(app: &App, pane_id: crate::layout::PaneId) -> String {
+        app.public_pane_id(0, pane_id).expect("public pane id")
+    }
+
+    fn sleep_response(app: &mut App, public_id: &str) -> serde_json::Value {
+        let encoded = app.handle_pane_sleep(
+            "req_sleep".into(),
+            crate::api::schema::PaneTarget {
+                pane_id: public_id.to_string(),
+            },
+        );
+        serde_json::from_str(&encoded).expect("valid response json")
+    }
+
+    #[tokio::test]
+    async fn the_pane_sleep_verb_puts_a_retired_unwatched_pane_to_sleep() {
+        // TP-DORMANT-13: the API verb is the same policy gate as the sweep —
+        // it goes through make_pane_dormant, so every refusal the sweep obeys
+        // binds an API caller too, and success returns the pane's fresh info
+        // with the dormant field set.
+        let (mut app, pane_id) = app_with_scrollback_pane(b"verb-history\r\n", true);
+        let terminal_id = terminal_id_of(&app, pane_id);
+        let public_id = public_pane_id_of(&app, pane_id);
+
+        let response = sleep_response(&mut app, &public_id);
+
+        assert_eq!(
+            response["result"]["pane"]["dormant"],
+            serde_json::Value::Bool(true),
+            "success returns the pane info carrying dormant: {response}"
+        );
+        assert!(
+            app.terminal_runtimes.get(&terminal_id).is_none(),
+            "the runtime left the registry"
+        );
+        assert!(app
+            .state
+            .terminals
+            .get(&terminal_id)
+            .unwrap()
+            .dormant
+            .is_some());
+        let _ = std::fs::remove_dir_all(app.dormant_history_dir());
+    }
+
+    #[tokio::test]
+    async fn the_pane_sleep_verb_never_reaches_a_live_child() {
+        // TP-DORMANT-13: TP-DORMANT-01's unbendable rule holds on the API
+        // path — a caller cannot sleep a pane whose child still runs.
+        let (mut app, pane_id) = app_with_scrollback_pane(b"still-working\r\n", false);
+        let terminal_id = terminal_id_of(&app, pane_id);
+        app.terminal_runtimes
+            .get(&terminal_id)
+            .unwrap()
+            .test_set_child_pid(std::process::id());
+        let public_id = public_pane_id_of(&app, pane_id);
+
+        let response = sleep_response(&mut app, &public_id);
+
+        assert_eq!(
+            response["error"]["code"],
+            serde_json::Value::String("child_still_running".into()),
+            "the refusal surfaces as an API error: {response}"
+        );
+        assert!(
+            app.terminal_runtimes.get(&terminal_id).is_some(),
+            "a refused pane keeps its runtime"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_pane_sleep_verb_refuses_a_watched_pane() {
+        // TP-DORMANT-13: the second unbendable rule — a watched pane cannot
+        // be blanked under its viewer, not even by an explicit API request.
+        let (mut app, pane_id) = app_with_scrollback_pane(b"watched\r\n", true);
+        app.state.workspaces[0].active_tab_by_client.insert(7, 0);
+        let public_id = public_pane_id_of(&app, pane_id);
+
+        let response = sleep_response(&mut app, &public_id);
+
+        assert_eq!(
+            response["error"]["code"],
+            serde_json::Value::String("pane_watched".into()),
+            "the refusal surfaces as an API error: {response}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_pane_sleep_verb_is_idempotent_on_a_dormant_pane() {
+        // TP-DORMANT-13: a retried sleep is not an error and not a second
+        // transition — the pane's state, its history file, and the event
+        // stream all stay exactly as the first sleep left them.
+        let (mut app, pane_id) = app_with_scrollback_pane(b"idempotent\r\n", true);
+        let terminal_id = terminal_id_of(&app, pane_id);
+        let public_id = public_pane_id_of(&app, pane_id);
+
+        let first = sleep_response(&mut app, &public_id);
+        assert_eq!(first["result"]["pane"]["dormant"], true, "{first}");
+        let history_path = app
+            .state
+            .terminals
+            .get(&terminal_id)
+            .unwrap()
+            .dormant
+            .clone()
+            .unwrap()
+            .history_path
+            .expect("history written");
+        let saved = std::fs::read_to_string(&history_path).unwrap();
+        let events_after_first = app.event_hub.current_sequence();
+
+        let second = sleep_response(&mut app, &public_id);
+
+        assert_eq!(
+            second["result"]["pane"]["dormant"],
+            serde_json::Value::Bool(true),
+            "a repeated sleep is a success, not an error: {second}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&history_path).unwrap(),
+            saved,
+            "the history file is untouched"
+        );
+        assert_eq!(
+            app.event_hub.current_sequence(),
+            events_after_first,
+            "no transition happened, so no event is emitted"
+        );
+        let _ = std::fs::remove_dir_all(app.dormant_history_dir());
+    }
+
+    #[tokio::test]
+    async fn the_pane_sleep_verb_reports_an_unknown_pane() {
+        // The error contract stays uniform with every other pane verb.
+        let mut app = test_app();
+        let response = sleep_response(&mut app, "p_missing");
+        assert_eq!(
+            response["error"]["code"],
+            serde_json::Value::String("pane_not_found".into()),
+            "{response}"
+        );
+    }
+
+    fn pane_updated_after(app: &App, sequence: u64) -> Option<crate::api::schema::PaneInfo> {
+        app.event_hub
+            .events_after(sequence)
+            .into_iter()
+            .find_map(|(_, envelope)| match envelope.data {
+                crate::api::schema::EventData::PaneUpdated { pane } => Some(pane),
+                _ => None,
+            })
+    }
+
+    #[tokio::test]
+    async fn the_pane_sleep_verb_announces_the_transition() {
+        // TP-DORMANT-14: the field is only half the observability — a watcher
+        // subscribed to pane.updated must hear the transition, not discover
+        // it on its next poll.
+        let (mut app, pane_id) = app_with_scrollback_pane(b"announce\r\n", true);
+        let public_id = public_pane_id_of(&app, pane_id);
+        let seq_before = app.event_hub.current_sequence();
+
+        let response = sleep_response(&mut app, &public_id);
+
+        assert_eq!(response["result"]["pane"]["dormant"], true, "{response}");
+        let announced =
+            pane_updated_after(&app, seq_before).expect("the sleep transition emits pane.updated");
+        assert!(
+            announced.dormant,
+            "the announced pane carries the new state"
+        );
+        let _ = std::fs::remove_dir_all(app.dormant_history_dir());
+    }
+
+    #[tokio::test]
+    async fn the_dormancy_sweep_announces_each_pane_it_sleeps() {
+        // TP-DORMANT-14: the sweep is the transition nobody asked for — if it
+        // stays silent, an API watcher's picture of the session quietly rots.
+        let (mut app, _pane_id) = app_with_scrollback_pane(b"swept\r\n", true);
+        let seq_before = app.event_hub.current_sequence();
+
+        let changed = app.dormancy_sweep_with_pressure(std::time::Instant::now(), true);
+
+        assert!(changed, "the sweep slept the retired pane");
+        let announced =
+            pane_updated_after(&app, seq_before).expect("the sweep transition emits pane.updated");
+        assert!(announced.dormant);
+        let _ = std::fs::remove_dir_all(app.dormant_history_dir());
+    }
+
+    #[tokio::test]
+    async fn waking_a_dormant_pane_announces_it() {
+        // TP-DORMANT-14: the wake is the other direction of the same promise;
+        // the announced pane is awake again, dormant field gone.
+        let (mut app, pane_id) = app_with_scrollback_pane(b"wake-announce\r\n", true);
+        app.make_pane_dormant(pane_id).expect("dormancy accepted");
+        let seq_before = app.event_hub.current_sequence();
+
+        assert!(app.wake_dormant_pane(pane_id), "the pane woke");
+
+        let announced =
+            pane_updated_after(&app, seq_before).expect("the wake transition emits pane.updated");
+        assert!(!announced.dormant, "the announced pane is awake again");
+        let _ = std::fs::remove_dir_all(app.dormant_history_dir());
+    }
+
+    #[tokio::test]
+    async fn a_dormant_panes_api_info_says_so_and_an_awake_panes_does_not() {
+        // TP-DORMANT-14: without this field dormancy is invisible to API
+        // clients — a watcher polling the snapshot cannot tell a sleeping
+        // pane from an awake one, and the lifecycle runs unobserved. The
+        // false case stays unserialized so an awake pane's JSON is unchanged.
+        let (mut app, pane_id) = app_with_scrollback_pane(b"sleepy\r\n", true);
+
+        let awake = app.pane_info(0, pane_id).expect("awake pane info");
+        assert!(!awake.dormant, "an awake pane is not dormant");
+        let awake_json = serde_json::to_value(&awake).unwrap();
+        assert!(
+            awake_json.get("dormant").is_none(),
+            "false is not serialized, keeping the awake pane's JSON unchanged"
+        );
+
+        app.make_pane_dormant(pane_id).expect("dormancy accepted");
+
+        let dormant = app.pane_info(0, pane_id).expect("dormant pane info");
+        assert!(dormant.dormant, "a dormant pane says so");
+        let dormant_json = serde_json::to_value(&dormant).unwrap();
+        assert_eq!(
+            dormant_json.get("dormant"),
+            Some(&serde_json::Value::Bool(true))
+        );
+        let _ = std::fs::remove_dir_all(app.dormant_history_dir());
+    }
+
+    #[tokio::test]
+    async fn an_alt_screen_panes_api_info_says_so_and_a_primary_panes_does_not() {
+        // TP-DORMANT-14: the alternate_screen field lets an API watcher tell
+        // "no scrollback yet" from "a fullscreen app owns the viewport" — the
+        // intent form of the scroll guard, readable without a screen capture.
+        let (app, pane_id) = app_with_scrollback_pane(b"primary\r\n\x1b[?1049halt", true);
+        let info = app.pane_info(0, pane_id).expect("alt-screen pane info");
+        assert!(info.alternate_screen, "the alternate screen is visible");
+        let json = serde_json::to_value(&info).unwrap();
+        assert_eq!(
+            json.get("alternate_screen"),
+            Some(&serde_json::Value::Bool(true))
+        );
+
+        let (app, pane_id) = app_with_scrollback_pane(b"primary-only\r\n", true);
+        let info = app.pane_info(0, pane_id).expect("primary pane info");
+        assert!(!info.alternate_screen);
+        let json = serde_json::to_value(&info).unwrap();
+        assert!(
+            json.get("alternate_screen").is_none(),
+            "false is not serialized"
+        );
     }
 
     #[tokio::test]
