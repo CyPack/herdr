@@ -824,7 +824,7 @@ pub(crate) fn indented_row_label(
 ///
 /// The daily area collects every workspace standing in one directory, so the
 /// directory's own name is the one thing they all share — deriving the label
-/// from it names them all the same. Seven rows reading `ayaz` say no more than
+/// from it names them all the same. Seven rows reading `user` say no more than
 /// seven rows reading `main` did (#99): a name repeated seven times is not a
 /// name, it is a category.
 ///
@@ -3545,9 +3545,9 @@ fn render_workspace_list(
             // from that was `$HOME`, and seven rows all read `main`.
             //
             // #94 moved those rows under the daily header and, without meaning
-            // to, moved their labels too — before it they read `ayaz`, after it
+            // to, moved their labels too — before it they read `user`, after it
             // `main`. Withholding the branch was the first half of the fix; the
-            // second is that `ayaz` seven times says no more than `main` seven
+            // second is that `user` seven times says no more than `main` seven
             // times did, so the name arrives resolved (TP-DAILY-15/16).
             indented_row_label(
                 &label,
@@ -7971,7 +7971,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         chat_count: usize,
     ) -> (AppState, std::path::PathBuf) {
         let (mut app, daily) = app_with_daily_chats(chat_count);
-        let mut home = Workspace::test_new("ayaz");
+        let mut home = Workspace::test_new("user");
         home.identity_cwd = daily.clone();
         app.workspaces.push(home);
         (app, daily)
@@ -8030,7 +8030,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
     ///
     /// `Workspace::test_new` hands back a workspace that IS named — it stores
     /// its argument as `custom_name` — and that is the opposite of what was
-    /// measured: those seven carried no name at all and read `ayaz` only
+    /// measured: those seven carried no name at all and read `user` only
     /// because that is what `$HOME` is called. Leaving the fixture's name in
     /// place makes every derivation test pass without ever running the
     /// derivation, which is how the first version of these tests went green
@@ -8038,7 +8038,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
     fn app_with_n_workspaces_in_the_daily_directory(n: usize) -> (AppState, std::path::PathBuf) {
         let (mut app, daily) = app_with_daily_chats(2);
         for _ in 0..n {
-            let mut home = Workspace::test_new("ayaz");
+            let mut home = Workspace::test_new("user");
             home.custom_name = None;
             home.identity_cwd = daily.clone();
             app.workspaces.push(home);
@@ -9215,7 +9215,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
     #[test]
     fn a_daily_area_row_keeps_its_own_name_instead_of_a_branch() {
         assert_eq!(
-            indented_row_label("ayaz", Some("main"), false, Some("reviewr 2")),
+            indented_row_label("user", Some("main"), false, Some("reviewr 2")),
             "reviewr 2",
             "the branch belongs to the directory, not to this row"
         );

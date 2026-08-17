@@ -4601,7 +4601,7 @@ mod tests {
     // T3.3 / TP-CHAT-NAME-01: a chat row had no rename at all. The name it
     // wore came from the transcript, and for a chat started outside a
     // workspace's directory there is no title to derive — which is how a row
-    // came back reading `ayaz` with nothing to say what it was spawned for.
+    // came back reading `user` with nothing to say what it was spawned for.
     #[test]
     fn a_chat_row_offers_to_be_renamed() {
         let chat_menu = |ws_idx: Option<usize>| ContextMenuState {

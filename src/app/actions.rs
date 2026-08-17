@@ -2183,7 +2183,7 @@ impl AppState {
     /// (TP-CHAT-MOVE-08). `None` when the row carries no resolvable title,
     /// which is exactly the chat most worth naming: for one started outside a
     /// workspace's directory there is nothing to derive a title from, and its
-    /// row is the one that came back saying only `ayaz`.
+    /// row is the one that came back saying only `user`.
     pub(crate) fn chat_row_title(&self, session_id: &str) -> Option<String> {
         self.workspace_chat_rows
             .values()

@@ -75,7 +75,7 @@ CyPack fork'unun beyan edilmiş **birinci önceliği tamamen farklı bir yerde**
 | İkincil eksen | Agent detection + socket API + marketplace | **Custom layout altyapısı** (shell bölgeleri) |
 | Sürüm disiplini | stable/preview kanalları, GitHub Release | Yayın YOK — sadece fork branch'lerine FF push |
 | Doküman yüzeyi | herdr.dev/docs + `docs/next/` | `.codex/` + `.local/` + `docs/superpowers/` (çoğu gitignored) |
-| Karar mercii | ogulcancelik (solo maintainer) | Kullanıcı (Ayaz/CyPack) direktifi |
+| Karar mercii | ogulcancelik (solo maintainer) | Kullanıcı (CyPack) direktifi |
 
 **Sonuç:** İki vizyon **çatışmıyor ama örtüşmüyor**. Fork, upstream'in mimarisini (Shell/Stage/Compositor) miras alıp üzerine upstream'de talep edilmemiş bir ürün ekseni inşa ediyor.
 

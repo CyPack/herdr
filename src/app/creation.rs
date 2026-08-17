@@ -695,7 +695,7 @@ mod merge_tests {
         app.state.daily_chat_cwd = Some(daily.clone());
         app.state.workspaces = (0..n)
             .map(|_| {
-                let mut ws = Workspace::test_new("ayaz");
+                let mut ws = Workspace::test_new("user");
                 ws.custom_name = None;
                 ws.identity_cwd = daily.clone();
                 ws

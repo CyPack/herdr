@@ -2605,7 +2605,7 @@ impl ContextMenuState {
                 // only names available were the ones the transcript happened to
                 // yield — for a chat started outside a workspace's directory
                 // there is no resolvable title at all, which is how a row came
-                // to read `ayaz` with nothing to say who spawned it or why.
+                // to read `user` with nothing to say who spawned it or why.
                 let mut items = vec!["Rename chat...", "Move to branch..."];
                 // TP-CHAT-MOVE-11: modules are a second kind of destination and
                 // they get their own verb. They were already reachable through
