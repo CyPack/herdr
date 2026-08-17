@@ -832,6 +832,7 @@ impl App {
             ),
             resources: crate::resource::ResourceSample::default(),
             resource_history: crate::resource::ResourceHistory::default(),
+            clock_now: None,
             terminals: std::collections::HashMap::new(),
             closed_agents: Default::default(),
             direct_attach_resize_locks: std::collections::HashSet::new(),

@@ -550,7 +550,7 @@ Writing more sections than the bar allows, asking for a `max_sections` of zero o
 
 ### Putting something in a section
 
-A section is empty until it is given a widget. There are four kinds:
+A section is empty until it is given a widget. There are six kinds:
 
 | `widget.kind` | Draws | Names |
 |---|---|---|
@@ -559,6 +559,7 @@ A section is empty until it is given a widget. There are four kinds:
 | `meter` | the same counter, as a filled bar | `metric` |
 | `sparkline` | the same counter over time, one column per reading | `metric` |
 | `icon` | one picture | `glyph`, or `art`, or `pixels` + `palette` |
+| `clock` | the time | `format` |
 
 No widget ever changes how wide its section is. The sizing rules above decide that, and content that does not fit is cut rather than pushing its neighbours around — clipping is by display width, so a two-cell emoji counts as two.
 
@@ -611,11 +612,41 @@ How often the machine is re-read is one setting for all of them:
 resource_interval_ms = 500   # default: 2000
 ```
 
-Nothing is read at all unless a section asks for it, so a bar without a `resource` or `meter` costs nothing whatever this says.
+Nothing is read at all unless a section asks for it, so a bar without a `resource`, `meter` or `sparkline` costs nothing whatever this says.
 
 Accepted between 250 and 60000. The floor is not a preference: a CPU percentage is the difference between two cumulative readings, and the kernel counts in jiffies — a hundred a second, so ten milliseconds each. At 250 ms a single-core machine has twenty-five of them to tell apart; at 100 ms it has ten, and the figure on screen starts reporting the counter's resolution rather than the machine's load. The ceiling is a typo guard — a reading once a minute describes history.
 
 A value outside the range is reported by `herdr config check` and the default pace is kept. A bad number leaves you with a working meter and a sentence about the number, rather than a bar that quietly stopped.
+
+#### The time
+
+A `clock` section writes the time however `format` asks for it:
+
+```toml
+[[shell.bars.top.sections]]
+kind   = "content"
+widget = { kind = "clock", format = "%a %d %b  %H:%M" }
+```
+
+Leave `format` out and you get `%H:%M`. Every field is written below as it renders at one moment — Monday 17 August 2026, at 13:05:09 — so the table reads as a single clock taken apart:
+
+| Field | Renders |
+|---|---|
+| `%H` | `13` |
+| `%I` | `01` |
+| `%M` | `05` |
+| `%S` | `09` |
+| `%p` | `PM` |
+| `%a` | `Mon` |
+| `%d` | `17` |
+| `%b` | `Aug` |
+| `%m` | `08` |
+| `%Y` | `2026` |
+| `%y` | `26` |
+
+Anything that is not a field is carried through as written, and `%%` is a literal percent. A field Herdr cannot fill in is reported by `herdr config check` rather than drawn as itself — `%Q` on a bar is indistinguishable from a field that exists and rendered wrongly.
+
+**The format also decides how often the clock is redrawn.** A format naming `%S` is refreshed every second; one without it once a minute, on the minute. There is no separate interval setting, because the format already says which resolution you asked for, and two settings that can disagree only raise the question of which one wins. A bar with no clock schedules nothing at all.
 
 #### A picture
 

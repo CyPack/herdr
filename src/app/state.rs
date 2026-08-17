@@ -3850,6 +3850,16 @@ pub struct AppState {
     /// one reading and is copied freely, and giving it a growing tail would make
     /// every copy of a reading carry the history of every other.
     pub(crate) resource_history: crate::resource::ResourceHistory,
+    /// The wall clock a `clock` section draws, as the loop last read it.
+    ///
+    /// Held here rather than read at draw time for the reason a resource sample
+    /// is: the renderer formats what it is given and never takes a reading, so
+    /// a clock cannot make the bar repaint on every frame.
+    ///
+    /// `None` until the first tick, and again whenever the local zone cannot be
+    /// resolved. A clock quietly falling back to UTC would show another
+    /// country's time with nothing about it looking wrong.
+    pub(crate) clock_now: Option<time::OffsetDateTime>,
     pub(crate) drag: Option<DragState>,
     pub(crate) workspace_press: Option<WorkspacePressState>,
     pub(crate) tab_press: Option<TabPressState>,
@@ -4892,6 +4902,7 @@ impl AppState {
             shell_bar_chrome: crate::ui::shell::ShellBarChrome::default(),
             resources: crate::resource::ResourceSample::default(),
             resource_history: crate::resource::ResourceHistory::default(),
+            clock_now: None,
             drag: None,
             workspace_press: None,
             tab_press: None,

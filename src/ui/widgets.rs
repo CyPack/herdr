@@ -141,11 +141,16 @@ pub(crate) fn render_chip(
 /// size was decided by the layout solver before this function was called.
 // TP-CHROME-52/53: a label is drawn inside its own section, clipped by display
 // width, and an empty rectangle is a no-op.
+#[allow(clippy::too_many_arguments)] // one parameter per live source, and each
+                                     // one is a reading taken elsewhere; folding
+                                     // them into a struct would hide which
+                                     // widgets need which.
 pub(crate) fn render_section_widget(
     frame: &mut Frame,
     widget: &crate::ui::shell::SectionWidget,
     resources: &crate::resource::ResourceSample,
     history: &crate::resource::ResourceHistory,
+    now: Option<time::OffsetDateTime>,
     palette: &Palette,
     area: Rect,
     style: Style,
@@ -173,6 +178,19 @@ pub(crate) fn render_section_widget(
         }
         crate::ui::shell::SectionWidget::Icon { glyph } => {
             std::borrow::Cow::Borrowed(glyph.as_str())
+        }
+        // The reading arrives already taken, like the sample below it. A clock
+        // that called `now()` here would draw correctly and repaint its cells on
+        // every frame, which is the failure `resource` was shaped to avoid.
+        //
+        // An unreadable local zone draws nothing rather than falling back to
+        // UTC: a clock quietly showing another country's time is worse than an
+        // empty section, because nothing about it looks wrong.
+        crate::ui::shell::SectionWidget::Clock { format } => {
+            let Some(now) = now else {
+                return;
+            };
+            std::borrow::Cow::Owned(format.render(now))
         }
         crate::ui::shell::SectionWidget::Label { text } => {
             if text.is_empty() {

@@ -1095,6 +1095,7 @@ impl compose::Component for BaseLayer {
                         widget,
                         &app.resources,
                         &app.resource_history,
+                        app.clock_now,
                         &app.palette,
                         rect,
                         section_style,

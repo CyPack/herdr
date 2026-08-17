@@ -423,6 +423,15 @@ pub(crate) enum BarConfigProblem {
         index: usize,
         presentation: String,
     },
+    /// A `clock` format naming a field this build cannot write.
+    ///
+    /// Carries the character rather than the whole format, because that is the
+    /// one glyph in the line that has to change.
+    UnknownClockField {
+        edge: &'static str,
+        index: usize,
+        field: char,
+    },
     SecondaryWithoutAction {
         edge: &'static str,
         index: usize,
@@ -637,6 +646,17 @@ impl std::fmt::Display for BarConfigProblem {
                     &SECONDARY_PRESENTATIONS
                         .iter()
                         .map(|(name, _)| *name)
+                        .collect::<Vec<_>>()
+                )
+            ),
+            Self::UnknownClockField { edge, index, field } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}].widget.format writes \"%{field}\", which \
+                 this build cannot fill in; expected {offered}, or %% for a literal percent",
+                offered = accepted_names(
+                    &crate::clock::clock_field_names()
+                        .iter()
+                        .map(String::as_str)
                         .collect::<Vec<_>>()
                 )
             ),
@@ -1390,6 +1410,14 @@ pub(crate) enum SectionWidget {
     Art {
         art: crate::icon::IconArt,
     },
+    /// The wall clock, written the way this section asked for.
+    ///
+    /// Carries the parsed format rather than the string, so drawing walks a
+    /// list instead of re-reading a format on every frame — the same reason a
+    /// picture arrives as cells and a colour as a spec.
+    Clock {
+        format: crate::clock::ClockFormat,
+    },
 }
 
 impl SectionWidget {
@@ -1403,7 +1431,32 @@ impl SectionWidget {
     pub(crate) const fn reads_the_machine(&self) -> bool {
         match self {
             Self::Resource { .. } | Self::Meter { .. } | Self::Sparkline { .. } => true,
-            Self::None | Self::Label { .. } | Self::Icon { .. } | Self::Art { .. } => false,
+            Self::None
+            | Self::Label { .. }
+            | Self::Icon { .. }
+            | Self::Art { .. }
+            | Self::Clock { .. } => false,
+        }
+    }
+
+    /// How often this widget's text can change on its own, or `None` when it
+    /// cannot.
+    ///
+    /// A separate question from `reads_the_machine`, and deliberately so: a
+    /// clock changes without anybody opening `/proc`, and a resource section
+    /// opens `/proc` on a pace of its own. Folding the two together would make
+    /// a bar with only a clock start sampling the machine, or a bar with only a
+    /// meter start waking on the clock's minute.
+    pub(crate) fn tick(&self) -> Option<std::time::Duration> {
+        match self {
+            Self::Clock { format } => Some(format.resolution()),
+            Self::None
+            | Self::Label { .. }
+            | Self::Icon { .. }
+            | Self::Art { .. }
+            | Self::Resource { .. }
+            | Self::Meter { .. }
+            | Self::Sparkline { .. } => None,
         }
     }
 }
@@ -1516,6 +1569,25 @@ impl ShellBarChrome {
             .into_iter()
             .flat_map(|bar| bar.entries.iter())
             .any(|chrome| chrome.widget.reads_the_machine())
+    }
+
+    /// The fastest pace any section needs to be redrawn at, or `None` when
+    /// nothing on screen changes by itself.
+    ///
+    /// The minimum, because one clock showing seconds beside another showing
+    /// only minutes has to leave both correct, and the slower one costs nothing
+    /// extra: it renders the same text on the ticks it did not need.
+    ///
+    /// `None` is the whole cost argument, the same as it is for the sampler: a
+    /// bar with no clock schedules no wakeup, so a herdr nobody is watching
+    /// sits as still as it did before this widget existed.
+    // TP-CLOCK-07: no clock section means no tick at all.
+    pub(crate) fn clock_tick(&self) -> Option<std::time::Duration> {
+        [&self.top, &self.bottom, &self.left, &self.right]
+            .into_iter()
+            .flat_map(|bar| bar.entries.iter())
+            .filter_map(|chrome| chrome.widget.tick())
+            .min()
     }
 }
 
@@ -1669,7 +1741,37 @@ const WIDGET_KINDS: &[SectionKind<SectionWidget>] = &[
                   widget = { kind = \"sparkline\", metric = \"cpu\" }\n",
         build: sparkline_widget,
     },
+    SectionKind {
+        name: "clock",
+        keys: &["format"],
+        refuses: &[],
+        example: "[shell.bars.top]\nenabled = true\n\n\
+                  [[shell.bars.top.sections]]\nkind = \"content\"\n\
+                  widget = { kind = \"clock\", format = \"%H:%M\" }\n",
+        build: clock_widget,
+    },
 ];
+
+/// A `clock` section's format, parsed here so the renderer never parses.
+///
+/// An unwritten format is `%H:%M` rather than a refusal: a clock with no format
+/// is a perfectly clear request, and the shape it asks for is the one nearly
+/// every bar clock has.
+fn clock_widget(at: SectionAt<'_>) -> Result<SectionWidget, BarConfigProblem> {
+    let raw = at.config.widget.format.trim();
+    let format = if raw.is_empty() {
+        crate::clock::ClockFormat::default()
+    } else {
+        crate::clock::ClockFormat::parse(raw).map_err(|field| {
+            BarConfigProblem::UnknownClockField {
+                edge: at.edge,
+                index: at.index,
+                field,
+            }
+        })?
+    };
+    Ok(SectionWidget::Clock { format })
+}
 
 fn label_widget(at: SectionAt<'_>) -> Result<SectionWidget, BarConfigProblem> {
     Ok(SectionWidget::Label {
@@ -3144,6 +3246,22 @@ mod tests {
             .collect()
     }
 
+    /// The guide's table of clock fields: the spelling, then what it renders.
+    fn documented_clock_fields() -> Vec<(String, String)> {
+        guide_table_after("so the table reads as a single clock taken apart")
+            .into_iter()
+            .map(|columns| {
+                (
+                    columns[0].clone(),
+                    columns
+                        .get(1)
+                        .map(|cell| cell.trim_matches('`').to_string())
+                        .unwrap_or_default(),
+                )
+            })
+            .collect()
+    }
+
     /// The guide's table of the menu's own rows, by the label it draws.
     fn documented_bar_section_menu() -> Vec<String> {
         guide_table_after("The menu offers the same command in all three places")
@@ -3387,6 +3505,38 @@ mod tests {
         assert_eq!(
             documented, accepted,
             "the guide's presentation table and the names this build accepts are different sets"
+        );
+    }
+
+    /// The guide's clock table is the field table, spelling and rendering both.
+    ///
+    /// Both columns, because a name alone is not a useful row: somebody chooses
+    /// `%I` over `%H` by reading what it produces, and a wrong rendering in the
+    /// right-hand column sends them to a bar that says something other than
+    /// what they read here. The renderings are checked against the table the
+    /// spec publishes, which `every_clock_field_renders_the_example_it_publishes`
+    /// has already tied to the real renderer — so a wrong number in the guide
+    /// cannot survive by matching a wrong number in the code.
+    #[test]
+    fn the_guide_lists_exactly_the_clock_fields_this_build_can_write() {
+        // TP-CLOCK-11: the guide's clock table and the fields this build writes
+        // are one set, in both directions, renderings included.
+        let documented = documented_clock_fields();
+        assert!(
+            documented.len() >= 5,
+            "the guide's clock table stopped parsing; found {documented:?}"
+        );
+
+        let documented = documented
+            .into_iter()
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let built = crate::clock::CLOCK_FIELDS
+            .iter()
+            .map(|field| (format!("%{}", field.spec), field.example.to_string()))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(
+            documented, built,
+            "the guide's clock table and the fields this build writes differ"
         );
     }
 

@@ -63,6 +63,7 @@ mod checksum;
 mod claude_sessions;
 mod cli;
 mod client;
+mod clock;
 mod config;
 mod detect;
 mod events;

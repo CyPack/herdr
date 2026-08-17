@@ -384,6 +384,9 @@ impl App {
         // — and the only reason. The screen follows the data's clock, not the
         // other way round.
         changed |= self.tick_resource_sample(now);
+        // Same rule, other clock: a minute turning over changes what a clock
+        // section says, and nothing else about it is a reason to draw.
+        changed |= self.tick_clock();
 
         self.start_git_status_refresh_if_due(now);
 
@@ -707,6 +710,52 @@ impl App {
         )
     }
 
+    /// When the clock next has something new to show, or `None` when no
+    /// section shows one.
+    ///
+    /// Aligned to the boundary rather than to a fixed interval from the last
+    /// tick. A `%H:%M` clock woken every sixty seconds from whenever it started
+    /// would show a minute that changed up to fifty-nine seconds ago; woken at
+    /// the boundary, it changes when the minute does. The alignment costs one
+    /// modulo and buys the difference between a clock and a stopwatch.
+    // TP-CLOCK-08: a clock wakes on the boundary of the unit it shows.
+    pub(crate) fn clock_deadline(&self) -> Option<Instant> {
+        let tick = self.state.shell_bar_chrome.clock_tick()?;
+        let period = tick.as_secs().max(1);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?;
+        // Whole seconds until the next multiple of the period. Never zero: a
+        // deadline already in the past would make the loop spin.
+        let past = now.as_secs() % period;
+        let until = period - past;
+        let sub = u64::from(now.subsec_nanos());
+        Some(Instant::now() + Duration::from_nanos(until * 1_000_000_000 - sub))
+    }
+
+    /// Re-reads the wall clock, if a section is showing one.
+    ///
+    /// Returns whether the text a clock would draw has changed, so the loop can
+    /// leave the screen alone when it has not. Reading is cheap; repainting a
+    /// region every tick is what the resolution rule exists to avoid, and a
+    /// clock woken on the boundary can still find the same minute if the loop
+    /// woke early for some other reason.
+    // TP-CLOCK-09: the loop reads the clock, the renderer never does.
+    pub(crate) fn tick_clock(&mut self) -> bool {
+        if self.state.shell_bar_chrome.clock_tick().is_none() {
+            // A bar that lost its clock must not keep a stale reading around to
+            // draw if one comes back.
+            return self.state.clock_now.take().is_some();
+        }
+        let previous = self.state.clock_now;
+        self.state.clock_now = crate::clock::local_now();
+        previous.map(|at| (at.hour(), at.minute(), at.second()))
+            != self
+                .state
+                .clock_now
+                .map(|at| (at.hour(), at.minute(), at.second()))
+    }
+
     /// Reads the machine, if a reading is due.
     ///
     /// Called from the loop and from nowhere else. The first call can only
@@ -787,6 +836,7 @@ impl App {
             self.copy_feedback_deadline,
             self.next_animation_tick,
             self.resource_sample_deadline(),
+            self.clock_deadline(),
             include_git_refresh
                 .then(|| self.git_refresh_deadline())
                 .flatten(),
@@ -990,6 +1040,91 @@ mod tests {
                 "the reading has to reach the history a {kind} widget draws from"
             );
         }
+    }
+
+    /// A bar with a clock wakes for one, and a bar without a clock does not.
+    ///
+    /// The negative half carries the whole cost argument, exactly as it does
+    /// for the sampler: a clock is the first thing in this product that changes
+    /// without anybody touching it, so a tick scheduled unconditionally would
+    /// wake every herdr on every machine once a minute for a widget almost
+    /// nobody has turned on. The `resource` row is there because the two live
+    /// clocks are separate on purpose — a meter must not start waking on the
+    /// minute, and a clock must not start opening `/proc`.
+    // TP-CLOCK-07: no clock section means no tick at all.
+    #[test]
+    fn only_a_bar_with_a_clock_asks_the_loop_to_wake_for_one() {
+        let with_clock = app_with_only_widget("clock");
+        assert!(
+            with_clock.clock_deadline().is_some(),
+            "a clock section must ask the loop to wake"
+        );
+        assert_eq!(
+            with_clock.resource_sample_deadline(),
+            None,
+            "a clock must not make the loop start reading the machine"
+        );
+
+        for kind in ["label", "resource"] {
+            let without = app_with_only_widget(kind);
+            assert_eq!(
+                without.clock_deadline(),
+                None,
+                "a bar holding only a {kind} widget must not wake for a clock"
+            );
+        }
+    }
+
+    /// A clock reading reaches state, and only a changed one asks for a draw.
+    ///
+    /// The second half keeps the wakeup cheap. A tick reporting a change every
+    /// time would repaint the clock's cells on every wakeup — the cost the
+    /// resolution rule exists to avoid, and one that looks perfectly correct on
+    /// screen.
+    // TP-CLOCK-09: the loop reads the clock, the renderer never does.
+    #[test]
+    fn ticking_the_clock_fills_state_and_reports_only_real_changes() {
+        let mut app = app_with_only_widget("clock");
+        assert!(
+            app.state.clock_now.is_none(),
+            "control: nothing has read the clock yet"
+        );
+
+        assert!(
+            app.tick_clock(),
+            "the first reading is a change from nothing"
+        );
+        assert!(
+            app.state.clock_now.is_some(),
+            "the reading has to reach the state the renderer draws from"
+        );
+        assert!(
+            !app.tick_clock(),
+            "a second tick inside the same second has nothing new to draw"
+        );
+    }
+
+    /// A bar that loses its clock drops the reading it was holding.
+    ///
+    /// A stale time is worse than no time: a config reload that removes the
+    /// clock and later brings it back would otherwise paint whatever moment the
+    /// last bar was showing, for as long as it took the next tick to arrive.
+    // TP-CLOCK-10: removing the clock clears the reading behind it.
+    #[test]
+    fn a_bar_that_loses_its_clock_forgets_the_time_it_was_holding() {
+        let mut app = app_with_only_widget("clock");
+        app.tick_clock();
+        assert!(app.state.clock_now.is_some(), "control: a reading is held");
+
+        app.state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::default();
+        assert!(
+            app.tick_clock(),
+            "dropping a held reading is itself a change worth drawing"
+        );
+        assert_eq!(
+            app.state.clock_now, None,
+            "a clock nobody is showing must not leave a time behind"
+        );
     }
 
     /// The control for the test above: widening the gate must not open it.

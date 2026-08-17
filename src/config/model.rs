@@ -1084,6 +1084,13 @@ pub struct ShellBarSectionWidgetConfig {
     /// Single-character keys mapped to colour specs, in the same grammar as
     /// `shell.bars.<edge>.color`.
     pub palette: std::collections::BTreeMap<String, String>,
+    /// How a `clock` widget writes the time: `%H:%M` and its neighbours, with
+    /// everything else carried through as written. Empty means `%H:%M`.
+    ///
+    /// The format also decides how often the clock is redrawn — a format naming
+    /// seconds is refreshed every second, one without them once a minute — so
+    /// there is no separate interval key that could disagree with it.
+    pub format: String,
 }
 
 /// `[[shell.bars.<edge>.sections]].action` — what clicking one part does.

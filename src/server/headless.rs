@@ -4370,6 +4370,13 @@ impl HeadlessServer {
         // never executed by the process that drew it.
         // TP-RES-11: the sampler runs in the loop that actually renders.
         changed |= self.app.tick_resource_sample(now);
+        // And the clock, for exactly the same reason and caught by exactly the
+        // same guard: this was added to the monolithic loop alone, every clock
+        // test stayed green, and the parity check named `tick_clock` as a call
+        // this loop was missing. A clock that ticks only where nothing draws is
+        // a clock that never moves.
+        // TP-CLOCK-12: the clock ticks in the loop that actually renders.
+        changed |= self.app.tick_clock();
 
         if self.has_app_client() {
             self.app.start_git_status_refresh_if_due(now);
