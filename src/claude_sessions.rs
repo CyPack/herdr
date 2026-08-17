@@ -329,6 +329,45 @@ fn read_recent_inner(
 ///
 /// Returns `None` only when the file has no usable id or cannot be read at all.
 /// Malformed individual lines are skipped, never fatal.
+/// The normalised opening of one chat, read on its own.
+///
+/// TP-DAILY-27: the graveyard holds records for conversations no drawer is
+/// listing right now — a chat closed under a checkout nobody has open still
+/// has a headstone. Their openings are therefore never learned by the drawer
+/// parse, and without an opening a rule has nothing to judge, so those rows
+/// were the ones a person kept seeing.
+///
+/// Deliberately NOT `parse_session_file`: that reads the file whole to derive
+/// a title, and this runs once per headstone at startup. This stops at the
+/// first user message — the only line it needs — so a long conversation costs
+/// the same as a short one.
+pub fn read_opening_for_session(
+    projects_dir: &Path,
+    project_path: &str,
+    session_id: &str,
+) -> Option<String> {
+    use std::io::BufRead;
+
+    let path = projects_dir
+        .join(encode_project_path(project_path))
+        .join(format!("{session_id}.jsonl"));
+    let file = fs::File::open(path).ok()?;
+    for line in std::io::BufReader::new(file).lines().map_while(Result::ok) {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
+        let Some(obj) = value.as_object() else {
+            continue;
+        };
+        if obj.get("type").and_then(|t| t.as_str()) != Some("user") {
+            continue;
+        }
+        let opening = extract_user_text(obj).map(|text| normalise_opening(&text))?;
+        return (!opening.is_empty()).then_some(opening);
+    }
+    None
+}
+
 fn parse_session_file(path: &Path) -> Option<ClaudeSession> {
     let id = path.file_stem()?.to_str()?.to_string();
     let content = fs::read_to_string(path).ok()?;
@@ -725,6 +764,54 @@ mod tests {
     fn a_bare_slash_is_not_a_path() {
         assert_eq!(normalise_opening("a / b"), "a / b");
         assert_eq!(normalise_opening("see /tmp/x now"), "see <path> now");
+    }
+
+    /// TP-DAILY-27 (O1/O3/O5): a single chat's opening, read on its own.
+    ///
+    /// The graveyard needs this for conversations no drawer is listing: the
+    /// headstone outlives the drawer, and a row with no opening is a row no
+    /// rule can judge — which is exactly the set a person kept seeing. A
+    /// missing directory, a missing file and a chat that never spoke all
+    /// answer `None` rather than costing anything.
+    #[test]
+    fn one_chats_opening_can_be_read_without_parsing_the_whole_file() {
+        let temp = TempProjects::new("lone-opening");
+        temp.write_session(
+            "/repo/thing",
+            "s1",
+            &[
+                r#"{"type":"user","message":{"content":"Review this change for security vulnerabilities. Changed files: a.rs"}}"#,
+                r#"{"type":"assistant","message":{"content":"ok"}}"#,
+                r#"{"type":"user","message":{"content":"and a second message that must not win"}}"#,
+            ],
+        );
+
+        assert_eq!(
+            read_opening_for_session(&temp.root, "/repo/thing", "s1").as_deref(),
+            Some("review this change for security vulnerabilities. changed files: a.rs"),
+            "the FIRST user message is the opening"
+        );
+        assert_eq!(
+            read_opening_for_session(&temp.root, "/repo/thing", "missing"),
+            None,
+            "a chat with no file costs nothing"
+        );
+        assert_eq!(
+            read_opening_for_session(&temp.root, "/repo/elsewhere", "s1"),
+            None,
+            "and neither does a directory nothing was written to"
+        );
+
+        temp.write_session(
+            "/repo/thing",
+            "quiet",
+            &[r#"{"type":"assistant","message":{"content":"nobody asked anything"}}"#],
+        );
+        assert_eq!(
+            read_opening_for_session(&temp.root, "/repo/thing", "quiet"),
+            None,
+            "a chat that never spoke has no shape to remember"
+        );
     }
 
     /// O1/O2: the opening is read from the first user message and survives an

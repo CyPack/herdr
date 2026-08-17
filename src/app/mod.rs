@@ -620,6 +620,29 @@ impl App {
             })
             .collect();
         records.extend(derived);
+
+        // TP-DAILY-27: teach the classifier about the conversations only the
+        // graveyard remembers. A headstone can outlive every drawer that
+        // listed its chat, and until now those rows carried no opening at all
+        // — so no rule could reach them and they were exactly the ones left on
+        // screen. One file each, first line only, and only for the ones
+        // nothing already knows.
+        if let Some(dir) = crate::claude_sessions::default_claude_projects_dir() {
+            for record in &records {
+                if state.chat_openings.contains_key(&record.agent_id) {
+                    continue;
+                }
+                let Some(cwd) = record.cwd.as_ref() else {
+                    continue;
+                };
+                if let Some(opening) =
+                    crate::claude_sessions::read_opening_for_session(&dir, cwd, &record.agent_id)
+                {
+                    state.chat_openings.insert(record.agent_id.clone(), opening);
+                }
+            }
+            state.classify_chats();
+        }
         state
             .closed_agents
             .load_stored(crate::persist::closed_agents::prune(
@@ -3359,6 +3382,84 @@ mod tests {
         restore_config_dir(&root, previous);
 
         assert_eq!(count, 1, "the handoff road reads the store like any other");
+    }
+
+    /// TP-DAILY-27: a headstone whose chat no drawer is listing still gets
+    /// classified, and a shape already learned from a live parse outranks it.
+    ///
+    /// Measured on the reported machine: 38 of 78 witnessed deaths were the
+    /// code-review pass, and NONE of them fell inside the drawer's parse
+    /// window — their directories were not open. Without this the filter shipped
+    /// and the rows a person was pointing at stayed exactly where they were.
+    #[test]
+    fn a_headstone_no_drawer_lists_still_learns_its_shape() {
+        let (root, store, previous) = with_temp_config_dir("graveyard-openings");
+        let projects = root.join(".claude").join("projects");
+        let repo = root.join("repo");
+        let dir = projects.join(crate::claude_sessions::encode_project_path(
+            &repo.to_string_lossy(),
+        ));
+        std::fs::create_dir_all(&dir).expect("fake projects dir");
+        std::fs::write(
+            dir.join("chore.jsonl"),
+            "{\"type\":\"user\",\"message\":{\"content\":\"Review this change for security vulnerabilities. Changed files: a.rs\"}}\n",
+        )
+        .expect("fake transcript");
+        std::fs::write(
+            dir.join("known.jsonl"),
+            "{\"type\":\"user\",\"message\":{\"content\":\"this file must not be read again\"}}\n",
+        )
+        .expect("fake transcript");
+
+        let fresh = crate::persist::workspace_chats::now_ms();
+        std::fs::write(
+            &store,
+            format!(
+                r#"{{"version":1,"records":[
+                   {{"agent_id":"chore","label":"a chore","cwd":{cwd},"closed_at":{fresh}}},
+                   {{"agent_id":"known","label":"already known","cwd":{cwd},"closed_at":{fresh}}}
+                ]}}"#,
+                cwd = serde_json::to_string(&repo.to_string_lossy().to_string()).expect("cwd json"),
+            ),
+        )
+        .expect("fake store");
+
+        let previous_home = std::env::var_os("HOME");
+        std::env::set_var("HOME", &root);
+        let mut state = AppState::test_new();
+        state.routine_chat_markers = crate::config::Config::default().ui.routine_chat_markers;
+        state.hidden_chat_labels = vec![crate::chat_labels::ChatLabel::Routine];
+        // O4: a shape the live parse already learned must not be re-read or
+        // overwritten — the drawer's answer is the fresh one.
+        state.chat_openings.insert(
+            "known".to_string(),
+            "a shape learned from the drawer".to_string(),
+        );
+
+        App::seed_closed_agents(&mut state);
+
+        let learned = state.chat_openings.get("chore").cloned();
+        let kept = state.chat_openings.get("known").cloned();
+        let hidden = state.chat_is_hidden("chore");
+        match previous_home {
+            Some(home) => std::env::set_var("HOME", home),
+            None => std::env::remove_var("HOME"),
+        }
+        restore_config_dir(&root, previous);
+
+        assert!(
+            learned.is_some_and(|opening| opening.starts_with("review this change")),
+            "the headstone taught the classifier its chat's shape"
+        );
+        assert_eq!(
+            kept.as_deref(),
+            Some("a shape learned from the drawer"),
+            "and it did not overwrite one the drawer already knew"
+        );
+        assert!(
+            hidden,
+            "so the chore is now something the panel can leave out"
+        );
     }
 
     /// TP-DAILY-25: the seeding path passes the REAL verdict, not a stand-in.
