@@ -704,6 +704,149 @@ mod tests {
         assert!(app.terminal_runtimes.get(&terminal_id).is_none());
     }
 
+    fn public_pane_id_of(app: &App, pane_id: crate::layout::PaneId) -> String {
+        app.public_pane_id(0, pane_id).expect("public pane id")
+    }
+
+    fn sleep_response(app: &mut App, public_id: &str) -> serde_json::Value {
+        let encoded = app.handle_pane_sleep(
+            "req_sleep".into(),
+            crate::api::schema::PaneTarget {
+                pane_id: public_id.to_string(),
+            },
+        );
+        serde_json::from_str(&encoded).expect("valid response json")
+    }
+
+    #[tokio::test]
+    async fn the_pane_sleep_verb_puts_a_retired_unwatched_pane_to_sleep() {
+        // TP-DORMANT-13: the API verb is the same policy gate as the sweep —
+        // it goes through make_pane_dormant, so every refusal the sweep obeys
+        // binds an API caller too, and success returns the pane's fresh info
+        // with the dormant field set.
+        let (mut app, pane_id) = app_with_scrollback_pane(b"verb-history\r\n", true);
+        let terminal_id = terminal_id_of(&app, pane_id);
+        let public_id = public_pane_id_of(&app, pane_id);
+
+        let response = sleep_response(&mut app, &public_id);
+
+        assert_eq!(
+            response["result"]["pane"]["dormant"],
+            serde_json::Value::Bool(true),
+            "success returns the pane info carrying dormant: {response}"
+        );
+        assert!(
+            app.terminal_runtimes.get(&terminal_id).is_none(),
+            "the runtime left the registry"
+        );
+        assert!(app
+            .state
+            .terminals
+            .get(&terminal_id)
+            .unwrap()
+            .dormant
+            .is_some());
+        let _ = std::fs::remove_dir_all(app.dormant_history_dir());
+    }
+
+    #[tokio::test]
+    async fn the_pane_sleep_verb_never_reaches_a_live_child() {
+        // TP-DORMANT-13: TP-DORMANT-01's unbendable rule holds on the API
+        // path — a caller cannot sleep a pane whose child still runs.
+        let (mut app, pane_id) = app_with_scrollback_pane(b"still-working\r\n", false);
+        let terminal_id = terminal_id_of(&app, pane_id);
+        app.terminal_runtimes
+            .get(&terminal_id)
+            .unwrap()
+            .test_set_child_pid(std::process::id());
+        let public_id = public_pane_id_of(&app, pane_id);
+
+        let response = sleep_response(&mut app, &public_id);
+
+        assert_eq!(
+            response["error"]["code"],
+            serde_json::Value::String("child_still_running".into()),
+            "the refusal surfaces as an API error: {response}"
+        );
+        assert!(
+            app.terminal_runtimes.get(&terminal_id).is_some(),
+            "a refused pane keeps its runtime"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_pane_sleep_verb_refuses_a_watched_pane() {
+        // TP-DORMANT-13: the second unbendable rule — a watched pane cannot
+        // be blanked under its viewer, not even by an explicit API request.
+        let (mut app, pane_id) = app_with_scrollback_pane(b"watched\r\n", true);
+        app.state.workspaces[0].active_tab_by_client.insert(7, 0);
+        let public_id = public_pane_id_of(&app, pane_id);
+
+        let response = sleep_response(&mut app, &public_id);
+
+        assert_eq!(
+            response["error"]["code"],
+            serde_json::Value::String("pane_watched".into()),
+            "the refusal surfaces as an API error: {response}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_pane_sleep_verb_is_idempotent_on_a_dormant_pane() {
+        // TP-DORMANT-13: a retried sleep is not an error and not a second
+        // transition — the pane's state, its history file, and the event
+        // stream all stay exactly as the first sleep left them.
+        let (mut app, pane_id) = app_with_scrollback_pane(b"idempotent\r\n", true);
+        let terminal_id = terminal_id_of(&app, pane_id);
+        let public_id = public_pane_id_of(&app, pane_id);
+
+        let first = sleep_response(&mut app, &public_id);
+        assert_eq!(first["result"]["pane"]["dormant"], true, "{first}");
+        let history_path = app
+            .state
+            .terminals
+            .get(&terminal_id)
+            .unwrap()
+            .dormant
+            .clone()
+            .unwrap()
+            .history_path
+            .expect("history written");
+        let saved = std::fs::read_to_string(&history_path).unwrap();
+        let events_after_first = app.event_hub.current_sequence();
+
+        let second = sleep_response(&mut app, &public_id);
+
+        assert_eq!(
+            second["result"]["pane"]["dormant"],
+            serde_json::Value::Bool(true),
+            "a repeated sleep is a success, not an error: {second}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&history_path).unwrap(),
+            saved,
+            "the history file is untouched"
+        );
+        assert_eq!(
+            app.event_hub.current_sequence(),
+            events_after_first,
+            "no transition happened, so no event is emitted"
+        );
+        let _ = std::fs::remove_dir_all(app.dormant_history_dir());
+    }
+
+    #[tokio::test]
+    async fn the_pane_sleep_verb_reports_an_unknown_pane() {
+        // The error contract stays uniform with every other pane verb.
+        let mut app = test_app();
+        let response = sleep_response(&mut app, "p_missing");
+        assert_eq!(
+            response["error"]["code"],
+            serde_json::Value::String("pane_not_found".into()),
+            "{response}"
+        );
+    }
+
     #[tokio::test]
     async fn a_dormant_panes_api_info_says_so_and_an_awake_panes_does_not() {
         // TP-DORMANT-14: without this field dormancy is invisible to API

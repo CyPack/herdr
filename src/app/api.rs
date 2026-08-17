@@ -1132,6 +1132,7 @@ impl App {
                 return self.handle_pane_send_input(request.id, params)
             }
             Method::PaneClose(target) => return self.handle_pane_close(request.id, target),
+            Method::PaneSleep(target) => return self.handle_pane_sleep(request.id, target),
             Method::ClosedAgentRevive(params) => {
                 return self.handle_closed_agent_revive(request.id, params)
             }
