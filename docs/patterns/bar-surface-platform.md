@@ -31,6 +31,10 @@ ownership. What is missing is the **bridge** from a plugin to a bar section.
 | a right press offers a **menu** of presentations | **exists** | `ContextMenuKind::BarSection`, `action.secondary = "menu"` — the default |
 | open a command in a new tab of the current workspace | **exists** | `App::open_argv_in_new_tab`, `secondary = "tab"` |
 | open a command **beside the focused pane** | **exists** | `App::open_argv_in_split`, `secondary = "split"` |
+| bar section **runs a command and opens nothing** | **exists** | `SectionAction::Run`, `action = { kind = "run", argv = […] }` |
+| bar section **goes to a workspace by name** | **exists** | `SectionAction::FocusWorkspace`, `action = { kind = "workspace", name = "…" }` |
+| bar section shows **the time** | **exists** | `SectionWidget::Clock`, `widget = { kind = "clock", format = "%H:%M" }` |
+| bar section shows **disk / battery / net / temp** | **exists** | `ResourceMetric` table; only the metrics a section shows are read |
 | bar section runs a plugin action | **exists** | `SectionAction::InvokePlugin`, `action = { kind = "plugin", command = "…" }` |
 | the grammar can be **read without running it** | **exists** | `herdr shell spec [--json]` — kinds, keys, refusals, colours, pictures, menu rows |
 | **icon by name rather than raw codepoint** | **MISSING** | `glyph` still takes a literal grapheme; `art` takes a name, an icon-font symbol does not |
@@ -39,6 +43,10 @@ ownership. What is missing is the **bridge** from a plugin to a bar section.
 
 Read that table before proposing anything. Two rows are missing; the rest is plumbing that
 already works and must be reused rather than reinvented.
+
+⭐ **Everything in this table is in the installed binary** as of 2026-08-17 19:39 — verified by
+running `herdr shell spec` against it, not by reading the source. SP3.5 is about the link after
+that one.
 
 > ⚠ **This table is a claim about the code, and it has been wrong twice.** Both times the
 > failure was the same: a row written from what the surrounding design implied rather than
@@ -314,6 +322,57 @@ then just an index of manifests, which can live entirely outside this repository
   invented under pressure.
 
 ---
+
+## SP3.5 · Getting it onto somebody's screen
+
+Everything above is about what a bar *can* be. This section is about the gap that closed last
+and cost the most: what a bar *is*, on the machine of the person who asked for one.
+
+The chain has six links and the last one is the one that gets skipped:
+
+```
+  source merged  →  artefact built  →  artefact INSTALLED  →  process RESTARTED
+                                                                    ↓
+                                            the person's CONFIG names a bar
+                                                                    ↓
+                                                   the person SEES it
+```
+
+Measured on 2026-08-17, after the whole bar platform had landed: the first four links were
+green — `~/.local/bin/herdr` carried every feature, the live process had been restarted onto
+it, and `herdr shell spec` listed `clock`, `disk`, `battery`, `net`, `temp`, `run`,
+`workspace`, the menu and `split`. The fifth link was `grep -c "shell.bars" ~/.config/herdr/config.toml`
+→ **0**. Ten commits, thirty killed mutations and roughly five thousand green tests had changed
+nothing about what anybody was looking at.
+
+**Checking each link, in the product's own terms:**
+
+```bash
+# 3. what is installed, and when
+ls -l --time-style=+%F_%H:%M "$(command -v herdr)"
+
+# 4. what the live process is actually running from, and how old it is
+pgrep -af 'herdr server' | head -1
+ls -l /proc/<pid>/exe          # "(deleted)" means the file moved under a running process
+ps -o pid,lstart,etime -p <pid>
+
+# 5. which features that binary carries — the only claim that cannot be faked
+env -u HERDR_SOCKET_PATH -u HERDR_CLIENT_SOCKET_PATH herdr shell spec
+
+# 6. whether the person's own config asks for any of it
+grep -c "shell.bars" ~/.config/herdr/config.toml
+```
+
+**Two rules that fall out of this.**
+
+A new binary does not reach a running herdr. The process keeps executing the file it started
+with, so installing and restarting are separate steps and the restart belongs to the person
+whose session it is. `herdr update` is not the way to install a fork build — it replaces it
+with an upstream release.
+
+And a config that loads is not a config that is seen. `herdr config check` answering `ok`
+proves the file parses; an empty file answers `ok` too. The last link is measured by the person
+looking at their own bar, and by nothing else.
 
 ## SP4 · Anti-patterns
 
