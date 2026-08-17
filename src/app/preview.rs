@@ -896,9 +896,13 @@ mod tests {
             url_origin("http://127.0.0.1:8770/deep/path?q=1#frag"),
             Some("http://127.0.0.1:8770")
         );
+        // A tailnet-style host with no path at all: the whole string is the
+        // origin. The address comes from the shared CGNAT range (RFC 6598),
+        // which is where tailnet addresses live and which names no machine in
+        // particular — the case under test is the missing path, not the host.
         assert_eq!(
-            url_origin("http://100.75.115.68:8770"),
-            Some("http://100.75.115.68:8770")
+            url_origin("http://100.64.0.1:8770"),
+            Some("http://100.64.0.1:8770")
         );
         assert_eq!(url_origin("not-a-url"), None);
         assert_eq!(
