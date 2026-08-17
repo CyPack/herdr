@@ -85,16 +85,70 @@ Rules the checker enforces, each with its own message:
   has a size, and a config that loads on one screen and not another is worse than
   a mark clipped by a narrow window. It clips, exactly as a label does.
 
-Colours use the same grammar as `shell.bars.<edge>.color`: a palette token
-(`mauve`, `accent`, `teal`, …) or a literal `#rrggbb`. They resolve **at draw
-time**, so switching theme recolours a picture without re-deriving geometry.
+### BI3.a · Which number governs which axis
+
+`cells` runs **along** the bar and `size` runs **across** it, and the two swap
+meaning with the edge. A picture is measured against both, on the right axis:
+
+| edge | `cells` bounds | `size` (less border) bounds |
+|---|---|---|
+| `top` / `bottom` | the picture's **width** | the picture's **rows** |
+| `left` / `right` | the picture's **rows** | the picture's **width** |
+
+This is not a detail. A side bar's `cells` is a *height*, and comparing a
+picture's width against it refused pictures that fit perfectly — the failure had
+no other detector, because both numbers were plausible and both refusals read
+correctly. A picture too tall for the bar is refused with its own message, so a
+6-pixel mark asks for `size = 3` (plus 2 if `border = true`).
+
+### BI3.b · Colours, and how to find out which ones exist
+
+Colours use the same grammar as `shell.bars.<edge>.color`: a palette token or a
+literal `#rrggbb`. They resolve **at draw time**, so switching theme recolours a
+picture without re-deriving geometry.
+
+The tokens are `accent`, `text`, `mauve`, `green`, `yellow`, `red`, `blue`,
+`teal`, `peach`, `orange`, `surface`, `dim`. Do not take that list from here —
+it is a copy, and copies age. Ask the build:
+
+```bash
+herdr shell spec | grep -A1 colours
+```
+
+An unrecognised colour is **not refused**: it warns into the log and comes back
+cyan. That tolerance is deliberate — refusing would mean a config that loads
+today and not tomorrow — but it also means no refusal message ever names the
+set, which is why `shell spec` publishes it and why the guide's colour table is
+gated against the parser in both directions.
+
+A **bundled** picture is held to a higher bar than somebody's own config: every
+colour in a shipped palette must be a token this build resolves, because a typo
+there would draw cyan on every machine and the person looking at it never wrote
+the line that produced it.
+
+### BI3.c · The bundled pictures
+
+`herd`, `herd-small`, `dot`, `ring`, `level` — with `herdr shell spec` printing
+each one's size in cells and rows, and the configuration guide carrying the same
+table. Both are gated against the catalogue as a **set, in both directions**, and
+against the four numbers each row writes: a picture nobody documented is one
+nobody can find, and a documented size that is wrong sends somebody to a section
+that clips or sits half empty.
 
 ## BI4 · Verify it the way the tests do
 
 ```bash
-# the product's own answer, before you look at a screen
+# what this build accepts, without running a bar at all
+herdr shell spec            # names, sizes, colours, refusals
+herdr shell spec --json     # the same, for an agent
+
+# the product's own answer on your file, before you look at a screen
 herdr config check
 ```
+
+⚠ `config check` answering `ok` proves nothing on its own — an empty config says
+`ok` too. Pair it with a **negative control**: break one thing on purpose and
+watch it be refused. A check that cannot fail is a check that has not run.
 
 A picture that reaches the buffer is not the same as one a person can see. This
 fork shipped a bar label whose foreground was the colour of the surface under it:
@@ -113,6 +167,10 @@ checking chrome, read **colour**, not just symbols
 | Silently clip a picture that does not fit a declared width | Refuse where it is written |
 | Bake `Color` at config time | Keep specs; resolve against the live palette |
 | Prove an icon works with a symbol dump | Read the cell colours too |
+| Measure a picture's width against `cells` on a side bar | `cells` is a height there; BI3.a |
+| Add a bundled picture without documenting it | The guide's table is gated as a set, both ways — an undocumented picture turns the build red on purpose |
+| Trust that a picture's numbers describe its shape | `dot` shipped as `▀▄▄▀` — a valley — while its size and its comment both said "a filled dot". A shape is the one property only a picture can state |
+| Copy the colour list out of a document | Ask `herdr shell spec`; a copied list ages silently |
 
 ## BI6 · Why this format is ready for third-party icons
 
