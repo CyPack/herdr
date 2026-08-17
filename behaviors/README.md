@@ -130,3 +130,16 @@ some of them.
 `scripts/license_guard_check.py` covers the one thing no behavior test could:
 it fails the build if the fork stops being AGPL-3.0-or-later, or if the Apache
 attribution for upstream's post-`cd5ea1be` code goes missing.
+
+`scripts/personal_identifier_check.py` guards the same kind of decision from
+the other direction. This fork is public and is written on one developer's
+machine, so that machine's home directory, tailnet address and mail account
+kept ending up in committed text — 240 occurrences across 29 files before
+anyone looked. Cleaning them once does not hold: every branch cut before the
+cleanup still carries the old spellings, and a three-way merge takes a side
+silently when only one side changed a region. The guard refuses tailnet
+addresses outside the two RFC 6598 documentation ones, `/home/<name>` and its
+dash-encoded slug form for names that are not on a neutral list, and mail
+addresses that are neither upstream's, the project's, nor a reserved example
+domain. `vendor/` is skipped: it is upstream's tree, verified by the patch
+index instead, and rewriting another project's attribution would be wrong.
