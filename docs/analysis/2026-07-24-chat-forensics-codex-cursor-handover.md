@@ -120,7 +120,7 @@ Hash `3e70c786…` = `/home/ayaz/projects/herdr` kimliği; **4 oturumun tamamı 
 | 3 | `1d59306a-951a-497b-a7d6-873ccab4cbef` | **Cursor CLI Update** | 2026-07-23 16:35:57 | **2026-07-24 22:11:47** | 176 | 53 | 5/17/26 | `grok-4.5` | `unrestricted` | CLI güncelliği + MCP onay kök nedeni |
 | 4 | `f3a9222f-0cef-4c7f-a219-6569b574f82f` | *(başlıksız)* | 2026-07-24 22:12:22 | 2026-07-24 22:12:22 | — | — | — | — | `hasConversation:false` | **BOŞ** |
 
-**Model:** 4 oturumda da **Cursor Grok 4.5** (`lastUsedModel:"grok-4.5"`). Sistem prompt'u: *"You are Cursor Grok 4.5 … jointly trained and owned by SpaceXAI and Cursor"*. `agent about` çıktısı: Model = `Cursor Grok 4.5 High Fast`, Tier = `Pro`, Email = `01cypack@gmail.com`, Terminal = `kitty`, Shell = `fish`, OS = `linux (x64)`.
+**Model:** 4 oturumda da **Cursor Grok 4.5** (`lastUsedModel:"grok-4.5"`). Sistem prompt'u: *"You are Cursor Grok 4.5 … jointly trained and owned by SpaceXAI and Cursor"*. `agent about` çıktısı: Model = `Cursor Grok 4.5 High Fast`, Tier = `Pro`, Email = *(hesap sahibi — bu belgede tutulmuyor)*, Terminal = `kitty`, Shell = `fish`, OS = `linux (x64)`.
 
 ### A.2 Cursor agent-transcript'leri — `~/.cursor/projects/agent-transcripts/`
 

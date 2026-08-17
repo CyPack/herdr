@@ -432,7 +432,7 @@ ancak CyPack izin verirse/yeniden lisanslarsa).
 - FSF GPL FAQ: *"If you are the copyright holder for the code, you can release it under various
   different non-exclusive licenses at various times."*
 - CyPack, **kendi 819 commit'inin telif sahibidir** (`git shortlog -sne 46174563..HEAD` →
-  `819 CyPack <01cypack@gmail.com>`, %100). Bu katkıları istediği lisansla verebilir.
+  `819 CyPack`, %100). Bu katkıları istediği lisansla verebilir.
 
 **AMA — kritik engel:**
 
