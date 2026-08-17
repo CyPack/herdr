@@ -2046,6 +2046,23 @@ mod tests {
             panes_before + 1,
             "the focused pane must have been divided exactly once"
         );
+        // Which way, not merely that it happened. Turning the direction round
+        // was measured to break nothing at all: every other assertion here
+        // counts panes, and a pane below is exactly as much a pane as one
+        // beside. The direction is a promise this surface makes to the rest of
+        // the product — a bar section splits the way every other launcher
+        // splits — and a promise nothing checks is a promise that will drift.
+        assert!(
+            matches!(
+                app.state.workspaces[0].tabs[active_tab].layout.root(),
+                crate::layout::Node::Split {
+                    direction: ratatui::layout::Direction::Horizontal,
+                    ..
+                }
+            ),
+            "a bar section splits beside the pane, not under it — the same way \
+             the pane menu's own \"Split right\" and a plugin pane do"
+        );
         assert_eq!(
             app.state.terminals.len(),
             terminals_before + 1,
