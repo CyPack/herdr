@@ -2011,7 +2011,16 @@ impl Default for UiConfig {
             // opening measured here (173 chats): the thing that writes it is
             // the person's own `!` command, so hiding it by default would hide
             // their own work.
-            routine_chat_markers: vec!["<scheduled-task".into(), "<command-name>".into()],
+            routine_chat_markers: vec![
+                "<scheduled-task".into(),
+                "<command-name>".into(),
+                // Measured on the reported machine: 218 chats, 38 of them
+                // already in the graveyard. The code-review pass writes this
+                // sentence itself and writes nothing else first, so it is a
+                // declaration in the same sense the two tags above are — just
+                // spelled in English because a person never had to read it.
+                "review this change for security vulnerabilities".into(),
+            ],
             routine_chat_prompt_patterns: Vec::new(),
             routine_chat_repeat_threshold: DEFAULT_ROUTINE_CHAT_REPEAT_THRESHOLD,
             hidden_chat_labels: vec![ROUTINE_CHAT_LABEL.to_string()],
@@ -2402,8 +2411,20 @@ mouse_wheel_host_scroll = "mobile"
         let defaults = Config::default();
         assert_eq!(
             defaults.ui.routine_chat_markers,
-            vec!["<scheduled-task".to_string(), "<command-name>".to_string()],
-            "a fresh install must already know the two openings a chat writes about itself"
+            vec![
+                "<scheduled-task".to_string(),
+                "<command-name>".to_string(),
+                "review this change for security vulnerabilities".to_string()
+            ],
+            "a fresh install must already know the openings a chat writes about itself"
+        );
+        assert!(
+            defaults
+                .ui
+                .routine_chat_markers
+                .iter()
+                .any(|marker| marker == "review this change for security vulnerabilities"),
+            "the code-review pass declares itself in a sentence rather than a tag, and it              ships on by default because no person writes that line by hand"
         );
         assert!(
             defaults.ui.routine_chat_prompt_patterns.is_empty(),
@@ -2470,7 +2491,7 @@ routine_chat_repeat_threshold = 5
         assert_eq!(config.ui.routine_chat_repeat_threshold, 5);
         assert_eq!(
             config.ui.routine_chat_markers,
-            vec!["<scheduled-task".to_string(), "<command-name>".to_string()],
+            crate::config::Config::default().ui.routine_chat_markers,
             "a table that names one key must leave the other three at their defaults"
         );
         assert_eq!(config.ui.hidden_chat_labels, vec!["routine".to_string()]);

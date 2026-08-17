@@ -4606,6 +4606,25 @@ impl AppState {
             .copied()
     }
 
+    /// TP-DAILY-26: the graveyard rows a person should see.
+    ///
+    /// The store keeps every death it witnessed and this does not touch it —
+    /// a record is history and deleting history to tidy a list is the wrong
+    /// trade. What it decides is narrower and is the thing that was actually
+    /// asked for: which of those rows get drawn.
+    ///
+    /// One gate for all three of the panel's ghost passes — the count, the
+    /// layouts and the records themselves. They are addressed by index into
+    /// one another, so a filter applied to two of the three would bind a row
+    /// to the wrong headstone rather than simply showing one row too many.
+    pub fn visible_closed_agents(
+        &self,
+    ) -> impl Iterator<Item = &crate::app::closed_agents::ClosedAgentRecord> {
+        self.closed_agents
+            .entries()
+            .filter(move |record| !self.chat_is_hidden(&record.agent_id))
+    }
+
     /// TP-DAILY-23: whether the daily section leaves this chat out.
     ///
     /// Three ways to answer no, and each one is a report someone made. A chat
@@ -6539,8 +6558,10 @@ mod tests {
     /// `(session id, opening)` pairs.
     fn state_with_openings(openings: &[(&str, &str)]) -> AppState {
         let mut state = AppState::test_new();
-        state.routine_chat_markers =
-            vec!["<scheduled-task".to_string(), "<command-name>".to_string()];
+        // Taken from the shipped defaults rather than written out here: a
+        // fixture that repeats the list keeps passing while the real one
+        // drifts, which is how the code-review opening went unnoticed.
+        state.routine_chat_markers = crate::config::Config::default().ui.routine_chat_markers;
         state.routine_chat_repeat_threshold = 3;
         for (session_id, opening) in openings {
             state
@@ -6652,6 +6673,53 @@ mod tests {
                 "the same chore in a third directory is still the same chore"
             );
         }
+    }
+
+    /// TP-DAILY-26 (R2/R3): a chore that closed is not drawn in the panel, and
+    /// the record of it is still there.
+    ///
+    /// Both halves matter and they pull opposite ways. The user is looking at
+    /// rows that say "an agent ran and closed" and does not want the chores
+    /// among them; the graveyard exists so a death is never lost. Drawing and
+    /// keeping are separate acts, so this filters the drawing only.
+    #[test]
+    fn a_closed_chore_is_not_drawn_but_is_still_remembered() {
+        let mut state = state_with_openings(&[
+            (
+                "chore",
+                "review this change for security vulnerabilities. changed files",
+            ),
+            ("real", "kenar cizgisi hakkinda konusalim"),
+        ]);
+        state.hidden_chat_labels = vec![crate::chat_labels::ChatLabel::Routine];
+        for id in ["chore", "real"] {
+            state
+                .closed_agents
+                .record_closed(crate::app::closed_agents::ClosedAgentRecord {
+                    agent_id: id.to_string(),
+                    label: format!("{id} label"),
+                    cwd: None,
+                    workspace_key: None,
+                    session: None,
+                    closed_at: 1_000,
+                    revival: crate::app::closed_agents::RevivalState::Dormant,
+                });
+        }
+
+        let drawn: Vec<&str> = state
+            .visible_closed_agents()
+            .map(|record| record.agent_id.as_str())
+            .collect();
+        assert_eq!(drawn, vec!["real"], "the chore is not drawn");
+        assert_eq!(
+            state.closed_agents.entries().count(),
+            2,
+            "and the record of it is still kept — history is not tidied away"
+        );
+
+        // R5: emptying the list brings the headstone back.
+        state.hidden_chat_labels.clear();
+        assert_eq!(state.visible_closed_agents().count(), 2);
     }
 
     /// TP-DAILY-25 (G2/G4/G6): the graveyard and the daily section ask ONE

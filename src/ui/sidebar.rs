@@ -2624,7 +2624,7 @@ pub(crate) enum AgentPanelRow {
 /// dividing nothing remains impossible by construction.
 pub(crate) fn agent_panel_rows(app: &AppState, live_count: usize) -> Vec<AgentPanelRow> {
     let mut rows: Vec<AgentPanelRow> = (0..live_count).map(AgentPanelRow::Live).collect();
-    let ghosts = app.closed_agents.entries().count();
+    let ghosts = app.visible_closed_agents().count();
     if ghosts > 0 {
         rows.push(AgentPanelRow::Separator);
         rows.extend((0..ghosts).map(AgentPanelRow::Ghost));
@@ -2670,8 +2670,7 @@ fn agent_panel_row_gap(app: &AppState, rows: &[AgentPanelRow], index: usize) -> 
 /// able to disagree about what "now" was.
 fn ghost_row_layouts(app: &AppState) -> Vec<Vec<Vec<ResolvedToken>>> {
     let now = std::time::SystemTime::now();
-    app.closed_agents
-        .entries()
+    app.visible_closed_agents()
         .map(|record| resolved_ghost_rows(app, record, now))
         .collect()
 }
@@ -4883,7 +4882,7 @@ fn render_agent_detail(
     // into leftover space after this loop — it IS part of this loop, which is
     // what makes every ghost reachable by scrolling.
     let ghost_layouts = ghost_row_layouts(app);
-    let ghost_records: Vec<_> = app.closed_agents.entries().collect();
+    let ghost_records: Vec<_> = app.visible_closed_agents().collect();
     for (kind, row_y, height) in agent_panel_placements(app, area) {
         let (index, detail) = match kind {
             AgentPanelRow::Live(index) => match details.get(index) {
@@ -7993,6 +7992,51 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             );
         }
         (app, daily)
+    }
+
+    /// TP-DAILY-26 (R4): the panel's three ghost passes agree on WHICH ghosts.
+    ///
+    /// The count, the layouts and the records are addressed by index into one
+    /// another — `AgentPanelRow::Ghost(i)` reaches into both lists. Filter two
+    /// of the three and nothing looks broken at first: the panel simply binds
+    /// row `i` to someone else's headstone, so a person clicks one name and
+    /// revives another. That is worse than showing the chore.
+    #[test]
+    fn the_panels_three_ghost_passes_see_the_same_ghosts() {
+        let mut app = AppState::test_new();
+        app.hidden_chat_labels = vec![crate::chat_labels::ChatLabel::Routine];
+        app.derived_chat_labels
+            .insert("chore".to_string(), crate::chat_labels::ChatLabel::Routine);
+        for id in ["chore", "real-a", "real-b"] {
+            app.closed_agents
+                .record_closed(crate::app::closed_agents::ClosedAgentRecord {
+                    agent_id: id.to_string(),
+                    label: format!("{id} label"),
+                    cwd: None,
+                    workspace_key: None,
+                    session: None,
+                    closed_at: 1_000,
+                    revival: crate::app::closed_agents::RevivalState::Dormant,
+                });
+        }
+
+        let counted = agent_panel_rows(&app, 0)
+            .iter()
+            .filter(|row| matches!(row, AgentPanelRow::Ghost(_)))
+            .count();
+        let layouts = ghost_row_layouts(&app).len();
+        let records: Vec<&str> = app
+            .visible_closed_agents()
+            .map(|record| record.agent_id.as_str())
+            .collect();
+
+        assert_eq!(counted, 2, "the count skips the chore");
+        assert_eq!(layouts, 2, "and so do the layouts");
+        assert_eq!(records.len(), 2, "and so do the records");
+        assert!(
+            !records.contains(&"chore"),
+            "the one they all skip is the chore: {records:?}"
+        );
     }
 
     /// TP-DAILY-23 (S1): the reported behaviour. A chat the rules call routine
