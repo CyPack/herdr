@@ -419,9 +419,9 @@ mod tests {
     }
 
     fn model(home_accessible: bool, include_nested: bool) -> FileManagerLocationsModel {
-        let mut favorites = vec![item("/home/ayaz", home_accessible)];
+        let mut favorites = vec![item("/home/user", home_accessible)];
         if include_nested {
-            favorites.push(item("/home/ayaz/projects/herdr", true));
+            favorites.push(item("/home/user/projects/herdr", true));
         }
         FileManagerLocationsModel::from_sources(favorites, Vec::new(), Vec::new())
     }
@@ -429,7 +429,7 @@ mod tests {
     fn flf_model(include_home: bool) -> FileManagerLocationsModel {
         let mut favorites = vec![item("/workspace", true), item("/missing", false)];
         if include_home {
-            favorites.push(item("/home/ayaz", true));
+            favorites.push(item("/home/user", true));
         }
         FileManagerLocationsModel::from_sources(
             favorites,
@@ -444,12 +444,12 @@ mod tests {
     fn flf_cursor_normalizes_exact_location_without_inferred_direct_ancestor() {
         let model = flf_model(true);
         let mut exact = FileManagerLocationsState::default();
-        assert!(exact.activate_location(Path::new("/home/ayaz"), &model));
+        assert!(exact.activate_location(Path::new("/home/user"), &model));
         assert!(!exact.normalize_cursor_for_rail(&model));
-        assert_eq!(exact.cursor_path(&model), Some(Path::new("/home/ayaz")));
+        assert_eq!(exact.cursor_path(&model), Some(Path::new("/home/user")));
 
         let mut direct = FileManagerLocationsState::default();
-        direct.activate_direct(PathBuf::from("/home/ayaz/projects/herdr"));
+        direct.activate_direct(PathBuf::from("/home/user/projects/herdr"));
         assert!(direct.normalize_cursor_for_rail(&model));
         assert_eq!(
             direct.cursor_path(&model),
@@ -521,7 +521,7 @@ mod tests {
 
         assert_eq!(
             state.move_cursor(&model, 1),
-            FileManagerLocationCursorMove::Moved(PathBuf::from("/home/ayaz"))
+            FileManagerLocationCursorMove::Moved(PathBuf::from("/home/user"))
         );
         assert_eq!(
             state.move_cursor(&model, 1),
@@ -529,7 +529,7 @@ mod tests {
         );
         assert_eq!(
             state.move_cursor(&model, -1),
-            FileManagerLocationCursorMove::Moved(PathBuf::from("/home/ayaz"))
+            FileManagerLocationCursorMove::Moved(PathBuf::from("/home/user"))
         );
         assert_eq!(
             state.move_cursor(&model, -99),
@@ -548,9 +548,9 @@ mod tests {
         let live = flf_model(true);
         let replacement = flf_model(false);
         let mut pending = FileManagerLocationsState::default();
-        assert!(pending.activate_location(Path::new("/home/ayaz"), &live));
+        assert!(pending.activate_location(Path::new("/home/user"), &live));
         pending.begin_load(
-            PathBuf::from("/home/ayaz"),
+            PathBuf::from("/home/user"),
             7,
             live.revision(),
             11,
@@ -564,9 +564,9 @@ mod tests {
         assert_eq!(pending.pending, None);
 
         let mut failed = FileManagerLocationsState::default();
-        assert!(failed.activate_location(Path::new("/home/ayaz"), &live));
+        assert!(failed.activate_location(Path::new("/home/user"), &live));
         failed.fail_load(
-            PathBuf::from("/home/ayaz"),
+            PathBuf::from("/home/user"),
             7,
             live.revision(),
             FileManagerLocationLoadError::Unavailable,
@@ -588,11 +588,11 @@ mod tests {
         assert!(state.activate_location(Path::new("/workspace"), &model));
         assert_eq!(
             state.move_cursor(&model, 1),
-            FileManagerLocationCursorMove::Moved(PathBuf::from("/home/ayaz"))
+            FileManagerLocationCursorMove::Moved(PathBuf::from("/home/user"))
         );
 
         assert!(!state.reconcile_model(&model));
-        assert_eq!(state.cursor_path(&model), Some(Path::new("/home/ayaz")));
+        assert_eq!(state.cursor_path(&model), Some(Path::new("/home/user")));
         assert_eq!(
             state.origin,
             Some(FileManagerLocationOrigin::Location(PathBuf::from(
@@ -621,17 +621,17 @@ mod tests {
         let model = model(true, true);
         let mut state = FileManagerLocationsState::default();
 
-        assert!(state.activate_location(Path::new("/home/ayaz"), &model));
+        assert!(state.activate_location(Path::new("/home/user"), &model));
 
         assert_eq!(
             state.origin,
             Some(FileManagerLocationOrigin::Location(PathBuf::from(
-                "/home/ayaz"
+                "/home/user"
             )))
         );
         assert_eq!(
             state.highlighted_path(&model),
-            Some(Path::new("/home/ayaz")),
+            Some(Path::new("/home/user")),
             "a deeper cwd is intentionally absent from this authority check"
         );
     }
@@ -642,16 +642,16 @@ mod tests {
     fn fcl_origin_nested_favorite_wins_only_after_explicit_activation() {
         let model = model(true, true);
         let mut state = FileManagerLocationsState::default();
-        assert!(state.activate_location(Path::new("/home/ayaz"), &model));
+        assert!(state.activate_location(Path::new("/home/user"), &model));
         assert_eq!(
             state.highlighted_path(&model),
-            Some(Path::new("/home/ayaz"))
+            Some(Path::new("/home/user"))
         );
 
-        assert!(state.activate_location(Path::new("/home/ayaz/projects/herdr"), &model));
+        assert!(state.activate_location(Path::new("/home/user/projects/herdr"), &model));
         assert_eq!(
             state.highlighted_path(&model),
-            Some(Path::new("/home/ayaz/projects/herdr"))
+            Some(Path::new("/home/user/projects/herdr"))
         );
     }
 
@@ -662,13 +662,13 @@ mod tests {
         let model = model(true, true);
         let mut state = FileManagerLocationsState::default();
 
-        state.activate_direct(PathBuf::from("/home/ayaz/projects"));
+        state.activate_direct(PathBuf::from("/home/user/projects"));
         assert_eq!(state.highlighted_path(&model), None);
 
-        state.activate_direct(PathBuf::from("/home/ayaz"));
+        state.activate_direct(PathBuf::from("/home/user"));
         assert_eq!(
             state.highlighted_path(&model),
-            Some(Path::new("/home/ayaz"))
+            Some(Path::new("/home/user"))
         );
     }
 
@@ -679,13 +679,13 @@ mod tests {
         let live = model(true, true);
         let inaccessible = model(false, false);
         let mut state = FileManagerLocationsState::default();
-        assert!(state.activate_location(Path::new("/home/ayaz"), &live));
+        assert!(state.activate_location(Path::new("/home/user"), &live));
 
         assert!(state.reconcile_model(&inaccessible));
         assert_eq!(state.origin, None);
         assert_eq!(state.highlighted_path(&inaccessible), None);
 
-        assert!(state.activate_location(Path::new("/home/ayaz"), &live));
+        assert!(state.activate_location(Path::new("/home/user"), &live));
         state.retire_for_closed_files();
         assert_eq!(state.origin, None);
         assert_eq!(state.highlighted_path(&live), None);

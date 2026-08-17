@@ -124,7 +124,7 @@ pub const MODULE_KEY_PREFIX: &str = "module:";
 /// one place that decides what it is keyed by instead.
 ///
 /// The ledger's key space now holds two kinds of string, and they must not be
-/// confused: `/home/ayaz/projects/herdr` is somewhere on disk, `module:docs`
+/// confused: `/home/user/projects/herdr` is somewhere on disk, `module:docs`
 /// is not. Every reader builds its own key rather than parsing someone else's
 /// — [`ledger_key`] for directories, this for containers — so nothing
 /// downstream has to tell them apart by shape. A function that takes this

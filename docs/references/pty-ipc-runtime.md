@@ -89,7 +89,7 @@ IPC ailesi (`interprocess`, `parity-tokio-ipc`, `ipc-channel` → 228 ters-bağ�
 
 | Etiket | Kaynak | Tier | Conf | Konu |
 |---|---|---|---|---|
-| `[refpool-index]` | `~/.cartography/refpool/` — 17 repo, hepsi `codebase-memory-mcp` `moderate` modda indeksli | executable | 0.95 | Sembol/pattern çözümü: `search_graph(project="home-ayaz-.cartography-refpool-<ad>")`. 2026-07-25 indeksleme sayıları SYSTEM-MAP'te |
+| `[refpool-index]` | `~/.cartography/refpool/` — 17 repo, hepsi `codebase-memory-mcp` `moderate` modda indeksli | executable | 0.95 | Sembol/pattern çözümü: `search_graph(project="home-user-.cartography-refpool-<ad>")`. 2026-07-25 indeksleme sayıları SYSTEM-MAP'te |
 | `[pty-ipc-pool-classification]` | `~/.cartography/pools/pty-ipc/` — `taxonomy.json` (9 kategori ailesi) · `sources.json` (17 kayıt) · `classifications/P01–P17.json` (40 claim) · `pattern-index.json` (PI→repo ters indeks) | executable | 0.9 | 2026-07-26. `ratatui` pool'unun şema kardeşi. Şema doğrulandı: taxonomy dışı kategori YOK; 19/19 pattern örneklendi |
 
 ## ⚖️ Yeniden-kullanım politikası (lisans kapısı — kod almadan ÖNCE oku)

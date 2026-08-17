@@ -275,7 +275,7 @@ tanımları, i3/sway tiling config, Cassowary constraint solver, `ratatui-hypert
 
 **Komut (izole, canlıya sıfır dokunma):**
 ```bash
-cd /home/ayaz/projects/herdr && HERDR_RENDER_PROF=1 ./.local/herdr-trail-test.sh run
+cd /home/user/projects/herdr && HERDR_RENDER_PROF=1 ./.local/herdr-trail-test.sh run
 ```
 
 **Neden önemli:** Tüm "3.683/3.683 geçti" tipi iddiaların kaynağı aynı ajan zincirinin yazdığı

@@ -49,7 +49,7 @@
         {"type": "executable", "ref": "hook birim testleri 6/6 PASS (2026-07-12): rust-prompt→blok, non-rust→boş, trust/robust-FP→boş, kill-switch→boş, bozuk-JSON→fail-open exit 0, herdr-cwd→herdr eki; settings.json kaydı python ile doğrulandı (cleanupPeriodDays korundu)", "confidence": 0.95},
         {"type": "filesystem", "ref": "skill hot-load system-reminder kanıtı (rust-dev skill listesine düştü, 2026-07-12)", "confidence": 0.9}
       ]},
-      {"id": "hc6", "text": "codebase-memory-mcp herdr index'i (home-ayaz-projects-herdr) son commit dalgasını (ed1522a) kapsıyor", "status": "open", "sources": [
+      {"id": "hc6", "text": "codebase-memory-mcp herdr index'i (home-user-projects-herdr) son commit dalgasını (ed1522a) kapsıyor", "status": "open", "sources": [
         {"type": "filesystem", "ref": ".local/AGENTIC-DEV.md '13.819 node' kaydı (Jul 11) — son commit'ler sonrası reindex doğrulanmadı", "confidence": 0.7}
       ]}
     ],

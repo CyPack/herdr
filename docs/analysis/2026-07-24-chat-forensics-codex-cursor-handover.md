@@ -111,7 +111,7 @@ Aşağıda §C.2'de grid ile. Özet: `NEXT-SESSION-PROMPT.md` "101 task" iddia e
 
 ### A.1 Cursor chat store — `~/.config/cursor/chats/3e70c7861ec5ac15ed572fe661714e7d/`
 
-Hash `3e70c786…` = `/home/ayaz/projects/herdr` kimliği; **4 oturumun tamamı bu projede**.
+Hash `3e70c786…` = `/home/user/projects/herdr` kimliği; **4 oturumun tamamı bu projede**.
 
 | # | Oturum ID | Başlık | İlk mesaj (CEST) | Son mesaj (CEST) | Blob | JSON | u/a/t | Model | Onay modu | Konu |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -325,7 +325,7 @@ Yerelde eski agent sürümleri (`2026.07.08`, `2026.07.09`) duruyor; aktif symli
 >      "server": "codebase-memory-mcp",
 >      "command_name": "index_status",
 >      "parameters": {
->        "project": "home-ayaz-projects-herdr"
+>        "project": "home-user-projects-herdr"
 >      }
 >    }
 >
@@ -358,7 +358,7 @@ BEFORE approvalMode= allowlist
 BEFORE allow count= 8
 BEFORE sandbox= {'mode': 'disabled', 'networkAccess': 'user_config_with_defaults'}
 BEFORE autoAcceptWebSearch= False
-backup -> /home/ayaz/.config/cursor/cli-config.json.bak-pre-yolo
+backup -> /home/user/.config/cursor/cli-config.json.bak-pre-yolo
 AFTER approvalMode= unrestricted
 AFTER allow count= 15
 AFTER sandbox= {'mode': 'disabled', 'networkAccess': 'allow_all'}
@@ -394,7 +394,7 @@ function agent --wraps agent --description 'Cursor agent with --yolo --approve-m
 | Session ID | `019f85a7-9086-7510-bde5-62228636b4fd` | `~/.codex/sessions/2026/07/21/rollout-2026-07-21T19-09-39-019f85a7-…jsonl` (58 MB, 17 268 satır) — **hâlâ mevcut** |
 | Kapsam | 2026-07-21 17:09 UTC → 2026-07-22 23:33 UTC (son üretken mesaj) | SESSION_META + timestamp taraması |
 | CLI | Codex TUI **0.144.6**, `originator: codex-tui`, `source: cli` | SESSION_META |
-| cwd / branch | `/home/ayaz/projects/herdr` · `feat/native-fm` | SESSION_META + git_status |
+| cwd / branch | `/home/user/projects/herdr` · `feat/native-fm` | SESSION_META + git_status |
 | Remote politikası | `origin` = **CyPack/herdr** fork; `upstream` = read-only | agent analizi + `git remote -v` |
 | Ölçek | **28 user turn**, 767 agent mesajı, 3055 `exec`, **1011 MCP çağrısı**, 37 context compaction | Python parse — **28 `user_message` event'i bağımsız yeniden doğrulandı ✅** |
 | MCP dağılımı | `search_graph` 424 · `get_code_snippet` 328 · `trace_path` 82 · `search_code` 78 · `index_status` 29 · `query_graph` 25 · `get_architecture` 16 · `manage_adr` 13 · `index_repository` 6 · `get_graph_schema` 5 · `detect_changes` 4 · `list_projects` 1 · context7 `resolve-library-id` 1 | jsonl tool-call sayımı |
@@ -411,7 +411,7 @@ function agent --wraps agent --description 'Cursor agent with --yolo --approve-m
 > 2. Commit: `docs: record directory click focus semantics`
 > 3. Post-commit gate'ler (fmt, nextest, clippy, maintenance…)
 > 4. `git push origin HEAD:feat/native-fm` + SHA equality
-> 5. Kullanıcıya cleanup-first launcher: `cd /home/ayaz/projects/herdr && HERDR_RENDER_PROF=1 ./.local/herdr-trail-test.sh run`
+> 5. Kullanıcıya cleanup-first launcher: `cd /home/user/projects/herdr && HERDR_RENDER_PROF=1 ./.local/herdr-trail-test.sh run`
 > 6. E2E: file/dir click highlight, aynı kolonda ↑/↓, Right→first child, rapid click smoothness, residue=0
 
 → **6 maddenin 4'ü (1-4) Cursor tarafından tamamlandı; 5-6 kullanıcı-sahipli kaldı.**
@@ -903,7 +903,7 @@ Kesişim: B4'ün görsel oracle'ı A ile aynı Playwright altyapısını kullan�
 3. **✅ Git durumu temiz ve senkron.** `HEAD = origin/feat/native-fm = b48bd903`. Sadece `?? .superpowers/` (dokunulmaz).
 4. **👤 İki iş kullanıcı-sahipli, agent yapamaz:** DCLICK-6 ve FFO-9 fiziksel E2E. Tek komut:
    ```bash
-   cd /home/ayaz/projects/herdr && HERDR_RENDER_PROF=1 ./.local/herdr-trail-test.sh run
+   cd /home/user/projects/herdr && HERDR_RENDER_PROF=1 ./.local/herdr-trail-test.sh run
    ```
    Kontrol listesi (Cursor'ın verdiği, birebir): *"dosya/klasör click → dolgun mavi; ↑/↓ aynı kolon; Right → child first row; Left → parent; rapid click akıcı; kapanınca `/tmp/herdr-trail-manual-test` residue yok."*
 5. **⭐ Yeni öncelikler için başlangıç noktaları:**
@@ -918,36 +918,36 @@ Kesişim: B4'ün görsel oracle'ı A ile aynı Playwright altyapısını kullan�
 ## §H. İLGİLİ DOSYA YOLLARI (mutlak)
 
 **Chat kaynakları (salt-okuma):**
-- `/home/ayaz/.config/cursor/chats/3e70c7861ec5ac15ed572fe661714e7d/1d59306a-951a-497b-a7d6-873ccab4cbef/`
-- `/home/ayaz/.config/cursor/chats/3e70c7861ec5ac15ed572fe661714e7d/2b3a0a2a-a47b-4706-a5b1-3f97f82c8a32/`
-- `/home/ayaz/.config/cursor/chats/3e70c7861ec5ac15ed572fe661714e7d/653d9258-f93e-49af-88c5-5d92e3db88c2/`
-- `/home/ayaz/.config/cursor/chats/3e70c7861ec5ac15ed572fe661714e7d/f3a9222f-0cef-4c7f-a219-6569b574f82f/`
-- `/home/ayaz/.cursor/projects/agent-transcripts/84b9e842-3392-4e54-9d33-8ea000885b48/84b9e842-3392-4e54-9d33-8ea000885b48.jsonl`
-- `/home/ayaz/.cursor/projects/agent-transcripts/07089768-2045-4fee-84ab-e4e41c4d1411/07089768-2045-4fee-84ab-e4e41c4d1411.jsonl`
-- `/home/ayaz/.codex/sessions/2026/07/21/rollout-2026-07-21T19-09-39-019f85a7-9086-7510-bde5-62228636b4fd.jsonl` (58 MB — DCLICK/FFO/FMN/FMH/FMP)
-- `/home/ayaz/.codex/sessions/2026/07/17/rollout-2026-07-17T10-45-10-019f6f40-41f0-7292-97c2-fc93837f96a2.jsonl` (59 MB — vizyon/misyon)
-- `/home/ayaz/.codex/sessions/2026/07/18/rollout-2026-07-18T13-05-24-019f74e6-fece-7372-bbd2-ee305b99e81b.jsonl` (66 MB — preview direktifi + custom layout)
+- `/home/user/.config/cursor/chats/3e70c7861ec5ac15ed572fe661714e7d/1d59306a-951a-497b-a7d6-873ccab4cbef/`
+- `/home/user/.config/cursor/chats/3e70c7861ec5ac15ed572fe661714e7d/2b3a0a2a-a47b-4706-a5b1-3f97f82c8a32/`
+- `/home/user/.config/cursor/chats/3e70c7861ec5ac15ed572fe661714e7d/653d9258-f93e-49af-88c5-5d92e3db88c2/`
+- `/home/user/.config/cursor/chats/3e70c7861ec5ac15ed572fe661714e7d/f3a9222f-0cef-4c7f-a219-6569b574f82f/`
+- `/home/user/.cursor/projects/agent-transcripts/84b9e842-3392-4e54-9d33-8ea000885b48/84b9e842-3392-4e54-9d33-8ea000885b48.jsonl`
+- `/home/user/.cursor/projects/agent-transcripts/07089768-2045-4fee-84ab-e4e41c4d1411/07089768-2045-4fee-84ab-e4e41c4d1411.jsonl`
+- `/home/user/.codex/sessions/2026/07/21/rollout-2026-07-21T19-09-39-019f85a7-9086-7510-bde5-62228636b4fd.jsonl` (58 MB — DCLICK/FFO/FMN/FMH/FMP)
+- `/home/user/.codex/sessions/2026/07/17/rollout-2026-07-17T10-45-10-019f6f40-41f0-7292-97c2-fc93837f96a2.jsonl` (59 MB — vizyon/misyon)
+- `/home/user/.codex/sessions/2026/07/18/rollout-2026-07-18T13-05-24-019f74e6-fece-7372-bbd2-ee305b99e81b.jsonl` (66 MB — preview direktifi + custom layout)
 
 **Süreklilik / karar kaynakları:**
-- `/home/ayaz/projects/herdr/.codex/NEXT-SESSION-PROMPT.md`
-- `/home/ayaz/projects/herdr/.codex/CURRENT.md` (109 745 B)
-- `/home/ayaz/projects/herdr/.codex/TASKS.md` (177 139 B)
-- `/home/ayaz/projects/herdr/.codex/HANDOFF.md` (71 413 B)
-- `/home/ayaz/projects/herdr/.codex/MEMORY.md`
-- `/home/ayaz/projects/herdr/.codex/CHANGE-PIPELINE-TASKS.md`
-- `/home/ayaz/projects/herdr/.codex/evidence/files-preview-capability-test-points.md` ⭐ **PDF/XLSX kararı**
-- `/home/ayaz/projects/herdr/.codex/evidence/files-directory-click-focus-closure.md`
-- `/home/ayaz/projects/herdr/.codex/evidence/files-focus-ownership-closure.md`
-- `/home/ayaz/projects/herdr/.codex/evidence/b2-image-dependency.md`
-- `/home/ayaz/projects/herdr/.codex/evidence/files-visibility-preview-plugin-research.md`
-- `/home/ayaz/projects/herdr/.codex/evidence/fm5-preview-placement-decision.md`
-- `/home/ayaz/projects/herdr/.codex/references/yazi-file-manager-performance-transfer.md`
-- `/home/ayaz/projects/herdr/.local/prd/custom-layout-target-mockup.md` ⭐ **mockup bölge dökümü**
-- `/home/ayaz/projects/herdr/docs/superpowers/specs/2026-07-18-herdr-fip-closure-and-custom-layout-prd.md` ⭐ **B1-B4 zinciri**
-- `/home/ayaz/projects/herdr/docs/superpowers/specs/2026-07-17-herdr-custom-layout-architecture-guide.md`
-- `/home/ayaz/projects/herdr/docs/superpowers/specs/2026-07-19-herdr-files-layout-v1-lock.md`
-- `/home/ayaz/projects/herdr/docs/superpowers/specs/2026-07-18-herdr-miller-trail-ux-contract.md`
-- `/home/ayaz/projects/herdr/.local/SESSION-8-HANDOFF.md`, `SESSION-9-HANDOFF.md`, `CURRENT-HANDOFF.md`, `ISOLATED-DEV-TEST.md`
+- `/home/user/projects/herdr/.codex/NEXT-SESSION-PROMPT.md`
+- `/home/user/projects/herdr/.codex/CURRENT.md` (109 745 B)
+- `/home/user/projects/herdr/.codex/TASKS.md` (177 139 B)
+- `/home/user/projects/herdr/.codex/HANDOFF.md` (71 413 B)
+- `/home/user/projects/herdr/.codex/MEMORY.md`
+- `/home/user/projects/herdr/.codex/CHANGE-PIPELINE-TASKS.md`
+- `/home/user/projects/herdr/.codex/evidence/files-preview-capability-test-points.md` ⭐ **PDF/XLSX kararı**
+- `/home/user/projects/herdr/.codex/evidence/files-directory-click-focus-closure.md`
+- `/home/user/projects/herdr/.codex/evidence/files-focus-ownership-closure.md`
+- `/home/user/projects/herdr/.codex/evidence/b2-image-dependency.md`
+- `/home/user/projects/herdr/.codex/evidence/files-visibility-preview-plugin-research.md`
+- `/home/user/projects/herdr/.codex/evidence/fm5-preview-placement-decision.md`
+- `/home/user/projects/herdr/.codex/references/yazi-file-manager-performance-transfer.md`
+- `/home/user/projects/herdr/.local/prd/custom-layout-target-mockup.md` ⭐ **mockup bölge dökümü**
+- `/home/user/projects/herdr/docs/superpowers/specs/2026-07-18-herdr-fip-closure-and-custom-layout-prd.md` ⭐ **B1-B4 zinciri**
+- `/home/user/projects/herdr/docs/superpowers/specs/2026-07-17-herdr-custom-layout-architecture-guide.md`
+- `/home/user/projects/herdr/docs/superpowers/specs/2026-07-19-herdr-files-layout-v1-lock.md`
+- `/home/user/projects/herdr/docs/superpowers/specs/2026-07-18-herdr-miller-trail-ux-contract.md`
+- `/home/user/projects/herdr/.local/SESSION-8-HANDOFF.md`, `SESSION-9-HANDOFF.md`, `CURRENT-HANDOFF.md`, `ISOLATED-DEV-TEST.md`
 
 **Geçici çalışma çıktıları (/tmp, kalıcı değil):** `/tmp/chatdump/` — store.db kopyaları + `S1.txt`, `S2-codex-resume.txt` rekonstrüksiyonları.
 
@@ -973,7 +973,7 @@ print(m.get('cwd'), '|', m.get('title','(başlıksız)'), '|', '$d')
 done | sort -u
 ```
 
-**herdr için:** hash = `3e70c7861ec5ac15ed572fe661714e7d` (= `/home/ayaz/projects/herdr`).
+**herdr için:** hash = `3e70c7861ec5ac15ed572fe661714e7d` (= `/home/user/projects/herdr`).
 Her oturum dizininde: `meta.json` · `prompt_history.json` · `store.db` (+ opsiyonel `-wal`, `-shm`).
 
 ### I.2 store.db'yi GÜVENLİ kopyalama (WAL bozma — asla orijinalde sorgu koşma)
@@ -1079,7 +1079,7 @@ grep -c '@@@@@' /tmp/chatdump/transcript.txt
 ```bash
 python3 -c "
 import json
-p='/home/ayaz/.config/cursor/chats/3e70c7861ec5ac15ed572fe661714e7d/2b3a0a2a-a47b-4706-a5b1-3f97f82c8a32/prompt_history.json'
+p='/home/user/.config/cursor/chats/3e70c7861ec5ac15ed572fe661714e7d/2b3a0a2a-a47b-4706-a5b1-3f97f82c8a32/prompt_history.json'
 h=json.load(open(p))
 print('EN YENİ (index 0):', h[0][:200])
 print('EN ESKİ (index -1):', h[-1][:200])
@@ -1129,7 +1129,7 @@ done
 ```python
 python3 - <<'EOF'
 import json
-p='/home/ayaz/.codex/sessions/2026/07/21/rollout-2026-07-21T19-09-39-019f85a7-9086-7510-bde5-62228636b4fd.jsonl'
+p='/home/user/.codex/sessions/2026/07/21/rollout-2026-07-21T19-09-39-019f85a7-9086-7510-bde5-62228636b4fd.jsonl'
 users=[]
 for line in open(p):
     try: o=json.loads(line)
@@ -1176,7 +1176,7 @@ rg -o --no-filename '[A-Za-z0-9_./-]+/skills/[A-Za-z0-9_./-]+/SKILL\.md' <rollou
 ### I.9 Git çapraz doğrulaması (chat iddialarını sınama)
 
 ```bash
-cd /home/ayaz/projects/herdr
+cd /home/user/projects/herdr
 git log --format='%h|%ad|%s' --date=iso -60          # chat zaman damgalarıyla çakıştır
 git status --short --branch
 git rev-parse HEAD origin/<branch>                    # SHA equality
@@ -1254,8 +1254,8 @@ grep -c '^- \[ \]'    .codex/TASKS.md                 # üst-seviye (girintisiz)
 | `docs/superpowers/specs/` (18 dosya, ~380 KB) | 380 KB | 4 dosya okundu (custom-layout PRD, mockup, layout-v1-lock referansı, miller-trail-ux-contract referansı) | Her programın tam tasarım spec'i: FIP design (46 KB), shell foundation v0 (48 KB), native FM workspace (39 KB), files rapid navigation PRD (23 KB), focus ownership design (28 KB), locations follow design (24 KB) | *"Z programının tasarım gerekçesi neydi?"* — implementasyona başlamadan ilgili spec'i AÇ |
 | `.codex/evidence/` (40+ dosya) | — | 3 dosya okundu (preview capability, directory click closure kısmi, b2 dependency başlık) | Her programın kanıt defteri: test ID'leri, ölçüm sonuçları, ADR referansları | *"Bu iddia gerçekten kanıtlandı mı?"* — iddia başına ilgili evidence dosyasını AÇ |
 | Cursor `store.db` binary protobuf blob'ları | 559 blob (786−227) | **Çözülmedi** (gerek kalmadı) | DAG topolojisi: mesaj ebeveyn/çocuk ilişkileri, checkpoint/branch noktaları, muhtemelen edit/regenerate geçmişi | *"Kullanıcı bir mesajı düzenleyip yeniden mi üretti?"* · *"Konuşmada dallanma var mı?"* — sadece dallanma şüphesi varsa çöz (protobuf şeması reverse gerektirir) |
-| `~/.cursor/projects/home-ayaz-projects-herdr/terminals/*.txt` | ? | **Hiç açılmadı** | Cursor'ın terminal oturumlarının tam çıktısı (metadata: pid, cwd, last_command, exit_code + tam output) | *"Cursor hangi komutu koşturdu ve tam çıktısı neydi?"* — tool-result kırpması yetersiz kaldığında AÇ |
-| `~/.cursor/projects/home-ayaz-projects-herdr/agent-tools/*.txt` | 2 dosya (44 KB, 89 KB) | **Hiç açılmadı** | Büyük shell çıktılarının tam hâli (Cursor bunları dosyaya yazıp referans veriyor) | Aynı — kırpılmış `<<RESULT` yetersizse AÇ |
+| `~/.cursor/projects/home-user-projects-herdr/terminals/*.txt` | ? | **Hiç açılmadı** | Cursor'ın terminal oturumlarının tam çıktısı (metadata: pid, cwd, last_command, exit_code + tam output) | *"Cursor hangi komutu koşturdu ve tam çıktısı neydi?"* — tool-result kırpması yetersiz kaldığında AÇ |
+| `~/.cursor/projects/home-user-projects-herdr/agent-tools/*.txt` | 2 dosya (44 KB, 89 KB) | **Hiç açılmadı** | Büyük shell çıktılarının tam hâli (Cursor bunları dosyaya yazıp referans veriyor) | Aynı — kırpılmış `<<RESULT` yetersizse AÇ |
 
 **Genel not:** Bu turda **hedefli sorgu** stratejisi kullanıldı (regex + grep + offset'li okuma), tam parse değil. 200+ MB Codex rollout verisi mevcut; tam parse hem gereksiz hem context-yıkıcı olurdu. Yukarıdaki tablo, hangi sorunun hangi kaynağı açmayı gerektirdiğini gösterir — **soru olmadan dosya açma**.
 

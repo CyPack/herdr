@@ -28,10 +28,10 @@ example_pool_root: ~/.cartography/refpool/   # KALICI klonlar (kod okuma için) 
 
 | repo | yol (`~/.cartography/refpool/`) | codebase-mcp projesi | commit | NE İÇİN (birebir kaynak) |
 |---|---|---|---|---|
-| **joshuto** ⭐ | `joshuto/` | `home-ayaz-.cartography-refpool-joshuto` | d2581fb | **Miller 3-kolon (parent/current/preview) + preview-kolonu-içi image** — `src/ui/views/tui_folder_view.rs` `Constraint[3]`+`Direction::Horizontal`+`Ratio(0)`=gizle |
-| **ratatui-image** ⭐ | `ratatui-image/` | `home-ayaz-.cartography-refpool-ratatui-image` | 109e700 | **Kitty encoder + U+10EEEE unicode-placeholder (mux-safe)** — `src/protocol/kitty.rs:157-271`; ayrıca sixel/iterm2/halfblocks + Picker auto-detect |
-| **yeet** | `yeet/` | `home-ayaz-.cartography-refpool-yeet` | dbe6b1c | ratatui+ratatui-image+chafa-fallback+tokio-async+Lua-config canlı glue; modal(vim) |
-| **rat-commander** | `rat-commander/` | `home-ayaz-.cartography-refpool-rat-commander` | 99b9791 | **per-slot Gfx protocol cache** (her frame image-id yeniden göndermeme, perf) — `src/ui/graphics/mod.rs`; MC-tarzı 2-panel |
+| **joshuto** ⭐ | `joshuto/` | `home-user-.cartography-refpool-joshuto` | d2581fb | **Miller 3-kolon (parent/current/preview) + preview-kolonu-içi image** — `src/ui/views/tui_folder_view.rs` `Constraint[3]`+`Direction::Horizontal`+`Ratio(0)`=gizle |
+| **ratatui-image** ⭐ | `ratatui-image/` | `home-user-.cartography-refpool-ratatui-image` | 109e700 | **Kitty encoder + U+10EEEE unicode-placeholder (mux-safe)** — `src/protocol/kitty.rs:157-271`; ayrıca sixel/iterm2/halfblocks + Picker auto-detect |
+| **yeet** | `yeet/` | `home-user-.cartography-refpool-yeet` | dbe6b1c | ratatui+ratatui-image+chafa-fallback+tokio-async+Lua-config canlı glue; modal(vim) |
+| **rat-commander** | `rat-commander/` | `home-user-.cartography-refpool-rat-commander` | 99b9791 | **per-slot Gfx protocol cache** (her frame image-id yeniden göndermeme, perf) — `src/ui/graphics/mod.rs`; MC-tarzı 2-panel |
 | yazi | `yazi/` | (ana index: `tmp-yazi-src` /tmp/yazi-src) | 4dab480 | async-io+preview altın-standardı; `yazi-adapter` kendi Driver/EMULATOR-tespit soyutlaması |
 | tui-file-explorer | `tui-file-explorer/` | (indexlenmedi) | bb00b63 | küçük/temiz API-yüzeyi ref ⚠️ "miller" iddiası ABARTILI (kaynak=2-panel `dual_pane.rs`) |
 | ratatui-explorer | `ratatui-explorer/` | (indexlenmedi) | c518bdf | minimal ratatui file-widget iskeleti (image yok) |

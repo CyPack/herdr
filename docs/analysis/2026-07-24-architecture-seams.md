@@ -250,7 +250,7 @@ fn contains_kitty_graphics_bytes(bytes: &[u8]) -> bool {
 ```
 ╔═══════════════════════ SAF VERİ (PTY/tokio gerektirmez) ═══════════════════════╗
 ║  AppState  src/app/state.rs (4.118 sat)            Workspace  src/workspace.rs ║
-║   qn: home-ayaz-projects-herdr.src.app.state.AppState  (in_degree 89)          ║
+║   qn: home-user-projects-herdr.src.app.state.AppState  (in_degree 89)          ║
 ║   doc: "Testable without PTYs or a tokio runtime."                             ║
 ║   ├─ workspaces / active / selected / mode                                     ║
 ║   ├─ stage: StageState               (ui/surface_host.rs)                      ║
@@ -742,7 +742,7 @@ Burada **iki tamamen farklı** iş var. Ayırmak kritik.
 ### G0 · Proje kimliği
 
 ```
-project: "home-ayaz-projects-herdr"
+project: "home-user-projects-herdr"
 düğüm/kenar: 24.357 / 129.892   ·   durum: ready
 diller: Rust 298 dosya · TOML 44 · Python 26 · TypeScript 20 · YAML 19 · Bash 13
 ```
@@ -767,13 +767,13 @@ Bu repoda `.codex/evidence/`, `website/`, `scripts/`, `tests/`, `docs/` de indek
 
 ```jsonc
 // İYİ — dosya yoluna göre daralt
-{"project":"home-ayaz-projects-herdr", "file_pattern":"src/ui/surface_host.rs"}
+{"project":"home-user-projects-herdr", "file_pattern":"src/ui/surface_host.rs"}
 
 // İYİ — qualified_name desenine göre daralt
-{"project":"home-ayaz-projects-herdr", "qn_pattern":"^home-ayaz-projects-herdr\\.src\\.ui\\..*"}
+{"project":"home-user-projects-herdr", "qn_pattern":"^home-user-projects-herdr\\.src\\.ui\\..*"}
 
 // KÖTÜ — lab kopyalarını da getirir
-{"project":"home-ayaz-projects-herdr", "name_pattern":"^compute_view$"}
+{"project":"home-user-projects-herdr", "name_pattern":"^compute_view$"}
 ```
 
 Cypher ile eleme:
@@ -838,7 +838,7 @@ search_graph{name_pattern:"^(AppState|Workspace|compute_view|BaseLayer|TileLayou
                             RegionRects|ShellView|StageSurfaceView|ShellModel|ResizeTransaction)$"}
 → total: 22 sonuç. Bunların 8'i lab kopyası:
 
-  home-ayaz-projects-herdr..codex.evidence.miller-scroll-version-lab
+  home-user-projects-herdr..codex.evidence.miller-scroll-version-lab
       .v0-trail-baseline-3bd32bcf.src.ui.compute_view      (in_degree 81)
       .v1-horizontal-viewport-0f958efe.src.ui.compute_view (in_degree 82)
       .v2-fractional-one-third-84092e52.src.ui.compute_view(in_degree 84)
@@ -846,10 +846,10 @@ search_graph{name_pattern:"^(AppState|Workspace|compute_view|BaseLayer|TileLayou
   + aynı 4 sürüm için BaseLayer
 
   GERÇEK OLAN:
-  home-ayaz-projects-herdr.src.ui.compute_view             (in_degree 113)  ← src/ui.rs:150
+  home-user-projects-herdr.src.ui.compute_view             (in_degree 113)  ← src/ui.rs:150
 ```
 
-**Ayırt etme kuralı:** gerçek sembolün `qualified_name`'i `home-ayaz-projects-herdr.src.` ile başlar (nokta-nokta yok). Lab kopyaları `home-ayaz-projects-herdr..codex.evidence.` ile başlar (**çift nokta** — `.codex` gizli dizinden geliyor).
+**Ayırt etme kuralı:** gerçek sembolün `qualified_name`'i `home-user-projects-herdr.src.` ile başlar (nokta-nokta yok). Lab kopyaları `home-user-projects-herdr..codex.evidence.` ile başlar (**çift nokta** — `.codex` gizli dizinden geliyor).
 
 **Kalıcı çözüm önerisi:** `.codex/evidence/miller-scroll-version-lab/` indekslemeden hariç tutulmalı (bu bir kod dizini değil, arşivlenmiş deney anlık görüntüleri).
 
@@ -1162,45 +1162,45 @@ pub(super) fn solve(layout: &ValidatedShellLayout, area: Rect, resolve_dynamic: 
 ### J2 · Dosya yolu envanteri (mutlak)
 
 **Render / UI çekirdeği**
-- `/home/ayaz/projects/herdr/src/ui.rs` (3.324 sat) — `compute_view*`, `render*`, `BaseLayer`, `OverlayLayer`
-- `/home/ayaz/projects/herdr/src/ui/compose.rs` (133) — `Compositor`, `Component`, `RenderCtx`
-- `/home/ayaz/projects/herdr/src/ui/shell.rs` (1.554) — modül kökü, `ShellLayout::default`, `compute_projection`
-- `/home/ayaz/projects/herdr/src/ui/shell/model.rs` (351) — `RegionId`, `TrackPolicy`, `ShellLayout`, `ValidatedShellLayout`, `RegionRects`
-- `/home/ayaz/projects/herdr/src/ui/shell/layout.rs` (593) — solver, `ResponsiveDegradation`, degradasyon sırası
-- `/home/ayaz/projects/herdr/src/ui/shell/template.rs` (155) — `ShellTemplateId` (5 kapalı template)
-- `/home/ayaz/projects/herdr/src/ui/shell/view.rs` (205) — `ShellGeometryKey`, `ShellView`, `hit_at`, generation disiplini
-- `/home/ayaz/projects/herdr/src/ui/shell/interaction.rs` (1.516) — resize/collapse/scroll reducer'ları
-- `/home/ayaz/projects/herdr/src/ui/surface_host.rs` — `StageState`, `StageSurfaceView`, `BuiltInAppId`
-- `/home/ayaz/projects/herdr/src/ui/sidebar.rs` — ⚠ F4 render-purity ihlali `:1279`
-- `/home/ayaz/projects/herdr/src/ui/mobile.rs` — ⚠ ikinci purity adayı `:1386` (I2)
-- `/home/ayaz/projects/herdr/src/ui/app_dock.rs` — shell.regions tüketen tek doğru örnek
-- `/home/ayaz/projects/herdr/src/ui/visual_fixture.rs` (1.523) — `export_cell_fixture`
-- `/home/ayaz/projects/herdr/src/ui/file_manager.rs` (3.799)
-- `/home/ayaz/projects/herdr/src/ui/file_manager/{locations,miller,trail_view}.rs`
+- `/home/user/projects/herdr/src/ui.rs` (3.324 sat) — `compute_view*`, `render*`, `BaseLayer`, `OverlayLayer`
+- `/home/user/projects/herdr/src/ui/compose.rs` (133) — `Compositor`, `Component`, `RenderCtx`
+- `/home/user/projects/herdr/src/ui/shell.rs` (1.554) — modül kökü, `ShellLayout::default`, `compute_projection`
+- `/home/user/projects/herdr/src/ui/shell/model.rs` (351) — `RegionId`, `TrackPolicy`, `ShellLayout`, `ValidatedShellLayout`, `RegionRects`
+- `/home/user/projects/herdr/src/ui/shell/layout.rs` (593) — solver, `ResponsiveDegradation`, degradasyon sırası
+- `/home/user/projects/herdr/src/ui/shell/template.rs` (155) — `ShellTemplateId` (5 kapalı template)
+- `/home/user/projects/herdr/src/ui/shell/view.rs` (205) — `ShellGeometryKey`, `ShellView`, `hit_at`, generation disiplini
+- `/home/user/projects/herdr/src/ui/shell/interaction.rs` (1.516) — resize/collapse/scroll reducer'ları
+- `/home/user/projects/herdr/src/ui/surface_host.rs` — `StageState`, `StageSurfaceView`, `BuiltInAppId`
+- `/home/user/projects/herdr/src/ui/sidebar.rs` — ⚠ F4 render-purity ihlali `:1279`
+- `/home/user/projects/herdr/src/ui/mobile.rs` — ⚠ ikinci purity adayı `:1386` (I2)
+- `/home/user/projects/herdr/src/ui/app_dock.rs` — shell.regions tüketen tek doğru örnek
+- `/home/user/projects/herdr/src/ui/visual_fixture.rs` (1.523) — `export_cell_fixture`
+- `/home/user/projects/herdr/src/ui/file_manager.rs` (3.799)
+- `/home/user/projects/herdr/src/ui/file_manager/{locations,miller,trail_view}.rs`
 
 **Grafik**
-- `/home/ayaz/projects/herdr/src/kitty_graphics.rs` (2.075)
-- `/home/ayaz/projects/herdr/src/ghostty/` · `/home/ayaz/projects/herdr/vendor/libghostty-vt.*`
+- `/home/user/projects/herdr/src/kitty_graphics.rs` (2.075)
+- `/home/user/projects/herdr/src/ghostty/` · `/home/user/projects/herdr/vendor/libghostty-vt.*`
 
 **File Manager**
-- `/home/ayaz/projects/herdr/src/fm/{mod,preview_capability,image_preview,text_preview,trail_snapshots,trail,miller,operations,rename,delete,watcher,entry_kind,entry_time,natsort}.rs`
+- `/home/user/projects/herdr/src/fm/{mod,preview_capability,image_preview,text_preview,trail_snapshots,trail,miller,operations,rename,delete,watcher,entry_kind,entry_time,natsort}.rs`
 
 **App / state / işçiler**
-- `/home/ayaz/projects/herdr/src/app/state.rs` (4.118) · `mod.rs` (5.180) · `actions.rs` (5.775) · `runtime.rs` (1.087)
-- `/home/ayaz/projects/herdr/src/app/{image_preview_worker,file_preview_worker,file_operation_worker,file_manager_io_worker,file_manager_watcher}.rs`
-- `/home/ayaz/projects/herdr/src/app/input/{shell,mod,file_manager,mouse,modal,navigate,sidebar,terminal,copy_mode,overlays,selection,settings}.rs`
+- `/home/user/projects/herdr/src/app/state.rs` (4.118) · `mod.rs` (5.180) · `actions.rs` (5.775) · `runtime.rs` (1.087)
+- `/home/user/projects/herdr/src/app/{image_preview_worker,file_preview_worker,file_operation_worker,file_manager_io_worker,file_manager_watcher}.rs`
+- `/home/user/projects/herdr/src/app/input/{shell,mod,file_manager,mouse,modal,navigate,sidebar,terminal,copy_mode,overlays,selection,settings}.rs`
 
 **Server / protokol / client**
-- `/home/ayaz/projects/herdr/src/server/{headless,render_stream,clients,handoff,terminal_attach,keybindings,socket_paths,clipboard_image}.rs`
-- `/home/ayaz/projects/herdr/src/protocol/{wire,render_ansi,mod}.rs`
-- `/home/ayaz/projects/herdr/src/client/mod.rs`
-- `/home/ayaz/projects/herdr/src/persist/snapshot.rs`
-- `/home/ayaz/projects/herdr/src/api/` · `/home/ayaz/projects/herdr/src/app/api.rs`
+- `/home/user/projects/herdr/src/server/{headless,render_stream,clients,handoff,terminal_attach,keybindings,socket_paths,clipboard_image}.rs`
+- `/home/user/projects/herdr/src/protocol/{wire,render_ansi,mod}.rs`
+- `/home/user/projects/herdr/src/client/mod.rs`
+- `/home/user/projects/herdr/src/persist/snapshot.rs`
+- `/home/user/projects/herdr/src/api/` · `/home/user/projects/herdr/src/app/api.rs`
 
 **Test**
-- `/home/ayaz/projects/herdr/tests/{client_mode,multi_client,server_headless,detach_reattach,live_handoff,cross_area,api_ping,auto_detect,cli_wrapper}.rs`
-- `/home/ayaz/projects/herdr/tests/visual/` (Playwright: 10 spec + harness + fixtures)
-- `/home/ayaz/projects/herdr/tests/fixtures/session/` (3 snapshot fixture'ı)
+- `/home/user/projects/herdr/tests/{client_mode,multi_client,server_headless,detach_reattach,live_handoff,cross_area,api_ping,auto_detect,cli_wrapper}.rs`
+- `/home/user/projects/herdr/tests/visual/` (Playwright: 10 spec + harness + fixtures)
+- `/home/user/projects/herdr/tests/fixtures/session/` (3 snapshot fixture'ı)
 
 ### J3 · Analiz hijyeni beyanı
 

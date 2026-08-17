@@ -615,8 +615,8 @@ pub(crate) enum ModuleBranchSource {
 /// deliberately no walk up the parents. Measured on the reporting machine:
 ///
 /// ```text
-/// /home/ayaz/Marktplaats satis        exists, empty, no .git
-/// git -C "/home/ayaz/Marktplaats satis" rev-parse --show-toplevel  →  /home/ayaz
+/// /home/user/Marktplaats satis        exists, empty, no .git
+/// git -C "/home/user/Marktplaats satis" rev-parse --show-toplevel  →  /home/user
 /// ```
 ///
 /// `$HOME` is itself a git repository there. A climbing check would have called
@@ -6672,7 +6672,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         app.sidebar_tab = crate::app::state::SidebarTab::Projects;
         app.mouse_capture = false;
         app.projects_sessions = vec![project_sessions(
-            "/home/ayaz/projects/herdr",
+            "/home/user/projects/herdr",
             vec![
                 test_chat("a", "first chat", 4),
                 test_chat("b", "second chat", 2),
@@ -6735,11 +6735,11 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         app.sidebar_tab = crate::app::state::SidebarTab::Projects;
         app.mouse_capture = false;
         app.projects_sessions = vec![project_sessions(
-            "/home/ayaz/projects/herdr",
+            "/home/user/projects/herdr",
             vec![test_chat("a", "hidden chat", 4)],
         )];
         app.collapsed_project_paths
-            .insert(std::path::PathBuf::from("/home/ayaz/projects/herdr"));
+            .insert(std::path::PathBuf::from("/home/user/projects/herdr"));
         let area = Rect::new(0, 0, 24, 12);
         app.view.sidebar_tab_hit_areas = compute_sidebar_tab_areas(area);
         app.view.project_row_areas = compute_project_row_areas(&app, area);
@@ -6759,7 +6759,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let mut app = crate::app::state::AppState::test_new();
         app.sidebar_tab = crate::app::state::SidebarTab::Projects;
         app.mouse_capture = false;
-        app.projects_sessions = vec![project_sessions("/home/ayaz/projects/empty", Vec::new())];
+        app.projects_sessions = vec![project_sessions("/home/user/projects/empty", Vec::new())];
         let area = Rect::new(0, 0, 24, 12);
         app.view.sidebar_tab_hit_areas = compute_sidebar_tab_areas(area);
         app.view.project_row_areas = compute_project_row_areas(&app, area);
@@ -7103,7 +7103,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
     #[test]
     fn project_display_name_uses_final_component() {
         assert_eq!(
-            project_display_name(std::path::Path::new("/home/ayaz/projects/herdr")),
+            project_display_name(std::path::Path::new("/home/user/projects/herdr")),
             "herdr"
         );
         assert_eq!(project_display_name(std::path::Path::new("/")), "/");
@@ -11927,8 +11927,8 @@ mod module_gap_tests {
 
     // M2.3 🔴 / TP-MOD-37: THE guard. Measured on the reporting machine:
     //
-    //   /home/ayaz/Marktplaats satis          exists, empty, no .git
-    //   git -C "..." rev-parse --show-toplevel  →  /home/ayaz
+    //   /home/user/Marktplaats satis          exists, empty, no .git
+    //   git -C "..." rev-parse --show-toplevel  →  /home/user
     //
     // `$HOME` is itself a git repository there. If this answered `Repository`,
     // "New branch..." on that module would open branches and worktrees over the

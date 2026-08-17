@@ -534,7 +534,7 @@ edilmiş bir takas — ama **resync yolu yoksa** bug olur.
 Bu katalog **prior-art**tır; herdr koduna hiçbir değişiklik yapılmadı. Bir pattern'i
 almadan önce:
 
-1. **Zaten var mı?** `search_graph(project="home-ayaz-projects-herdr", query="…")` ile
+1. **Zaten var mı?** `search_graph(project="home-user-projects-herdr", query="…")` ile
    herdr'ın kendi `src/pty/`, `src/ipc.rs`, `src/protocol/` karşılığını bul.
 2. **Bağımsız kanıtı var mı?** `[zynk]` sayılmaz (fork). `open` işaretli `PI4` ve `PI16`
    ikinci kanıt bekliyor.

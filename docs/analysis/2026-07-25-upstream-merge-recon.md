@@ -84,8 +84,8 @@ Gerekçe (iki bağımsız kaynak):
 ## Durum (kesinti sonrası, doğrulanmış)
 
 ```
-/home/ayaz/projects/herdr                b48bd903 [feat/native-fm]      ← DOKUNULMADI, temiz
-/home/ayaz/projects/herdr-upstream-recon b48bd903 [recon/upstream-sync-probe] ← temiz, MERGE_HEAD yok
+/home/user/projects/herdr                b48bd903 [feat/native-fm]      ← DOKUNULMADI, temiz
+/home/user/projects/herdr-upstream-recon b48bd903 [recon/upstream-sync-probe] ← temiz, MERGE_HEAD yok
 ```
 Recon worktree **yerinde bırakıldı** — karar verilirse orada devam edilir.
 Rollback: her şey `b48bd903`; worktree silinirse `git worktree remove` yeter.

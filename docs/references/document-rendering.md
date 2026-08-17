@@ -66,7 +66,7 @@ related:
 | Etiket | Kaynak/URL | Tier | Conf | Desteklediği pattern | Konu |
 |---|---|---|---|---|---|
 | `[ratatui-image-crate]` | https://crates.io/api/v1/crates/ratatui-image | official-registry | 0.95 | DR1 | v**11.0.6** · 2026-06-25 · MIT · 593.358 indirme (242.832 son dönem) · kitty+sixel+iterm2+halfblock |
-| `[ratatui-image-src]` | `/home/ayaz/.cartography/refpool/ratatui-image/` (yerel indeks + disk) | source-code | 1.0 | DR1, DR7 | `Picker.from_query_stdio` (`src/picker.rs:94`), `from_query_stdio_with_options` (`:106-165`), `query_stdio_capabilities` (`:441-482`), `query_with_timeout` (`:560-598`), `cap_parser.Parser.push` (`cap_parser.rs:140-261`), `detect_tmux_and_outer_protocol_from_env` (`:296-325`), `interpret_parser_responses` (`:484-553`), `test_from_query_stdio_no_hang` (`:622`), `SlicedImage.slice_rows` (`sliced.rs`), `ResizeEncodeRender.needs_resize` |
+| `[ratatui-image-src]` | `/home/user/.cartography/refpool/ratatui-image/` (yerel indeks + disk) | source-code | 1.0 | DR1, DR7 | `Picker.from_query_stdio` (`src/picker.rs:94`), `from_query_stdio_with_options` (`:106-165`), `query_stdio_capabilities` (`:441-482`), `query_with_timeout` (`:560-598`), `cap_parser.Parser.push` (`cap_parser.rs:140-261`), `detect_tmux_and_outer_protocol_from_env` (`:296-325`), `interpret_parser_responses` (`:484-553`), `test_from_query_stdio_no_hang` (`:622`), `SlicedImage.slice_rows` (`sliced.rs`), `ResizeEncodeRender.needs_resize` |
 | `[ratatui-image-cargo]` | `refpool/ratatui-image/Cargo.toml` | source-code | 1.0 | DR1, DR13 | Bağımlılıklar: `image`, `icy_sixel`, `base64-simd`, `rand`, `ratatui ^0.30.1`, `self_cell`, `thiserror`; unix `rustix ^0.38`, **windows `windows 0.58`** (herdr `windows-sys 0.61.2` ile ÇAKIŞIR); rust-version 1.86, edition 2024; feature `chafa-dyn`/`chafa-static` (LGPL C kütüphanesi) |
 | `[icy-sixel-crate]` | https://crates.io/api/v1/crates/icy_sixel | official-registry | 0.95 | DR13 | v0.5.0 · 2025-12-27 · MIT/Apache · 690.369 indirme · saf Rust SIXEL |
 | `[viuer-crate]` | https://crates.io/api/v1/crates/viuer | official-registry | 0.95 | — | v0.11.0 · **2025-12-09** (durgun) · MIT · 1.073.734 indirme |
@@ -132,7 +132,7 @@ related:
 |---|---|---|---|---|
 | `[webfetch-crates-io]` | `WebFetch` → `https://crates.io/api/v1/crates/<ad>` | executable | 1.0 | 🟢 12/12 başarılı. Sürüm/bakım/indirme/lisans için **kanonik yol** |
 | `[webfetch-gh-api]` | `WebFetch` → `https://api.github.com/search/repositories?q=…` | executable | 1.0 | 🟢 Ekosistem taraması; `pushed_at`+`archived`+`license.spdx_id` üçlüsü zorunlu |
-| `[codebase-mcp-refpool]` | codebase-memory-mcp, indeksler: `home-ayaz-.cartography-refpool-{ratatui-image,yazi-src,joshuto,superfile-src,…}` | executable | 0.9 | 🟢 `get_architecture` + `search_graph` ile sembol bul → **sonra diskten tam kod oku** (en verimli kombinasyon) |
+| `[codebase-mcp-refpool]` | codebase-memory-mcp, indeksler: `home-user-.cartography-refpool-{ratatui-image,yazi-src,joshuto,superfile-src,…}` | executable | 0.9 | 🟢 `get_architecture` + `search_graph` ile sembol bul → **sonra diskten tam kod oku** (en verimli kombinasyon) |
 | `[pkg-registry-mcp-fail]` | `mcp__pkg-registry__get-cargo-package-details` | executable | 1.0 | 🔴 **4/4 başarısız** ("Error fetching package details") 2026-07-24. Alternatif: crates.io v1 API doğrudan |
 | `[websearch-fail]` | `WebSearch` | executable | 1.0 | 🔴 **Oturum boyunca bozuk** (`output_config.effort 'xhigh' is not supported`). Alternatif: WebFetch + birincil API'ler |
 

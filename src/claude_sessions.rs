@@ -365,8 +365,8 @@ mod tests {
     #[test]
     fn encode_basic_path() {
         assert_eq!(
-            encode_project_path("/home/ayaz/projects/x"),
-            "-home-ayaz-projects-x"
+            encode_project_path("/home/user/projects/x"),
+            "-home-user-projects-x"
         );
     }
 

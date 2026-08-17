@@ -24,7 +24,7 @@
       {
         "repo": "oly",
         "sha": "741ba42",
-        "project": "home-ayaz-.cartography-refpool-oly",
+        "project": "home-user-.cartography-refpool-oly",
         "nodes": 3163,
         "edges": 10422,
         "independent": true
@@ -32,7 +32,7 @@
       {
         "repo": "orbt",
         "sha": "186c11c",
-        "project": "home-ayaz-.cartography-refpool-orbt",
+        "project": "home-user-.cartography-refpool-orbt",
         "nodes": 1245,
         "edges": 4292,
         "independent": "influenced"
@@ -40,7 +40,7 @@
       {
         "repo": "running-process",
         "sha": "da50923",
-        "project": "home-ayaz-.cartography-refpool-running-process",
+        "project": "home-user-.cartography-refpool-running-process",
         "nodes": 10360,
         "edges": 50893,
         "independent": true
@@ -48,7 +48,7 @@
       {
         "repo": "tenex",
         "sha": "fda7d37",
-        "project": "home-ayaz-.cartography-refpool-tenex",
+        "project": "home-user-.cartography-refpool-tenex",
         "nodes": 2920,
         "edges": 11386,
         "independent": true
@@ -56,7 +56,7 @@
       {
         "repo": "zellij",
         "sha": "812ad86",
-        "project": "home-ayaz-.cartography-refpool-zellij",
+        "project": "home-user-.cartography-refpool-zellij",
         "nodes": 14625,
         "edges": 90245,
         "independent": true
@@ -64,7 +64,7 @@
       {
         "repo": "sshx",
         "sha": "dd42496",
-        "project": "home-ayaz-.cartography-refpool-sshx",
+        "project": "home-user-.cartography-refpool-sshx",
         "nodes": 888,
         "edges": 2445,
         "independent": true
@@ -72,7 +72,7 @@
       {
         "repo": "kode-bridge",
         "sha": "de31d0f",
-        "project": "home-ayaz-.cartography-refpool-kode-bridge",
+        "project": "home-user-.cartography-refpool-kode-bridge",
         "nodes": 1113,
         "edges": 2686,
         "independent": true
@@ -80,7 +80,7 @@
       {
         "repo": "mprocs",
         "sha": "d1966e7",
-        "project": "home-ayaz-.cartography-refpool-mprocs",
+        "project": "home-user-.cartography-refpool-mprocs",
         "nodes": 2350,
         "edges": 9508,
         "independent": true
@@ -88,7 +88,7 @@
       {
         "repo": "tui-term",
         "sha": "e1ebdd0",
-        "project": "home-ayaz-.cartography-refpool-tui-term",
+        "project": "home-user-.cartography-refpool-tui-term",
         "nodes": 498,
         "edges": 1258,
         "independent": true
@@ -96,7 +96,7 @@
       {
         "repo": "ptywright",
         "sha": "0586657",
-        "project": "home-ayaz-.cartography-refpool-ptywright",
+        "project": "home-user-.cartography-refpool-ptywright",
         "nodes": 2166,
         "edges": 9470,
         "independent": true
@@ -104,7 +104,7 @@
       {
         "repo": "shell-compose",
         "sha": "914d874",
-        "project": "home-ayaz-.cartography-refpool-shell-compose",
+        "project": "home-user-.cartography-refpool-shell-compose",
         "nodes": 260,
         "edges": 585,
         "independent": true
@@ -112,7 +112,7 @@
       {
         "repo": "zwire-host",
         "sha": "af77c51",
-        "project": "home-ayaz-.cartography-refpool-zwire-host",
+        "project": "home-user-.cartography-refpool-zwire-host",
         "nodes": 579,
         "edges": 2229,
         "independent": true
@@ -120,7 +120,7 @@
       {
         "repo": "skim",
         "sha": "cbfb7fa",
-        "project": "home-ayaz-.cartography-refpool-skim",
+        "project": "home-user-.cartography-refpool-skim",
         "nodes": 3508,
         "edges": 15858,
         "independent": true
@@ -128,7 +128,7 @@
       {
         "repo": "gwm-cli",
         "sha": "7212406",
-        "project": "home-ayaz-.cartography-refpool-gwm-cli",
+        "project": "home-user-.cartography-refpool-gwm-cli",
         "nodes": 6106,
         "edges": 33520,
         "independent": true
@@ -136,7 +136,7 @@
       {
         "repo": "bohay",
         "sha": "9d16cac",
-        "project": "home-ayaz-.cartography-refpool-bohay",
+        "project": "home-user-.cartography-refpool-bohay",
         "nodes": 2675,
         "edges": 13648,
         "independent": true
@@ -144,7 +144,7 @@
       {
         "repo": "fresh-editor",
         "sha": "4610966",
-        "project": "home-ayaz-.cartography-refpool-fresh-editor",
+        "project": "home-user-.cartography-refpool-fresh-editor",
         "nodes": 30767,
         "edges": 145937,
         "independent": true
@@ -152,7 +152,7 @@
       {
         "repo": "zynk",
         "sha": "3d10a90",
-        "project": "home-ayaz-.cartography-refpool-zynk",
+        "project": "home-user-.cartography-refpool-zynk",
         "nodes": 14109,
         "edges": 77606,
         "independent": false

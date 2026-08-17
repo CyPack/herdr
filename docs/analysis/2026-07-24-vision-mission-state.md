@@ -24,7 +24,7 @@ related:
 
 # herdr — Vizyon & Misyon Durum Analizi
 
-**Analiz tarihi:** 2026-07-24 · **Repo:** `/home/ayaz/projects/herdr` · **HEAD:** `b48bd903` (`feat/native-fm`)
+**Analiz tarihi:** 2026-07-24 · **Repo:** `/home/user/projects/herdr` · **HEAD:** `b48bd903` (`feat/native-fm`)
 **Kapsam:** salt-okuma inceleme (kod değişikliği yapılmadı)
 **Yöntem:** discovery-first + evidence-propagation. Her iddia (claim · evidence · confidence) üçlüsüyle kaydedildi. Kod keşfinde önce codebase-memory graph (24.357 node / 129.892 edge, `status: ready`, taze sembol `TrailSnapshots::focus_entry` ile freshness doğrulandı), sonra grep.
 
@@ -584,7 +584,7 @@ Duraklatma gerekçesi (`.codex/MEMORY.md`): *"The non-product change-pipeline la
 - `Cargo.toml` version hâlâ `0.7.3` — upstream'in son stable'ı; fork kendi sürüm numarasını almamış
 - `website/latest.json` upstream v0.7.3'ü gösteriyor, asset URL'leri `github.com/ogulcancelik/herdr/releases/download/v0.7.3/...`
 - Fork'un release workflow'u yok; `.github/workflows/release.yml` upstream'in
-- Kurulu binary ile geliştirme binary'si farklı: `.codex/evidence/files-visibility-preview-plugin-research.md` — *"The installed binary `/home/ayaz/.local/bin/herdr` is dated 2026-07-12... **Running plain `herdr` selects the older installed binary; the new scroll and sidebar behavior exists only in the current debug build** until a separately authorized install/release workflow updates the installed binary."*
+- Kurulu binary ile geliştirme binary'si farklı: `.codex/evidence/files-visibility-preview-plugin-research.md` — *"The installed binary `/home/user/.local/bin/herdr` is dated 2026-07-12... **Running plain `herdr` selects the older installed binary; the new scroll and sidebar behavior exists only in the current debug build** until a separately authorized install/release workflow updates the installed binary."*
 
 **Etki:** Kullanıcı kendi geliştirdiği file manager'ı günlük kullanamıyor; her test izole debug build gerektiriyor (`.local/ISOLATED-DEV-TEST.md`, `.local/herdr-trail-test.sh`, `.local/herdr-files-v1-profile.sh`).
 
@@ -636,7 +636,7 @@ Belge 2026-07-17'de donmuş, 7 gün bayat. Kendini "authority order on conflict:
 
 | # | Karar | Kaynak | Not |
 |---|---|---|---|
-| 1 | **DCLICK-6** fiziksel izole E2E kabulü | `.codex/TASKS.md` P0 ACTIVE | Reçete: `cd /home/ayaz/projects/herdr && HERDR_RENDER_PROF=1 ./.local/herdr-trail-test.sh run` |
+| 1 | **DCLICK-6** fiziksel izole E2E kabulü | `.codex/TASKS.md` P0 ACTIVE | Reçete: `cd /home/user/projects/herdr && HERDR_RENDER_PROF=1 ./.local/herdr-trail-test.sh run` |
 | 2 | **FFO-9** `TP-FFO-E2E-01` fiziksel kabul | `.codex/TASKS.md` P0 ACTIVE | Rail/Trail mouse-to-key ownership, tek adım wheel, Right/Left kolon yasaları, Rail-disabled aksiyonlar, tek dolu aktif satır |
 | 3 | **FMN-6** Home/Desktop/Downloads pre-warm | `.codex/MEMORY.md` | *"not authorized without a separate first-entry latency RED"*; genel/sınırsız LRU asla |
 | 4 | **FMR-0** 4 scroll versiyonundan production adayı seçimi | `.codex/TASKS.md` | *"Rank from raw evidence and select/reject a production candidate; **recency alone cannot win**"* |
@@ -768,7 +768,7 @@ Bu bölüm, ileride *"yeni ihtiyaçlarımız olduğunda / daha fazlasını isted
 ### I.2 Divergence ölçüm komutları (kopyala-çalıştır)
 
 ```bash
-cd /home/ayaz/projects/herdr
+cd /home/user/projects/herdr
 
 # Fork ↔ upstream mesafesi — HER İKİ YÖNÜ de ölç, tek yön yanıltır
 git rev-list --count origin/master..upstream/master   # upstream'de olup fork'ta OLMAYAN
@@ -811,7 +811,7 @@ grep -rn "pub struct PaneState\|pub struct PaneRuntime" src/
 comm -23 <(find docs -type f | sort) <(git ls-files docs/ | sort)
 
 # Graph (codebase-memory-mcp)
-#   index_status(project="home-ayaz-projects-herdr")
+#   index_status(project="home-user-projects-herdr")
 #   → ready DEĞİL, TAZE SEMBOL ile doğrula (örn TrailSnapshots::focus_entry)
 ```
 

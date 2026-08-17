@@ -76,7 +76,7 @@ gelir.
 | **`vendor/libghostty-vt`** | `vendor/libghostty-vt.patches.md` her aktif patch | Patch sessizce düşer (HP8) |
 
 **Sembol izini elle sürme.** Kod grafiği indeksli
-(`home-ayaz-projects-herdr`, 31.617 düğüm / 168.657 kenar):
+(`home-user-projects-herdr`, 31.617 düğüm / 168.657 kenar):
 
 ```
 search_graph(name_pattern=...)        # sembolü bul

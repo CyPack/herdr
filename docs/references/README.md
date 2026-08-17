@@ -41,7 +41,7 @@ related:
 
 > **Prior-art havuzu (`~/.cartography/refpool/`).** Dış referans repo'ları buraya **shallow
 > klonlanır** ve `codebase-memory-mcp` ile indekslenir → registry satırları çıplak iddia değil,
-> `search_graph(project="home-ayaz-.cartography-refpool-<ad>")` ile canlı koda çözülür.
+> `search_graph(project="home-user-.cartography-refpool-<ad>")` ile canlı koda çözülür.
 > ⚠️ Havuza herdr'dan **türemiş** bir proje eklenirse (`zynk` gibi) `derivative` işaretlenir ve
 > θ-kuralında bağımsız ikinci kaynak olarak **sayılmaz** (sahte konsensüs).
 
@@ -82,7 +82,7 @@ related:
 
 | Etiket | Kaynak | Tier | Conf | Desteklediği pattern | Konu |
 |---|---|---|---|---|---|
-| `[herdr-discipline-memory]` | `~/.claude/projects/-home-ayaz/memory/feedback-herdr-fork-production-discipline.md` | project-memory | 0.85 | HP3 (nextest), çalışma disiplini | nextest v0.9.140 kurulumu; `cargo test` paralel flaky kök-neden KANITI (seri 2531/2531 vs nextest 2533/2533); per-feature branch kuralı; no happy-path/token-cimriliği-yok çalışma tarzı |
+| `[herdr-discipline-memory]` | `~/.claude/projects/-home-user/memory/feedback-herdr-fork-production-discipline.md` | project-memory | 0.85 | HP3 (nextest), çalışma disiplini | nextest v0.9.140 kurulumu; `cargo test` paralel flaky kök-neden KANITI (seri 2531/2531 vs nextest 2533/2533); per-feature branch kuralı; no happy-path/token-cimriliği-yok çalışma tarzı |
 
 ## Resmî dış kaynaklar (2026-07-12 curl canlılık-doğrulandı, HTTP 200)
 
@@ -106,7 +106,7 @@ related:
 | Etiket | Kaynak | Tier | Conf | Konu |
 |---|---|---|---|---|
 | `[sys-toolchain]` | rustc/cargo 1.96.1 + rust-analyzer + cargo-nextest v0.9.140 + cargo-miri + ast-grep (`~/.cargo/bin`) | executable | 1.0 | 2026-07-12 `rustc --version`/`rustup show`/`ls ~/.cargo/bin` çıktılarıyla doğrulandı |
-| `[codebase-mcp]` | codebase-memory-mcp, index `home-ayaz-projects-herdr` | executable | 0.9 | Sembol keşfi ZORUNLU yol; `detect_changes=0` tek başına tazelik değildir. 2026-07-22 doc-aware single-worker CLI store 24,327 node / 129,874 edge ile FFO sembollerini çözdü; long-lived built-in channel'ın daha eski sayımı ayrı ve stale olarak etiketlendi |
+| `[codebase-mcp]` | codebase-memory-mcp, index `home-user-projects-herdr` | executable | 0.9 | Sembol keşfi ZORUNLU yol; `detect_changes=0` tek başına tazelik değildir. 2026-07-22 doc-aware single-worker CLI store 24,327 node / 129,874 edge ile FFO sembollerini çözdü; long-lived built-in channel'ın daha eski sayımı ayrı ve stale olarak etiketlendi |
 | `[pkg-registry-mcp]` | pkg-registry MCP cargo tool'ları | executable (bağlantı) | 0.9 | Crate meta + RustSec advisory sorgusu |
 
 ## Kayıt kuralı (yeni kaynak eklerken)

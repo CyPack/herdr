@@ -22,7 +22,7 @@ example_pool: ~/.cartography/refpool/               # kod okuma (codebase-mcp in
 
 ## [P1] Miller çok-kolon layout (parent/current/preview) · conf 0.95
 - **NE:** dizin gezginini yatay N-kolona böl (sol=parent, orta=current, sağ=preview). Ratio-tabanlı esnek.
-- **KAYNAK:** `joshuto/src/ui/views/tui_folder_view.rs` — `constraints: &[Constraint; 3]` + `Layout::default().direction(Direction::Horizontal)`; **`Constraint::Ratio(0, _)` = o kolonu GİZLE** (dinamik aç/kapa). codebase-mcp: `home-ayaz-.cartography-refpool-joshuto`.
+- **KAYNAK:** `joshuto/src/ui/views/tui_folder_view.rs` — `constraints: &[Constraint; 3]` + `Layout::default().direction(Direction::Horizontal)`; **`Constraint::Ratio(0, _)` = o kolonu GİZLE** (dinamik aç/kapa). codebase-mcp: `home-user-.cartography-refpool-joshuto`.
 - **NE ZAMAN:** klasik ranger/miller deneyimi (bir üst + mevcut + önizleme). herdr'da L1 TileLayout/ratatui Layout ile birebir ifade edilir.
 - **NE ZAMAN KULLANMA:** tek-panel dar sidebar yeterliyse (Constraint[1]). Aşırı-dar terminalde parent'ı Ratio(0) ile gizle.
 
@@ -34,14 +34,14 @@ example_pool: ~/.cartography/refpool/               # kod okuma (codebase-mcp in
 
 ## [P3] ⭐ Unicode-placeholder virtual placement (MULTIPLEXER-SAFE image) · conf 0.95
 - **NE:** ham Kitty APC escape yerine `a=T,U=1,f=32,t=d` ile "virtual placement" oluştur + hücrelere `U+10EEEE` unicode-placeholder karakterleri (renk-kodlu image-id) yaz. Karakterler NORMAL METİN → multiplexer anlamadan taşır → görsel doğru yerde kalır.
-- **KAYNAK:** `ratatui-image/src/protocol/kitty.rs:157-271` (kaynak-koddan doğrulandı). codebase-mcp: `home-ayaz-.cartography-refpool-ratatui-image`.
+- **KAYNAK:** `ratatui-image/src/protocol/kitty.rs:157-271` (kaynak-koddan doğrulandı). codebase-mcp: `home-user-.cartography-refpool-ratatui-image`.
 - **NE ZAMAN:** herdr bir MULTIPLEXER olduğu için image'ın pane/kompozisyon içinde stabil kalması gerektiğinde. Zellij bunu çözememiş → herdr'ın kitty_graphics'i zaten pin/virtual destekliyor (herdr-existing-fm map).
 - **NE ZAMAN KULLANMA:** herdr host'a re-emit ederken absolute placement de yeterli (kitty_graphics.rs:581-631 zaten normalize ediyor) — virtual placeholder ÇOCUK→herdr yönünde kritik, herdr→host yönünde değil.
 - **ANTI-PATTERN:** viuer/viu "dump" (ham escape bas) → multiplexer'da kaybolur. Bunu KULLANMA.
 
 ## [P4] Per-slot Gfx protocol cache (image'ı her frame yeniden gönderme) · conf 0.9
 - **NE:** her preview-slot için yüklenmiş image-id'yi cache'le; içerik değişmedikçe upload'ı TEKRARLAMA (sadece display).
-- **KAYNAK:** `rat-commander/src/ui/graphics/mod.rs` (Gfx katmanı, per-slot cache). codebase-mcp: `home-ayaz-.cartography-refpool-rat-commander`.
+- **KAYNAK:** `rat-commander/src/ui/graphics/mod.rs` (Gfx katmanı, per-slot cache). codebase-mcp: `home-user-.cartography-refpool-rat-commander`.
 - **NE ZAMAN:** preview sık redraw olduğunda (performans). **herdr'da ZATEN VAR:** kitty_graphics `sources: HashMap<(PaneId,u32),u32>` + image/placement signature dedup (kitty_graphics.rs:267-330) → aynı desen. Yerel-preview placement'ı bu cache'e sentetik-key ile eklemek yeter.
 
 ## [P5] StatefulProtocol / Picker auto-detect · conf 0.85
@@ -56,7 +56,7 @@ example_pool: ~/.cartography/refpool/               # kod okuma (codebase-mcp in
 
 ## [P7] ratatui + ratatui-image + chafa-fallback glue · conf 0.9
 - **NE:** ratatui app'e image widget'ı bağlama + terminal desteklemezse chafa(ASCII)-fallback.
-- **KAYNAK:** `yeet` (ratatui+ratatui-image+chafa+tokio+Lua). codebase-mcp: `home-ayaz-.cartography-refpool-yeet`.
+- **KAYNAK:** `yeet` (ratatui+ratatui-image+chafa+tokio+Lua). codebase-mcp: `home-user-.cartography-refpool-yeet`.
 - **NE ZAMAN:** canlı entegrasyon deseni referansı (widget lifecycle + fallback). herdr'da fallback = halfblocks/ASCII.
 
 ## ⚠️ KANITLI BOŞLUK = FIRSAT

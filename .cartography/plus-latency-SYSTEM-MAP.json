@@ -232,12 +232,12 @@
         "sources": [
           {
             "type": "source_code",
-            "url": "file:///home/ayaz/projects/herdr/src/app/input/sidebar.rs#L283-L293",
+            "url": "file:///home/user/projects/herdr/src/app/input/sidebar.rs#L283-L293",
             "confidence": 0.95
           },
           {
             "type": "source_code",
-            "url": "file:///home/ayaz/projects/herdr/src/app/input/mouse.rs#L547-L564",
+            "url": "file:///home/user/projects/herdr/src/app/input/mouse.rs#L547-L564",
             "confidence": 0.9
           }
         ],
@@ -250,12 +250,12 @@
         "sources": [
           {
             "type": "source_code",
-            "url": "file:///home/ayaz/projects/herdr/src/client/mod.rs#L1467-L1470",
+            "url": "file:///home/user/projects/herdr/src/client/mod.rs#L1467-L1470",
             "confidence": 0.9
           },
           {
             "type": "source_code",
-            "url": "file:///home/ayaz/projects/herdr/src/server/headless.rs#L2601-L2625",
+            "url": "file:///home/user/projects/herdr/src/server/headless.rs#L2601-L2625",
             "confidence": 0.9
           }
         ],
@@ -268,12 +268,12 @@
         "sources": [
           {
             "type": "source_code",
-            "url": "file:///home/ayaz/projects/herdr/src/server/headless.rs#L445-L506",
+            "url": "file:///home/user/projects/herdr/src/server/headless.rs#L445-L506",
             "confidence": 0.92
           },
           {
             "type": "source_code",
-            "url": "file:///home/ayaz/projects/herdr/src/server/headless.rs#L678-L681",
+            "url": "file:///home/user/projects/herdr/src/server/headless.rs#L678-L681",
             "confidence": 0.9
           }
         ],
@@ -286,7 +286,7 @@
         "sources": [
           {
             "type": "source_code",
-            "url": "file:///home/ayaz/projects/herdr/src/pane.rs#L1795-L1921",
+            "url": "file:///home/user/projects/herdr/src/pane.rs#L1795-L1921",
             "confidence": 0.92
           }
         ],
@@ -299,7 +299,7 @@
         "sources": [
           {
             "type": "source_code",
-            "url": "file:///home/ayaz/projects/herdr/vendor/portable-pty/src/unix.rs#L228-L286",
+            "url": "file:///home/user/projects/herdr/vendor/portable-pty/src/unix.rs#L228-L286",
             "confidence": 0.9
           }
         ],
@@ -312,7 +312,7 @@
         "sources": [
           {
             "type": "source_code",
-            "url": "file:///home/ayaz/projects/herdr/src/pty/backend.rs#L17-L40",
+            "url": "file:///home/user/projects/herdr/src/pty/backend.rs#L17-L40",
             "confidence": 0.5
           }
         ],
@@ -325,12 +325,12 @@
         "sources": [
           {
             "type": "source_code",
-            "url": "file:///home/ayaz/projects/herdr/src/pane/terminal.rs#L40-L41",
+            "url": "file:///home/user/projects/herdr/src/pane/terminal.rs#L40-L41",
             "confidence": 0.93
           },
           {
             "type": "source_code",
-            "url": "file:///home/ayaz/projects/herdr/src/pane/terminal.rs#L1133-L1150",
+            "url": "file:///home/user/projects/herdr/src/pane/terminal.rs#L1133-L1150",
             "confidence": 0.9
           }
         ],
@@ -343,12 +343,12 @@
         "sources": [
           {
             "type": "source_code",
-            "url": "file:///home/ayaz/projects/herdr/src/pty/actor/unix.rs#L344",
+            "url": "file:///home/user/projects/herdr/src/pty/actor/unix.rs#L344",
             "confidence": 0.9
           },
           {
             "type": "source_code",
-            "url": "file:///home/ayaz/projects/herdr/src/pty/actor/unix.rs#L436",
+            "url": "file:///home/user/projects/herdr/src/pty/actor/unix.rs#L436",
             "confidence": 0.88
           }
         ],
@@ -361,7 +361,7 @@
         "sources": [
           {
             "type": "source_code",
-            "url": "file:///home/ayaz/projects/herdr/src/app/projects.rs#L242-L256",
+            "url": "file:///home/user/projects/herdr/src/app/projects.rs#L242-L256",
             "confidence": 0.92
           }
         ],
@@ -374,12 +374,12 @@
         "sources": [
           {
             "type": "source_code",
-            "url": "file:///home/ayaz/projects/herdr/src/pane.rs#L1928-L1963",
+            "url": "file:///home/user/projects/herdr/src/pane.rs#L1928-L1963",
             "confidence": 0.9
           },
           {
             "type": "spec",
-            "url": "file:///home/ayaz/projects/herdr/CLAUDE.md#Universal-Project-Rules-Principles",
+            "url": "file:///home/user/projects/herdr/CLAUDE.md#Universal-Project-Rules-Principles",
             "confidence": 0.9
           }
         ],
@@ -397,7 +397,7 @@
           },
           {
             "type": "filesystem",
-            "url": "file:///home/ayaz/.claude.json#mcpServers (33 entries, read directly in this session)",
+            "url": "file:///home/user/.claude.json#mcpServers (33 entries, read directly in this session)",
             "confidence": 0.95
           }
         ],
@@ -410,7 +410,7 @@
         "sources": [
           {
             "type": "executable",
-            "url": "shell:///home/ayaz/projects/herdr $ time claude --version  ->  2.1.207 (Claude Code); 0.109s total",
+            "url": "shell:///home/user/projects/herdr $ time claude --version  ->  2.1.207 (Claude Code); 0.109s total",
             "confidence": 0.95
           }
         ],
@@ -459,7 +459,7 @@
         "sources": [
           {
             "type": "source_code",
-            "url": "file:///home/ayaz/projects/herdr/src/app/projects.rs#L19-L48",
+            "url": "file:///home/user/projects/herdr/src/app/projects.rs#L19-L48",
             "confidence": 0.5
           }
         ],
@@ -472,12 +472,12 @@
         "sources": [
           {
             "type": "source_code",
-            "url": "file:///home/ayaz/projects/herdr/src/app/projects.rs#L50-L123",
+            "url": "file:///home/user/projects/herdr/src/app/projects.rs#L50-L123",
             "confidence": 0.9
           },
           {
             "type": "source_code",
-            "url": "file:///home/ayaz/projects/herdr/src/app/projects.rs#L204-L216",
+            "url": "file:///home/user/projects/herdr/src/app/projects.rs#L204-L216",
             "confidence": 0.88
           }
         ],
@@ -490,7 +490,7 @@
         "sources": [
           {
             "type": "source_code",
-            "url": "file:///home/ayaz/projects/herdr/src/server/headless.rs#L430-L598 (aggregate of cl1/cl4/cl5/cl7/cl8/cl9 file:lines)",
+            "url": "file:///home/user/projects/herdr/src/server/headless.rs#L430-L598 (aggregate of cl1/cl4/cl5/cl7/cl8/cl9 file:lines)",
             "confidence": 0.9
           }
         ],

@@ -701,9 +701,9 @@ https://docs.rs/<CRATE>/latest/<crate_snake>/
 
 **codebase-memory-mcp refpool** (yerel indeksli referans projeler):
 ```
-get_architecture(project="home-ayaz-.cartography-refpool-<AD>")
+get_architecture(project="home-user-.cartography-refpool-<AD>")
 search_graph(project=..., query="<doğal dil>", limit=40)
-→ sonra: /home/ayaz/.cartography/refpool/<AD>/ altından DOSYAYI DOĞRUDAN OKU
+→ sonra: /home/user/.cartography/refpool/<AD>/ altından DOSYAYI DOĞRUDAN OKU
 ```
 > MCP sembol/dosya yerini verir; **tam kod kanıtı için diskten okumak daha verimli**.
 > Bu turda yazi `pdf.lua`'nın 55 satırının tamamı böyle okundu.

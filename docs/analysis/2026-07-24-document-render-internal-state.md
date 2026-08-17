@@ -26,9 +26,9 @@ related:
 
 # herdr — Dosya Render/Edit İç Durumu (BÖLÜM 4A)
 
-**Kapsam:** `/home/ayaz/projects/herdr`, branch `feat/native-fm`. İnceleme **salt-okuma** yapıldı: hiçbir kaynak dosya değiştirilmedi, `cargo build`/`cargo test` çalıştırılmadı, herdr server/socket'e dokunulmadı, `.superpowers/` açılmadı, git mutasyonu yapılmadı.
+**Kapsam:** `/home/user/projects/herdr`, branch `feat/native-fm`. İnceleme **salt-okuma** yapıldı: hiçbir kaynak dosya değiştirilmedi, `cargo build`/`cargo test` çalıştırılmadı, herdr server/socket'e dokunulmadı, `.superpowers/` açılmadı, git mutasyonu yapılmadı.
 
-**Metot:** codebase-memory-mcp (`home-ayaz-projects-herdr`, 24.357 node / 129.892 edge, `status: ready`) ile keşif → doğrudan kaynak okuma ile doğrulama → `.codex/evidence/`, `.codex/TASKS.md`, `docs/superpowers/`, `.local/prd/` taraması.
+**Metot:** codebase-memory-mcp (`home-user-projects-herdr`, 24.357 node / 129.892 edge, `status: ready`) ile keşif → doğrudan kaynak okuma ile doğrulama → `.codex/evidence/`, `.codex/TASKS.md`, `docs/superpowers/`, `.local/prd/` taraması.
 
 **Kanıt sözleşmesi:** Her iddia `(claim, evidence = dosya:satır veya birebir alıntı, confidence 0..1)` üçlüsüyle verilir. Çıplak iddia yoktur. Doğrulanamayan her şey **açıkça işaretlidir** (§I sonu).
 
@@ -996,49 +996,49 @@ Kullanılacak test-only araçlar (`CLAUDE.md`'de adı geçiyor):
 ## EK — İLGİLİ MUTLAK YOLLAR
 
 **Kaynak kod:**
-`/home/ayaz/projects/herdr/src/fm/preview_capability.rs` ·
-`/home/ayaz/projects/herdr/src/fm/image_preview.rs` ·
-`/home/ayaz/projects/herdr/src/fm/text_preview.rs` ·
-`/home/ayaz/projects/herdr/src/fm/mod.rs` ·
-`/home/ayaz/projects/herdr/src/fm/trail_snapshots.rs` ·
-`/home/ayaz/projects/herdr/src/fm/operations.rs` ·
-`/home/ayaz/projects/herdr/src/fm/rename.rs` ·
-`/home/ayaz/projects/herdr/src/fm/delete.rs` ·
-`/home/ayaz/projects/herdr/src/fm/entry_kind.rs` ·
-`/home/ayaz/projects/herdr/src/fm/watcher.rs` ·
-`/home/ayaz/projects/herdr/src/kitty_graphics.rs` ·
-`/home/ayaz/projects/herdr/src/app/image_preview_worker.rs` ·
-`/home/ayaz/projects/herdr/src/app/file_preview_worker.rs` ·
-`/home/ayaz/projects/herdr/src/app/file_rename.rs` ·
-`/home/ayaz/projects/herdr/src/app/runtime.rs` ·
-`/home/ayaz/projects/herdr/src/app/input/mod.rs` ·
-`/home/ayaz/projects/herdr/src/app/input/file_manager.rs` ·
-`/home/ayaz/projects/herdr/src/app/state.rs` ·
-`/home/ayaz/projects/herdr/src/app/mod.rs` ·
-`/home/ayaz/projects/herdr/src/ui/file_manager.rs` ·
-`/home/ayaz/projects/herdr/src/ui/dialogs.rs` ·
-`/home/ayaz/projects/herdr/src/ui/visual_fixture.rs` ·
-`/home/ayaz/projects/herdr/src/protocol/wire.rs` ·
-`/home/ayaz/projects/herdr/src/server/headless.rs` ·
-`/home/ayaz/projects/herdr/src/server/clipboard_image.rs` ·
-`/home/ayaz/projects/herdr/src/client/mod.rs` ·
-`/home/ayaz/projects/herdr/src/config/model.rs` ·
-`/home/ayaz/projects/herdr/src/ghostty/mod.rs` ·
-`/home/ayaz/projects/herdr/Cargo.toml`
+`/home/user/projects/herdr/src/fm/preview_capability.rs` ·
+`/home/user/projects/herdr/src/fm/image_preview.rs` ·
+`/home/user/projects/herdr/src/fm/text_preview.rs` ·
+`/home/user/projects/herdr/src/fm/mod.rs` ·
+`/home/user/projects/herdr/src/fm/trail_snapshots.rs` ·
+`/home/user/projects/herdr/src/fm/operations.rs` ·
+`/home/user/projects/herdr/src/fm/rename.rs` ·
+`/home/user/projects/herdr/src/fm/delete.rs` ·
+`/home/user/projects/herdr/src/fm/entry_kind.rs` ·
+`/home/user/projects/herdr/src/fm/watcher.rs` ·
+`/home/user/projects/herdr/src/kitty_graphics.rs` ·
+`/home/user/projects/herdr/src/app/image_preview_worker.rs` ·
+`/home/user/projects/herdr/src/app/file_preview_worker.rs` ·
+`/home/user/projects/herdr/src/app/file_rename.rs` ·
+`/home/user/projects/herdr/src/app/runtime.rs` ·
+`/home/user/projects/herdr/src/app/input/mod.rs` ·
+`/home/user/projects/herdr/src/app/input/file_manager.rs` ·
+`/home/user/projects/herdr/src/app/state.rs` ·
+`/home/user/projects/herdr/src/app/mod.rs` ·
+`/home/user/projects/herdr/src/ui/file_manager.rs` ·
+`/home/user/projects/herdr/src/ui/dialogs.rs` ·
+`/home/user/projects/herdr/src/ui/visual_fixture.rs` ·
+`/home/user/projects/herdr/src/protocol/wire.rs` ·
+`/home/user/projects/herdr/src/server/headless.rs` ·
+`/home/user/projects/herdr/src/server/clipboard_image.rs` ·
+`/home/user/projects/herdr/src/client/mod.rs` ·
+`/home/user/projects/herdr/src/config/model.rs` ·
+`/home/user/projects/herdr/src/ghostty/mod.rs` ·
+`/home/user/projects/herdr/Cargo.toml`
 
 **Karar ve kanıt belgeleri:**
-`/home/ayaz/projects/herdr/.codex/evidence/b2-image-dependency.md` ·
-`/home/ayaz/projects/herdr/.codex/evidence/files-visibility-preview-plugin-research.md` ·
-`/home/ayaz/projects/herdr/.codex/evidence/files-preview-capability-test-points.md` ·
-`/home/ayaz/projects/herdr/.codex/evidence/fm5-preview-placement-decision.md` ·
-`/home/ayaz/projects/herdr/.codex/NEXT-SESSION-PROMPT.md` ·
-`/home/ayaz/projects/herdr/.codex/TASKS.md` ·
-`/home/ayaz/projects/herdr/.local/prd/native-file-manager-DECISION.md` ·
-`/home/ayaz/projects/herdr/CLAUDE.md`
+`/home/user/projects/herdr/.codex/evidence/b2-image-dependency.md` ·
+`/home/user/projects/herdr/.codex/evidence/files-visibility-preview-plugin-research.md` ·
+`/home/user/projects/herdr/.codex/evidence/files-preview-capability-test-points.md` ·
+`/home/user/projects/herdr/.codex/evidence/fm5-preview-placement-decision.md` ·
+`/home/user/projects/herdr/.codex/NEXT-SESSION-PROMPT.md` ·
+`/home/user/projects/herdr/.codex/TASKS.md` ·
+`/home/user/projects/herdr/.local/prd/native-file-manager-DECISION.md` ·
+`/home/user/projects/herdr/CLAUDE.md`
 
 **Test yüzeyi:**
-`/home/ayaz/projects/herdr/tests/visual/` (9 spec + snapshot dizinleri) ·
-`/home/ayaz/projects/herdr/tests/visual/fixtures/generated/vis-14-trail-metadata-preview.json`
+`/home/user/projects/herdr/tests/visual/` (9 spec + snapshot dizinleri) ·
+`/home/user/projects/herdr/tests/visual/fixtures/generated/vis-14-trail-metadata-preview.json`
 
 ---
 
