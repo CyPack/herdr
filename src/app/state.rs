@@ -4019,6 +4019,24 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// Which open workspace goes by this name, if any.
+    ///
+    /// The first match rather than a refusal when two share a name. Names are a
+    /// person's own labels and nothing stops two checkouts of the same
+    /// repository being called the same thing; a button that refused to work
+    /// because of that would be a button that stopped working for a reason
+    /// nobody could see. Going to the first one is at least a place.
+    ///
+    /// Compared exactly. A name is what somebody typed into their config and
+    /// what the sidebar shows them; folding case here would make the two
+    /// disagree in a way only this function knows about.
+    // TP-CHROME-120: a workspace action resolves by the name the sidebar shows.
+    pub(crate) fn workspace_index_named(&self, name: &str) -> Option<usize> {
+        self.workspaces
+            .iter()
+            .position(|workspace| workspace.display_name() == name)
+    }
+
     /// The client whose view is currently being resolved, if any.
     // The window is written by production and only read back by the tests that
     // pin the context contract; the per-client tab resolution reads it next.

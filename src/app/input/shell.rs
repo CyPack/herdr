@@ -97,6 +97,19 @@ pub(crate) enum BarSectionClick {
     /// replacing it would drop somebody's open work; tabs are not scarce, and
     /// refusing a second one would refuse something harmless.
     OpenTab { argv: Vec<String> },
+    /// Run a command and open nothing.
+    ///
+    /// No size, no presentation and no "already open" sibling: there is nothing
+    /// on screen for a second one to collide with. What it cannot do is report
+    /// success, because a command that opened nothing leaves nothing to look
+    /// at — only failure is worth saying out loud.
+    RunCommand { argv: Vec<String> },
+    /// Go to the workspace with this name.
+    ///
+    /// Resolved where the workspaces are, not here: pure state can answer which
+    /// workspace is called what, but a bar chrome table holds a name from a
+    /// config file and the list it has to match against can change under it.
+    FocusWorkspace { name: String },
     /// Open the same command beside the focused pane.
     ///
     /// Which pane gets split is not carried here for the same reason the
@@ -180,6 +193,18 @@ impl AppState {
         };
         match self.shell_bar_chrome.action_for(region, index) {
             None | Some(crate::ui::shell::SectionAction::None) => BarSectionClick::Inert,
+            // Neither of these opens anything, so neither has a second
+            // presentation to offer — the same reason the plugin arm below is
+            // deliberately inert on a right press. A menu here would list three
+            // places to put something that goes to none of them.
+            Some(crate::ui::shell::SectionAction::Run { argv }) => match gesture {
+                SectionGesture::Primary => BarSectionClick::RunCommand { argv: argv.clone() },
+                SectionGesture::Secondary => BarSectionClick::Inert,
+            },
+            Some(crate::ui::shell::SectionAction::FocusWorkspace { name }) => match gesture {
+                SectionGesture::Primary => BarSectionClick::FocusWorkspace { name: name.clone() },
+                SectionGesture::Secondary => BarSectionClick::Inert,
+            },
             Some(crate::ui::shell::SectionAction::OpenPopup {
                 argv,
                 width,
@@ -1284,6 +1309,52 @@ mod tests {
                 &state.bar_section_click_at(Position::new(4, 0), SectionGesture::Secondary),
                 expected,
                 "`secondary = \"{presentation}\"` must reach its own intent and no other"
+            );
+        }
+    }
+
+    // TN-G5.1 · the two actions that open nothing reach their own intents, and
+    // offer no second presentation.
+    //
+    // The secondary half is the part worth pinning. Both of these are a single
+    // thing that happens, so a menu offering "in a popup / in a tab / in a
+    // split" would be listing three places to put something that goes to none
+    // of them — and the menu is now what a section does by default, so staying
+    // inert here had to be written down rather than inherited.
+    // TP-CHROME-121: an action that opens nothing answers the first gesture and
+    // consumes the second.
+    #[test]
+    fn an_action_that_opens_nothing_offers_no_second_presentation() {
+        let mut run = popup_section(10, &["true"]);
+        run.action.kind = "run".to_string();
+        let (run_state, _) = state_with_divided_top_bar(vec![run]);
+
+        let mut go = popup_section(10, &["true"]);
+        go.action.kind = "workspace".to_string();
+        go.action.argv = Vec::new();
+        go.action.name = "herdr".to_string();
+        let (go_state, _) = state_with_divided_top_bar(vec![go]);
+
+        let at = Position::new(4, 0);
+        assert_eq!(
+            run_state.bar_section_click_at(at, SectionGesture::Primary),
+            BarSectionClick::RunCommand {
+                argv: vec!["true".to_string()],
+            }
+        );
+        assert_eq!(
+            go_state.bar_section_click_at(at, SectionGesture::Primary),
+            BarSectionClick::FocusWorkspace {
+                name: "herdr".to_string(),
+            }
+        );
+
+        for (name, state) in [("run", &run_state), ("workspace", &go_state)] {
+            assert_eq!(
+                state.bar_section_click_at(at, SectionGesture::Secondary),
+                BarSectionClick::Inert,
+                "a {name} action has nothing to re-present, and the press still \
+                 belongs to the bar"
             );
         }
     }

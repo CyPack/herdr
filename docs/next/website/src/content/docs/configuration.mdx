@@ -832,6 +832,36 @@ The plugin decides what the action does and how it is presented, so a plugin sec
 
 Pressing a section whose plugin is installed but switched off says so, which is a different message from a plugin that is not installed at all — the first is a setting, the second is an install.
 
+#### Running something without opening anything
+
+`run` executes `argv` and opens no pane at all — for the things you do *to* a session rather than in it:
+
+```toml
+[[shell.bars.top.sections]]
+kind   = "content"
+widget = { kind = "label", text = "sync" }
+action = { kind = "run", argv = ["my-sync-script"] }
+```
+
+It runs detached, in the focused pane's directory, with its output discarded. Pressing it while it is still running starts another one — there is nothing on screen for two of them to collide over.
+
+Only a failure to *start* is reported. A command that starts and then exits non-zero says so nowhere, which is the honest limit of an action whose whole purpose is opening nothing: if you want to see what happened, `popup` is the action that shows you.
+
+`width`, `height` and `secondary` are refused on it, because there is no presentation to size or to choose.
+
+#### Going to a workspace
+
+`workspace` switches to an open workspace by the name the sidebar shows:
+
+```toml
+[[shell.bars.left.sections]]
+kind   = "content"
+widget = { kind = "icon", art = "dot" }
+action = { kind = "workspace", name = "herdr" }
+```
+
+By name rather than by position, because position is whatever the display order happens to be. Nothing checks that the workspace exists while the config is read — a bar can name a checkout you have not opened yet — so pressing a section whose name matches nothing says so instead. If two workspaces share a name, the first goes.
+
 #### Fields that can never take effect
 
 Herdr refuses a half-finished edit rather than leaving it looking meaningful. A section with no `action.kind` but a leftover `width`, `height`, `secondary` or `command` is reported, because in every one of those shapes the command was removed and its settings stayed behind. The same rule catches a `command` on a `popup` action and an `argv` on a `plugin` one: both leave an id or a command line somewhere nothing will ever read it.
@@ -844,8 +874,9 @@ A section is three independent choices, and every combination is allowed:
 |---|---|---|
 | `fixed` — exactly `cells` | nothing | nothing — an indicator that swallows the click |
 | `fill` — a share of the rest, by `weight` | `label` | `popup` — run `argv` in a popup pane |
-| `content` — between `min` and `max` | `resource` · `meter` | `plugin` — invoke an installed plugin's action |
-| | `icon` | |
+| `content` — between `min` and `max` | `resource` · `meter` · `sparkline` | `plugin` — invoke an installed plugin's action |
+| | `icon` | `run` — run `argv` and open nothing |
+| | `clock` | `workspace` — go to a workspace by name |
 
 The three are asked separately on purpose: adding a widget never changes how wide a section is, and adding an action never changes what it draws. A picture that opens a popup is an icon widget plus a popup action, not a fourth kind of thing.
 

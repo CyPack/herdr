@@ -423,6 +423,27 @@ pub(crate) enum BarConfigProblem {
         index: usize,
         presentation: String,
     },
+    /// An action that opens nothing, carrying a key about how to open it.
+    ActionWithUnusedPresentation {
+        edge: &'static str,
+        index: usize,
+        field: &'static str,
+    },
+    /// An action that goes to no workspace, carrying a workspace name.
+    ///
+    /// Carries the kind so the complaint can say which action it is, the way
+    /// the plugin leftover does: "this one has no destination to name" reads
+    /// differently for a popup than for a plugin.
+    ActionWithUnusedName {
+        edge: &'static str,
+        index: usize,
+        kind: &'static str,
+    },
+    /// A `workspace` action with no destination.
+    WorkspaceActionWithoutName {
+        edge: &'static str,
+        index: usize,
+    },
     /// A `clock` format naming a field this build cannot write.
     ///
     /// Carries the character rather than the whole format, because that is the
@@ -648,6 +669,21 @@ impl std::fmt::Display for BarConfigProblem {
                         .map(|(name, _)| *name)
                         .collect::<Vec<_>>()
                 )
+            ),
+            Self::ActionWithUnusedPresentation { edge, index, field } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}].action sets {field}, but this action \
+                 opens nothing, so there is nothing for it to describe"
+            ),
+            Self::ActionWithUnusedName { edge, index, kind } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}].action.name is set on a \"{kind}\" \
+                 action, which goes to no workspace, so the name is never read"
+            ),
+            Self::WorkspaceActionWithoutName { edge, index } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}].action is a workspace action with no \
+                 name, so there is nowhere for it to go"
             ),
             Self::UnknownClockField { edge, index, field } => write!(
                 formatter,
@@ -1307,6 +1343,18 @@ pub(crate) enum SectionAction {
         /// here could land on a different plugin's action than the file names.
         action: String,
     },
+    /// Run a command and open nothing at all.
+    ///
+    /// The bar's answer to the things a person does *to* their session rather
+    /// than *in* it — a sync, a notification, a `herdr` subcommand. Failure is
+    /// the only thing it has to say, because success is by definition invisible.
+    Run { argv: Vec<String> },
+    /// Go to the workspace with this name.
+    ///
+    /// A name rather than an id or an index: the id is a generated handle no
+    /// config could know, and the index is display order. The name is what the
+    /// person typed and what they recognise.
+    FocusWorkspace { name: String },
 }
 
 /// How a secondary press presents a section's command.
@@ -2017,7 +2065,7 @@ const ACTION_KINDS: &[SectionKind<SectionAction>] = &[
         keys: &["argv", "width", "height", "secondary"],
         // A popup runs what the file says; a plugin id here would be read by
         // nothing.
-        refuses: &["command"],
+        refuses: &["command", "name"],
         example: "[shell.bars.top]\nenabled = true\n\n\
                   [[shell.bars.top.sections]]\nkind = \"content\"\n\
                   widget = { kind = \"label\", text = \"status\" }\n\
@@ -2029,14 +2077,131 @@ const ACTION_KINDS: &[SectionKind<SectionAction>] = &[
         keys: &["command"],
         // Command line, geometry and the second gesture all come from the
         // plugin's manifest, so every one of these is a setting nothing reads.
-        refuses: &["argv", "width", "height", "secondary"],
+        refuses: &["argv", "width", "height", "secondary", "name"],
         example: "[shell.bars.top]\nenabled = true\n\n\
                   [[shell.bars.top.sections]]\nkind = \"content\"\n\
                   widget = { kind = \"label\", text = \"files\" }\n\
                   action = { kind = \"plugin\", command = \"files.open\" }\n",
         build: plugin_action,
     },
+    SectionKind {
+        name: "run",
+        keys: &["argv"],
+        // Nothing to present and no geometry to give: this action opens
+        // nothing, which is its whole purpose. `secondary` on it would be a key
+        // asking how to show something that is never shown.
+        refuses: &["command", "width", "height", "secondary", "name"],
+        example: "[shell.bars.top]\nenabled = true\n\n\
+                  [[shell.bars.top.sections]]\nkind = \"content\"\n\
+                  widget = { kind = \"label\", text = \"sync\" }\n\
+                  action = { kind = \"run\", argv = [\"true\"] }\n",
+        build: run_action,
+    },
+    SectionKind {
+        name: "workspace",
+        keys: &["name"],
+        refuses: &["argv", "command", "width", "height", "secondary"],
+        example: "[shell.bars.top]\nenabled = true\n\n\
+                  [[shell.bars.top.sections]]\nkind = \"content\"\n\
+                  widget = { kind = \"label\", text = \"herdr\" }\n\
+                  action = { kind = \"workspace\", name = \"herdr\" }\n",
+        build: workspace_action,
+    },
 ];
+
+/// A command that runs and opens nothing.
+///
+/// The same argv rules as a popup — it is the same untrusted line from the same
+/// file — and none of the popup's presentation keys, because there is no
+/// presentation. A section carrying a size for a window it never opens is the
+/// dead component CLA9 names.
+fn run_action(at: SectionAt<'_>) -> Result<SectionAction, BarConfigProblem> {
+    let SectionAt {
+        config,
+        edge,
+        index,
+        ..
+    } = at;
+    if !config.action.command.trim().is_empty() {
+        return Err(BarConfigProblem::PopupActionWithPluginCommand { edge, index });
+    }
+    if !config.action.name.trim().is_empty() {
+        return Err(BarConfigProblem::ActionWithUnusedName {
+            edge,
+            index,
+            kind: "run",
+        });
+    }
+    // A size or a presentation on an action that opens nothing is the same
+    // half-finished shape a popup size with no popup leaves: the line looks
+    // like it configures something and never can.
+    if let Some(field) = presentation_leftover(config) {
+        return Err(BarConfigProblem::ActionWithUnusedPresentation { edge, index, field });
+    }
+    // The same rule the popup arm applies, and the same refusal: an argv of
+    // blanks asks the runtime to execute nothing, and disk is untrusted input.
+    if config
+        .action
+        .argv
+        .iter()
+        .all(|argument| argument.trim().is_empty())
+    {
+        return Err(BarConfigProblem::PopupActionWithoutCommand { edge, index });
+    }
+    Ok(SectionAction::Run {
+        argv: config.action.argv.clone(),
+    })
+}
+
+/// Go to the workspace with this name.
+///
+/// By name, because a workspace's stable id is a generated handle no config
+/// could know and its position is whatever the display order happens to be.
+/// The name is the one thing about a workspace a person actually recognises,
+/// and the one thing they wrote down themselves.
+///
+/// Nothing checks that the workspace exists while the config is read, which is
+/// the decision the plugin arm already makes and for the same reason: a bar can
+/// name a checkout nobody has opened yet, and refusing the line at read time
+/// would forbid the button for a workspace somebody is about to create. A name
+/// that resolves to nothing says so when it is pressed.
+fn workspace_action(at: SectionAt<'_>) -> Result<SectionAction, BarConfigProblem> {
+    let SectionAt {
+        config,
+        edge,
+        index,
+        ..
+    } = at;
+    if !config
+        .action
+        .argv
+        .iter()
+        .all(|argument| argument.trim().is_empty())
+    {
+        return Err(BarConfigProblem::ActionWithUnusedPresentation {
+            edge,
+            index,
+            field: "argv",
+        });
+    }
+    if !config.action.command.trim().is_empty() {
+        return Err(BarConfigProblem::ActionWithUnusedPresentation {
+            edge,
+            index,
+            field: "command",
+        });
+    }
+    if let Some(field) = presentation_leftover(config) {
+        return Err(BarConfigProblem::ActionWithUnusedPresentation { edge, index, field });
+    }
+    let name = config.action.name.trim();
+    if name.is_empty() {
+        return Err(BarConfigProblem::WorkspaceActionWithoutName { edge, index });
+    }
+    Ok(SectionAction::FocusWorkspace {
+        name: name.to_string(),
+    })
+}
 
 fn popup_action(at: SectionAt<'_>) -> Result<SectionAction, BarConfigProblem> {
     let SectionAt {
@@ -2050,6 +2215,13 @@ fn popup_action(at: SectionAt<'_>) -> Result<SectionAction, BarConfigProblem> {
     // leftover is precisely the kind the next reader trusts.
     if !config.action.command.trim().is_empty() {
         return Err(BarConfigProblem::PopupActionWithPluginCommand { edge, index });
+    }
+    if !config.action.name.trim().is_empty() {
+        return Err(BarConfigProblem::ActionWithUnusedName {
+            edge,
+            index,
+            kind: "popup",
+        });
     }
     // An empty argv, or one made only of blanks, would ask the runtime to execute
     // nothing. Disk is untrusted input (CL1): refuse it here rather than discovering
@@ -2081,6 +2253,13 @@ fn plugin_action(at: SectionAt<'_>) -> Result<SectionAction, BarConfigProblem> {
     // missing id are present the leftover is the better complaint: it names a line
     // that exists and is wrong, while the missing id names a line that is not there
     // to look at.
+    if !config.action.name.trim().is_empty() {
+        return Err(BarConfigProblem::ActionWithUnusedName {
+            edge,
+            index,
+            kind: "plugin",
+        });
+    }
     if let Some(field) = plugin_action_popup_field(config) {
         return Err(BarConfigProblem::PluginActionWithPopupField { edge, index, field });
     }
@@ -2105,6 +2284,24 @@ fn plugin_action(at: SectionAt<'_>) -> Result<SectionAction, BarConfigProblem> {
 /// rather than counted: a complaint that says "something does not belong" sends
 /// somebody to read the whole table, which is the cost this function exists to
 /// avoid.
+/// A size or a second presentation left on an action that presents nothing.
+///
+/// Shared by the two actions that open nothing at all. Kept apart from
+/// `plugin_action_popup_field` because that one also refuses `argv`, and both
+/// of these need theirs.
+fn presentation_leftover(config: &ShellBarSectionConfig) -> Option<&'static str> {
+    if config.action.width.is_some() {
+        return Some("width");
+    }
+    if config.action.height.is_some() {
+        return Some("height");
+    }
+    if !config.action.secondary.trim().is_empty() {
+        return Some("secondary");
+    }
+    None
+}
+
 fn plugin_action_popup_field(config: &ShellBarSectionConfig) -> Option<&'static str> {
     if !config
         .action

@@ -1140,6 +1140,10 @@ pub struct ShellBarSectionActionConfig {
     pub width: Option<crate::popup_size::PopupSize>,
     /// Outer popup height, in cells or as a percentage string like `"60%"`.
     pub height: Option<crate::popup_size::PopupSize>,
+    /// Which workspace a `workspace` action goes to, by the name shown in the
+    /// sidebar. Refused on every other kind, and refused when empty: a
+    /// destination nobody named is a button that cannot go anywhere.
+    pub name: String,
 }
 
 impl Default for ShellBarConfig {

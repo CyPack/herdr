@@ -537,6 +537,7 @@ mod tests {
                 "width" | "height" => "10",
                 "secondary" => "\"tab\"",
                 "command" => "\"files.open\"",
+                "name" => "\"herdr\"",
                 other => panic!("no sample value for the refused key {other:?}"),
             };
             // A section that is otherwise complete, so the only thing left to
@@ -546,9 +547,16 @@ mod tests {
                  [[shell.bars.top.sections]]\nkind = \"content\"\n\
                  widget = {{ kind = \"label\", text = \"x\" }}\n\
                  action = {{ kind = \"{kind}\", {base}, {key} = {value} }}\n",
+                // The key that makes each kind complete, so the only thing
+                // left to complain about is the one under test. A `panic!`
+                // rather than a fallback: an action kind added later has to
+                // name its own required key here, and a silent default would
+                // hand it whichever one the neighbour happened to use.
                 base = match kind {
-                    "popup" => "argv = [\"true\"]",
-                    _ => "command = \"files.open\"",
+                    "popup" | "run" => "argv = [\"true\"]",
+                    "plugin" => "command = \"files.open\"",
+                    "workspace" => "name = \"herdr\"",
+                    other => panic!("no complete section shape for action kind {other:?}"),
                 },
             );
             let found = problems(&text);

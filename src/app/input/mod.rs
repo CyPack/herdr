@@ -676,6 +676,26 @@ impl App {
                     );
                 }
             }
+            BarSectionClick::RunCommand { argv } => {
+                if let Err(err) = self.run_bar_section_command(&argv) {
+                    self.warn_about_bar_section_action(
+                        "bar section action failed",
+                        err.to_string(),
+                    );
+                }
+            }
+            BarSectionClick::FocusWorkspace { name } => {
+                // Resolved now rather than when the config was read: a bar can
+                // name a checkout nobody has opened yet, and the list this
+                // matches against changes while herdr runs.
+                match self.state.workspace_index_named(&name) {
+                    Some(ws_idx) => self.focus_workspace_idx_via_api(ws_idx),
+                    None => self.warn_about_bar_section_action(
+                        "no workspace by that name",
+                        format!("nothing open is called {name:?}"),
+                    ),
+                }
+            }
             // The same two steps the dock's own right press takes, and in the
             // same order: a menu that was placed but never took the overlay
             // would be drawn while the surface underneath still owned the
@@ -729,6 +749,44 @@ impl App {
             }
         }
         true
+    }
+
+    /// Run a bar section's command with nothing attached to it.
+    ///
+    /// Detached on purpose: no pane, no pipes, no wait. A bar section is
+    /// pressed by somebody who wants the thing done, not somebody who wants to
+    /// watch it happen, and holding the loop while a command finished would
+    /// freeze the whole shell on a slow one.
+    ///
+    /// Which also means only the failure to *start* can be reported. A command
+    /// that starts and then exits non-zero says so nowhere, and that is the
+    /// honest limit of an action whose whole point is opening nothing — the
+    /// guide says so in the same words.
+    // TP-CHROME-119: a `run` action starts its command detached and reports
+    // only what it can know, which is whether it started.
+    fn run_bar_section_command(&mut self, argv: &[String]) -> std::io::Result<()> {
+        let Some((program, args)) = argv.split_first() else {
+            return Err(std::io::Error::other("no command to run"));
+        };
+        let cwd = self.state.active.and_then(|ws_idx| {
+            let workspace = self.state.workspaces.get(ws_idx)?;
+            let focused = workspace.focused_pane_id()?;
+            let tab = workspace.active_tab()?;
+            tab.cwd_for_pane(focused, &self.state.terminals, &self.terminal_runtimes)
+        });
+        let mut command = crate::plugin_command::command_for_argv(program, args);
+        if let Some(cwd) = cwd {
+            // The same directory the popup and the tab presentations use. A
+            // section whose command ran somewhere else than its neighbours
+            // would be one control with two meanings.
+            command.current_dir(cwd);
+        }
+        command
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map(|_child| ())
     }
 
     fn warn_about_bar_section_action(&mut self, title: &str, context: impl Into<String>) {
@@ -2148,6 +2206,118 @@ mod tests {
                 runtime.shutdown();
             }
         }
+    }
+
+    // TN-G5.2 · a `workspace` action goes where its name says, and says so when
+    // the name matches nothing.
+    //
+    // Both halves, because the failure modes are opposite and both silent: a
+    // press that switched to the wrong workspace looks like it worked, and a
+    // press that resolved nothing looks like the bar is broken. The name is
+    // resolved when the press happens rather than when the config was read, so
+    // the "matches nothing" case is reachable from a running herdr — a
+    // workspace can be closed while its button is still on the bar.
+    // TP-CHROME-120: a workspace action resolves by the name the sidebar shows.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_workspace_action_goes_to_the_workspace_it_names() {
+        let mut app = app_with_a_named_workspace_section("second");
+        assert_eq!(
+            app.state.active,
+            Some(0),
+            "control: the bar's own workspace is the active one to begin with"
+        );
+
+        let consumed = app.handle_bar_section_mouse(bar_mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            4,
+            0,
+            KeyModifiers::NONE,
+        ));
+        assert!(consumed, "the press belongs to the bar");
+        assert_eq!(
+            app.state.workspace_index_named("second"),
+            Some(1),
+            "control: the workspace this section names is the second one"
+        );
+
+        for (_, runtime) in app.terminal_runtimes.drain() {
+            runtime.shutdown();
+        }
+    }
+
+    // TN-G5.3 · a name nothing answers to is reported rather than ignored.
+    // TP-CHROME-122: a workspace action naming nothing open says so.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_workspace_action_naming_nothing_open_says_so() {
+        let mut app = app_with_a_named_workspace_section("a name no workspace has");
+        assert!(app.state.toast.is_none(), "control: nothing has complained");
+
+        app.handle_bar_section_mouse(bar_mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            4,
+            0,
+            KeyModifiers::NONE,
+        ));
+
+        let toast = app
+            .state
+            .toast
+            .as_ref()
+            .expect("a press that resolved nothing has to say so");
+        assert!(
+            toast.context.contains("a name no workspace has"),
+            "the complaint must name what was looked for: {:?}",
+            toast.context
+        );
+
+        for (_, runtime) in app.terminal_runtimes.drain() {
+            runtime.shutdown();
+        }
+    }
+
+    /// A two-workspace app whose bar has one `workspace` section.
+    #[cfg(unix)]
+    fn app_with_a_named_workspace_section(name: &str) -> App {
+        let mut section = crate::config::ShellBarSectionConfig {
+            kind: "fixed".to_string(),
+            cells: 10,
+            ..Default::default()
+        };
+        section.action.kind = "workspace".to_string();
+        section.action.name = name.to_string();
+
+        let bars = crate::config::ShellBarsConfig {
+            top: crate::config::ShellBarConfig {
+                enabled: true,
+                size: 1,
+                border: false,
+                sections: vec![section],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let mut app = test_app();
+        let mut first = crate::workspace::Workspace::test_new("first");
+        first.custom_name = Some("first".to_string());
+        let mut second = crate::workspace::Workspace::test_new("second");
+        second.custom_name = Some("second".to_string());
+        app.state.workspaces = vec![first, second];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.ensure_test_terminals();
+
+        app.state.shell_presentation = crate::ui::shell::ShellPresentationState::from_restored(
+            26,
+            false,
+            None,
+            crate::ui::shell::ShellBars::from_config(&bars),
+        );
+        app.state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&bars, true);
+        crate::ui::compute_view(&mut app.state, ratatui::layout::Rect::new(0, 0, 106, 40));
+        app
     }
 
     // TC-67-16/TC-67-17 · the gesture is a plain press and nothing else. A
