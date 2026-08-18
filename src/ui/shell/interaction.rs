@@ -600,6 +600,22 @@ impl ShellPresentationState {
         self.bars
     }
 
+    /// Replace the edge strips, keeping every session fact beside them.
+    ///
+    /// A reload that rebuilt this whole aggregate would take the panel width,
+    /// the fold state and the presented template down with it — those come from
+    /// the session file rather than from `config.toml`, and two sources writing
+    /// one fact is how they drift. So the config-owned half is replaced in
+    /// place and the session-owned half is left alone.
+    pub(crate) fn set_bars(&mut self, bars: ShellBars) {
+        self.bars = bars;
+    }
+
+    /// Replace the bar colours, for the same reason and on the same terms.
+    pub(crate) fn set_bar_colors(&mut self, bar_colors: BarColors) {
+        self.bar_colors = bar_colors;
+    }
+
     pub(crate) const fn bar_colors(&self) -> BarColors {
         self.bar_colors
     }

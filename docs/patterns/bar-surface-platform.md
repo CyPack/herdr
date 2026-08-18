@@ -173,7 +173,7 @@ array of gesture-tagged actions (verbose for the case that dominates, and still 
 command).
 
 ```toml
-action = { kind = "popup", argv = ["btop"], width = "80%", height = "80%", secondary = "tab" }
+action = { kind = "popup", argv = ["btop"], width = "97%", height = "92%", secondary = "tab" }
 ```
 
 A `secondary` naming something this build does not know, or sitting on a section with no
@@ -224,7 +224,7 @@ color   = "mauve"
 kind   = "fixed"              # fixed | fill | weighted (see custom-layout.md)
 cells  = 10
 widget = { kind = "icon", art = "herd" }
-action = { kind = "popup", argv = ["btop"], width = "80%", height = "80%" }
+action = { kind = "popup", argv = ["btop"], width = "97%", height = "92%" }
 ```
 
 Sizing rules worth knowing before you write:
@@ -233,6 +233,14 @@ Sizing rules worth knowing before you write:
   not fit. That refusal is a gift: it happens where you can fix it.
 - `fill` takes what is left and is **never refused** — its width is not known until the
   terminal has a size. It clips instead.
+- `content` asks for **at least `min` and at most `max`**, taking as much of what is left as
+  fits between them. Both default to zero, and an unwritten `max` used to be honoured
+  literally — "at most zero cells" — so a section naming only its widget parsed cleanly,
+  raised no diagnostic, and drew **nothing**. `herdr shell spec` published ten widget
+  examples in exactly that shape. Since 2026-08-18 an unwritten `max` means unbounded, the
+  same way an unwritten `fill` weight means one: the simplest section must not be the one
+  that needs the most typing (TP-CHROME-124). Write both bounds when you want a bound;
+  write neither when you want the content to size itself.
 - **`max_sections` is the bar's budget**, default 8, accepted from 1 to 16. It used to be a
   hard 8 borrowed from the pane splitter — on the reasoning that dividing a bar and splitting a
   screen are the same question. They are not, and a macOS-style toolbar of 10–11 icons was the
@@ -242,6 +250,13 @@ Sizing rules worth knowing before you write:
   doing sixteen is a file its next reader will believe.
 
 ### Assigning behaviour
+
+A popup's `width`/`height` are a share of the **pane area**, not of the terminal, so the
+sidebar is already subtracted before the percentage applies. Measured 2026-08-18 on a
+120-column screen: `width = "80%"` left btop 69 usable columns and it drew
+`Terminal size too small: Width = 69 · Needed = 80` instead of a process list. The examples
+here ask for `97%`/`92%` because a full-screen tool wants nearly the whole pane; a small
+status popup does not. Size the popup to what you are launching, and check it by launching it.
 
 Two shapes: `action = { kind = "popup", argv = [...] }` and
 `action = { kind = "plugin", command = "…" }`. A `popup` section additionally chooses what its
@@ -373,6 +388,44 @@ with an upstream release.
 And a config that loads is not a config that is seen. `herdr config check` answering `ok`
 proves the file parses; an empty file answers `ok` too. The last link is measured by the person
 looking at their own bar, and by nothing else.
+
+### SP3.5.a · The seventh link — a reload that reaches the running client
+
+The chain above has a link nobody drew until it cost three rounds: **the config on disk
+reaching the client that is already running.** Editing the file and reloading is not the same
+as starting with it.
+
+Measured 2026-08-18, against a correct config on disk that `config check` accepted and a
+reload that answered `"status":"applied"`:
+
+| what was changed and reloaded | reached the screen |
+|---|---|
+| a section's `action` (a click target) | ❌ |
+| a section's `max` (its width) | ❌ |
+| `shell.resource_interval_ms` | ✅ |
+
+`App::new` built three structures out of `[shell.bars]` — the bar set, its colours, and the
+chrome that answers presses — and `apply_live_config` rebuilt none of them; it read one field
+out of `config.shell`. The bar drew correctly the whole time, because it was drawing the config
+the client had **started** with. Both reload paths behaved identically: the CLI
+(`herdr server reload-config`) and the TUI shortcut (`prefix+shift+r`).
+
+Fixed by TP-CHROME-127: a reload now rebuilds all three together, and the session facts sharing
+that aggregate — panel width, fold state, presented template — are replaced in place rather
+than rebuilt, because those belong to the session file rather than to `config.toml`.
+
+**The rule this leaves.** When a config change does not show up, ask *which* of the seven links
+is open before touching the setting again:
+
+```bash
+# is it on disk?
+grep -A4 'shell.bars' ~/.config/herdr/config.toml
+# does it parse?
+env -u HERDR_SOCKET_PATH -u HERDR_CLIENT_SOCKET_PATH herdr config check ; echo "exit=$?"
+# did the running client take it? — the only honest test is the product itself:
+#   change something VISIBLE (a section's `max`, a label's text), reload, and look.
+#   A reload reporting "applied" is the server's answer, not the screen's.
+```
 
 ## SP4 · Anti-patterns
 
