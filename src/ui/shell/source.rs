@@ -1230,18 +1230,35 @@ fn fill_policy(at: SectionAt<'_>) -> Result<TrackPolicy, BarConfigProblem> {
     })
 }
 
+/// A `content` section with no `max` written asks for as much room as there is.
+///
+/// `max` is a `u16` that defaults to zero, and honouring that zero literally
+/// makes a section which names its widget and nothing else occupy nothing:
+/// `config check` still says ok, the bar still draws its border, and the person
+/// reads an empty strip with nothing anywhere to explain it. `fill` already
+/// refuses that shape by reading a missing weight as one — the simplest section
+/// must not be the one needing the most typing — and the config type's own doc
+/// comment already promises "as much as there is room for". The code was the
+/// only one of the three disagreeing.
 fn content_policy(at: SectionAt<'_>) -> Result<TrackPolicy, BarConfigProblem> {
-    if at.config.max < at.config.min {
+    let max = if at.config.max == 0 {
+        u16::MAX
+    } else {
+        at.config.max
+    };
+    if max < at.config.min {
         return Err(BarConfigProblem::ContentSectionMaxBelowMin {
             edge: at.edge,
             index: at.index,
+            // Reported as written rather than as substituted: a message naming a
+            // bound nobody typed sends somebody to edit a line that is not there.
             min: at.config.min,
             max: at.config.max,
         });
     }
     Ok(TrackPolicy::ContentBounded {
         min: at.config.min,
-        max: at.config.max,
+        max,
     })
 }
 
@@ -3547,6 +3564,12 @@ mod tests {
             examples.len()
         );
 
+        // Guard the gate itself: a harvest that finds blocks but no sections
+        // would leave every assertion below unreached and the test green over
+        // nothing, which is the failure a documentation gate is least able to
+        // notice about itself.
+        let mut sections_checked = 0usize;
+
         for (index, block) in examples.iter().enumerate() {
             let config: crate::config::Config = toml::from_str(block).unwrap_or_else(|err| {
                 panic!(
@@ -3563,7 +3586,50 @@ mod tests {
                 "guide example {} is refused by this build: {problems:?}\n{block}",
                 index + 1
             );
+
+            // TP-CHROME-125: an accepted example must also ask for room. This
+            // test's own promise — that an example must not "quietly produce an
+            // empty section" — went unmeasured until 2026-08-18, because a
+            // `content` section with no bounds parses, raises no problem, and
+            // occupies nothing. Acceptance and drawing are different questions,
+            // and only one of them was being asked.
+            for (bar, edge) in [
+                (&config.shell.bars.top, "top"),
+                (&config.shell.bars.bottom, "bottom"),
+                (&config.shell.bars.left, "left"),
+                (&config.shell.bars.right, "right"),
+            ] {
+                // `enabled` is deliberately not asked here. Most examples in the
+                // guide are fragments — a `[[shell.bars.top.sections]]` table and
+                // nothing else — so the bar they parse into is disabled by
+                // default, and every check that starts by skipping disabled bars
+                // is silent on exactly the examples people copy most. Whether the
+                // fragment switched a bar on has nothing to do with whether the
+                // section it shows can draw.
+                for (position, section) in bar.sections.iter().enumerate() {
+                    sections_checked += 1;
+                    let policy = section_policy(section, edge, position).unwrap_or_else(|problem| {
+                        panic!(
+                            "guide example {} {edge} section {position} is refused: {problem}\n{block}",
+                            index + 1
+                        )
+                    });
+                    assert!(
+                        policy_asks_for_room(&policy),
+                        "guide example {} {edge} section {position} asks for no room ({policy:?}), \
+                         so copying it draws an empty bar\n{block}",
+                        index + 1
+                    );
+                }
+            }
         }
+
+        assert!(
+            sections_checked >= examples.len(),
+            "the guide's examples yielded only {sections_checked} sections across {} blocks, \
+             so this gate is measuring almost nothing",
+            examples.len()
+        );
     }
 
     /// The guide shows every kind there is, and shows nothing that is not one.
@@ -6000,6 +6066,21 @@ mod tests {
         }
     }
 
+    /// Whether a solved policy can ever occupy a cell.
+    ///
+    /// A policy that cannot is not a refusal — nothing reports it, `config
+    /// check` stays quiet, and the bar draws its border around nothing — so it
+    /// is the one shape a gate that only asks "is this accepted?" cannot see.
+    fn policy_asks_for_room(policy: &TrackPolicy) -> bool {
+        match policy {
+            TrackPolicy::Fixed { cells } => *cells > 0,
+            TrackPolicy::ContentBounded { max, .. } => *max > 0,
+            TrackPolicy::Fill { weight } => *weight > 0,
+            TrackPolicy::Resizable { max, .. } => *max > 0,
+            TrackPolicy::Collapsed { .. } => true,
+        }
+    }
+
     fn fixed_section(cells: u16) -> ShellBarSectionConfig {
         ShellBarSectionConfig {
             kind: "fixed".to_string(),
@@ -6220,6 +6301,148 @@ mod tests {
         );
         // A fill with no weight written is the commonest section there is, and
         // asking for it must not require typing a number.
+        assert_eq!(
+            section_policy(&section_config("fill"), "top", 0),
+            Ok(TrackPolicy::Fill { weight: 1 })
+        );
+    }
+
+    /// Every example `herdr shell spec` prints is a config that draws something.
+    ///
+    /// The guide and the spec are two separate example sources and only one of
+    /// them was guarded: the guide is copied by a person reading the website,
+    /// the spec by an agent reading the terminal, and both were publishing the
+    /// unbounded `content` shape. An example that parses into a section holding
+    /// no cells teaches the same wrong thing wherever it is read, so both
+    /// sources answer to the same question here rather than to two that can
+    /// drift apart.
+    #[test]
+    fn every_spec_example_asks_for_room() {
+        // TP-CHROME-126: every example the machine-readable spec prints asks for
+        // room, not just for valid syntax.
+        let mut checked = 0usize;
+        for facts in sizing_kind_facts()
+            .into_iter()
+            .chain(widget_kind_facts())
+            .chain(action_kind_facts())
+        {
+            let config: crate::config::Config =
+                toml::from_str(facts.example).unwrap_or_else(|err| {
+                    panic!(
+                        "the `{}` example is not valid TOML: {err}\n{}",
+                        facts.name, facts.example
+                    )
+                });
+            for (bar, edge) in [
+                (&config.shell.bars.top, "top"),
+                (&config.shell.bars.bottom, "bottom"),
+                (&config.shell.bars.left, "left"),
+                (&config.shell.bars.right, "right"),
+            ] {
+                for (position, section) in bar.sections.iter().enumerate() {
+                    let policy =
+                        section_policy(section, edge, position).unwrap_or_else(|problem| {
+                            panic!(
+                                "the `{}` example is refused: {problem}\n{}",
+                                facts.name, facts.example
+                            )
+                        });
+                    assert!(
+                        policy_asks_for_room(&policy),
+                        "the `{}` example asks for no room ({policy:?}), so copying it \
+                         draws an empty bar\n{}",
+                        facts.name,
+                        facts.example
+                    );
+                    checked += 1;
+                }
+            }
+        }
+
+        // Guard the harvest: a renamed field or an emptied table would leave
+        // every assertion above unreached and this test green over nothing.
+        assert!(
+            checked >= 10,
+            "expected the spec to still carry its examples, checked {checked} sections"
+        );
+    }
+
+    /// A `content` section that names no bounds asks for room, not for nothing.
+    ///
+    /// `max` is a `u16` that defaults to zero, and "at most zero cells" is a
+    /// section that occupies nothing: the widget is built, the geometry solves,
+    /// `config check` says ok, and the person sees an empty bar with nothing
+    /// anywhere to explain it. `fill` already refuses that trap by reading a
+    /// missing weight as one, on the grounds that the simplest section must not
+    /// be the one needing the most typing; the same argument holds here, and the
+    /// config type's own doc comment already promises "as much as there is room
+    /// for".
+    ///
+    /// Measured 2026-08-18 against the installed binary: four bars written
+    /// without bounds drew nothing at all, two written with them drew, and
+    /// `herdr shell spec` publishes ten widget examples in the unbounded shape.
+    #[test]
+    fn a_content_section_without_bounds_asks_for_room_rather_than_nothing() {
+        // TP-CHROME-124: a `content` section with no bounds written asks for as
+        // much room as there is, rather than for none.
+        assert_eq!(
+            section_policy(&section_config("content"), "top", 0),
+            Ok(TrackPolicy::ContentBounded {
+                min: 0,
+                max: u16::MAX
+            })
+        );
+
+        // A written `min` with no `max` is unbounded above rather than a
+        // contradiction: the zero means "unwritten", so it is below nothing.
+        assert_eq!(
+            section_policy(
+                &ShellBarSectionConfig {
+                    kind: "content".to_string(),
+                    min: 5,
+                    ..Default::default()
+                },
+                "top",
+                0
+            ),
+            Ok(TrackPolicy::ContentBounded {
+                min: 5,
+                max: u16::MAX
+            })
+        );
+
+        // A real contradiction is still refused, and still reports the numbers
+        // that were written rather than the one the policy substituted.
+        assert_eq!(
+            section_policy(
+                &ShellBarSectionConfig {
+                    kind: "content".to_string(),
+                    min: 10,
+                    max: 4,
+                    ..Default::default()
+                },
+                "top",
+                0
+            ),
+            Err(BarConfigProblem::ContentSectionMaxBelowMin {
+                edge: "top",
+                index: 0,
+                min: 10,
+                max: 4
+            })
+        );
+
+        // The neighbours keep their own answers to a zero, which are different
+        // from this one on purpose: `fixed` refuses because a cell count is the
+        // whole of what it was asked, and `fill` substitutes because a weight is
+        // a ratio nobody needs to spell.
+        assert_eq!(
+            section_policy(&fixed_section(0), "top", 0),
+            Err(BarConfigProblem::FixedSectionWithoutCells {
+                edge: "top",
+                index: 0
+            })
+        );
         assert_eq!(
             section_policy(&section_config("fill"), "top", 0),
             Ok(TrackPolicy::Fill { weight: 1 })
