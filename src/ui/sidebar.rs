@@ -2011,6 +2011,16 @@ fn walk_tree(
                 if !state.emitted_nodes.insert(node_key.clone()) {
                     continue;
                 }
+                // TP-FOCUS-NODE-01: focus answers "what am I working in right
+                // now". A container whose whole subtree has no visible
+                // checkout and no running chat is not an answer to that, and
+                // its header — plus every row that would hang under it — is
+                // noise in a filtered tree. Both the declared roots and the
+                // children pushed below arrive through this arm, so the gate
+                // sits here rather than at each of the three push sites.
+                if app.spaces_focus_only && !node_is_live_in_focus(app, &node_key, maps) {
+                    continue;
+                }
                 entries.push(WorkspaceListEntry::ProjectHeader {
                     project_key: node_key.clone(),
                 });
@@ -2093,6 +2103,52 @@ fn walk_tree(
             }
         }
     }
+}
+
+/// Whether `node_key` still stands for work in progress once focus narrows the
+/// tree.
+///
+/// Two kinds of member answer this, and they are asked separately: a checkout
+/// that survived the filter, or a chat moved into this container that is open
+/// in a tab right now. `daily_section_visible` makes exactly this exception for
+/// the daily section (TP-DAILY-06) — a filter may narrow what you see, it may
+/// never hide where you are. One rule, two surfaces.
+fn node_is_live_in_focus(app: &AppState, node_key: &str, maps: &TreeWalkMaps<'_>) -> bool {
+    let guard = app.space_nodes.len() + 1;
+    let first = subtree_first_ws(
+        node_key,
+        maps.node_children,
+        maps.buckets_of_node,
+        maps.first_ws_of_space,
+        guard,
+    );
+    first != usize::MAX || subtree_has_resumed_chat(app, node_key, maps, guard)
+}
+
+/// Whether any chat moved into this subtree is open in a tab.
+///
+/// Recursive over the same child map the walk uses, with the walk's own guard:
+/// a container's liveness is its whole subtree's, not just its own row.
+fn subtree_has_resumed_chat(
+    app: &AppState,
+    node_key: &str,
+    maps: &TreeWalkMaps<'_>,
+    guard: usize,
+) -> bool {
+    if guard == 0 {
+        return false;
+    }
+    if module_chat_rows(app, node_key)
+        .iter()
+        .any(|chat| app.find_resumed_chat_tab(&chat.session_id).is_some())
+    {
+        return true;
+    }
+    maps.node_children
+        .get(node_key)
+        .into_iter()
+        .flatten()
+        .any(|child| subtree_has_resumed_chat(app, child, maps, guard - 1))
 }
 
 /// Whether anything under `node_key` reaches the screen.
@@ -7807,6 +7863,106 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             .collect::<Vec<_>>();
         app.workspace_chat_rows.insert(key, rows);
         app
+    }
+
+    /// The reported shape: the module hangs under a project, so the walk
+    /// reaches it from its parent's child list rather than seeding it alone.
+    fn app_with_a_child_module_holding_moved_chats(chat_count: usize) -> AppState {
+        let mut app = app_with_a_module_holding_moved_chats(chat_count);
+        app.space_nodes[0].parent = Some("project:herdr".to_string());
+        app.space_nodes.push(crate::spaces::SpaceNode {
+            key: "project:herdr".to_string(),
+            name: "herdr".to_string(),
+            icon: None,
+            parent: None,
+            dir: None,
+        });
+        app
+    }
+
+    /// Wires a moved chat into an open tab, which is what "running" means to
+    /// every surface that asks.
+    fn resume_moved_chat(app: &mut AppState, index: usize) {
+        let session_id = format!("moved-session-{index}");
+        let tab = app.workspaces[0]
+            .tabs
+            .first_mut()
+            .expect("the fixture workspace has a tab");
+        tab.resumed_session_id = Some(session_id);
+    }
+
+    // F1 · TP-FOCUS-NODE-01: focus answers "what am I working in right now".
+    // A module holding only chats, none of them running, is not an answer to
+    // that question, and its header is noise in a filtered tree.
+    #[test]
+    fn focus_hides_a_module_whose_moved_chats_are_all_idle() {
+        let mut app = app_with_a_child_module_holding_moved_chats(2);
+        app.spaces_focus_only = true;
+
+        let kinds = entry_kinds(&app);
+        assert!(
+            !kinds.contains(&"project"),
+            "a module with nothing live under it is not drawn in focus: {kinds:?}"
+        );
+        assert!(
+            !kinds.contains(&"module-chat"),
+            "rows under an undrawn header would be invisible anyway: {kinds:?}"
+        );
+    }
+
+    // F2 · TP-FOCUS-NODE-02: a filter may narrow what you see, never hide
+    // where you are. The same exception `daily_section_visible` makes, on the
+    // second surface that needs it — one rule, two surfaces.
+    #[test]
+    fn focus_keeps_a_module_whose_moved_chat_is_running() {
+        let mut app = app_with_a_child_module_holding_moved_chats(2);
+        resume_moved_chat(&mut app, 0);
+        app.spaces_focus_only = true;
+
+        let kinds = entry_kinds(&app);
+        assert!(
+            kinds.contains(&"project"),
+            "the module you are working in stays visible: {kinds:?}"
+        );
+    }
+
+    // F3: the filter is a view, not a deletion. Turning it off restores the
+    // module without anything else having to happen.
+    #[test]
+    fn a_module_with_idle_chats_returns_when_focus_is_off() {
+        let app = app_with_a_child_module_holding_moved_chats(2);
+        assert!(
+            entry_kinds(&app).contains(&"project"),
+            "outside focus the module is drawn as it always was"
+        );
+    }
+
+    // F4: a module can hold two kinds of member — checkouts and moved chats —
+    // and they are judged separately. A filtered-out checkout does not silence
+    // a module whose chat is running; one live member is enough.
+    #[test]
+    fn a_filtered_checkout_does_not_silence_a_module_with_a_running_chat() {
+        let mut app = app_with_a_child_module_holding_moved_chats(1);
+        resume_moved_chat(&mut app, 0);
+        app.spaces_focus_only = true;
+
+        let kinds = entry_kinds(&app);
+        assert!(
+            kinds.contains(&"project"),
+            "one live member keeps the module, whatever happened to the other kind: {kinds:?}"
+        );
+    }
+
+    // F5: an "empty module" row inside a filtered tree states something false —
+    // the module is not empty, it is filtered.
+    #[test]
+    fn a_filtered_module_does_not_claim_to_be_empty() {
+        let mut app = app_with_a_child_module_holding_moved_chats(2);
+        app.spaces_focus_only = true;
+        assert!(
+            !entry_kinds(&app).contains(&"empty-module"),
+            "a module hidden by the filter must not also be labelled empty"
+        );
     }
 
     fn module_chat_positions(app: &AppState) -> Vec<usize> {
