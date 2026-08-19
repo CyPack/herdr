@@ -70,18 +70,6 @@ impl UserDirectoryKind {
         Self::Music,
     ];
 
-    /// The key `user-dirs.dirs` records this directory under.
-    pub(crate) const fn config_key(self) -> &'static str {
-        match self {
-            Self::Desktop => "XDG_DESKTOP_DIR",
-            Self::Downloads => "XDG_DOWNLOAD_DIR",
-            Self::Documents => "XDG_DOCUMENTS_DIR",
-            Self::Pictures => "XDG_PICTURES_DIR",
-            Self::Videos => "XDG_VIDEOS_DIR",
-            Self::Music => "XDG_MUSIC_DIR",
-        }
-    }
-
     /// The unlocalized name the freedesktop defaults start from, and the only
     /// name available when the host records no localized list.
     pub(crate) const fn default_child(self) -> &'static str {

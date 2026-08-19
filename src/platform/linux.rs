@@ -724,6 +724,20 @@ fn read_user_dirs(path: &Path) -> Option<String> {
     std::fs::read_to_string(path).ok()
 }
 
+/// The key `user-dirs.dirs` records a directory under. The file is a
+/// freedesktop convention, so the mapping lives with the reader rather than
+/// with the platform-neutral kind.
+const fn user_directory_config_key(kind: super::UserDirectoryKind) -> &'static str {
+    match kind {
+        super::UserDirectoryKind::Desktop => "XDG_DESKTOP_DIR",
+        super::UserDirectoryKind::Downloads => "XDG_DOWNLOAD_DIR",
+        super::UserDirectoryKind::Documents => "XDG_DOCUMENTS_DIR",
+        super::UserDirectoryKind::Pictures => "XDG_PICTURES_DIR",
+        super::UserDirectoryKind::Videos => "XDG_VIDEOS_DIR",
+        super::UserDirectoryKind::Music => "XDG_MUSIC_DIR",
+    }
+}
+
 /// Projects the recorded lines onto the directories this rail draws. Lines that
 /// name nothing this surface publishes are simply not this function's business.
 fn parse_user_directories(contents: &str, home: &Path) -> Vec<super::UserDirectory> {
@@ -737,7 +751,7 @@ fn parse_user_directories(contents: &str, home: &Path) -> Vec<super::UserDirecto
             let (key, value) = line.split_once('=')?;
             let kind = super::UserDirectoryKind::ALL
                 .into_iter()
-                .find(|kind| kind.config_key() == key.trim())?;
+                .find(|kind| user_directory_config_key(*kind) == key.trim())?;
             let path = recorded_user_directory_path(value.trim(), home)?;
             Some(super::UserDirectory { kind, path })
         })
