@@ -88,6 +88,8 @@ Two ideas run through the family:
 | TP-FOCUS-SW-03 | A focus with no candidates shows the whole tree instead of an empty one | With nothing active and nothing running the filter blanks the sidebar, which reads as a broken panel rather than a focused one | `a_focus_with_nothing_to_show_shows_everything` |
 | TP-FOCUS-SW-04 | The footer's filter slot belongs to the tab showing: "focus" on Spaces, "actives" on Projects, each flipping only its own filter, drawn accented while on and dim while off, and mouse chrome either way | Two controls for one idea, or one click flipping the other tab's filter behind the reader's back | `clicking_the_footer_toggle_on_spaces_flips_focus_only` · `clicking_the_footer_toggle_on_projects_leaves_focus_alone` · `the_spaces_footer_draws_its_focus_toggle_and_says_which_way_it_is_thrown` |
 | TP-FOCUS-SW-05 | Focus is per display: narrowing one screen leaves every other screen's tree whole (config carries only where a new client starts) | One screen's reading choice reaches into another's — the multi-display rule this fork is built on | `focusing_one_display_leaves_the_other_tree_alone` |
+| TP-FOCUS-NODE-01 | Focused, a container whose whole subtree has no visible checkout and no chat open in a tab is not drawn — header, chat rows and "empty module" line alike. | A module you are not working in keeps its header, its moved chats and its empty-module line in a tree whose whole job is to show what you *are* working in; the filter stops meaning anything and the surface reads as broken. | `focus_hides_a_module_whose_moved_chats_are_all_idle`, `a_filtered_module_does_not_claim_to_be_empty` |
+| TP-FOCUS-NODE-02 | A container holding a chat that is open in a tab stays drawn under focus, whatever happened to its checkouts. The two kinds of member are judged separately and one live member is enough. | A filter that hides where you actually are is worse than no filter: the chat is on screen in a tab while the tree claims its container does not exist. This is TP-DAILY-06's rule on its second surface. | `focus_keeps_a_module_whose_moved_chat_is_running`, `a_filtered_checkout_does_not_silence_a_module_with_a_running_chat` |
 
 ## Cost
 
@@ -101,3 +103,9 @@ any visual state to hover, which would make a pointer move a repaint.
 Sibling: `workspace-chats.md` (what the drawer remembers) ·
 `space-partition.md` (which repository a checkout groups under) ·
 `shared-surfaces.md` (per-display ownership).
+
+- `node_is_live_in_focus` is the single gate for TP-FOCUS-NODE-01/02, and it sits
+  on the `Job::Node` arm of the walk rather than at the three sites that push a
+  node. Moving it back to the push sites looks equivalent and is not: declared
+  roots reach the arm without ever passing a push site, so a root-level module
+  would keep drawing while its children went quiet.
