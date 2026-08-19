@@ -208,6 +208,10 @@ pub(crate) struct BarTrack {
     /// Whether the strip wears a panel border. It costs one cell on each side,
     /// which is why a bordered bar is refused below three.
     bordered: bool,
+    /// Whether focus mode quiets this edge. Carried rather than acted on: the
+    /// decision belongs to the frame being drawn, not to the moment the config
+    /// was read, so nothing has to be kept in step when focus is toggled.
+    hidden_when_focused: bool,
     // TP-CHROME-30: the division lives inside the value the geometry key
     // compares, so a differently divided bar cannot share an identity.
     sections: BarSections,
@@ -217,6 +221,7 @@ impl BarTrack {
     pub(crate) const NONE: Self = Self {
         cells: None,
         bordered: false,
+        hidden_when_focused: false,
         sections: BarSections::NONE,
     };
 
@@ -227,6 +232,7 @@ impl BarTrack {
         Self {
             cells: Some(cells),
             bordered: false,
+            hidden_when_focused: false,
             sections: BarSections::NONE,
         }
     }
@@ -236,6 +242,7 @@ impl BarTrack {
         Self {
             cells: Some(cells),
             bordered: true,
+            hidden_when_focused: false,
             sections: BarSections::NONE,
         }
     }
@@ -342,7 +349,25 @@ impl BarTrack {
         } else {
             Self::of(config.size)
         };
-        track.with_sections(sections_from_config(config, edge))
+        track
+            .with_sections(sections_from_config(config, edge))
+            .hidden_when_focused(config.hide_when_focused)
+    }
+
+    /// Records whether focus quiets this edge, without acting on it.
+    const fn hidden_when_focused(mut self, hidden: bool) -> Self {
+        self.hidden_when_focused = hidden;
+        self
+    }
+
+    /// This edge as the frame should draw it while focus is on: the edge that
+    /// opted in gives its cells back, everything else is left alone.
+    const fn under_focus(self) -> Self {
+        if self.hidden_when_focused {
+            Self::NONE
+        } else {
+            self
+        }
     }
 
     const fn enabled(self) -> bool {
@@ -2413,6 +2438,23 @@ impl ShellBars {
         right: BarTrack::NONE,
     };
 
+    /// The bars this frame draws, once focus has had its say.
+    ///
+    /// A filter over the configured value rather than a second copy of it:
+    /// nothing has to be kept in step when focus is toggled, and a bar can
+    /// never disagree with the file it was read from.
+    pub(crate) const fn visible(self, focus_active: bool) -> Self {
+        if !focus_active {
+            return self;
+        }
+        Self {
+            top: self.top.under_focus(),
+            bottom: self.bottom.under_focus(),
+            left: self.left.under_focus(),
+            right: self.right.under_focus(),
+        }
+    }
+
     pub(crate) fn from_config(config: &ShellBarsConfig) -> Self {
         Self {
             top: BarTrack::from_config(&config.top, "top"),
@@ -2943,6 +2985,105 @@ mod tests {
     ];
 
     // T5 · the default path is the path that already exists
+    fn bars_with_top_hidden_when_focused() -> ShellBars {
+        let mut config = ShellBarsConfig::default();
+        config.top.enabled = true;
+        config.top.size = 1;
+        config.top.border = false;
+        config.top.hide_when_focused = true;
+        config.right.enabled = true;
+        config.right.size = 1;
+        config.right.border = false;
+        ShellBars::from_config(&config)
+    }
+
+    // G1 · TP-CHROME-130: focus narrows the display to what is being worked in.
+    // A bar that exists to be glanced at is exactly what that mode is asking to
+    // be rid of, so an edge that opted in goes quiet and gives its cells back.
+    #[test]
+    fn focus_quiets_the_edge_that_asked_to_be_quieted() {
+        let bars = bars_with_top_hidden_when_focused().visible(true);
+
+        assert!(
+            !bars.top.enabled(),
+            "the edge that opted in draws nothing while focus is on"
+        );
+    }
+
+    // G5 · TP-CHROME-130: a quieted edge owns no cells, so it owns no hit
+    // targets either. A bar that is invisible but still clickable is the worst
+    // of both — the click does something and nothing on screen explains what.
+    #[test]
+    fn a_quieted_edge_offers_nothing_to_click() {
+        let bars = bars_with_top_hidden_when_focused().visible(true);
+        let outer = Rect::new(0, 0, 80, 24);
+
+        let drawn = bars.top.section_rects(RegionId::TopBar, outer);
+        assert_eq!(
+            drawn.len(),
+            0,
+            "a quieted edge lays out no sections, so nothing can be hit inside it"
+        );
+    }
+
+    // G7 · TP-CHROME-131: the stored value is what the file said; only the
+    // frame filters. If storage kept the filtered value instead, a snapshot
+    // taken while focus was on would restore a session whose bar is simply
+    // gone — a filter would have become a deletion.
+    #[test]
+    fn what_is_stored_is_the_configured_bar_not_the_drawn_one() {
+        let stored = bars_with_top_hidden_when_focused();
+
+        assert!(
+            stored.top.enabled(),
+            "storage keeps the edge the config asked for"
+        );
+        assert!(
+            !stored.visible(true).top.enabled(),
+            "and the frame is the only place it goes quiet"
+        );
+    }
+
+    // G2: the quieting is a view, not a deletion. Leaving focus restores the
+    // bar without the config being touched or reloaded.
+    #[test]
+    fn leaving_focus_restores_the_quieted_edge() {
+        let bars = bars_with_top_hidden_when_focused();
+
+        assert!(bars.visible(false).top.enabled(), "outside focus it draws");
+        assert!(
+            !bars.visible(true).top.enabled(),
+            "and the same value quiets again — the filter owns no state"
+        );
+    }
+
+    // G3: every bar written before this key existed keeps its behaviour. An
+    // opt-in that quietly opted everyone in would be a regression wearing a
+    // feature's clothes.
+    #[test]
+    fn an_edge_that_did_not_opt_in_is_untouched_by_focus() {
+        let mut config = ShellBarsConfig::default();
+        config.top.enabled = true;
+        config.top.size = 1;
+        config.top.border = false;
+
+        let bars = ShellBars::from_config(&config);
+        assert!(
+            bars.visible(true).top.enabled(),
+            "focus does not quiet a bar that never asked to be quieted"
+        );
+    }
+
+    // G4: the reason to quiet a status strip is not a reason to quiet the strip
+    // holding the controls in use, so the choice is per edge.
+    #[test]
+    fn focus_quiets_only_the_edges_that_asked() {
+        let bars = bars_with_top_hidden_when_focused().visible(true);
+
+        assert!(!bars.top.enabled(), "the opted-in edge is quiet");
+        assert!(bars.right.enabled(), "its neighbour is untouched");
+    }
+
     #[test]
     fn asking_for_nothing_derives_exactly_todays_tree() {
         // The whole promise of this layer: introducing a derivation must not

@@ -1003,6 +1003,15 @@ pub struct ShellBarConfig {
     /// stopped dividing.
     #[serde(default = "default_max_bar_sections")]
     pub max_sections: u16,
+    /// Whether focus mode quiets this edge.
+    ///
+    /// Focus narrows the display to what is being worked in; a bar that exists
+    /// to be glanced at is exactly what that mode is asking to be rid of. Off
+    /// by default, so every bar written before this key keeps its behaviour,
+    /// and per edge, because the reason to quiet a status strip is not a reason
+    /// to quiet the strip holding the controls being used.
+    #[serde(default)]
+    pub hide_when_focused: bool,
 }
 
 /// The section budget a bar has when nobody says otherwise.
@@ -1024,6 +1033,7 @@ impl ShellBarConfig {
             gradient: Vec::new(),
             sections: Vec::new(),
             max_sections: default_max_bar_sections(),
+            hide_when_focused: false,
         }
     }
 
@@ -1036,6 +1046,7 @@ impl ShellBarConfig {
             gradient: Vec::new(),
             sections: Vec::new(),
             max_sections: default_max_bar_sections(),
+            hide_when_focused: false,
         }
     }
 }

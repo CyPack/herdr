@@ -1378,6 +1378,12 @@
           "description": "How many parts anything may put on this bar. Accepted from 1 to 16; anything outside that range is refused rather than clamped, so the file never disagrees with the build."
         },
         {
+          "key": "shell.bars.bottom.hide_when_focused",
+          "type": "boolean",
+          "default": "false",
+          "description": "Whether focus mode quiets the bottom bar. Focus narrows the display to what is being worked in, and a bar that exists to be glanced at is what that mode is asking to be rid of. Off by default, and per edge: the reason to quiet a status strip is not a reason to quiet the strip holding the controls in use. Only the frame is affected — what this file says is still what is stored, so leaving focus brings the bar back."
+        },
+        {
           "key": "shell.bars.bottom.size",
           "type": "integer",
           "default": "3",
@@ -1412,6 +1418,12 @@
           "type": "integer",
           "default": "8",
           "description": "How many parts anything may put on this bar. Accepted from 1 to 16; anything outside that range is refused rather than clamped, so the file never disagrees with the build."
+        },
+        {
+          "key": "shell.bars.left.hide_when_focused",
+          "type": "boolean",
+          "default": "false",
+          "description": "Whether focus mode quiets the left bar. Focus narrows the display to what is being worked in, and a bar that exists to be glanced at is what that mode is asking to be rid of. Off by default, and per edge: the reason to quiet a status strip is not a reason to quiet the strip holding the controls in use. Only the frame is affected — what this file says is still what is stored, so leaving focus brings the bar back."
         },
         {
           "key": "shell.bars.left.size",
@@ -1450,6 +1462,12 @@
           "description": "How many parts anything may put on this bar. Accepted from 1 to 16; anything outside that range is refused rather than clamped, so the file never disagrees with the build."
         },
         {
+          "key": "shell.bars.right.hide_when_focused",
+          "type": "boolean",
+          "default": "false",
+          "description": "Whether focus mode quiets the right bar. Focus narrows the display to what is being worked in, and a bar that exists to be glanced at is what that mode is asking to be rid of. Off by default, and per edge: the reason to quiet a status strip is not a reason to quiet the strip holding the controls in use. Only the frame is affected — what this file says is still what is stored, so leaving focus brings the bar back."
+        },
+        {
           "key": "shell.bars.right.size",
           "type": "integer",
           "default": "12",
@@ -1484,6 +1502,12 @@
           "type": "integer",
           "default": "8",
           "description": "How many parts anything may put on this bar. Accepted from 1 to 16; anything outside that range is refused rather than clamped, so the file never disagrees with the build."
+        },
+        {
+          "key": "shell.bars.top.hide_when_focused",
+          "type": "boolean",
+          "default": "false",
+          "description": "Whether focus mode quiets the top bar. Focus narrows the display to what is being worked in, and a bar that exists to be glanced at is what that mode is asking to be rid of. Off by default, and per edge: the reason to quiet a status strip is not a reason to quiet the strip holding the controls in use. Only the frame is affected — what this file says is still what is stored, so leaving focus brings the bar back."
         },
         {
           "key": "shell.bars.top.size",

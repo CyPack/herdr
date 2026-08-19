@@ -179,6 +179,12 @@ const BAR_KEYS: &[KeySpec] = &[
         range: "1-16",
         default: "8",
     },
+    KeySpec {
+        key: "hide_when_focused",
+        value_type: "boolean",
+        range: "",
+        default: "false",
+    },
 ];
 
 /// Switches that live outside `[shell.bars]` and change what a bar may do.
@@ -801,6 +807,7 @@ mod tests {
                 "color" => "\"mauve\"".to_string(),
                 "gradient" => "[\"mauve\", \"teal\"]".to_string(),
                 "max_sections" => "8".to_string(),
+                "hide_when_focused" => "false".to_string(),
                 other => panic!("no sample value for the bar key {other:?}"),
             };
             text.push_str(&format!("{} = {value}\n", key.key));

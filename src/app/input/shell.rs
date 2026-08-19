@@ -1069,6 +1069,7 @@ mod tests {
                 enabled: true,
                 size: 1,
                 border: false,
+                hide_when_focused: false,
                 color: String::new(),
                 gradient: Vec::new(),
                 sections,
@@ -1166,6 +1167,7 @@ mod tests {
                 gradient: Vec::new(),
                 sections,
                 max_sections: COUNT as u16,
+                hide_when_focused: false,
             },
             ..Default::default()
         };

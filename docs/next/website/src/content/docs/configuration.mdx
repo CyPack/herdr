@@ -548,6 +548,26 @@ max_sections = 12
 
 Writing more sections than the bar allows, asking for a `max_sections` of zero or more than sixteen, naming a `kind` Herdr does not know, or giving a content section a `max` below its `min` leaves that bar undivided rather than guessing: one unreadable section would otherwise renumber every section after it, and the number is how a section is addressed.
 
+### Quieting a bar in focus mode
+
+Focus mode narrows the sidebar to what this display is working in. A bar that exists to be
+glanced at is often exactly what that mode is asking to be rid of, so each edge can opt into
+going quiet with it:
+
+```toml
+[shell.bars.top]
+enabled = true
+hide_when_focused = true
+```
+
+The choice is per edge, because the reason to quiet a status strip is not a reason to quiet the
+strip holding the controls being used. It is off by default, so a bar written before this key
+existed keeps behaving the way it always did.
+
+Only the frame is affected. What the file says is still what is stored, so leaving focus brings
+the bar back with its sections, colours and actions intact — and a session saved while focus was
+on does not come back missing a bar.
+
 ### Putting something in a section
 
 A section is empty until it is given a widget. There are six kinds:

@@ -410,10 +410,13 @@ fn compute_view_internal(
     // on restore. It is `None` today for everyone, so the answer is still the
     // legacy tree and nothing on screen moves; what ended is the era where the
     // file recorded a composition the draw path never asked for.
-    let derived = shell::derive_desktop_shell_layout(
-        app.shell_presentation.shell_template(),
-        app.shell_presentation.bars(),
-    );
+    // Focus quiets the edges that opted in, and it does so here rather than in
+    // the stored value: the geometry key below compares what is drawn, so an
+    // edge going quiet has to move the key or the frame would keep the old
+    // composition and nothing on screen would change.
+    let visible_bars = app.shell_presentation.bars().visible(app.spaces_focus_only);
+    let derived =
+        shell::derive_desktop_shell_layout(app.shell_presentation.shell_template(), visible_bars);
     let shell_layout = derived.layout;
     let shell_key = ShellGeometryKey::new(
         area,
@@ -421,7 +424,7 @@ fn compute_view_internal(
         u64::from(sidebar_w),
         app.shell_presentation.left_panel_collapse_revision(),
         derived.template,
-        app.shell_presentation.bars(),
+        visible_bars,
     );
     let previous_shell_view = std::mem::take(&mut app.view.shell);
     let shell_view =
@@ -601,6 +604,7 @@ fn compute_view_internal(
         &app_dock::AppDockModel::for_state(app),
         app.shell_presentation
             .bars()
+            .visible(app.spaces_focus_only)
             .left
             .inner(shell_view.regions.get(RegionId::AppDock)),
     );
@@ -1041,7 +1045,7 @@ impl compose::Component for BaseLayer {
         // inside it draws into what the border left. The dock reads the same
         // inner rectangle the hit areas were built from, so a click lands where
         // the icon is rather than one cell off it.
-        let bars = app.shell_presentation.bars();
+        let bars = app.shell_presentation.bars().visible(app.spaces_focus_only);
         let colors = app.shell_presentation.bar_colors();
         for region in [
             RegionId::TopBar,
