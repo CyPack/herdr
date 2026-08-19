@@ -2,7 +2,7 @@ use std::{
     collections::{HashSet, VecDeque},
     io::Write,
     os::fd::RawFd,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
 };
 
@@ -627,6 +627,101 @@ fn percent_decoded_path(encoded: &str) -> Option<PathBuf> {
 /// Candidate bookmark files, most current first. Nautilus, Nemo, Thunar and
 /// PCManFM all read and write the GTK 3 list, so the rail follows whichever of
 /// them the user actually curates their sidebar in.
+/// The localized user-directory list is external, user-editable text, so it is
+/// bounded before it can grow startup work — the same ceiling the bookmark
+/// list is read under.
+const USER_DIRS_MAX_BYTES: u64 = 64 * 1024;
+
+/// Reads the freedesktop user-directory list, refusing anything past the
+/// ceiling rather than letting a runaway file into startup.
+fn read_user_dirs(path: &Path) -> Option<String> {
+    let metadata = std::fs::metadata(path).ok()?;
+    if !metadata.is_file() {
+        return None;
+    }
+    if metadata.len() > USER_DIRS_MAX_BYTES {
+        tracing::warn!(
+            ?path,
+            bytes = metadata.len(),
+            ceiling = USER_DIRS_MAX_BYTES,
+            "user directory list exceeds the read ceiling; ignoring it"
+        );
+        return None;
+    }
+    std::fs::read_to_string(path).ok()
+}
+
+/// Projects the recorded lines onto the directories this rail draws. Lines that
+/// name nothing this surface publishes are simply not this function's business.
+fn parse_user_directories(contents: &str, home: &Path) -> Vec<super::UserDirectory> {
+    contents
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                return None;
+            }
+            let (key, value) = line.split_once('=')?;
+            let kind = super::UserDirectoryKind::ALL
+                .into_iter()
+                .find(|kind| kind.config_key() == key.trim())?;
+            let path = recorded_user_directory_path(value.trim(), home)?;
+            Some(super::UserDirectory { kind, path })
+        })
+        .collect()
+}
+
+/// `user-dirs.dirs(5)`: the value is `"$HOME/Path"` or `"/Path"`. Anything else
+/// names a place this reader cannot resolve, and a place it cannot resolve is
+/// worse than the unlocalized default it would otherwise fall back to.
+fn recorded_user_directory_path(value: &str, home: &Path) -> Option<PathBuf> {
+    let value = value.trim_matches('"');
+    if value.is_empty() {
+        return None;
+    }
+    if let Some(rest) = value.strip_prefix("$HOME") {
+        let rest = rest.trim_start_matches('/');
+        return Some(if rest.is_empty() {
+            home.to_path_buf()
+        } else {
+            home.join(rest)
+        });
+    }
+    let path = PathBuf::from(value);
+    path.is_absolute().then_some(path)
+}
+
+/// Completes a partial list with the unlocalized defaults, so a host that
+/// records only some of its directories still yields a full built-in block.
+fn merged_user_directories(
+    parsed: Vec<super::UserDirectory>,
+    home: &Path,
+) -> Vec<super::UserDirectory> {
+    super::well_known_user_directories(home)
+        .into_iter()
+        .map(|fallback| {
+            parsed
+                .iter()
+                .find(|recorded| recorded.kind == fallback.kind)
+                .cloned()
+                .unwrap_or(fallback)
+        })
+        .collect()
+}
+
+pub(crate) fn user_directories(home: &Path) -> Vec<super::UserDirectory> {
+    let config_home = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute())
+        .or_else(|| Some(home.join(".config")));
+    let parsed = config_home
+        .map(|dir| dir.join("user-dirs.dirs"))
+        .and_then(|path| read_user_dirs(&path))
+        .map(|contents| parse_user_directories(&contents, home))
+        .unwrap_or_default();
+    merged_user_directories(parsed, home)
+}
+
 fn desktop_bookmark_files() -> Vec<PathBuf> {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
@@ -1189,6 +1284,137 @@ mod tests {
         assert_eq!(
             parse_desktop_bookmarks(&contents).len(),
             DESKTOP_BOOKMARKS_MAX_ENTRIES
+        );
+    }
+
+    fn user_dir(kind: super::super::UserDirectoryKind, path: &str) -> super::super::UserDirectory {
+        super::super::UserDirectory {
+            kind,
+            path: PathBuf::from(path),
+        }
+    }
+
+    // TP-FDB-XDG-01: the well-known directories are localized per path element
+    // on the host, so their real names are read from the list the desktop
+    // records rather than assumed to be the English ones. Assuming English
+    // leaves the built-in block empty on every desktop that is not English.
+    #[test]
+    fn user_directories_follow_the_localized_names_the_host_recorded() {
+        use super::super::UserDirectoryKind as Kind;
+
+        let parsed = parse_user_directories(
+            concat!(
+                "# This file is written by xdg-user-dirs-update\n",
+                "XDG_DESKTOP_DIR=\"$HOME/Masaüstü\"\n",
+                "XDG_DOWNLOAD_DIR=\"$HOME/İndirilenler\"\n",
+                "XDG_DOCUMENTS_DIR=\"/mnt/veri/Belgeler\"\n",
+            ),
+            Path::new("/home/user"),
+        );
+
+        assert_eq!(
+            parsed,
+            vec![
+                user_dir(Kind::Desktop, "/home/user/Masaüstü"),
+                user_dir(Kind::Downloads, "/home/user/İndirilenler"),
+                user_dir(Kind::Documents, "/mnt/veri/Belgeler"),
+            ],
+            "localized names and absolute overrides are both what the host means"
+        );
+    }
+
+    // TP-FDB-XDG-02: the list is external input. Comments, keys this surface
+    // does not publish, and malformed lines are skipped without taking the
+    // readable entries down with them, and a runaway file is refused outright.
+    #[test]
+    fn user_directories_survive_comments_unknown_keys_and_malformed_lines() {
+        use super::super::UserDirectoryKind as Kind;
+
+        let parsed = parse_user_directories(
+            concat!(
+                "# a comment\n",
+                "XDG_TEMPLATES_DIR=\"$HOME/Şablonlar\"\n",
+                "XDG_DOWNLOAD_DIR\n",
+                "XDG_PICTURES_DIR=\"\"\n",
+                "XDG_MUSIC_DIR=\"$HOME/Müzik\"\n",
+                "   \n",
+            ),
+            Path::new("/home/user"),
+        );
+
+        assert_eq!(
+            parsed,
+            vec![user_dir(Kind::Music, "/home/user/Müzik")],
+            "one unusable line must not cost the rail the lines around it"
+        );
+    }
+
+    #[test]
+    fn a_runaway_user_directory_list_is_refused_before_it_is_parsed() {
+        let dir = std::env::temp_dir().join(format!(
+            "herdr-user-dirs-{}-{}",
+            std::process::id(),
+            "ceiling"
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("user-dirs.dirs");
+        // Sized from the line itself rather than an assumed width, so the
+        // fixture cannot drift under the ceiling it is meant to exceed.
+        let line = "XDG_DOWNLOAD_DIR=\"$HOME/Downloads\"\n";
+        let bloat = line.repeat((USER_DIRS_MAX_BYTES as usize / line.len()) + 64);
+        std::fs::write(&path, &bloat).expect("write");
+
+        let refused = read_user_dirs(&path);
+        std::fs::remove_dir_all(&dir).ok();
+
+        assert!(
+            refused.is_none(),
+            "a file past the ceiling must not reach the parser"
+        );
+    }
+
+    // A host that records nothing localized still gets a full built-in block:
+    // the unlocalized freedesktop names are the fallback, which is exactly the
+    // behaviour that existed before the localized list was read at all.
+    #[test]
+    fn user_directories_fall_back_to_the_unlocalized_names() {
+        use super::super::UserDirectoryKind as Kind;
+
+        let merged = merged_user_directories(Vec::new(), Path::new("/home/user"));
+
+        assert_eq!(
+            merged,
+            vec![
+                user_dir(Kind::Desktop, "/home/user/Desktop"),
+                user_dir(Kind::Downloads, "/home/user/Downloads"),
+                user_dir(Kind::Documents, "/home/user/Documents"),
+                user_dir(Kind::Pictures, "/home/user/Pictures"),
+                user_dir(Kind::Videos, "/home/user/Videos"),
+                user_dir(Kind::Music, "/home/user/Music"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_partial_localized_list_is_completed_rather_than_truncated() {
+        use super::super::UserDirectoryKind as Kind;
+
+        let merged = merged_user_directories(
+            vec![user_dir(Kind::Downloads, "/home/user/İndirilenler")],
+            Path::new("/home/user"),
+        );
+
+        assert_eq!(
+            merged,
+            vec![
+                user_dir(Kind::Desktop, "/home/user/Desktop"),
+                user_dir(Kind::Downloads, "/home/user/İndirilenler"),
+                user_dir(Kind::Documents, "/home/user/Documents"),
+                user_dir(Kind::Pictures, "/home/user/Pictures"),
+                user_dir(Kind::Videos, "/home/user/Videos"),
+                user_dir(Kind::Music, "/home/user/Music"),
+            ],
+            "the recorded entry wins its slot; the rest keep their published order"
         );
     }
 

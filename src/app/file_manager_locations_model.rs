@@ -79,6 +79,10 @@ pub struct FileManagerLocationItem {
 pub(crate) struct FileManagerLocationSources<'a> {
     /// The user's home directory.
     pub(crate) home: &'a Path,
+    /// The well-known user directories as the host actually keeps them. Their
+    /// names are localized per path element, so they arrive as measured paths
+    /// rather than being assumed from English defaults.
+    pub(crate) user_dirs: &'a [crate::platform::UserDirectory],
     /// Root of the host's mounted network shares, when it has one.
     pub(crate) network_root: Option<&'a Path>,
     /// The host file manager's bookmark list, in the order the user arranged it.
@@ -193,6 +197,7 @@ impl FileManagerLocationsModel {
 
         let FileManagerLocationSources {
             home,
+            user_dirs,
             network_root,
             bookmarks,
             pinned,
@@ -205,21 +210,29 @@ impl FileManagerLocationsModel {
             directory_is_accessible(home),
         )];
 
-        // The XDG user directories are permanent members of the built-in block,
+        // The well-known user directories are permanent members of the built-in
+        // block, with their own identity icons. Their names are localized per
+        // path element on the host, so the measured path is authoritative and
+        // its own name is the label.
         // with their own identity icons. Users routinely bookmark them as well;
         // section dedup then absorbs that copy here rather than scattering
         // Downloads and Documents into the middle of the curated list.
-        for (label, child, icon) in [
-            ("Desktop", "Desktop", FileManagerLocationIcon::Desktop),
-            ("Downloads", "Downloads", FileManagerLocationIcon::Downloads),
-            ("Documents", "Documents", FileManagerLocationIcon::Documents),
-            ("Pictures", "Pictures", FileManagerLocationIcon::Pictures),
-            ("Videos", "Videos", FileManagerLocationIcon::Videos),
-            ("Music", "Music", FileManagerLocationIcon::Music),
-        ] {
-            let path = home.join(child);
-            if directory_is_accessible(&path) {
-                favorites.push(item(label, path, icon, true));
+        for directory in user_dirs {
+            let icon = match directory.kind {
+                crate::platform::UserDirectoryKind::Desktop => FileManagerLocationIcon::Desktop,
+                crate::platform::UserDirectoryKind::Downloads => FileManagerLocationIcon::Downloads,
+                crate::platform::UserDirectoryKind::Documents => FileManagerLocationIcon::Documents,
+                crate::platform::UserDirectoryKind::Pictures => FileManagerLocationIcon::Pictures,
+                crate::platform::UserDirectoryKind::Videos => FileManagerLocationIcon::Videos,
+                crate::platform::UserDirectoryKind::Music => FileManagerLocationIcon::Music,
+            };
+            if directory_is_accessible(&directory.path) {
+                favorites.push(item(
+                    derived_label(&directory.path),
+                    directory.path.clone(),
+                    icon,
+                    true,
+                ));
             }
         }
 
@@ -373,7 +386,7 @@ mod tests {
         FileManagerLocationIcon, FileManagerLocationItem, FileManagerLocationSectionKind,
         FileManagerLocationSources, FileManagerLocationsModel,
     };
-    use crate::platform::DesktopBookmark;
+    use crate::platform::{DesktopBookmark, UserDirectory, UserDirectoryKind};
 
     fn item(path: &str, accessible: bool) -> FileManagerLocationItem {
         FileManagerLocationItem {
@@ -426,6 +439,61 @@ mod tests {
 
     // TP-FLF-STEP-01: input auto-scroll and renderer rows share one content
     // line identity across headers, inaccessible rows, and section gaps.
+    // TP-FDB-MODEL-03: the built-in block names its directories the way the host
+    // does. The freedesktop layout is localized per path element, so a desktop
+    // that keeps `İndirilenler` must see `İndirilenler`; assuming the English
+    // name empties this block on every desktop that is not English. A recorded
+    // directory pointing back at home draws no second Home row.
+    #[test]
+    fn fdb_built_in_block_follows_the_host_own_directory_names() {
+        let home = TempHome::new("localized");
+        let downloads = home.directory("İndirilenler");
+        let documents = home.directory("Belgeler");
+
+        let model = FileManagerLocationsModel::from_host_sources(FileManagerLocationSources {
+            home: &home.0,
+            user_dirs: &[
+                UserDirectory {
+                    kind: UserDirectoryKind::Desktop,
+                    path: home.0.clone(),
+                },
+                UserDirectory {
+                    kind: UserDirectoryKind::Downloads,
+                    path: downloads,
+                },
+                UserDirectory {
+                    kind: UserDirectoryKind::Documents,
+                    path: documents,
+                },
+            ],
+            network_root: None,
+            bookmarks: &[],
+            pinned: &[],
+        });
+
+        let favorites = model
+            .section(FileManagerLocationSectionKind::Favorites)
+            .expect("favorites section");
+        assert_eq!(
+            favorites
+                .items
+                .iter()
+                .map(|item| item.label.as_str())
+                .collect::<Vec<_>>(),
+            ["Home", "İndirilenler", "Belgeler"],
+            "the host's own names are the labels, and home is drawn once"
+        );
+        assert_eq!(
+            favorites
+                .items
+                .iter()
+                .find(|item| item.label == "İndirilenler")
+                .map(|item| item.icon),
+            Some(FileManagerLocationIcon::Downloads),
+            "identity travels with the kind, not with the localized name"
+        );
+    }
+
     #[test]
     fn flf_model_line_identity_matches_render_section_law() {
         let model = FileManagerLocationsModel::from_sources(
@@ -455,6 +523,7 @@ mod tests {
 
         let model = FileManagerLocationsModel::from_host_sources(FileManagerLocationSources {
             home: &home.0,
+            user_dirs: &crate::platform::well_known_user_directories(&home.0),
             network_root: None,
             bookmarks: &[
                 bookmark(&projects, None),
@@ -500,6 +569,7 @@ mod tests {
 
         let model = FileManagerLocationsModel::from_host_sources(FileManagerLocationSources {
             home: &home.0,
+            user_dirs: &crate::platform::well_known_user_directories(&home.0),
             network_root: Some(&network),
             bookmarks: &[
                 bookmark(&projects, None),
@@ -553,6 +623,7 @@ mod tests {
         let without_bookmarks =
             FileManagerLocationsModel::from_host_sources(FileManagerLocationSources {
                 home: &home.0,
+                user_dirs: &crate::platform::well_known_user_directories(&home.0),
                 network_root: Some(&network),
                 bookmarks: &[],
                 pinned: &[],

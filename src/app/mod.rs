@@ -813,11 +813,13 @@ impl App {
         // and network mount root are read once here, at the same explicit
         // discovery boundary as the rest of the locations model.
         let home_directory = crate::worktree::expand_tilde_absolute_path("~");
+        let user_directories = crate::platform::user_directories(&home_directory);
         let desktop_bookmarks = crate::platform::desktop_bookmarks();
         let network_mounts_root = crate::platform::network_mounts_root();
         let file_manager_locations_model = state::FileManagerLocationsModel::from_host_sources(
             state::FileManagerLocationSources {
                 home: &home_directory,
+                user_dirs: &user_directories,
                 network_root: network_mounts_root.as_deref(),
                 bookmarks: &desktop_bookmarks,
                 pinned: &projects_pinned,

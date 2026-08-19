@@ -37,6 +37,85 @@ pub(crate) struct DesktopBookmark {
     pub(crate) label: Option<String>,
 }
 
+/// A well-known user directory as the host actually keeps it.
+///
+/// The freedesktop layout is localized per path element, so the directory a
+/// Turkish desktop calls `İndirilenler` holds the same identity an English one
+/// calls `Downloads`. `kind` carries that identity; `path` carries the truth.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct UserDirectory {
+    pub(crate) kind: UserDirectoryKind,
+    pub(crate) path: std::path::PathBuf,
+}
+
+/// The subset of freedesktop user directories this rail gives its own identity
+/// icon to, in the order it draws them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum UserDirectoryKind {
+    Desktop,
+    Downloads,
+    Documents,
+    Pictures,
+    Videos,
+    Music,
+}
+
+impl UserDirectoryKind {
+    pub(crate) const ALL: [Self; 6] = [
+        Self::Desktop,
+        Self::Downloads,
+        Self::Documents,
+        Self::Pictures,
+        Self::Videos,
+        Self::Music,
+    ];
+
+    /// The key `user-dirs.dirs` records this directory under.
+    pub(crate) const fn config_key(self) -> &'static str {
+        match self {
+            Self::Desktop => "XDG_DESKTOP_DIR",
+            Self::Downloads => "XDG_DOWNLOAD_DIR",
+            Self::Documents => "XDG_DOCUMENTS_DIR",
+            Self::Pictures => "XDG_PICTURES_DIR",
+            Self::Videos => "XDG_VIDEOS_DIR",
+            Self::Music => "XDG_MUSIC_DIR",
+        }
+    }
+
+    /// The unlocalized name the freedesktop defaults start from, and the only
+    /// name available when the host records no localized list.
+    pub(crate) const fn default_child(self) -> &'static str {
+        match self {
+            Self::Desktop => "Desktop",
+            Self::Downloads => "Downloads",
+            Self::Documents => "Documents",
+            Self::Pictures => "Pictures",
+            Self::Videos => "Videos",
+            Self::Music => "Music",
+        }
+    }
+}
+
+/// What to draw when the host records no localized list: the unlocalized
+/// freedesktop names under `home`.
+pub(crate) fn well_known_user_directories(home: &std::path::Path) -> Vec<UserDirectory> {
+    UserDirectoryKind::ALL
+        .iter()
+        .map(|&kind| UserDirectory {
+            kind,
+            path: home.join(kind.default_child()),
+        })
+        .collect()
+}
+
+/// The user directories the host keeps, localized when the platform records
+/// that. Only Linux publishes a machine-readable list; elsewhere the
+/// unlocalized names are the truth.
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn user_directories(home: &std::path::Path) -> Vec<UserDirectory> {
+    well_known_user_directories(home)
+}
+
 /// Bookmarks curated in the host file manager. Only Linux keeps them in the
 /// freedesktop text format; macOS Finder uses a binary property list and
 /// Windows Quick Access is a shell-namespace concept, so both yield nothing and
