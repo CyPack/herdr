@@ -2,7 +2,7 @@ use std::{
     collections::{HashSet, VecDeque},
     io::Write,
     os::fd::RawFd,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
 };
 
@@ -570,6 +570,306 @@ pub fn read_clipboard_text() -> Option<String> {
     None
 }
 
+/// Ceilings for the bookmark source. It is an external, hand-editable file, so
+/// a runaway or hostile one must not turn into unbounded startup work in the
+/// locations model.
+const DESKTOP_BOOKMARKS_MAX_BYTES: u64 = 64 * 1024;
+const DESKTOP_BOOKMARKS_MAX_ENTRIES: usize = 128;
+
+/// Parse the freedesktop bookmark list shared by GTK file managers: one URI per
+/// line, optionally followed by a space and a display label.
+///
+/// Order is preserved because the user arranged it. Remote schemes are dropped
+/// rather than kept as dead rows — this surface navigates local paths only.
+fn parse_desktop_bookmarks(contents: &str) -> Vec<super::DesktopBookmark> {
+    contents
+        .lines()
+        .filter_map(|line| {
+            let (uri, label) = match line.trim().split_once(' ') {
+                Some((uri, label)) => (uri, Some(label.trim())),
+                None => (line.trim(), None),
+            };
+            let path = percent_decoded_path(uri.strip_prefix("file://")?)?;
+            path.is_absolute().then(|| super::DesktopBookmark {
+                path,
+                label: label
+                    .filter(|label| !label.is_empty())
+                    .map(ToOwned::to_owned),
+            })
+        })
+        .take(DESKTOP_BOOKMARKS_MAX_ENTRIES)
+        .collect()
+}
+
+/// Decode the URI escapes a real desktop path carries. A malformed escape
+/// invalidates the whole entry rather than being passed through, so a truncated
+/// line cannot resolve to a different directory than the user bookmarked.
+fn percent_decoded_path(encoded: &str) -> Option<PathBuf> {
+    let bytes = encoded.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'%' {
+            decoded.push(bytes[index]);
+            index += 1;
+            continue;
+        }
+        let digits = bytes.get(index + 1..index + 3)?;
+        if !digits.iter().all(u8::is_ascii_hexdigit) {
+            return None;
+        }
+        decoded.push(u8::from_str_radix(std::str::from_utf8(digits).ok()?, 16).ok()?);
+        index += 3;
+    }
+    String::from_utf8(decoded).ok().map(PathBuf::from)
+}
+
+/// Candidate bookmark files, most current first. Nautilus, Nemo, Thunar and
+/// PCManFM all read and write the GTK 3 list, so the rail follows whichever of
+/// them the user actually curates their sidebar in.
+/// Mount points a desktop treats as places rather than as machinery. A volume
+/// outside these roots is system plumbing — `/boot` and `/boot/efi` are real
+/// local filesystems and no file manager calls them locations.
+const VOLUME_MOUNT_ROOTS: &[&str] = &["/mnt", "/media", "/run/media", "/srv"];
+
+/// Local filesystems only, as an allow list rather than a deny list. A missed
+/// new filesystem type costs one row; a network or FUSE mount that slipped
+/// through costs a startup hang the moment its server stops answering — the
+/// same hazard `network_mounts_root` refuses to `stat` for.
+const LOCAL_FILESYSTEMS: &[&str] = &[
+    "ext2", "ext3", "ext4", "btrfs", "xfs", "f2fs", "bcachefs", "zfs", "vfat", "exfat", "ntfs",
+    "ntfs3", "iso9660", "udf",
+];
+
+/// A container can mount hundreds of paths; the rail is a place to start from,
+/// not an inventory.
+const MOUNTED_VOLUMES_MAX: usize = 32;
+
+/// Projects the kernel mount table onto the volumes this rail offers.
+fn parse_mounted_volumes(contents: &str) -> Vec<PathBuf> {
+    contents
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_ascii_whitespace();
+            let _device = fields.next()?;
+            let mount_point = fields.next()?;
+            let filesystem = fields.next()?;
+            if !LOCAL_FILESYSTEMS.contains(&filesystem) {
+                return None;
+            }
+            let path = PathBuf::from(unescaped_mount_path(mount_point));
+            VOLUME_MOUNT_ROOTS
+                .iter()
+                .any(|root| path.starts_with(root))
+                .then_some(path)
+        })
+        .take(MOUNTED_VOLUMES_MAX)
+        .collect()
+}
+
+/// `/proc/mounts` writes space, tab, newline and backslash as octal escapes, so
+/// a volume the user named `USB Disk` arrives as `USB\040Disk`.
+fn unescaped_mount_path(field: &str) -> String {
+    let mut unescaped = String::with_capacity(field.len());
+    let mut characters = field.chars();
+    while let Some(character) = characters.next() {
+        if character != '\\' {
+            unescaped.push(character);
+            continue;
+        }
+        let digits: String = characters.clone().take(3).collect();
+        let escaped = (digits.len() == 3)
+            .then(|| u8::from_str_radix(&digits, 8).ok())
+            .flatten();
+        match escaped {
+            Some(byte) => {
+                unescaped.push(char::from(byte));
+                characters.nth(2);
+            }
+            None => unescaped.push(character),
+        }
+    }
+    unescaped
+}
+
+/// Volumes the host currently has mounted. Read once, at the same explicit
+/// discovery boundary as the rest of the locations model.
+pub(crate) fn mounted_volumes() -> Vec<PathBuf> {
+    std::fs::read_to_string("/proc/mounts")
+        .map(|contents| parse_mounted_volumes(&contents))
+        .unwrap_or_default()
+}
+
+/// The localized user-directory list is external, user-editable text, so it is
+/// bounded before it can grow startup work — the same ceiling the bookmark
+/// list is read under.
+const USER_DIRS_MAX_BYTES: u64 = 64 * 1024;
+
+/// Reads the freedesktop user-directory list, refusing anything past the
+/// ceiling rather than letting a runaway file into startup.
+fn read_user_dirs(path: &Path) -> Option<String> {
+    let metadata = std::fs::metadata(path).ok()?;
+    if !metadata.is_file() {
+        return None;
+    }
+    if metadata.len() > USER_DIRS_MAX_BYTES {
+        tracing::warn!(
+            ?path,
+            bytes = metadata.len(),
+            ceiling = USER_DIRS_MAX_BYTES,
+            "user directory list exceeds the read ceiling; ignoring it"
+        );
+        return None;
+    }
+    std::fs::read_to_string(path).ok()
+}
+
+/// The key `user-dirs.dirs` records a directory under. The file is a
+/// freedesktop convention, so the mapping lives with the reader rather than
+/// with the platform-neutral kind.
+const fn user_directory_config_key(kind: super::UserDirectoryKind) -> &'static str {
+    match kind {
+        super::UserDirectoryKind::Desktop => "XDG_DESKTOP_DIR",
+        super::UserDirectoryKind::Downloads => "XDG_DOWNLOAD_DIR",
+        super::UserDirectoryKind::Documents => "XDG_DOCUMENTS_DIR",
+        super::UserDirectoryKind::Pictures => "XDG_PICTURES_DIR",
+        super::UserDirectoryKind::Videos => "XDG_VIDEOS_DIR",
+        super::UserDirectoryKind::Music => "XDG_MUSIC_DIR",
+    }
+}
+
+/// Projects the recorded lines onto the directories this rail draws. Lines that
+/// name nothing this surface publishes are simply not this function's business.
+fn parse_user_directories(contents: &str, home: &Path) -> Vec<super::UserDirectory> {
+    contents
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                return None;
+            }
+            let (key, value) = line.split_once('=')?;
+            let kind = super::UserDirectoryKind::ALL
+                .into_iter()
+                .find(|kind| user_directory_config_key(*kind) == key.trim())?;
+            let path = recorded_user_directory_path(value.trim(), home)?;
+            Some(super::UserDirectory { kind, path })
+        })
+        .collect()
+}
+
+/// `user-dirs.dirs(5)`: the value is `"$HOME/Path"` or `"/Path"`. Anything else
+/// names a place this reader cannot resolve, and a place it cannot resolve is
+/// worse than the unlocalized default it would otherwise fall back to.
+fn recorded_user_directory_path(value: &str, home: &Path) -> Option<PathBuf> {
+    let value = value.trim_matches('"');
+    if value.is_empty() {
+        return None;
+    }
+    if let Some(rest) = value.strip_prefix("$HOME") {
+        let rest = rest.trim_start_matches('/');
+        return Some(if rest.is_empty() {
+            home.to_path_buf()
+        } else {
+            home.join(rest)
+        });
+    }
+    let path = PathBuf::from(value);
+    path.is_absolute().then_some(path)
+}
+
+/// Completes a partial list with the unlocalized defaults, so a host that
+/// records only some of its directories still yields a full built-in block.
+fn merged_user_directories(
+    parsed: Vec<super::UserDirectory>,
+    home: &Path,
+) -> Vec<super::UserDirectory> {
+    super::well_known_user_directories(home)
+        .into_iter()
+        .map(|fallback| {
+            parsed
+                .iter()
+                .find(|recorded| recorded.kind == fallback.kind)
+                .cloned()
+                .unwrap_or(fallback)
+        })
+        .collect()
+}
+
+pub(crate) fn user_directories(home: &Path) -> Vec<super::UserDirectory> {
+    let config_home = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute())
+        .or_else(|| Some(home.join(".config")));
+    let parsed = config_home
+        .map(|dir| dir.join("user-dirs.dirs"))
+        .and_then(|path| read_user_dirs(&path))
+        .map(|contents| parse_user_directories(&contents, home))
+        .unwrap_or_default();
+    merged_user_directories(parsed, home)
+}
+
+fn desktop_bookmark_files() -> Vec<PathBuf> {
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute());
+    let config_home = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute())
+        .or_else(|| home.as_ref().map(|home| home.join(".config")));
+
+    let mut candidates = Vec::with_capacity(2);
+    candidates.extend(config_home.map(|dir| dir.join("gtk-3.0").join("bookmarks")));
+    candidates.extend(home.map(|dir| dir.join(".gtk-bookmarks")));
+    candidates
+}
+
+/// Bookmarks curated in the host file manager, in the order the user arranged
+/// them. The first readable candidate is authoritative: an empty current list
+/// means the user emptied it, not that a legacy file should be resurrected.
+pub(crate) fn desktop_bookmarks() -> Vec<super::DesktopBookmark> {
+    for path in desktop_bookmark_files() {
+        let Ok(metadata) = std::fs::metadata(&path) else {
+            continue;
+        };
+        if !metadata.is_file() {
+            continue;
+        }
+        if metadata.len() > DESKTOP_BOOKMARKS_MAX_BYTES {
+            tracing::warn!(
+                ?path,
+                bytes = metadata.len(),
+                ceiling = DESKTOP_BOOKMARKS_MAX_BYTES,
+                "desktop bookmarks file exceeds the read ceiling; ignoring it"
+            );
+            continue;
+        }
+        match std::fs::read_to_string(&path) {
+            Ok(contents) => return parse_desktop_bookmarks(&contents),
+            Err(err) => tracing::debug!(?path, %err, "reading desktop bookmarks failed"),
+        }
+    }
+    Vec::new()
+}
+
+/// Root of the GVfs mounts the user currently has.
+///
+/// Presence is established from the runtime directory listing rather than by
+/// stat-ing the mount root. `XDG_RUNTIME_DIR` is a tmpfs, so its `read_dir`
+/// answers from the kernel, while stat-ing the mount root itself enters the
+/// FUSE filesystem and blocks indefinitely when `gvfsd-fuse` has died. This
+/// runs during startup model preparation, where that stall would be a hang.
+pub(crate) fn network_mounts_root() -> Option<PathBuf> {
+    let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute())?;
+    std::fs::read_dir(&runtime_dir)
+        .ok()?
+        .flatten()
+        .any(|entry| entry.file_name() == std::ffi::OsStr::new("gvfs"))
+        .then(|| runtime_dir.join("gvfs"))
+}
+
 pub fn open_url(url: &str) -> std::io::Result<()> {
     Command::new("xdg-open")
         .arg(url)
@@ -1015,6 +1315,233 @@ mod tests {
     use super::*;
     use std::sync::{Mutex, OnceLock};
     use std::{cell::RefCell, collections::HashMap};
+
+    // TP-FDB-PARSE-01: the host bookmark list is user-editable text, so its
+    // reader keeps file order, honours renamed entries, decodes the URI escapes
+    // that real desktop paths carry, and drops what this surface cannot open.
+    #[test]
+    fn desktop_bookmarks_preserve_order_labels_and_decoded_paths() {
+        let parsed = parse_desktop_bookmarks(concat!(
+            "file:///home/user/MnMVeldOps MnMVeldOps\n",
+            "file:///home/user/Desktop/Project%20Meta%20Genesis Project Meta Genesis\n",
+            "file:///home/user/Asus-Downloads ASUS Downloads (Tailscale)\n",
+            "file:///home/user/projects\n",
+            "\n",
+            "   \n",
+            "smb://server/share Shared\n",
+            "file://localhost/relative\n",
+            "file:///home/user/broken%2 Broken escape\n",
+        ));
+
+        assert_eq!(
+            parsed
+                .iter()
+                .map(|bookmark| (
+                    bookmark.path.to_string_lossy().into_owned(),
+                    bookmark.label.clone()
+                ))
+                .collect::<Vec<_>>(),
+            [
+                (
+                    "/home/user/MnMVeldOps".to_string(),
+                    Some("MnMVeldOps".to_string())
+                ),
+                (
+                    "/home/user/Desktop/Project Meta Genesis".to_string(),
+                    Some("Project Meta Genesis".to_string())
+                ),
+                (
+                    "/home/user/Asus-Downloads".to_string(),
+                    Some("ASUS Downloads (Tailscale)".to_string())
+                ),
+                ("/home/user/projects".to_string(), None),
+            ],
+            "remote schemes, non-absolute hosts and malformed escapes are not navigable here"
+        );
+    }
+
+    // TP-FDB-PARSE-02: the file is an external input. A hostile or runaway one
+    // cannot grow unbounded startup work in the locations model.
+    #[test]
+    fn desktop_bookmarks_are_bounded_by_entry_ceiling() {
+        let contents = (0..DESKTOP_BOOKMARKS_MAX_ENTRIES + 64)
+            .map(|index| format!("file:///virtual/{index}\n"))
+            .collect::<String>();
+
+        assert_eq!(
+            parse_desktop_bookmarks(&contents).len(),
+            DESKTOP_BOOKMARKS_MAX_ENTRIES
+        );
+    }
+
+    fn user_dir(kind: super::super::UserDirectoryKind, path: &str) -> super::super::UserDirectory {
+        super::super::UserDirectory {
+            kind,
+            path: PathBuf::from(path),
+        }
+    }
+
+    // TP-FDB-XDG-01: the well-known directories are localized per path element
+    // on the host, so their real names are read from the list the desktop
+    // records rather than assumed to be the English ones. Assuming English
+    // leaves the built-in block empty on every desktop that is not English.
+    #[test]
+    fn user_directories_follow_the_localized_names_the_host_recorded() {
+        use super::super::UserDirectoryKind as Kind;
+
+        let parsed = parse_user_directories(
+            concat!(
+                "# This file is written by xdg-user-dirs-update\n",
+                "XDG_DESKTOP_DIR=\"$HOME/Masaüstü\"\n",
+                "XDG_DOWNLOAD_DIR=\"$HOME/İndirilenler\"\n",
+                "XDG_DOCUMENTS_DIR=\"/mnt/veri/Belgeler\"\n",
+            ),
+            Path::new("/home/user"),
+        );
+
+        assert_eq!(
+            parsed,
+            vec![
+                user_dir(Kind::Desktop, "/home/user/Masaüstü"),
+                user_dir(Kind::Downloads, "/home/user/İndirilenler"),
+                user_dir(Kind::Documents, "/mnt/veri/Belgeler"),
+            ],
+            "localized names and absolute overrides are both what the host means"
+        );
+    }
+
+    // TP-FDB-XDG-02: the list is external input. Comments, keys this surface
+    // does not publish, and malformed lines are skipped without taking the
+    // readable entries down with them, and a runaway file is refused outright.
+    #[test]
+    fn user_directories_survive_comments_unknown_keys_and_malformed_lines() {
+        use super::super::UserDirectoryKind as Kind;
+
+        let parsed = parse_user_directories(
+            concat!(
+                "# a comment\n",
+                "XDG_TEMPLATES_DIR=\"$HOME/Şablonlar\"\n",
+                "XDG_DOWNLOAD_DIR\n",
+                "XDG_PICTURES_DIR=\"\"\n",
+                "XDG_MUSIC_DIR=\"$HOME/Müzik\"\n",
+                "   \n",
+            ),
+            Path::new("/home/user"),
+        );
+
+        assert_eq!(
+            parsed,
+            vec![user_dir(Kind::Music, "/home/user/Müzik")],
+            "one unusable line must not cost the rail the lines around it"
+        );
+    }
+
+    // TP-FDB-VOL-01: the rail offers the volumes the host has mounted, and only
+    // those a desktop treats as places. Pseudo filesystems are machinery, `/`
+    // is already the Root row, `/boot` is plumbing, and a network or FUSE mount
+    // is refused outright because a dead one hangs startup.
+    #[test]
+    fn mounted_volumes_offer_host_places_and_refuse_machinery() {
+        let volumes = parse_mounted_volumes(concat!(
+            "proc /proc proc rw,nosuid 0 0\n",
+            "/dev/nvme0n1p3 / btrfs rw,relatime 0 0\n",
+            "/dev/nvme0n1p2 /boot ext4 rw 0 0\n",
+            "/dev/sda1 /mnt/veri ext4 rw 0 0\n",
+            "/dev/sdb1 /run/media/user/USB\\040Disk vfat rw 0 0\n",
+            "nas:/export /mnt/nas nfs4 rw 0 0\n",
+            "user@host:/ /mnt/remote fuse.sshfs rw 0 0\n",
+            "/dev/sdc1 /srv/arsiv xfs rw 0 0\n",
+            "tmpfs /run tmpfs rw 0 0\n",
+        ));
+
+        assert_eq!(
+            volumes,
+            vec![
+                PathBuf::from("/mnt/veri"),
+                PathBuf::from("/run/media/user/USB Disk"),
+                PathBuf::from("/srv/arsiv"),
+            ],
+            "places keep mount-table order; machinery, root, boot and remote mounts are not places"
+        );
+    }
+
+    #[test]
+    fn a_container_sized_mount_table_is_bounded() {
+        let contents = (0..MOUNTED_VOLUMES_MAX + 32)
+            .map(|index| format!("/dev/loop{index} /mnt/vol{index} ext4 rw 0 0\n"))
+            .collect::<String>();
+
+        assert_eq!(parse_mounted_volumes(&contents).len(), MOUNTED_VOLUMES_MAX);
+    }
+
+    #[test]
+    fn a_runaway_user_directory_list_is_refused_before_it_is_parsed() {
+        let dir = std::env::temp_dir().join(format!(
+            "herdr-user-dirs-{}-{}",
+            std::process::id(),
+            "ceiling"
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("user-dirs.dirs");
+        // Sized from the line itself rather than an assumed width, so the
+        // fixture cannot drift under the ceiling it is meant to exceed.
+        let line = "XDG_DOWNLOAD_DIR=\"$HOME/Downloads\"\n";
+        let bloat = line.repeat((USER_DIRS_MAX_BYTES as usize / line.len()) + 64);
+        std::fs::write(&path, &bloat).expect("write");
+
+        let refused = read_user_dirs(&path);
+        std::fs::remove_dir_all(&dir).ok();
+
+        assert!(
+            refused.is_none(),
+            "a file past the ceiling must not reach the parser"
+        );
+    }
+
+    // A host that records nothing localized still gets a full built-in block:
+    // the unlocalized freedesktop names are the fallback, which is exactly the
+    // behaviour that existed before the localized list was read at all.
+    #[test]
+    fn user_directories_fall_back_to_the_unlocalized_names() {
+        use super::super::UserDirectoryKind as Kind;
+
+        let merged = merged_user_directories(Vec::new(), Path::new("/home/user"));
+
+        assert_eq!(
+            merged,
+            vec![
+                user_dir(Kind::Desktop, "/home/user/Desktop"),
+                user_dir(Kind::Downloads, "/home/user/Downloads"),
+                user_dir(Kind::Documents, "/home/user/Documents"),
+                user_dir(Kind::Pictures, "/home/user/Pictures"),
+                user_dir(Kind::Videos, "/home/user/Videos"),
+                user_dir(Kind::Music, "/home/user/Music"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_partial_localized_list_is_completed_rather_than_truncated() {
+        use super::super::UserDirectoryKind as Kind;
+
+        let merged = merged_user_directories(
+            vec![user_dir(Kind::Downloads, "/home/user/İndirilenler")],
+            Path::new("/home/user"),
+        );
+
+        assert_eq!(
+            merged,
+            vec![
+                user_dir(Kind::Desktop, "/home/user/Desktop"),
+                user_dir(Kind::Downloads, "/home/user/İndirilenler"),
+                user_dir(Kind::Documents, "/home/user/Documents"),
+                user_dir(Kind::Pictures, "/home/user/Pictures"),
+                user_dir(Kind::Videos, "/home/user/Videos"),
+                user_dir(Kind::Music, "/home/user/Music"),
+            ],
+            "the recorded entry wins its slot; the rest keep their published order"
+        );
+    }
 
     // ── F1: identity-safe shutdown targets (PRD session-collapse-hardening) ──
 

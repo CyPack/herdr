@@ -22,6 +22,25 @@ Format and rules: [`README.md`](README.md).
 | TP-FLF-ENTER-03 | Crossing one prepared hierarchy edge with Right owns the child column and immediately highlights its first real row. | Right enters a column with no cursor, so the next keystroke has no anchor. | `flf_entered_child_highlights_first_actionable_entry` |
 | TP-FLF-ENTER-04 | Because explicit entry owns row zero immediately, the next Down advances exactly once, to row one. | Down after entry skips a row or does nothing, because entry left the cursor unset. | `flf_next_down_after_entry_selects_second_entry` |
 
+## Host desktop sources
+
+The rail mirrors the sidebar the user already curates in their desktop file
+manager. Design record and the reasoning behind the two omitted desktop rows:
+[`docs/superpowers/specs/2026-07-31-herdr-files-host-bookmarks-and-virtual-locations-analysis.md`](../docs/superpowers/specs/2026-07-31-herdr-files-host-bookmarks-and-virtual-locations-analysis.md).
+
+| ID | Behavior | Breaks if lost | Verified by |
+|---|---|---|---|
+| TP-FDB-PARSE-01 | The host bookmark list is read in file order, an explicit label outranks the directory name, URI escapes are decoded, and non-`file://` schemes are dropped rather than kept as unopenable rows. | The user's arrangement is re-sorted, a renamed entry loses its name, an escaped path resolves to the wrong directory, or a remote share becomes a row that can never open. | `desktop_bookmarks_preserve_order_labels_and_decoded_paths` |
+| TP-FDB-PARSE-02 | The bookmark file is an external, hand-editable input and is capped before it reaches the model. | A runaway or hostile file turns startup model preparation into unbounded work. | `desktop_bookmarks_are_bounded_by_entry_ceiling` |
+| TP-FDB-MODEL-01 | Bookmarks reach the rail as their own section in host order, and a bookmark whose target is gone stays visible and inaccessible instead of disappearing. | A broken bookmark vanishes silently, so the user never learns that a directory they rely on has moved. | `fdb_bookmarks_section_preserves_host_order_labels_and_broken_targets` |
+| TP-FDB-MODEL-02 | The built-in block is fixed — Home, the XDG user directories, Network, Trash — and holds those directories whether or not the host also bookmarks them. Trash points at the directory the desktop file manager shows. | Bookmarking Downloads demotes it out of the built-in block and scatters it into the middle of the curated list, so the rail's stable top region stops being stable. | `fdb_well_known_directories_stay_in_the_built_in_block_when_also_bookmarked` |
+| TP-FDB-XDG-01 | The well-known user directories are read from the list the host records (`user-dirs.dirs`), which is localized per path element, and an absolute override is honoured as written. | The built-in block is derived from English names the host may not use, so a Turkish, German or French desktop shows Home and Trash and nothing else — exactly the arrangement the user came here to see. | `user_directories_follow_the_localized_names_the_host_recorded` |
+| TP-FDB-XDG-02 | That list is external, hand-editable input: comments, keys this surface does not publish and malformed lines are skipped without taking the readable entries with them, a partial list is completed from the unlocalized defaults, and a file past the read ceiling is refused before parsing. | One bad line costs the rail every directory around it, a host that records only some directories loses the rest, or a runaway file turns startup into unbounded work. | `user_directories_survive_comments_unknown_keys_and_malformed_lines`, `a_partial_localized_list_is_completed_rather_than_truncated`, `user_directories_fall_back_to_the_unlocalized_names`, `a_runaway_user_directory_list_is_refused_before_it_is_parsed` |
+| TP-FDB-MODEL-03 | The built-in block labels each directory with the host's own name for it and carries identity on the kind rather than the label, so a directory the host points back at home draws no second Home row. | The rail claims names the host does not use, or renders Home twice when the desktop directory is turned off. | `fdb_built_in_block_follows_the_host_own_directory_names` |
+| TP-FDB-VOL-01 | The rail offers the volumes the host has mounted, in mount-table order, restricted to local filesystems under the roots a desktop treats as places, with octal-escaped mount paths decoded and the table bounded. | Machinery (`/proc`, `tmpfs`), plumbing (`/boot`) and the already-present root turn the rail into an inventory — or worse, a network/FUSE mount slips in and a dead one hangs herdr at startup. | `mounted_volumes_offer_host_places_and_refuse_machinery`, `a_container_sized_mount_table_is_bounded` |
+| TP-FDB-VOL-02 | A host with no desktop at all — no bookmark list, none of the well-known directories on disk — still reaches home, its mounted volumes and the filesystem root. | The rail is empty wherever there is no graphical file manager, so herdr stops carrying the experience it exists to carry on servers, containers and SSH sessions. | `fdb_a_host_without_a_desktop_still_gets_a_rail_worth_drawing` |
+| TP-FDB-RENDER-01 | A painted rule divides sections, reusing the single content line the model already counts for a section gap. | Either the groups run together with no visible boundary, or drawing the boundary consumes an extra line and row hit targets stop matching the painted rows. | `fdb_section_boundary_paints_a_rule_without_shifting_row_identity` |
+
 ## Cursor, focus and paint
 
 | ID | Behavior | Breaks if lost | Verified by |
@@ -71,3 +90,21 @@ Format and rules: [`README.md`](README.md).
   reduces an identity check to a path comparison, it violates this contract.
 - `TP-FLF-BOUNDED-01` and `TP-FLF-BLOCKED-01` are deliberately excluded from
   routine runs. Do not "fix" them into CI; they are host calibration.
+- `TP-FDB-MODEL-02` depends entirely on section dedup keeping path authority
+  with the *first* section that claims it. Making the bookmark section win a
+  duplicate — or emitting the built-in directories only when the host has no
+  bookmark list — moves Downloads and Documents out of the fixed top block and
+  into wherever the user happened to bookmark them. This was tried and rejected:
+  the rail's top region has to stay in the same place between machines.
+- Network discovery in `src/platform/linux.rs` deliberately does not `stat` the
+  GVfs mount root. If a resolution ever reduces it to an `is_dir()` check, a
+  dead `gvfsd-fuse` will hang herdr at startup.
+- The built-in block's names come from `crate::platform::user_directories`, not
+  from English constants. If a resolution ever reintroduces `home.join("Downloads")`
+  it will keep passing on an English desktop and silently empty the block on
+  every other one — which is how this gap survived unnoticed until it was measured.
+- The volume allow list in `src/platform/linux.rs` is deliberately an allow
+  list. Inverting it into a deny list of remote filesystems looks equivalent and
+  is not: every filesystem type added upstream then arrives enabled, and the
+  first one that is network-backed reintroduces the dead-mount startup hang that
+  `network_mounts_root` refuses to `stat` for.
