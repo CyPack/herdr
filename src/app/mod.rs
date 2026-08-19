@@ -2237,6 +2237,38 @@ impl App {
             }
         }
 
+        // The three structures `App::new` builds out of `[shell.bars]`, rebuilt
+        // here together. Until 2026-08-18 none of them was: this function read
+        // exactly one field out of `config.shell` — the sample interval — so a
+        // bar written or changed while the client ran never reached the screen,
+        // and `reload-config` still answered `"applied"`. Measured that day
+        // against the installed binary: a section's `max` changed from 10 to 30
+        // and reloaded through both the CLI and the TUI shortcut left the
+        // section at column 109 in all three readings.
+        //
+        // Placed after the theme block on purpose: bar colours resolve against
+        // the palette, so refreshing them before the theme settles would paint
+        // this frame out of the previous one.
+        //
+        // All three move together. Refreshing the chrome alone would leave a bar
+        // whose presses answer to one config and whose geometry answers to
+        // another — a worse state than either of them being stale.
+        if !invalid_section("shell") {
+            self.state
+                .shell_presentation
+                .set_bars(crate::ui::shell::ShellBars::from_config(&config.shell.bars));
+            self.state
+                .shell_presentation
+                .set_bar_colors(crate::ui::shell::BarColors::from_config(
+                    &config.shell.bars,
+                    &self.state.palette,
+                ));
+            self.state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(
+                &config.shell.bars,
+                config.shell.glyph_icons,
+            );
+        }
+
         crate::config::ConfigReloadReport {
             status,
             diagnostics,
@@ -3746,6 +3778,114 @@ mod tests {
 
         std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
         restore_xdg_state_home(original_xdg_state_home);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// A bar written into `config.toml` while the client is running reaches the screen.
+    ///
+    /// `App::new` builds three things out of `config.shell.bars` — the bar set inside
+    /// `shell_presentation`, its colours, and `shell_bar_chrome` — and until 2026-08-18
+    /// `apply_live_config` rebuilt none of them. It read exactly one field out of
+    /// `config.shell` (the sample interval), so every other bar fact stayed at whatever
+    /// the client started with. The reload still answered `"status":"applied"`.
+    ///
+    /// Measured against the installed binary that day: a section's `max` was changed from
+    /// 10 to 30 and reloaded through both paths — the CLI (`herdr server reload-config`)
+    /// and the TUI shortcut — and the section stayed at column 109 in all three readings.
+    /// A person adding a click action to their bar saw nothing happen, three times, with
+    /// nothing on screen to explain it.
+    ///
+    /// The session facts `shell_presentation` also carries — panel width, fold state,
+    /// which template is presented — must survive the update, which is why the bars are
+    /// replaced in place rather than the whole aggregate being rebuilt.
+    #[test]
+    fn reloading_config_applies_bar_changes_to_the_running_client() {
+        use crate::ui::shell::RegionId;
+
+        let _guard = config_env_lock().lock().unwrap();
+        let path = temp_config_path("reload-bars");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let quiet_update = "[update]\nversion_check = false\nmanifest_check = false\n";
+        std::fs::write(&path, quiet_update).unwrap();
+        std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
+
+        let mut app = test_app();
+        // A session fact that must survive the reload untouched.
+        // Inside the default 18..=36 bounds on purpose: `[ui]` clamps the width to
+        // the configured range on every reload, and a fixture outside it would fail
+        // for that reason instead of the one this assertion is about.
+        app.state.sidebar_width = 29;
+        app.state.sidebar_width_source = state::SidebarWidthSource::Manual;
+
+        // TP-CHROME-127: no bar to begin with, which is what `Config::default()` says.
+        assert!(
+            app.state
+                .shell_bar_chrome
+                .action_for(RegionId::TopBar, 0)
+                .is_none(),
+            "the default config carries no bar, so it carries no section action"
+        );
+
+        std::fs::write(
+            &path,
+            format!(
+                "{quiet_update}\n\
+                 [shell.bars.top]\n\
+                 enabled = true\n\
+                 size = 3\n\
+                 border = true\n\n\
+                 [[shell.bars.top.sections]]\n\
+                 kind = \"content\"\n\
+                 min = 9\n\
+                 max = 30\n\
+                 widget = {{ kind = \"resource\", metric = \"cpu\" }}\n\
+                 action = {{ kind = \"popup\", argv = [\"btop\"] }}\n"
+            ),
+        )
+        .unwrap();
+
+        let report = app.reload_config();
+        assert_eq!(report.status, crate::config::ConfigReloadStatus::Applied);
+
+        // R1 — the action reaches the chrome the click path reads.
+        assert!(
+            matches!(
+                app.state.shell_bar_chrome.action_for(RegionId::TopBar, 0),
+                Some(crate::ui::shell::SectionAction::OpenPopup { .. })
+            ),
+            "a section action written while the client runs must reach the chrome, \
+             or the press lands on a table that predates it"
+        );
+
+        // R2 — the geometry reaches the bar set, not only the action. The two are
+        // separate structures built from the same table, and fixing one alone would
+        // leave a bar whose clicks work at widths it is not drawn at.
+        assert_ne!(
+            app.state.shell_presentation.bars(),
+            crate::ui::shell::ShellBars::NONE,
+            "the reloaded bar set must carry the edge the config just switched on"
+        );
+
+        // R6 — the session facts in the same aggregate are not collateral damage.
+        assert_eq!(
+            app.state.sidebar_width, 29,
+            "reloading a bar must not reset the width the person dragged"
+        );
+
+        // R5 — switching the bar off is applied too; asymmetry here would leave a
+        // bar nobody can remove without restarting.
+        std::fs::write(&path, quiet_update).unwrap();
+        let report = app.reload_config();
+        assert_eq!(report.status, crate::config::ConfigReloadStatus::Applied);
+        assert!(
+            app.state
+                .shell_bar_chrome
+                .action_for(RegionId::TopBar, 0)
+                .is_none(),
+            "removing the bar from config must remove its chrome too"
+        );
+
+        std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
