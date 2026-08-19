@@ -1587,6 +1587,7 @@ impl SidebarTab {
     }
 }
 
+pub(crate) use super::file_manager_locations_model::FileManagerLocationSources;
 pub use super::file_manager_locations_model::{
     FileManagerLocationIcon, FileManagerLocationItem, FileManagerLocationsModel,
 };
@@ -5837,10 +5838,12 @@ mod tests {
         std::fs::write(home.0.join("Desktop"), b"not a directory").expect("create non-dir Desktop");
         let missing_pin = home.0.join("missing-pin");
 
-        let model = FileManagerLocationsModel::from_home_and_pins(
-            &home.0,
-            &[home.0.clone(), missing_pin.clone()],
-        );
+        let model = FileManagerLocationsModel::from_host_sources(FileManagerLocationSources {
+            home: &home.0,
+            network_root: None,
+            bookmarks: &[],
+            pinned: &[home.0.clone(), missing_pin.clone()],
+        });
 
         let favorites = model
             .section(FileManagerLocationSectionKind::Favorites)

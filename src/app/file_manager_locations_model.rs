@@ -1,6 +1,6 @@
 //! Prepared, bounded navigation model for Native Files locations.
 //!
-//! Filesystem discovery is confined to [`FileManagerLocationsModel::from_home_and_pins`].
+//! Filesystem discovery is confined to [`FileManagerLocationsModel::from_host_sources`].
 //! View computation, render, and input consume only these pure data types.
 
 use std::path::{Path, PathBuf};
@@ -13,6 +13,7 @@ pub const FILE_MANAGER_LOCATIONS_MAX_ITEMS: usize = 256;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileManagerLocationSectionKind {
     Favorites,
+    Bookmarks,
     Pinned,
     Locations,
 }
@@ -21,6 +22,7 @@ impl FileManagerLocationSectionKind {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Favorites => "FAVORITES",
+            Self::Bookmarks => "BOOKMARKS",
             Self::Pinned => "PINNED",
             Self::Locations => "LOCATIONS",
         }
@@ -37,6 +39,8 @@ pub enum FileManagerLocationIcon {
     Videos,
     Music,
     Trash,
+    Network,
+    Bookmark,
     Pin,
     Disk,
 }
@@ -52,6 +56,8 @@ impl FileManagerLocationIcon {
             Self::Videos => "󰕧",
             Self::Music => "󰝚",
             Self::Trash => "󰩹",
+            Self::Network => "󰛳",
+            Self::Bookmark => "󰉋",
             Self::Pin => "󰐃",
             Self::Disk => "󰋊",
         }
@@ -67,6 +73,20 @@ pub struct FileManagerLocationItem {
     pub ejectable: bool,
 }
 
+/// Everything the rail is built from, gathered by the caller so that model
+/// preparation itself stays a pure projection over named inputs.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct FileManagerLocationSources<'a> {
+    /// The user's home directory.
+    pub(crate) home: &'a Path,
+    /// Root of the host's mounted network shares, when it has one.
+    pub(crate) network_root: Option<&'a Path>,
+    /// The host file manager's bookmark list, in the order the user arranged it.
+    pub(crate) bookmarks: &'a [crate::platform::DesktopBookmark],
+    /// Absolute `[projects] pinned` directories from this application's config.
+    pub(crate) pinned: &'a [PathBuf],
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileManagerLocationSection {
     pub kind: FileManagerLocationSectionKind,
@@ -80,17 +100,38 @@ pub struct FileManagerLocationsModel {
 }
 
 impl FileManagerLocationsModel {
+    /// Compose a rail with no host bookmark section. Retained for the many
+    /// suites that exercise sections unrelated to the host list; production
+    /// composition goes through [`Self::from_ordered_sources`].
+    #[cfg(test)]
     pub fn from_sources(
         favorites: Vec<FileManagerLocationItem>,
         pinned: Vec<FileManagerLocationItem>,
         locations: Vec<FileManagerLocationItem>,
     ) -> Self {
+        Self::from_ordered_sources(favorites, Vec::new(), pinned, locations)
+    }
+
+    /// Compose the rail in its published section order: the host built-in
+    /// block, then the list the user curated in their desktop file manager,
+    /// then this application's own pins.
+    ///
+    /// Path identity belongs to the **first** section that claims it. That is
+    /// what keeps a bookmarked `Downloads` in the fixed built-in block instead
+    /// of drawing it a second time in the middle of the curated list.
+    pub fn from_ordered_sources(
+        favorites: Vec<FileManagerLocationItem>,
+        bookmarks: Vec<FileManagerLocationItem>,
+        pinned: Vec<FileManagerLocationItem>,
+        locations: Vec<FileManagerLocationItem>,
+    ) -> Self {
         let mut seen = std::collections::HashSet::new();
         let mut remaining = FILE_MANAGER_LOCATIONS_MAX_ITEMS;
-        let mut sections = Vec::with_capacity(3);
+        let mut sections = Vec::with_capacity(4);
 
         for (kind, source) in [
             (FileManagerLocationSectionKind::Favorites, favorites),
+            (FileManagerLocationSectionKind::Bookmarks, bookmarks),
             (FileManagerLocationSectionKind::Pinned, pinned),
             (FileManagerLocationSectionKind::Locations, locations),
         ] {
@@ -117,7 +158,11 @@ impl FileManagerLocationsModel {
     /// Prepare the startup Files-locations projection. This is an explicit
     /// refresh boundary: it may inspect directory metadata, while render and
     /// mouse input consume only the returned data.
-    pub fn from_home_and_pins(home: &Path, pinned: &[PathBuf]) -> Self {
+    ///
+    /// Host discovery — reading the bookmark list, locating the network mount
+    /// root — happens in [`crate::platform`] and arrives here as data, so this
+    /// projection stays deterministic under test.
+    pub(crate) fn from_host_sources(sources: FileManagerLocationSources<'_>) -> Self {
         fn directory_is_accessible(path: &Path) -> bool {
             std::fs::metadata(path).is_ok_and(|metadata| metadata.is_dir())
         }
@@ -137,12 +182,33 @@ impl FileManagerLocationsModel {
             }
         }
 
+        /// A path's own name is its display text unless something authoritative
+        /// renamed it.
+        fn derived_label(path: &Path) -> String {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .filter(|name| !name.is_empty())
+                .map_or_else(|| path.display().to_string(), ToOwned::to_owned)
+        }
+
+        let FileManagerLocationSources {
+            home,
+            network_root,
+            bookmarks,
+            pinned,
+        } = sources;
+
         let mut favorites = vec![item(
             "Home",
             home.to_path_buf(),
             FileManagerLocationIcon::Home,
             directory_is_accessible(home),
         )];
+
+        // The XDG user directories are permanent members of the built-in block,
+        // with their own identity icons. Users routinely bookmark them as well;
+        // section dedup then absorbs that copy here rather than scattering
+        // Downloads and Documents into the middle of the curated list.
         for (label, child, icon) in [
             ("Desktop", "Desktop", FileManagerLocationIcon::Desktop),
             ("Downloads", "Downloads", FileManagerLocationIcon::Downloads),
@@ -150,11 +216,6 @@ impl FileManagerLocationsModel {
             ("Pictures", "Pictures", FileManagerLocationIcon::Pictures),
             ("Videos", "Videos", FileManagerLocationIcon::Videos),
             ("Music", "Music", FileManagerLocationIcon::Music),
-            (
-                "Trash",
-                ".local/share/Trash",
-                FileManagerLocationIcon::Trash,
-            ),
         ] {
             let path = home.join(child);
             if directory_is_accessible(&path) {
@@ -162,17 +223,54 @@ impl FileManagerLocationsModel {
             }
         }
 
+        if let Some(root) = network_root.filter(|root| directory_is_accessible(root)) {
+            favorites.push(item(
+                "Network",
+                root.to_path_buf(),
+                FileManagerLocationIcon::Network,
+                true,
+            ));
+        }
+
+        // Desktop file managers open the trash's `files/` directory rather than
+        // the freedesktop container that also holds `info/` and `expunged/`.
+        // The container is the fallback for a home that has not been used yet.
+        let trash_container = home.join(".local/share/Trash");
+        for candidate in [trash_container.join("files"), trash_container] {
+            if directory_is_accessible(&candidate) {
+                favorites.push(item(
+                    "Trash",
+                    candidate,
+                    FileManagerLocationIcon::Trash,
+                    true,
+                ));
+                break;
+            }
+        }
+
+        // A bookmark whose target is gone stays visible and inaccessible. The
+        // desktop file manager marks it too; hiding it would silently erase the
+        // fact that something the user relies on has moved.
+        let bookmarks = bookmarks
+            .iter()
+            .map(|bookmark| {
+                item(
+                    bookmark
+                        .label
+                        .clone()
+                        .unwrap_or_else(|| derived_label(&bookmark.path)),
+                    bookmark.path.clone(),
+                    FileManagerLocationIcon::Bookmark,
+                    directory_is_accessible(&bookmark.path),
+                )
+            })
+            .collect();
+
         let pinned = pinned
             .iter()
             .map(|path| {
-                let label = path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .filter(|name| !name.is_empty())
-                    .map(ToOwned::to_owned)
-                    .unwrap_or_else(|| path.display().to_string());
                 item(
-                    label,
+                    derived_label(path),
                     path.clone(),
                     FileManagerLocationIcon::Pin,
                     directory_is_accessible(path),
@@ -194,7 +292,7 @@ impl FileManagerLocationsModel {
             })
             .unwrap_or_default();
 
-        Self::from_sources(favorites, pinned, locations)
+        Self::from_ordered_sources(favorites, bookmarks, pinned, locations)
     }
 
     #[cfg(test)]
@@ -271,7 +369,11 @@ impl FileManagerLocationsModel {
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use super::{FileManagerLocationIcon, FileManagerLocationItem, FileManagerLocationsModel};
+    use super::{
+        FileManagerLocationIcon, FileManagerLocationItem, FileManagerLocationSectionKind,
+        FileManagerLocationSources, FileManagerLocationsModel,
+    };
+    use crate::platform::DesktopBookmark;
 
     fn item(path: &str, accessible: bool) -> FileManagerLocationItem {
         FileManagerLocationItem {
@@ -284,6 +386,41 @@ mod tests {
             icon: FileManagerLocationIcon::Pin,
             accessible,
             ejectable: false,
+        }
+    }
+
+    struct TempHome(PathBuf);
+
+    impl TempHome {
+        fn new(name: &str) -> Self {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static COUNTER: AtomicU64 = AtomicU64::new(0);
+            let root = std::env::temp_dir().join(format!(
+                "herdr-locations-{name}-{}-{}",
+                std::process::id(),
+                COUNTER.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&root).expect("create temp home");
+            Self(root)
+        }
+
+        fn directory(&self, child: &str) -> PathBuf {
+            let path = self.0.join(child);
+            std::fs::create_dir_all(&path).expect("create directory");
+            path
+        }
+    }
+
+    impl Drop for TempHome {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn bookmark(path: &Path, label: Option<&str>) -> DesktopBookmark {
+        DesktopBookmark {
+            path: path.to_path_buf(),
+            label: label.map(ToOwned::to_owned),
         }
     }
 
@@ -303,5 +440,128 @@ mod tests {
         assert_eq!(model.line_index_for_path(Path::new("/pinned")), Some(5));
         assert_eq!(model.line_index_for_path(Path::new("/")), Some(8));
         assert_eq!(model.line_index_for_path(Path::new("/absent")), None);
+    }
+
+    // TP-FDB-MODEL-01: the host bookmark list reaches the rail as its own
+    // section, in the user's order, keeping renamed labels and keeping broken
+    // targets visible-but-inaccessible instead of silently disappearing.
+    #[test]
+    fn fdb_bookmarks_section_preserves_host_order_labels_and_broken_targets() {
+        let home = TempHome::new("bookmarks");
+        let projects = home.directory("projects");
+        let renamed = home.directory("Asus-Downloads");
+        let screenshots = home.directory("Pictures/Screenshots");
+        let missing = home.0.join("removed-since-bookmarking");
+
+        let model = FileManagerLocationsModel::from_host_sources(FileManagerLocationSources {
+            home: &home.0,
+            network_root: None,
+            bookmarks: &[
+                bookmark(&projects, None),
+                bookmark(&missing, Some("Git-sync")),
+                bookmark(&renamed, Some("ASUS Downloads (Tailscale)")),
+                bookmark(&screenshots, None),
+                bookmark(&home.0, Some("Home again")),
+            ],
+            pinned: &[],
+        });
+
+        let bookmarks = model
+            .section(FileManagerLocationSectionKind::Bookmarks)
+            .expect("bookmarks section");
+        assert_eq!(
+            bookmarks
+                .items
+                .iter()
+                .map(|item| (item.label.as_str(), item.accessible))
+                .collect::<Vec<_>>(),
+            [
+                ("projects", true),
+                ("Git-sync", false),
+                ("ASUS Downloads (Tailscale)", true),
+                ("Screenshots", true),
+            ],
+            "host order and labels survive, and a duplicate of Home stays with Favorites"
+        );
+    }
+
+    // TP-FDB-MODEL-02: the built-in block is fixed — the XDG user directories
+    // keep their identity position there whether or not the host also bookmarks
+    // them. Bookmarking Downloads must not demote it into the curated list.
+    #[test]
+    fn fdb_well_known_directories_stay_in_the_built_in_block_when_also_bookmarked() {
+        let home = TempHome::new("favorites");
+        let downloads = home.directory("Downloads");
+        home.directory("Documents");
+        let music = home.directory("Music");
+        let projects = home.directory("projects");
+        let network = home.directory("gvfs");
+        home.directory(".local/share/Trash/files");
+
+        let model = FileManagerLocationsModel::from_host_sources(FileManagerLocationSources {
+            home: &home.0,
+            network_root: Some(&network),
+            bookmarks: &[
+                bookmark(&projects, None),
+                bookmark(&downloads, None),
+                bookmark(&music, Some("Müzik")),
+            ],
+            pinned: &[],
+        });
+
+        let favorites = model
+            .section(FileManagerLocationSectionKind::Favorites)
+            .expect("favorites section");
+        assert_eq!(
+            favorites
+                .items
+                .iter()
+                .map(|item| item.label.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "Home",
+                "Downloads",
+                "Documents",
+                "Music",
+                "Network",
+                "Trash"
+            ],
+            "well-known directories hold their built-in position and icon"
+        );
+        assert_eq!(
+            favorites
+                .items
+                .iter()
+                .find(|item| item.label == "Trash")
+                .map(|item| item.path.clone()),
+            Some(home.0.join(".local/share/Trash/files")),
+            "Trash points at the directory the desktop file manager shows"
+        );
+
+        assert_eq!(
+            model
+                .section(FileManagerLocationSectionKind::Bookmarks)
+                .expect("bookmarks section")
+                .items
+                .iter()
+                .map(|item| item.label.as_str())
+                .collect::<Vec<_>>(),
+            ["projects"],
+            "the curated list carries only what the built-in block does not own"
+        );
+
+        let without_bookmarks =
+            FileManagerLocationsModel::from_host_sources(FileManagerLocationSources {
+                home: &home.0,
+                network_root: Some(&network),
+                bookmarks: &[],
+                pinned: &[],
+            });
+        assert!(
+            without_bookmarks
+                .section(FileManagerLocationSectionKind::Bookmarks)
+                .is_none(),
+            "an empty host list produces no empty section header"
+        );
     }
 }

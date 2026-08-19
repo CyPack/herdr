@@ -570,6 +570,124 @@ pub fn read_clipboard_text() -> Option<String> {
     None
 }
 
+/// Ceilings for the bookmark source. It is an external, hand-editable file, so
+/// a runaway or hostile one must not turn into unbounded startup work in the
+/// locations model.
+const DESKTOP_BOOKMARKS_MAX_BYTES: u64 = 64 * 1024;
+const DESKTOP_BOOKMARKS_MAX_ENTRIES: usize = 128;
+
+/// Parse the freedesktop bookmark list shared by GTK file managers: one URI per
+/// line, optionally followed by a space and a display label.
+///
+/// Order is preserved because the user arranged it. Remote schemes are dropped
+/// rather than kept as dead rows — this surface navigates local paths only.
+fn parse_desktop_bookmarks(contents: &str) -> Vec<super::DesktopBookmark> {
+    contents
+        .lines()
+        .filter_map(|line| {
+            let (uri, label) = match line.trim().split_once(' ') {
+                Some((uri, label)) => (uri, Some(label.trim())),
+                None => (line.trim(), None),
+            };
+            let path = percent_decoded_path(uri.strip_prefix("file://")?)?;
+            path.is_absolute().then(|| super::DesktopBookmark {
+                path,
+                label: label
+                    .filter(|label| !label.is_empty())
+                    .map(ToOwned::to_owned),
+            })
+        })
+        .take(DESKTOP_BOOKMARKS_MAX_ENTRIES)
+        .collect()
+}
+
+/// Decode the URI escapes a real desktop path carries. A malformed escape
+/// invalidates the whole entry rather than being passed through, so a truncated
+/// line cannot resolve to a different directory than the user bookmarked.
+fn percent_decoded_path(encoded: &str) -> Option<PathBuf> {
+    let bytes = encoded.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'%' {
+            decoded.push(bytes[index]);
+            index += 1;
+            continue;
+        }
+        let digits = bytes.get(index + 1..index + 3)?;
+        if !digits.iter().all(u8::is_ascii_hexdigit) {
+            return None;
+        }
+        decoded.push(u8::from_str_radix(std::str::from_utf8(digits).ok()?, 16).ok()?);
+        index += 3;
+    }
+    String::from_utf8(decoded).ok().map(PathBuf::from)
+}
+
+/// Candidate bookmark files, most current first. Nautilus, Nemo, Thunar and
+/// PCManFM all read and write the GTK 3 list, so the rail follows whichever of
+/// them the user actually curates their sidebar in.
+fn desktop_bookmark_files() -> Vec<PathBuf> {
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute());
+    let config_home = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute())
+        .or_else(|| home.as_ref().map(|home| home.join(".config")));
+
+    let mut candidates = Vec::with_capacity(2);
+    candidates.extend(config_home.map(|dir| dir.join("gtk-3.0").join("bookmarks")));
+    candidates.extend(home.map(|dir| dir.join(".gtk-bookmarks")));
+    candidates
+}
+
+/// Bookmarks curated in the host file manager, in the order the user arranged
+/// them. The first readable candidate is authoritative: an empty current list
+/// means the user emptied it, not that a legacy file should be resurrected.
+pub(crate) fn desktop_bookmarks() -> Vec<super::DesktopBookmark> {
+    for path in desktop_bookmark_files() {
+        let Ok(metadata) = std::fs::metadata(&path) else {
+            continue;
+        };
+        if !metadata.is_file() {
+            continue;
+        }
+        if metadata.len() > DESKTOP_BOOKMARKS_MAX_BYTES {
+            tracing::warn!(
+                ?path,
+                bytes = metadata.len(),
+                ceiling = DESKTOP_BOOKMARKS_MAX_BYTES,
+                "desktop bookmarks file exceeds the read ceiling; ignoring it"
+            );
+            continue;
+        }
+        match std::fs::read_to_string(&path) {
+            Ok(contents) => return parse_desktop_bookmarks(&contents),
+            Err(err) => tracing::debug!(?path, %err, "reading desktop bookmarks failed"),
+        }
+    }
+    Vec::new()
+}
+
+/// Root of the GVfs mounts the user currently has.
+///
+/// Presence is established from the runtime directory listing rather than by
+/// stat-ing the mount root. `XDG_RUNTIME_DIR` is a tmpfs, so its `read_dir`
+/// answers from the kernel, while stat-ing the mount root itself enters the
+/// FUSE filesystem and blocks indefinitely when `gvfsd-fuse` has died. This
+/// runs during startup model preparation, where that stall would be a hang.
+pub(crate) fn network_mounts_root() -> Option<PathBuf> {
+    let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute())?;
+    std::fs::read_dir(&runtime_dir)
+        .ok()?
+        .flatten()
+        .any(|entry| entry.file_name() == std::ffi::OsStr::new("gvfs"))
+        .then(|| runtime_dir.join("gvfs"))
+}
+
 pub fn open_url(url: &str) -> std::io::Result<()> {
     Command::new("xdg-open")
         .arg(url)
@@ -1015,6 +1133,64 @@ mod tests {
     use super::*;
     use std::sync::{Mutex, OnceLock};
     use std::{cell::RefCell, collections::HashMap};
+
+    // TP-FDB-PARSE-01: the host bookmark list is user-editable text, so its
+    // reader keeps file order, honours renamed entries, decodes the URI escapes
+    // that real desktop paths carry, and drops what this surface cannot open.
+    #[test]
+    fn desktop_bookmarks_preserve_order_labels_and_decoded_paths() {
+        let parsed = parse_desktop_bookmarks(concat!(
+            "file:///home/user/MnMVeldOps MnMVeldOps\n",
+            "file:///home/user/Desktop/Project%20Meta%20Genesis Project Meta Genesis\n",
+            "file:///home/user/Asus-Downloads ASUS Downloads (Tailscale)\n",
+            "file:///home/user/projects\n",
+            "\n",
+            "   \n",
+            "smb://server/share Shared\n",
+            "file://localhost/relative\n",
+            "file:///home/user/broken%2 Broken escape\n",
+        ));
+
+        assert_eq!(
+            parsed
+                .iter()
+                .map(|bookmark| (
+                    bookmark.path.to_string_lossy().into_owned(),
+                    bookmark.label.clone()
+                ))
+                .collect::<Vec<_>>(),
+            [
+                (
+                    "/home/user/MnMVeldOps".to_string(),
+                    Some("MnMVeldOps".to_string())
+                ),
+                (
+                    "/home/user/Desktop/Project Meta Genesis".to_string(),
+                    Some("Project Meta Genesis".to_string())
+                ),
+                (
+                    "/home/user/Asus-Downloads".to_string(),
+                    Some("ASUS Downloads (Tailscale)".to_string())
+                ),
+                ("/home/user/projects".to_string(), None),
+            ],
+            "remote schemes, non-absolute hosts and malformed escapes are not navigable here"
+        );
+    }
+
+    // TP-FDB-PARSE-02: the file is an external input. A hostile or runaway one
+    // cannot grow unbounded startup work in the locations model.
+    #[test]
+    fn desktop_bookmarks_are_bounded_by_entry_ceiling() {
+        let contents = (0..DESKTOP_BOOKMARKS_MAX_ENTRIES + 64)
+            .map(|index| format!("file:///virtual/{index}\n"))
+            .collect::<String>();
+
+        assert_eq!(
+            parse_desktop_bookmarks(&contents).len(),
+            DESKTOP_BOOKMARKS_MAX_ENTRIES
+        );
+    }
 
     // ── F1: identity-safe shutdown targets (PRD session-collapse-hardening) ──
 

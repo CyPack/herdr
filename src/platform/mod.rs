@@ -25,6 +25,33 @@ pub enum Signal {
     Kill,
 }
 
+/// One entry from the bookmark list the host desktop file manager keeps, in the
+/// order the user arranged it.
+///
+/// `label` is present only when the user renamed the entry. When it is absent
+/// the directory name is authoritative and the caller derives the display text,
+/// exactly as the desktop file manager does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DesktopBookmark {
+    pub(crate) path: std::path::PathBuf,
+    pub(crate) label: Option<String>,
+}
+
+/// Bookmarks curated in the host file manager. Only Linux keeps them in the
+/// freedesktop text format; macOS Finder uses a binary property list and
+/// Windows Quick Access is a shell-namespace concept, so both yield nothing and
+/// the rail degrades without special-casing at the call site.
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn desktop_bookmarks() -> Vec<DesktopBookmark> {
+    Vec::new()
+}
+
+/// Root of the host's mounted network shares, when the platform has one.
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn network_mounts_root() -> Option<std::path::PathBuf> {
+    None
+}
+
 pub(crate) fn detached_custom_command_process(command: &str) -> std::process::Command {
     let mut process = detached_custom_command_process_platform(command);
     configure_background_command(&mut process);

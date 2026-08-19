@@ -22,6 +22,20 @@ Format and rules: [`README.md`](README.md).
 | TP-FLF-ENTER-03 | Crossing one prepared hierarchy edge with Right owns the child column and immediately highlights its first real row. | Right enters a column with no cursor, so the next keystroke has no anchor. | `flf_entered_child_highlights_first_actionable_entry` |
 | TP-FLF-ENTER-04 | Because explicit entry owns row zero immediately, the next Down advances exactly once, to row one. | Down after entry skips a row or does nothing, because entry left the cursor unset. | `flf_next_down_after_entry_selects_second_entry` |
 
+## Host desktop sources
+
+The rail mirrors the sidebar the user already curates in their desktop file
+manager. Design record and the reasoning behind the two omitted desktop rows:
+[`docs/superpowers/specs/2026-07-31-herdr-files-host-bookmarks-and-virtual-locations-analysis.md`](../docs/superpowers/specs/2026-07-31-herdr-files-host-bookmarks-and-virtual-locations-analysis.md).
+
+| ID | Behavior | Breaks if lost | Verified by |
+|---|---|---|---|
+| TP-FDB-PARSE-01 | The host bookmark list is read in file order, an explicit label outranks the directory name, URI escapes are decoded, and non-`file://` schemes are dropped rather than kept as unopenable rows. | The user's arrangement is re-sorted, a renamed entry loses its name, an escaped path resolves to the wrong directory, or a remote share becomes a row that can never open. | `desktop_bookmarks_preserve_order_labels_and_decoded_paths` |
+| TP-FDB-PARSE-02 | The bookmark file is an external, hand-editable input and is capped before it reaches the model. | A runaway or hostile file turns startup model preparation into unbounded work. | `desktop_bookmarks_are_bounded_by_entry_ceiling` |
+| TP-FDB-MODEL-01 | Bookmarks reach the rail as their own section in host order, and a bookmark whose target is gone stays visible and inaccessible instead of disappearing. | A broken bookmark vanishes silently, so the user never learns that a directory they rely on has moved. | `fdb_bookmarks_section_preserves_host_order_labels_and_broken_targets` |
+| TP-FDB-MODEL-02 | The built-in block is fixed — Home, the XDG user directories, Network, Trash — and holds those directories whether or not the host also bookmarks them. Trash points at the directory the desktop file manager shows. | Bookmarking Downloads demotes it out of the built-in block and scatters it into the middle of the curated list, so the rail's stable top region stops being stable. | `fdb_well_known_directories_stay_in_the_built_in_block_when_also_bookmarked` |
+| TP-FDB-RENDER-01 | A painted rule divides sections, reusing the single content line the model already counts for a section gap. | Either the groups run together with no visible boundary, or drawing the boundary consumes an extra line and row hit targets stop matching the painted rows. | `fdb_section_boundary_paints_a_rule_without_shifting_row_identity` |
+
 ## Cursor, focus and paint
 
 | ID | Behavior | Breaks if lost | Verified by |
@@ -71,3 +85,12 @@ Format and rules: [`README.md`](README.md).
   reduces an identity check to a path comparison, it violates this contract.
 - `TP-FLF-BOUNDED-01` and `TP-FLF-BLOCKED-01` are deliberately excluded from
   routine runs. Do not "fix" them into CI; they are host calibration.
+- `TP-FDB-MODEL-02` depends entirely on section dedup keeping path authority
+  with the *first* section that claims it. Making the bookmark section win a
+  duplicate — or emitting the built-in directories only when the host has no
+  bookmark list — moves Downloads and Documents out of the fixed top block and
+  into wherever the user happened to bookmark them. This was tried and rejected:
+  the rail's top region has to stay in the same place between machines.
+- Network discovery in `src/platform/linux.rs` deliberately does not `stat` the
+  GVfs mount root. If a resolution ever reduces it to an `is_dir()` check, a
+  dead `gvfsd-fuse` will hang herdr at startup.

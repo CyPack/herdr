@@ -116,7 +116,10 @@ pub(crate) fn file_manager_content_layout(body: Rect) -> FileManagerContentLayou
 
 enum FileManagerLocationLine<'a> {
     Header(&'a str),
-    Blank,
+    /// The rule drawn between two sections. It occupies the same single content
+    /// line the model counts for a section gap, so painting it cannot shift row
+    /// identity or hit geometry.
+    Separator,
     Item(&'a FileManagerLocationItem),
 }
 
@@ -124,7 +127,7 @@ fn location_lines(model: &FileManagerLocationsModel) -> Vec<FileManagerLocationL
     let mut lines = Vec::new();
     for (section_index, section) in model.sections.iter().enumerate() {
         if section_index > 0 {
-            lines.push(FileManagerLocationLine::Blank);
+            lines.push(FileManagerLocationLine::Separator);
         }
         lines.push(FileManagerLocationLine::Header(section.kind.label()));
         lines.extend(section.items.iter().map(FileManagerLocationLine::Item));
@@ -274,6 +277,8 @@ fn location_icon(icon: FileManagerLocationIcon, ascii: bool) -> &'static str {
         FileManagerLocationIcon::Videos => "V",
         FileManagerLocationIcon::Music => "m",
         FileManagerLocationIcon::Trash => "x",
+        FileManagerLocationIcon::Network => "@",
+        FileManagerLocationIcon::Bookmark => "+",
         FileManagerLocationIcon::Pin => "*",
         FileManagerLocationIcon::Disk => "/",
     }
@@ -422,7 +427,17 @@ pub(crate) fn render_file_manager_locations(
                 ),
                 row,
             ),
-            FileManagerLocationLine::Blank => {}
+            // Inset by one cell on each side so the rule reads as a divider
+            // between groups rather than a border around the rail.
+            FileManagerLocationLine::Separator => {
+                if let Some(width) = usize::from(row.width).checked_sub(2).filter(|w| *w > 0) {
+                    frame.render_widget(
+                        Paragraph::new(format!(" {}", "─".repeat(width)))
+                            .style(Style::default().fg(app.palette.surface1)),
+                        row,
+                    );
+                }
+            }
             FileManagerLocationLine::Item(item) => {
                 let focused_cursor = rail_focused && cursor == Some(item.path.as_path());
                 let accepted_origin = origin == Some(item.path.as_path()) && !focused_cursor;
@@ -482,6 +497,64 @@ mod tests {
         assert!(rect.y >= bounds.y);
         assert!(rect.right() <= bounds.right());
         assert!(rect.bottom() <= bounds.bottom());
+    }
+
+    // TP-FDB-RENDER-01: a painted rule divides the built-in block from the
+    // curated list. It reuses the single content line the model already counts
+    // for a section gap, so making the boundary visible cannot move a row or
+    // its hit target.
+    #[test]
+    fn fdb_section_boundary_paints_a_rule_without_shifting_row_identity() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut app = AppState::test_new();
+        app.stage.activate_files().expect("Files activation");
+        app.file_manager = Some(crate::fm::FmState::new(PathBuf::from("/")));
+        app.file_manager_locations_model = FileManagerLocationsModel::from_ordered_sources(
+            vec![item("Home", "/home/user")],
+            vec![item("projects", "/home/user/projects")],
+            Vec::new(),
+            Vec::new(),
+        );
+
+        let area = Rect::new(0, 0, 90, 14);
+        let view = project_file_manager_locations_view(&app, area);
+        let rail = view.layout.rail.expect("persistent rail");
+
+        let mut terminal =
+            Terminal::new(TestBackend::new(area.width, area.height)).expect("test terminal");
+        terminal
+            .draw(|frame| super::render_file_manager_locations(&app, frame, &view))
+            .expect("render");
+        let buffer = terminal.backend().buffer().clone();
+        let row_text = |y: u16| {
+            (rail.x..rail.right())
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+        };
+
+        // FAVORITES · Home · rule · BOOKMARKS · projects
+        assert!(row_text(rail.y).contains("FAVORITES"));
+        assert!(row_text(rail.y + 1).contains("Home"));
+        let rule = row_text(rail.y + 2);
+        assert!(
+            rule.trim_end().starts_with(" ─") && rule.trim().chars().all(|ch| ch == '─'),
+            "the section boundary is an inset rule, not a blank line: {rule:?}"
+        );
+        assert!(row_text(rail.y + 3).contains("BOOKMARKS"));
+        assert!(row_text(rail.y + 4).contains("projects"));
+
+        assert_eq!(
+            view.rows
+                .iter()
+                .map(|row| (row.path.clone(), row.rect.y))
+                .collect::<Vec<_>>(),
+            [
+                (PathBuf::from("/home/user"), rail.y + 1),
+                (PathBuf::from("/home/user/projects"), rail.y + 4),
+            ],
+            "hit geometry still matches the painted rows"
+        );
     }
 
     // TP-FCL-GEO-01: the content-local rail, separator, and Trail are one

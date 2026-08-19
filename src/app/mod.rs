@@ -809,9 +809,19 @@ impl App {
             .iter()
             .map(|entry| crate::worktree::expand_tilde_absolute_path(entry))
             .collect();
-        let file_manager_locations_model = state::FileManagerLocationsModel::from_home_and_pins(
-            &crate::worktree::expand_tilde_absolute_path("~"),
-            &projects_pinned,
+        // The rail mirrors the host desktop's own sidebar, so the bookmark list
+        // and network mount root are read once here, at the same explicit
+        // discovery boundary as the rest of the locations model.
+        let home_directory = crate::worktree::expand_tilde_absolute_path("~");
+        let desktop_bookmarks = crate::platform::desktop_bookmarks();
+        let network_mounts_root = crate::platform::network_mounts_root();
+        let file_manager_locations_model = state::FileManagerLocationsModel::from_host_sources(
+            state::FileManagerLocationSources {
+                home: &home_directory,
+                network_root: network_mounts_root.as_deref(),
+                bookmarks: &desktop_bookmarks,
+                pinned: &projects_pinned,
+            },
         );
         let default_chat_agent = config
             .projects
