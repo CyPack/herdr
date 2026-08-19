@@ -5841,6 +5841,7 @@ mod tests {
         let model = FileManagerLocationsModel::from_host_sources(FileManagerLocationSources {
             home: &home.0,
             user_dirs: &crate::platform::well_known_user_directories(&home.0),
+            volumes: &[],
             network_root: None,
             bookmarks: &[],
             pinned: &[home.0.clone(), missing_pin.clone()],

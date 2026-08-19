@@ -125,6 +125,13 @@ pub(crate) fn desktop_bookmarks() -> Vec<DesktopBookmark> {
     Vec::new()
 }
 
+/// Volumes the host currently has mounted. Only Linux publishes a machine
+/// readable mount table this reader trusts.
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn mounted_volumes() -> Vec<std::path::PathBuf> {
+    Vec::new()
+}
+
 /// Root of the host's mounted network shares, when the platform has one.
 #[cfg(not(target_os = "linux"))]
 pub(crate) fn network_mounts_root() -> Option<std::path::PathBuf> {

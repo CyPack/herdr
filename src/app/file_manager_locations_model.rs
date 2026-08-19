@@ -83,6 +83,9 @@ pub(crate) struct FileManagerLocationSources<'a> {
     /// names are localized per path element, so they arrive as measured paths
     /// rather than being assumed from English defaults.
     pub(crate) user_dirs: &'a [crate::platform::UserDirectory],
+    /// Volumes the host currently has mounted, in mount-table order. These are
+    /// what makes the rail worth having on a machine with no desktop at all.
+    pub(crate) volumes: &'a [PathBuf],
     /// Root of the host's mounted network shares, when it has one.
     pub(crate) network_root: Option<&'a Path>,
     /// The host file manager's bookmark list, in the order the user arranged it.
@@ -198,6 +201,7 @@ impl FileManagerLocationsModel {
         let FileManagerLocationSources {
             home,
             user_dirs,
+            volumes,
             network_root,
             bookmarks,
             pinned,
@@ -291,19 +295,34 @@ impl FileManagerLocationsModel {
             })
             .collect();
 
-        let locations = home
-            .ancestors()
-            .last()
-            .filter(|path| !path.as_os_str().is_empty())
-            .map(|root| {
-                vec![item(
-                    "Root",
-                    root.to_path_buf(),
+        // The mounted volumes and the filesystem root are what this section is
+        // for. On a host with no desktop — a server, a container, an SSH
+        // session — they are the whole of what "places" can mean, and the rail
+        // is only worth drawing because they are here.
+        let mut locations: Vec<_> = volumes
+            .iter()
+            .map(|volume| {
+                item(
+                    derived_label(volume),
+                    volume.clone(),
                     FileManagerLocationIcon::Disk,
-                    directory_is_accessible(root),
-                )]
+                    directory_is_accessible(volume),
+                )
             })
-            .unwrap_or_default();
+            .collect();
+        locations.extend(
+            home.ancestors()
+                .last()
+                .filter(|path| !path.as_os_str().is_empty())
+                .map(|root| {
+                    item(
+                        "Root",
+                        root.to_path_buf(),
+                        FileManagerLocationIcon::Disk,
+                        directory_is_accessible(root),
+                    )
+                }),
+        );
 
         Self::from_ordered_sources(favorites, bookmarks, pinned, locations)
     }
@@ -444,6 +463,42 @@ mod tests {
     // that keeps `İndirilenler` must see `İndirilenler`; assuming the English
     // name empties this block on every desktop that is not English. A recorded
     // directory pointing back at home draws no second Home row.
+    // TP-FDB-VOL-02: a host with no desktop at all — no file manager, so no
+    // bookmark list, and none of the well-known directories on disk — still
+    // gets a rail worth drawing. herdr carries the experience; the host is not
+    // required to have a graphical file manager for places to mean something.
+    #[test]
+    fn fdb_a_host_without_a_desktop_still_gets_a_rail_worth_drawing() {
+        let home = TempHome::new("headless");
+        // A mounted volume is what a server has instead of a Downloads folder.
+        let volume = home.directory("arsiv");
+
+        let model = FileManagerLocationsModel::from_host_sources(FileManagerLocationSources {
+            home: &home.0,
+            // The defaults are offered, but none of them exist on this host.
+            user_dirs: &crate::platform::well_known_user_directories(&home.0),
+            volumes: &[volume],
+            network_root: None,
+            bookmarks: &[],
+            pinned: &[],
+        });
+
+        let labels: Vec<_> = model
+            .sections
+            .iter()
+            .flat_map(|section| section.items.iter().map(|item| item.label.as_str()))
+            .collect();
+
+        assert!(
+            labels.contains(&"Home") && labels.contains(&"arsiv") && labels.contains(&"Root"),
+            "a desktop-less host still reaches home, its volumes and the filesystem root: {labels:?}"
+        );
+        assert!(
+            labels.len() >= 3,
+            "an empty rail is not an acceptable outcome in any environment: {labels:?}"
+        );
+    }
+
     #[test]
     fn fdb_built_in_block_follows_the_host_own_directory_names() {
         let home = TempHome::new("localized");
@@ -466,6 +521,7 @@ mod tests {
                     path: documents,
                 },
             ],
+            volumes: &[],
             network_root: None,
             bookmarks: &[],
             pinned: &[],
@@ -524,6 +580,7 @@ mod tests {
         let model = FileManagerLocationsModel::from_host_sources(FileManagerLocationSources {
             home: &home.0,
             user_dirs: &crate::platform::well_known_user_directories(&home.0),
+            volumes: &[],
             network_root: None,
             bookmarks: &[
                 bookmark(&projects, None),
@@ -570,6 +627,7 @@ mod tests {
         let model = FileManagerLocationsModel::from_host_sources(FileManagerLocationSources {
             home: &home.0,
             user_dirs: &crate::platform::well_known_user_directories(&home.0),
+            volumes: &[],
             network_root: Some(&network),
             bookmarks: &[
                 bookmark(&projects, None),
@@ -624,6 +682,7 @@ mod tests {
             FileManagerLocationsModel::from_host_sources(FileManagerLocationSources {
                 home: &home.0,
                 user_dirs: &crate::platform::well_known_user_directories(&home.0),
+                volumes: &[],
                 network_root: Some(&network),
                 bookmarks: &[],
                 pinned: &[],

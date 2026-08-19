@@ -627,6 +627,79 @@ fn percent_decoded_path(encoded: &str) -> Option<PathBuf> {
 /// Candidate bookmark files, most current first. Nautilus, Nemo, Thunar and
 /// PCManFM all read and write the GTK 3 list, so the rail follows whichever of
 /// them the user actually curates their sidebar in.
+/// Mount points a desktop treats as places rather than as machinery. A volume
+/// outside these roots is system plumbing — `/boot` and `/boot/efi` are real
+/// local filesystems and no file manager calls them locations.
+const VOLUME_MOUNT_ROOTS: &[&str] = &["/mnt", "/media", "/run/media", "/srv"];
+
+/// Local filesystems only, as an allow list rather than a deny list. A missed
+/// new filesystem type costs one row; a network or FUSE mount that slipped
+/// through costs a startup hang the moment its server stops answering — the
+/// same hazard `network_mounts_root` refuses to `stat` for.
+const LOCAL_FILESYSTEMS: &[&str] = &[
+    "ext2", "ext3", "ext4", "btrfs", "xfs", "f2fs", "bcachefs", "zfs", "vfat", "exfat", "ntfs",
+    "ntfs3", "iso9660", "udf",
+];
+
+/// A container can mount hundreds of paths; the rail is a place to start from,
+/// not an inventory.
+const MOUNTED_VOLUMES_MAX: usize = 32;
+
+/// Projects the kernel mount table onto the volumes this rail offers.
+fn parse_mounted_volumes(contents: &str) -> Vec<PathBuf> {
+    contents
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_ascii_whitespace();
+            let _device = fields.next()?;
+            let mount_point = fields.next()?;
+            let filesystem = fields.next()?;
+            if !LOCAL_FILESYSTEMS.contains(&filesystem) {
+                return None;
+            }
+            let path = PathBuf::from(unescaped_mount_path(mount_point));
+            VOLUME_MOUNT_ROOTS
+                .iter()
+                .any(|root| path.starts_with(root))
+                .then_some(path)
+        })
+        .take(MOUNTED_VOLUMES_MAX)
+        .collect()
+}
+
+/// `/proc/mounts` writes space, tab, newline and backslash as octal escapes, so
+/// a volume the user named `USB Disk` arrives as `USB\040Disk`.
+fn unescaped_mount_path(field: &str) -> String {
+    let mut unescaped = String::with_capacity(field.len());
+    let mut characters = field.chars();
+    while let Some(character) = characters.next() {
+        if character != '\\' {
+            unescaped.push(character);
+            continue;
+        }
+        let digits: String = characters.clone().take(3).collect();
+        let escaped = (digits.len() == 3)
+            .then(|| u8::from_str_radix(&digits, 8).ok())
+            .flatten();
+        match escaped {
+            Some(byte) => {
+                unescaped.push(char::from(byte));
+                characters.nth(2);
+            }
+            None => unescaped.push(character),
+        }
+    }
+    unescaped
+}
+
+/// Volumes the host currently has mounted. Read once, at the same explicit
+/// discovery boundary as the rest of the locations model.
+pub(crate) fn mounted_volumes() -> Vec<PathBuf> {
+    std::fs::read_to_string("/proc/mounts")
+        .map(|contents| parse_mounted_volumes(&contents))
+        .unwrap_or_default()
+}
+
 /// The localized user-directory list is external, user-editable text, so it is
 /// bounded before it can grow startup work — the same ceiling the bookmark
 /// list is read under.
@@ -1347,6 +1420,44 @@ mod tests {
             vec![user_dir(Kind::Music, "/home/user/Müzik")],
             "one unusable line must not cost the rail the lines around it"
         );
+    }
+
+    // TP-FDB-VOL-01: the rail offers the volumes the host has mounted, and only
+    // those a desktop treats as places. Pseudo filesystems are machinery, `/`
+    // is already the Root row, `/boot` is plumbing, and a network or FUSE mount
+    // is refused outright because a dead one hangs startup.
+    #[test]
+    fn mounted_volumes_offer_host_places_and_refuse_machinery() {
+        let volumes = parse_mounted_volumes(concat!(
+            "proc /proc proc rw,nosuid 0 0\n",
+            "/dev/nvme0n1p3 / btrfs rw,relatime 0 0\n",
+            "/dev/nvme0n1p2 /boot ext4 rw 0 0\n",
+            "/dev/sda1 /mnt/veri ext4 rw 0 0\n",
+            "/dev/sdb1 /run/media/user/USB\\040Disk vfat rw 0 0\n",
+            "nas:/export /mnt/nas nfs4 rw 0 0\n",
+            "user@host:/ /mnt/remote fuse.sshfs rw 0 0\n",
+            "/dev/sdc1 /srv/arsiv xfs rw 0 0\n",
+            "tmpfs /run tmpfs rw 0 0\n",
+        ));
+
+        assert_eq!(
+            volumes,
+            vec![
+                PathBuf::from("/mnt/veri"),
+                PathBuf::from("/run/media/user/USB Disk"),
+                PathBuf::from("/srv/arsiv"),
+            ],
+            "places keep mount-table order; machinery, root, boot and remote mounts are not places"
+        );
+    }
+
+    #[test]
+    fn a_container_sized_mount_table_is_bounded() {
+        let contents = (0..MOUNTED_VOLUMES_MAX + 32)
+            .map(|index| format!("/dev/loop{index} /mnt/vol{index} ext4 rw 0 0\n"))
+            .collect::<String>();
+
+        assert_eq!(parse_mounted_volumes(&contents).len(), MOUNTED_VOLUMES_MAX);
     }
 
     #[test]

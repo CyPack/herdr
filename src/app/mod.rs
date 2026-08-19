@@ -814,12 +814,14 @@ impl App {
         // discovery boundary as the rest of the locations model.
         let home_directory = crate::worktree::expand_tilde_absolute_path("~");
         let user_directories = crate::platform::user_directories(&home_directory);
+        let mounted_volumes = crate::platform::mounted_volumes();
         let desktop_bookmarks = crate::platform::desktop_bookmarks();
         let network_mounts_root = crate::platform::network_mounts_root();
         let file_manager_locations_model = state::FileManagerLocationsModel::from_host_sources(
             state::FileManagerLocationSources {
                 home: &home_directory,
                 user_dirs: &user_directories,
+                volumes: &mounted_volumes,
                 network_root: network_mounts_root.as_deref(),
                 bookmarks: &desktop_bookmarks,
                 pinned: &projects_pinned,
