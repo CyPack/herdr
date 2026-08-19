@@ -2118,6 +2118,12 @@ impl App {
                     chat_drawer_mode_from_config(config.ui.chat_drawer_mode);
                 self.state.sidebar_agents = config.ui.sidebar.agents.clone();
                 self.state.sidebar_spaces = config.ui.sidebar.spaces.clone();
+                // TP-CHROME-132: the filter itself, not only the block around
+                // it. Reading it back cannot overwrite a live choice: the
+                // toggle writes the file before reloading from it
+                // (`save_spaces_focus_only`), so the file is always the newer
+                // of the two.
+                self.state.spaces_focus_only = config.ui.sidebar.spaces.focus_only;
                 self.state.agent_panel_scroll = 0;
                 self.state.accent = crate::config::parse_color(&config.ui.accent);
                 if !self.state.local_sound_playback && self.state.sound != config.ui.sound {
@@ -3812,6 +3818,66 @@ mod tests {
     /// The session facts `shell_presentation` also carries — panel width, fold state,
     /// which template is presented — must survive the update, which is why the bars are
     /// replaced in place rather than the whole aggregate being rebuilt.
+    // TP-CHROME-132: the focus switch is a config key like any other, and a
+    // reload has to apply it. It is written to the file by the toggle itself
+    // (`save_spaces_focus_only`), so reading it back can never overwrite a live
+    // choice — the file is always the newer of the two. Without this, editing
+    // the key by hand and reloading does nothing, which is the same defect
+    // TP-CHROME-127 fixed for the bars and the same one it would be strange to
+    // leave standing next to it.
+    #[test]
+    fn reloading_config_applies_the_focus_filter_to_the_running_client() {
+        let _guard = config_env_lock().lock().unwrap();
+        let path = temp_config_path("reload-focus");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let quiet_update = "[update]\nversion_check = false\nmanifest_check = false\n";
+        std::fs::write(&path, quiet_update).unwrap();
+        std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
+
+        let mut app = test_app();
+        // A session fact that must survive the reload untouched.
+        app.state.sidebar_width = 29;
+        app.state.sidebar_width_source = state::SidebarWidthSource::Manual;
+
+        assert!(
+            !app.state.spaces_focus_only,
+            "the default config carries no focus filter"
+        );
+
+        std::fs::write(
+            &path,
+            format!("{quiet_update}\n[ui.sidebar.spaces]\nfocus_only = true\n"),
+        )
+        .unwrap();
+
+        let report = app.reload_config();
+        assert_eq!(report.status, crate::config::ConfigReloadStatus::Applied);
+        assert!(
+            app.state.spaces_focus_only,
+            "a focus filter switched on in the file must reach the running client"
+        );
+        assert_eq!(
+            app.state.sidebar_width, 29,
+            "reloading the filter must not reset the width the person dragged"
+        );
+
+        // Switching it back off is applied too; asymmetry here would leave a
+        // filter nobody can lift without restarting.
+        std::fs::write(
+            &path,
+            format!("{quiet_update}\n[ui.sidebar.spaces]\nfocus_only = false\n"),
+        )
+        .unwrap();
+        assert_eq!(
+            app.reload_config().status,
+            crate::config::ConfigReloadStatus::Applied
+        );
+        assert!(
+            !app.state.spaces_focus_only,
+            "switching the filter off in the file must reach the client as well"
+        );
+    }
+
     #[test]
     fn reloading_config_applies_bar_changes_to_the_running_client() {
         use crate::ui::shell::RegionId;
