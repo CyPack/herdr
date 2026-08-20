@@ -442,8 +442,13 @@ pub(crate) const DORMANCY_SWEEP_INTERVAL: std::time::Duration = std::time::Durat
 
 /// How long a pane must have been retired before quiet time alone puts it to
 /// sleep. Memory pressure bypasses this, never the child-exited guard.
+///
+/// TP-DORMANT-11: 32 hours by request (2026-08-20) — a day was short enough
+/// that agents parked overnight and picked up the next afternoon had already
+/// been put to sleep. The pressure bypass is untouched on purpose: "OOM can
+/// send them there, that is fine — I mean the default."
 pub(crate) const DORMANCY_QUIET_THRESHOLD: std::time::Duration =
-    std::time::Duration::from_secs(24 * 60 * 60);
+    std::time::Duration::from_secs(32 * 60 * 60);
 
 /// Whether the machine is short enough on memory to sleep candidates early.
 ///
@@ -1053,7 +1058,32 @@ mod tests {
         assert!(app.dormancy_sweep_with_pressure(later, false));
         assert!(
             app.terminal_runtimes.get(&terminal_id).is_none(),
-            "a day-quiet retired pane sleeps"
+            "a threshold-quiet retired pane sleeps"
+        );
+        let _ = std::fs::remove_dir_all(app.dormant_history_dir());
+    }
+
+    // TP-DORMANT-11: the quiet threshold is thirty-two hours — under it a
+    // retired pane stays awake, at it plus a second it sleeps, and the
+    // number itself is pinned so a merge cannot quietly shorten the day.
+    #[tokio::test]
+    async fn the_quiet_threshold_is_thirty_two_hours() {
+        assert_eq!(
+            DORMANCY_QUIET_THRESHOLD,
+            std::time::Duration::from_secs(32 * 60 * 60)
+        );
+
+        let (mut app, pane_id) = app_with_scrollback_pane(b"policy\r\n", true);
+        let terminal_id = terminal_id_of(&app, pane_id);
+        app.pane_dormancy_enabled = true;
+        let start = std::time::Instant::now();
+        assert!(!app.dormancy_sweep_with_pressure(start, false));
+
+        let just_under = start + DORMANCY_QUIET_THRESHOLD - std::time::Duration::from_secs(1);
+        assert!(!app.dormancy_sweep_with_pressure(just_under, false));
+        assert!(
+            app.terminal_runtimes.get(&terminal_id).is_some(),
+            "one second under the threshold is still awake"
         );
         let _ = std::fs::remove_dir_all(app.dormant_history_dir());
     }
