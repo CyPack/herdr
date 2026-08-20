@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import contextlib
 import io
+import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -103,6 +105,45 @@ class AiCoAuthorTests(unittest.TestCase):
         self.assertIn("still fine", refusal, "the remedy has to survive too")
 
 
+class CommentLineTests(unittest.TestCase):
+    """What `git commit -v` puts under the message."""
+
+    def test_a_commented_diff_mentioning_a_trailer_does_not_refuse_the_commit(
+        self,
+    ) -> None:
+        """Found by mutation, and not hypothetical.
+
+        With `commit.verbose` on, git writes the whole diff into
+        `COMMIT_EDITMSG` as comment lines. A commit that edits *this file* then
+        carries this file's own patterns under the `#`, and a gate that read
+        them would refuse every change to itself — the one commit it must not
+        block.
+
+        Two independent things prevent it, and each is sufficient on its own:
+        the comment lines are dropped before anything is matched, and the
+        patterns are anchored at the start of a line so a `# +` prefix could
+        not match anyway. Mutation shows this directly — removing either one
+        alone changes nothing here, and removing both together fails this
+        test. So this pins the *property*, not either mechanism, and a
+        surviving single mutant on either is masking rather than a gap.
+        """
+        message = (
+            "chore(commits): tune the gate\n"
+            "\n"
+            "# Please enter the commit message for your changes.\n"
+            "# On branch master\n"
+            "# ------------------------ >8 ------------------------\n"
+            "# diff --git a/scripts/conventional_commits.py\n"
+            "# +    re.compile(r\"^co-authored-by:.*\\bclaude\\b\", re.I),\n"
+            "# +Co-Authored-By: Claude <noreply@anthropic.com>\n"
+        )
+        self.assertEqual(
+            check_message(message),
+            0,
+            "a trailer quoted inside a commented diff is not a trailer",
+        )
+
+
 class RangeModeTests(unittest.TestCase):
     """The path CI takes, where one refusal covers many commits."""
 
@@ -120,6 +161,51 @@ class RangeModeTests(unittest.TestCase):
         self.assertEqual(len(problems), 2)
         self.assertTrue(problems[0].startswith("abc1234"), problems)
         self.assertTrue(problems[1].startswith("def5678"), problems)
+
+
+    def test_range_mode_reads_the_body_from_git(self) -> None:
+        """The end of the path, against a real repository.
+
+        Found by mutation: changing the pretty format from `%B` to `%s` — so
+        the gate reads subjects and never sees a trailer — changed no test,
+        because the range test above handed pre-built pairs to the helper and
+        never went near git. A test that stops at the helper proves the helper.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            run = lambda *args: subprocess.run(
+                ["git", "-C", str(repo), *args],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            run("init", "-q", "-b", "main")
+            run("config", "user.name", "Test")
+            run("config", "user.email", "test@example.com")
+            (repo / "a.txt").write_text("one\n", encoding="utf-8")
+            run("add", "a.txt")
+            run(
+                "commit",
+                "-q",
+                "-m",
+                "feat(x): a thing\n\nCo-Authored-By: Claude <noreply@anthropic.com>",
+            )
+
+            cwd = os.getcwd()
+            os.chdir(repo)
+            try:
+                messages = conventional_commits.git_messages("HEAD")
+                problems = conventional_commits.attribution_problems_in_range(messages)
+            finally:
+                os.chdir(cwd)
+
+        self.assertEqual(len(messages), 1, messages)
+        self.assertIn(
+            "Co-Authored-By",
+            messages[0][1],
+            "range mode must read the body, not just the subject",
+        )
+        self.assertEqual(len(problems), 1, problems)
 
 
 if __name__ == "__main__":
