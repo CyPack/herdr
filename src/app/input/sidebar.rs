@@ -925,9 +925,12 @@ impl AppState {
         // uses, and across the ghost's whole card rather than only its first
         // row — a headstone is a card now, and a press on its lower half must
         // not fall through.
+        // TP-AGPANEL-46: and through the same FILTERED sequence the painter
+        // draws. The walk indexes visible ghosts, so the lookup must skip
+        // hidden records too — an unfiltered `entries()` here bound every
+        // row below a hidden record to its neighbour's headstone.
         let hit = crate::ui::closed_agent_index_at(self, self.agent_panel_rect(), row)?;
-        self.closed_agents
-            .entries()
+        self.visible_closed_agents()
             .nth(hit)
             .map(|record| record.agent_id.clone())
     }
@@ -1268,6 +1271,118 @@ mod tests {
         );
         // The live row above still resolves to the live road, not a ghost.
         assert!(app.state.closed_agent_target_at(separator_y - 1).is_none());
+    }
+
+    // TP-AGPANEL-46: the resolver reads the same filtered sequence the
+    // painter draws. A ledger record whose chat is hidden takes no row, so
+    // it must take no hit either — with an unfiltered walk every ghost
+    // BELOW a hidden record resolved to its neighbour, and a click revived
+    // a different conversation than the one under the pointer.
+    #[test]
+    fn a_hidden_record_does_not_shift_the_ghost_a_click_names() {
+        let mut app = app_for_mouse_test();
+        let ws = Workspace::test_new("one");
+        let pane = ws.tabs[0].root_pane;
+        app.state.workspaces = vec![ws];
+        app.state.ensure_test_terminals();
+        let terminal_id = app.state.workspaces[0].tabs[0].panes[&pane]
+            .attached_terminal_id
+            .clone();
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .detected_agent = Some(Agent::Pi);
+        app.state.sidebar_agents.rows = vec![vec![crate::config::AgentSidebarToken::Agent]];
+
+        // Newest first in the ledger: the hidden chore sits at the FRONT,
+        // ahead of both visible ghosts — the shape that shifted every hit.
+        for (id, at) in [("elder", 1), ("newer", 2), ("chore", 3)] {
+            app.state
+                .closed_agents
+                .record_closed(crate::app::closed_agents::ClosedAgentRecord {
+                    agent_id: id.into(),
+                    label: id.into(),
+                    cwd: None,
+                    workspace_key: None,
+                    session: None,
+                    closed_at: at,
+                    revival: crate::app::closed_agents::RevivalState::Dormant,
+                });
+        }
+        app.state.hidden_chat_labels = vec![crate::chat_labels::ChatLabel::Routine];
+        app.state
+            .derived_chat_labels
+            .insert("chore".to_string(), crate::chat_labels::ChatLabel::Routine);
+
+        let detail_area = app.state.agent_panel_rect();
+        let (_, ghost_rows) = crate::ui::closed_agent_row_slots(&app.state, detail_area)
+            .expect("two visible ghosts paint a graveyard");
+        assert_eq!(ghost_rows.len(), 2, "the hidden chore takes no row");
+
+        assert_eq!(
+            app.state.closed_agent_target_at(ghost_rows[0]).as_deref(),
+            Some("newer"),
+            "the first drawn ghost is the one the click names"
+        );
+        assert_eq!(
+            app.state.closed_agent_target_at(ghost_rows[1]).as_deref(),
+            Some("elder"),
+            "and the shift does not cascade to the row below"
+        );
+    }
+
+    // TP-AGPANEL-46: the boundary the fix must not move — a hidden record
+    // BEHIND every visible ghost never influenced the hits, and still must
+    // not.
+    #[test]
+    fn a_hidden_record_at_the_tail_changes_nothing() {
+        let mut app = app_for_mouse_test();
+        let ws = Workspace::test_new("one");
+        let pane = ws.tabs[0].root_pane;
+        app.state.workspaces = vec![ws];
+        app.state.ensure_test_terminals();
+        let terminal_id = app.state.workspaces[0].tabs[0].panes[&pane]
+            .attached_terminal_id
+            .clone();
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .detected_agent = Some(Agent::Pi);
+        app.state.sidebar_agents.rows = vec![vec![crate::config::AgentSidebarToken::Agent]];
+
+        // The chore closed FIRST, so it sits at the ledger's tail.
+        for (id, at) in [("chore", 1), ("elder", 2), ("newer", 3)] {
+            app.state
+                .closed_agents
+                .record_closed(crate::app::closed_agents::ClosedAgentRecord {
+                    agent_id: id.into(),
+                    label: id.into(),
+                    cwd: None,
+                    workspace_key: None,
+                    session: None,
+                    closed_at: at,
+                    revival: crate::app::closed_agents::RevivalState::Dormant,
+                });
+        }
+        app.state.hidden_chat_labels = vec![crate::chat_labels::ChatLabel::Routine];
+        app.state
+            .derived_chat_labels
+            .insert("chore".to_string(), crate::chat_labels::ChatLabel::Routine);
+
+        let detail_area = app.state.agent_panel_rect();
+        let (_, ghost_rows) = crate::ui::closed_agent_row_slots(&app.state, detail_area)
+            .expect("two visible ghosts paint a graveyard");
+        assert_eq!(ghost_rows.len(), 2);
+        assert_eq!(
+            app.state.closed_agent_target_at(ghost_rows[0]).as_deref(),
+            Some("newer")
+        );
+        assert_eq!(
+            app.state.closed_agent_target_at(ghost_rows[1]).as_deref(),
+            Some("elder")
+        );
     }
 
     #[test]
