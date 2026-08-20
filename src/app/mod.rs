@@ -1061,6 +1061,8 @@ impl App {
                 tab_scroll_left_hit_area: Rect::default(),
                 tab_scroll_right_hit_area: Rect::default(),
                 new_tab_hit_area: Rect::default(),
+                split_right_hit_area: Rect::default(),
+                split_down_hit_area: Rect::default(),
                 terminal_area: Rect::default(),
                 mobile_header_rect: Rect::default(),
                 mobile_header_hits: crate::ui::MobileHeaderHitAreas::default(),

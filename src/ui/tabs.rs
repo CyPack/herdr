@@ -13,6 +13,9 @@ use crate::app::AppState;
 const MIN_TAB_WIDTH: u16 = 8;
 const NEW_TAB_WIDTH: u16 = 3;
 const TAB_SCROLL_BUTTON_WIDTH: u16 = 3;
+/// TP-TAB-SPLIT-01: each of the two split buttons beside `+` — right split,
+/// then down split — is the same three cells wide the `+` is.
+const SPLIT_BUTTON_WIDTH: u16 = 3;
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct TabBarView {
@@ -26,6 +29,10 @@ pub(crate) struct TabBarView {
     pub scroll_left_hit_area: Rect,
     pub scroll_right_hit_area: Rect,
     pub new_tab_hit_area: Rect,
+    /// TP-TAB-SPLIT-01: split-right button, directly right of `+`.
+    pub split_right_hit_area: Rect,
+    /// TP-TAB-SPLIT-01: split-down button, right of the split-right button.
+    pub split_down_hit_area: Rect,
 }
 
 fn stage_tab_width(instance: AppInstanceId) -> u16 {
@@ -75,10 +82,18 @@ fn tab_width(ws: &crate::workspace::Workspace, tab_idx: usize) -> u16 {
         .max(MIN_TAB_WIDTH)
 }
 
+/// The widest a tab's NAME may paint, in display cells. The unseen dot and
+/// the zoom suffix ride outside the clamp — they are state channels, and a
+/// long name must not be able to swallow them.
+const TAB_NAME_MAX_WIDTH: usize = 20;
+
 fn tab_chrome_label(ws: &crate::workspace::Workspace, tab_idx: usize) -> String {
     let name = ws
         .tab_display_name(tab_idx)
         .unwrap_or_else(|| (tab_idx + 1).to_string());
+    // TP-TAB-NAME-01: clamp the name before any mark is attached, so the
+    // width, the hit areas and the paint all follow one bounded label.
+    let name = crate::ui::text::truncate_end(&name, TAB_NAME_MAX_WIDTH);
     // The glyph is the shape channel of the unseen mark — it survives any
     // palette. Going through the label keeps tab_width and the hit areas in
     // step automatically, the same route the zoomed " Z" suffix takes.
@@ -153,6 +168,26 @@ fn trailing_tab_controls_x(tab_hit_areas: &[Rect], fallback_x: u16) -> u16 {
         .unwrap_or(fallback_x)
 }
 
+/// The two split buttons, laid left-to-right from `start_x`. Whole width or
+/// nothing (TP-MOD-35's rule): a sliver would paint as blank cells that still
+/// answer a press — an invisible button is worse than a missing one.
+fn split_button_hit_areas(start_x: u16, area_right: u16, y: u16) -> (Rect, Rect) {
+    let fit = |x: u16| -> Rect {
+        if area_right.saturating_sub(x) >= SPLIT_BUTTON_WIDTH {
+            Rect::new(x, y, SPLIT_BUTTON_WIDTH, 1)
+        } else {
+            Rect::default()
+        }
+    };
+    let right_button = fit(start_x);
+    let down_button = if right_button.width > 0 {
+        fit(right_button.x + right_button.width)
+    } else {
+        Rect::default()
+    };
+    (right_button, down_button)
+}
+
 fn max_tab_scroll(ws: &crate::workspace::Workspace, area: Rect) -> usize {
     (0..ws.tabs.len())
         .find(|&scroll| {
@@ -202,6 +237,8 @@ pub(crate) fn compute_tab_bar_view(
             scroll_left_hit_area: Rect::default(),
             scroll_right_hit_area: Rect::default(),
             new_tab_hit_area: Rect::default(),
+            split_right_hit_area: Rect::default(),
+            split_down_hit_area: Rect::default(),
         };
     }
 
@@ -221,6 +258,11 @@ pub(crate) fn compute_tab_bar_view(
             area_right.saturating_sub(new_tab_x).min(NEW_TAB_WIDTH),
             1,
         );
+        let (split_right_hit_area, split_down_hit_area) = split_button_hit_areas(
+            new_tab_hit_area.x + new_tab_hit_area.width,
+            area_right,
+            area.y,
+        );
         return TabBarView {
             scroll: 0,
             tab_hit_areas: all_tabs,
@@ -228,12 +270,19 @@ pub(crate) fn compute_tab_bar_view(
             scroll_left_hit_area: Rect::default(),
             scroll_right_hit_area: Rect::default(),
             new_tab_hit_area,
+            split_right_hit_area,
+            split_down_hit_area,
         };
     }
 
     let left_hit_area = Rect::new(tabs_x, area.y, TAB_SCROLL_BUTTON_WIDTH.min(tabs_width), 1);
     let tab_area_x = left_hit_area.x + left_hit_area.width;
-    let reserved_trailing_width = NEW_TAB_WIDTH.saturating_add(TAB_SCROLL_BUTTON_WIDTH);
+    // TP-TAB-SPLIT-01: in overflow the trailing chrome is `\u{25b8} + \u{2590} \u{2584}` — the
+    // split buttons stay reachable however many tabs there are; the tabs
+    // scroll, the chrome does not.
+    let reserved_trailing_width = NEW_TAB_WIDTH
+        .saturating_add(TAB_SCROLL_BUTTON_WIDTH)
+        .saturating_add(SPLIT_BUTTON_WIDTH.saturating_mul(2));
     let tab_area_right = area_right.saturating_sub(reserved_trailing_width);
     let tab_area = Rect::new(
         tab_area_x,
@@ -265,6 +314,11 @@ pub(crate) fn compute_tab_bar_view(
         area_right.saturating_sub(new_tab_x).min(NEW_TAB_WIDTH),
         1,
     );
+    let (split_right_hit_area, split_down_hit_area) = split_button_hit_areas(
+        new_tab_hit_area.x + new_tab_hit_area.width,
+        area_right,
+        area.y,
+    );
 
     TabBarView {
         scroll,
@@ -273,6 +327,8 @@ pub(crate) fn compute_tab_bar_view(
         scroll_left_hit_area: left_hit_area,
         scroll_right_hit_area: right_hit_area,
         new_tab_hit_area,
+        split_right_hit_area,
+        split_down_hit_area,
     }
 }
 
@@ -481,6 +537,20 @@ pub(super) fn render_tab_bar(app: &AppState, frame: &mut Frame, area: Rect) {
         frame.render_widget(
             Paragraph::new(" + ").style(Style::default().fg(p.overlay1)),
             app.view.new_tab_hit_area,
+        );
+    }
+    // TP-TAB-SPLIT-01: right-half block reads "new pane on the right", lower
+    // block reads "new pane below". Drawn only when their cells exist.
+    if app.mouse_capture && app.view.split_right_hit_area.width > 0 {
+        frame.render_widget(
+            Paragraph::new(" \u{2590} ").style(Style::default().fg(p.overlay1)),
+            app.view.split_right_hit_area,
+        );
+    }
+    if app.mouse_capture && app.view.split_down_hit_area.width > 0 {
+        frame.render_widget(
+            Paragraph::new(" \u{2584} ").style(Style::default().fg(p.overlay1)),
+            app.view.split_down_hit_area,
         );
     }
 
@@ -866,6 +936,127 @@ mod tests {
             tab_width(&ws, 0),
             display_width_u16("提交 herdr 的反馈") + 4
         );
+    }
+
+    // TP-TAB-SPLIT-01: two split buttons stand right of the new-tab button,
+    // three cells each — right split first, down split second.
+    #[test]
+    fn the_split_buttons_stand_right_of_the_new_tab_button() {
+        let ws = Workspace::test_new("test");
+        let view = compute_tab_bar_view(&ws, &[], Rect::new(0, 0, 80, 1), 0, true, true);
+
+        assert!(view.new_tab_hit_area.width > 0, "precondition: + is drawn");
+        assert_eq!(
+            view.split_right_hit_area.x,
+            view.new_tab_hit_area.x + view.new_tab_hit_area.width
+        );
+        assert_eq!(view.split_right_hit_area.width, 3);
+        assert_eq!(
+            view.split_down_hit_area.x,
+            view.split_right_hit_area.x + view.split_right_hit_area.width
+        );
+        assert_eq!(view.split_down_hit_area.width, 3);
+    }
+
+    // TP-TAB-SPLIT-01: keyboard-driven strips carry no button chrome at all.
+    #[test]
+    fn without_mouse_chrome_the_split_buttons_claim_nothing() {
+        let ws = Workspace::test_new("test");
+        let view = compute_tab_bar_view(&ws, &[], Rect::new(0, 0, 80, 1), 0, true, false);
+
+        assert_eq!(view.split_right_hit_area, Rect::default());
+        assert_eq!(view.split_down_hit_area, Rect::default());
+    }
+
+    // TP-TAB-SPLIT-01: the boundary sits AT three cells — exactly enough for
+    // the right button seats it whole, and the down button, with nothing
+    // left, claims nothing.
+    #[test]
+    fn a_strip_with_exactly_three_spare_cells_seats_the_right_button_alone() {
+        let ws = Workspace::test_new("test");
+        // The + button starts flush at the last tab's end (no gap), so the
+        // spare cells after it are exactly SPLIT_BUTTON_WIDTH here.
+        let width = tab_width(&ws, 0) + NEW_TAB_WIDTH + SPLIT_BUTTON_WIDTH;
+        let view = compute_tab_bar_view(&ws, &[], Rect::new(0, 0, width, 1), 0, true, true);
+
+        assert_eq!(view.split_right_hit_area.width, SPLIT_BUTTON_WIDTH);
+        assert_eq!(view.split_down_hit_area.width, 0);
+    }
+
+    // TP-TAB-SPLIT-01: a strip too narrow to seat the buttons claims no hit
+    // cells for them — a button that cannot paint must not be pressable.
+    #[test]
+    fn a_strip_too_narrow_for_the_split_buttons_claims_nothing() {
+        let ws = Workspace::test_new("test");
+        // Room for the tab and the + button only.
+        let width = tab_width(&ws, 0) + 1 + NEW_TAB_WIDTH;
+        let view = compute_tab_bar_view(&ws, &[], Rect::new(0, 0, width, 1), 0, true, true);
+
+        assert_eq!(view.split_right_hit_area.width, 0);
+        assert_eq!(view.split_down_hit_area.width, 0);
+    }
+
+    // TP-TAB-NAME-01: the strip shows at most twenty cells of a name, so a
+    // long name cannot squeeze its neighbours out of reach.
+    #[test]
+    fn a_long_tab_name_is_clamped_to_twenty_cells() {
+        let mut ws = Workspace::test_new("test");
+        ws.tabs[0].set_custom_name("abcdefghijklmnopqrstuvwxyz".into());
+
+        let label = tab_chrome_label(&ws, 0);
+        assert_eq!(display_width_u16(&label), 20);
+        assert!(label.ends_with('…'), "the cut is announced: {label:?}");
+        assert_eq!(tab_width(&ws, 0), 24, "width follows the clamped label");
+    }
+
+    // TP-TAB-NAME-01: the boundary — a name exactly at the limit is whole,
+    // no ellipsis pretending something was cut.
+    #[test]
+    fn a_name_exactly_at_the_limit_is_untouched() {
+        let mut ws = Workspace::test_new("test");
+        ws.tabs[0].set_custom_name("abcdefghijklmnopqrst".into());
+
+        assert_eq!(tab_chrome_label(&ws, 0), "abcdefghijklmnopqrst");
+    }
+
+    #[test]
+    fn a_name_under_the_limit_is_untouched() {
+        let mut ws = Workspace::test_new("test");
+        ws.tabs[0].set_custom_name("abcdefghijklmnopqrs".into());
+
+        assert_eq!(tab_chrome_label(&ws, 0), "abcdefghijklmnopqrs");
+    }
+
+    // TP-TAB-NAME-01: the unseen dot and the zoom suffix are state channels;
+    // the clamp runs on the name alone so neither can be swallowed by it.
+    #[test]
+    fn the_unseen_and_zoom_marks_survive_the_clamp() {
+        let mut ws = Workspace::test_new("test");
+        ws.tabs[0].set_custom_name("abcdefghijklmnopqrstuvwxyz".into());
+        ws.tabs[0].unseen = true;
+        ws.tabs[0].zoomed = true;
+
+        let label = tab_chrome_label(&ws, 0);
+        assert!(
+            label.starts_with("\u{25cf} "),
+            "unseen dot leads: {label:?}"
+        );
+        assert!(label.ends_with(" Z"), "zoom suffix trails: {label:?}");
+        assert!(label.contains('…'), "the name itself is still clamped");
+    }
+
+    // TP-TAB-NAME-01: cells, not chars — a wide script hits the limit sooner.
+    #[test]
+    fn the_clamp_measures_display_cells_not_chars() {
+        let mut ws = Workspace::test_new("test");
+        ws.tabs[0].set_custom_name("反馈反馈反馈反馈反馈反馈".into());
+
+        let label = tab_chrome_label(&ws, 0);
+        assert!(
+            (19..=20).contains(&display_width_u16(&label)),
+            "clamped by display width: {label:?}"
+        );
+        assert!(label.ends_with('…'));
     }
 
     #[test]
