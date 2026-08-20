@@ -876,6 +876,37 @@ impl HeadlessServer {
             crate::render_prof::event("full_render_cause.deferred_project_chat_tab");
         }
 
+        // TP-DEFER-PERSON-01: the chat-row verbs and the module verbs are
+        // person actions like every other request here; the monolithic loop
+        // consumed them and this pass did not, so on the server every
+        // installed herdr actually runs they parked forever — a rename that
+        // renamed nothing, a move that moved nothing.
+        if let Some((session_id, target)) = self.app.state.request_chat_move.take() {
+            self.app.apply_chat_move(&session_id, target.as_deref());
+            needs_render = true;
+            crate::render_prof::event("full_render_cause.deferred_chat_move");
+        }
+        if let Some((session_id, name)) = self.app.state.request_chat_rename.take() {
+            self.app.apply_chat_rename(&session_id, &name);
+            needs_render = true;
+            crate::render_prof::event("full_render_cause.deferred_chat_rename");
+        }
+        if let Some((session_id, label)) = self.app.state.request_chat_label.take() {
+            self.app.apply_chat_label(&session_id, label);
+            needs_render = true;
+            crate::render_prof::event("full_render_cause.deferred_chat_label");
+        }
+        if let Some(module_key) = self.app.state.request_module_git_init.take() {
+            self.app.initialize_module_repository(&module_key);
+            needs_render = true;
+            crate::render_prof::event("full_render_cause.deferred_module_git_init");
+        }
+        if let Some(module_key) = self.app.state.request_module_branch_workspace.take() {
+            self.app.open_branch_workspace_for_module(&module_key);
+            needs_render = true;
+            crate::render_prof::event("full_render_cause.deferred_module_branch");
+        }
+
         // Preview show acts on an external browser window: no re-render.
         let _ = self.app.handle_preview_show_request();
 
@@ -5206,6 +5237,121 @@ mod tests {
             })
             .expect("tab created event");
         assert_eq!(tab_created.label, "ops");
+        shutdown_test_runtimes(&mut server);
+    }
+
+    // TP-DEFER-PERSON-01: the requests a person raises from a chat row —
+    // rename, move, label — are consumed by the headless server's deferred
+    // pass, not only by the monolithic loop. Measured live 2026-08-20: all
+    // three were set by the input road and never taken on the server every
+    // installed herdr actually runs, so renaming a chat did nothing at all.
+    #[tokio::test]
+    async fn a_deferred_chat_rename_reaches_the_ledger_on_the_headless_server() {
+        let event_hub = api::EventHub::default();
+        let mut server = test_headless_server_with_event_hub(event_hub.clone());
+
+        server.app.state.request_chat_rename = Some(("sess-1".into(), "yeni ad".into()));
+        assert!(server.handle_deferred_requests_headless());
+
+        assert!(server.app.state.request_chat_rename.is_none());
+        assert_eq!(
+            server
+                .app
+                .workspace_chat_ledger
+                .names
+                .get("sess-1")
+                .map(String::as_str),
+            Some("yeni ad")
+        );
+        shutdown_test_runtimes(&mut server);
+    }
+
+    // TP-DEFER-PERSON-01: the move half of the same gap — the reported
+    // shape was "the chat does not appear under the module I moved it to",
+    // because the move was never applied at all.
+    #[tokio::test]
+    async fn a_deferred_chat_move_reaches_the_ledger_on_the_headless_server() {
+        let event_hub = api::EventHub::default();
+        let mut server = test_headless_server_with_event_hub(event_hub.clone());
+
+        server.app.state.request_chat_move = Some(("sess-2".into(), Some("modul-hedef".into())));
+        assert!(server.handle_deferred_requests_headless());
+
+        assert!(server.app.state.request_chat_move.is_none());
+        assert_eq!(
+            server
+                .app
+                .workspace_chat_ledger
+                .moves
+                .get("sess-2")
+                .map(String::as_str),
+            Some("modul-hedef")
+        );
+        shutdown_test_runtimes(&mut server);
+    }
+
+    // TP-DEFER-PERSON-01: and the label half — hiding a chore from the
+    // drawer went the same dead road.
+    #[tokio::test]
+    async fn a_deferred_chat_label_reaches_the_ledger_on_the_headless_server() {
+        let event_hub = api::EventHub::default();
+        let mut server = test_headless_server_with_event_hub(event_hub.clone());
+
+        server.app.state.request_chat_label = Some((
+            "sess-3".into(),
+            Some(crate::chat_labels::ChatLabel::Routine),
+        ));
+        assert!(server.handle_deferred_requests_headless());
+
+        assert!(server.app.state.request_chat_label.is_none());
+        assert!(server
+            .app
+            .workspace_chat_ledger
+            .labels
+            .contains_key("sess-3"));
+        shutdown_test_runtimes(&mut server);
+    }
+
+    // TP-CHAT-NAME-02: the open tab wearing the conversation follows the
+    // rename — the row and the tab are two views of one name, and the
+    // reported half of the defect was exactly "the tab's reference label
+    // does not rename either".
+    #[tokio::test]
+    async fn a_rename_reaches_the_open_tab_wearing_that_conversation() {
+        let event_hub = api::EventHub::default();
+        let mut server = test_headless_server_with_event_hub(event_hub.clone());
+        server
+            .app
+            .create_workspace_with_options(std::env::temp_dir(), true)
+            .unwrap();
+        let ws_idx = server.app.state.active.expect("workspace");
+        server.app.state.workspaces[ws_idx].tabs[0].resumed_session_id = Some("sess-t".into());
+
+        server.app.state.request_chat_rename = Some(("sess-t".into(), "taze ad".into()));
+        assert!(server.handle_deferred_requests_headless());
+
+        assert_eq!(
+            server.app.state.workspaces[ws_idx].tabs[0]
+                .custom_name
+                .as_deref(),
+            Some("taze ad")
+        );
+        shutdown_test_runtimes(&mut server);
+    }
+
+    // TP-DEFER-PERSON-01: the module verbs ride the same pass — consumed,
+    // not parked forever.
+    #[tokio::test]
+    async fn deferred_module_requests_are_consumed_on_the_headless_server() {
+        let event_hub = api::EventHub::default();
+        let mut server = test_headless_server_with_event_hub(event_hub.clone());
+
+        server.app.state.request_module_git_init = Some("mod-a".into());
+        server.app.state.request_module_branch_workspace = Some("mod-b".into());
+        assert!(server.handle_deferred_requests_headless());
+
+        assert!(server.app.state.request_module_git_init.is_none());
+        assert!(server.app.state.request_module_branch_workspace.is_none());
         shutdown_test_runtimes(&mut server);
     }
 

@@ -218,6 +218,25 @@ impl App {
         if !self.workspace_chat_ledger.set_name(session_id, name) {
             return;
         }
+        // TP-CHAT-NAME-02: the open tab wearing this conversation follows
+        // the rename — the row and the tab are two views of one name, and
+        // half of the reported defect was exactly the tab's reference label
+        // staying stale. A withdrawn (blank) name leaves the tab alone: the
+        // ledger falls back to the derived title, and the tab keeps whatever
+        // it was wearing rather than being blanked.
+        let renamed = name.trim();
+        if !renamed.is_empty() {
+            if let Some((ws_idx, tab_idx)) = self.state.find_resumed_chat_tab(session_id) {
+                if let Some(tab) = self
+                    .state
+                    .workspaces
+                    .get_mut(ws_idx)
+                    .and_then(|ws| ws.tabs.get_mut(tab_idx))
+                {
+                    tab.set_custom_name(renamed.to_string());
+                }
+            }
+        }
         self.sync_workspace_chat_rows();
         if self.no_session {
             return;
