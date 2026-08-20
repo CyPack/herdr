@@ -951,24 +951,16 @@ fn sync_trail_view(app: &mut AppState, viewport_area: Rect) -> TrailViewSnapshot
     );
     let detail_preferred_width = file_manager.miller.preview_preferred_width;
     let horizontal = file_manager.miller.horizontal;
-    let mut snapshot = if horizontal.follow_active {
-        file_manager::trail_view::project_trail_view_with_detail_width(
-            viewport_area,
-            &file_manager.trail,
-            &file_manager.trail_snapshots,
-            &preferred_widths,
-            detail_preferred_width,
-        )
-    } else {
-        file_manager::trail_view::project_trail_view_with_origin(
-            viewport_area,
-            &file_manager.trail,
-            &file_manager.trail_snapshots,
-            &preferred_widths,
-            detail_preferred_width,
-            horizontal.offset_cells,
-        )
-    };
+    let vertical = file_manager.miller.vertical.clone();
+    let mut snapshot = file_manager::trail_view::project_trail_view_both_axes(
+        viewport_area,
+        &file_manager.trail,
+        &file_manager.trail_snapshots,
+        &preferred_widths,
+        detail_preferred_width,
+        (!horizontal.follow_active).then_some(horizontal.offset_cells),
+        &vertical,
+    );
     if !snapshot.columns.is_empty() {
         file_manager.miller.horizontal.offset_cells = snapshot.offset_cells;
     }
