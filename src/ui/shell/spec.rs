@@ -584,16 +584,19 @@ mod tests {
                 "[shell.bars.top]\nenabled = true\n\n\
                  [[shell.bars.top.sections]]\nkind = \"content\"\n\
                  widget = {{ kind = \"label\", text = \"x\" }}\n\
-                 action = {{ kind = \"{kind}\", {base}, {key} = {value} }}\n",
+                 action = {{ kind = \"{kind}\", {base}{key} = {value} }}\n",
                 // The key that makes each kind complete, so the only thing
                 // left to complain about is the one under test. A `panic!`
                 // rather than a fallback: an action kind added later has to
                 // name its own required key here, and a silent default would
                 // hand it whichever one the neighbour happened to use.
                 base = match kind {
-                    "popup" | "run" => "argv = [\"true\"]",
-                    "plugin" => "command = \"files.open\"",
-                    "workspace" => "name = \"herdr\"",
+                    "popup" | "run" => "argv = [\"true\"], ",
+                    "plugin" => "command = \"files.open\", ",
+                    "workspace" => "name = \"herdr\", ",
+                    // Complete bare: it reads no keys, so the only thing left
+                    // to complain about is already the one under test.
+                    "hide" => "",
                     other => panic!("no complete section shape for action kind {other:?}"),
                 },
             );

@@ -474,6 +474,16 @@ pub(crate) enum BarConfigProblem {
         index: usize,
         kind: &'static str,
     },
+    /// A `hide` action carrying a command line.
+    ///
+    /// It runs nothing and opens nothing — the one thing it acts on is the bar
+    /// it sits in — so an `argv` or a plugin `command` beside it is a line that
+    /// looks like it configures something and never can.
+    HideActionWithCommand {
+        edge: &'static str,
+        index: usize,
+        field: &'static str,
+    },
     /// A `workspace` action with no destination.
     WorkspaceActionWithoutName {
         edge: &'static str,
@@ -731,6 +741,11 @@ impl std::fmt::Display for BarConfigProblem {
                 formatter,
                 "shell.bars.{edge}.sections[{index}].action.name is set on a \"{kind}\" \
                  action, which goes to no workspace, so the name is never read"
+            ),
+            Self::HideActionWithCommand { edge, index, field } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}].action sets {field}, but \"hide\" runs \
+                 nothing — it only switches its own bar off — so the line is never read"
             ),
             Self::WorkspaceActionWithoutName { edge, index } => write!(
                 formatter,
@@ -1474,6 +1489,15 @@ impl BarEdges {
     pub(crate) const fn is_empty(self) -> bool {
         !(self.top || self.bottom || self.left || self.right)
     }
+
+    pub(crate) fn insert(&mut self, edge: BarEdge) {
+        match edge {
+            BarEdge::Top => self.top = true,
+            BarEdge::Bottom => self.bottom = true,
+            BarEdge::Left => self.left = true,
+            BarEdge::Right => self.right = true,
+        }
+    }
 }
 
 /// What a click on one section of a bar does.
@@ -1553,6 +1577,14 @@ pub(crate) enum SectionAction {
     /// config could know, and the index is display order. The name is what the
     /// person typed and what they recognise.
     FocusWorkspace { name: String },
+    /// Switch the bar this section sits on off.
+    ///
+    /// The one action that acts on the chrome itself rather than opening or
+    /// running anything, which is why it carries nothing: the edge comes from
+    /// where the section is, and there is nothing to size, present or name.
+    /// The way back is the global key — `keys.toggle_bars` — which empties
+    /// the switch whatever filled it.
+    Hide,
 }
 
 /// How a secondary press presents a section's command.
@@ -2362,6 +2394,18 @@ const ACTION_KINDS: &[SectionKind<SectionAction>] = &[
                   action = { kind = \"workspace\", name = \"herdr\" }\n",
         build: workspace_action,
     },
+    SectionKind {
+        name: "hide",
+        keys: &[],
+        // It runs nothing, opens nothing and goes nowhere, so every key the
+        // other kinds read is a leftover here.
+        refuses: &["argv", "command", "width", "height", "secondary", "name"],
+        example: "[shell.bars.top]\nenabled = true\n\n\
+                  [[shell.bars.top.sections]]\nkind = \"content\"\n\
+                  widget = { kind = \"label\", text = \"hide\" }\n\
+                  action = { kind = \"hide\" }\n",
+        build: hide_action,
+    },
 ];
 
 /// A command that runs and opens nothing.
@@ -2406,6 +2450,51 @@ fn run_action(at: SectionAt<'_>) -> Result<SectionAction, BarConfigProblem> {
     Ok(SectionAction::Run {
         argv: config.action.argv.clone(),
     })
+}
+
+/// Switch the bar this section sits on off.
+///
+/// Reads nothing, so everything it could be handed is a leftover — and each
+/// one is refused by name, because a line that looks like it configures
+/// something and never can is the same half-finished edit `no_action`
+/// already refuses.
+fn hide_action(at: SectionAt<'_>) -> Result<SectionAction, BarConfigProblem> {
+    let SectionAt {
+        config,
+        edge,
+        index,
+        ..
+    } = at;
+    if !config
+        .action
+        .argv
+        .iter()
+        .all(|argument| argument.trim().is_empty())
+    {
+        return Err(BarConfigProblem::HideActionWithCommand {
+            edge,
+            index,
+            field: "argv",
+        });
+    }
+    if !config.action.command.trim().is_empty() {
+        return Err(BarConfigProblem::HideActionWithCommand {
+            edge,
+            index,
+            field: "command",
+        });
+    }
+    if !config.action.name.trim().is_empty() {
+        return Err(BarConfigProblem::ActionWithUnusedName {
+            edge,
+            index,
+            kind: "hide",
+        });
+    }
+    if let Some(field) = presentation_leftover(config) {
+        return Err(BarConfigProblem::ActionWithUnusedPresentation { edge, index, field });
+    }
+    Ok(SectionAction::Hide)
 }
 
 /// Go to the workspace with this name.
@@ -4612,6 +4701,47 @@ mod tests {
                  ({actual_cells} cells × {actual_rows} rows)"
             );
         }
+    }
+
+    // TP-CHROME-142: a section can be its own hide button. `hide` reads no
+    // keys at all, so every key written beside it is a leftover from some
+    // other kind's shape — and each one is refused by name, because a line
+    // that looks like it configures something and never can is the same
+    // half-finished edit `no_action` already refuses.
+    #[test]
+    fn a_hide_action_reads_nothing_and_refuses_every_leftover() {
+        let hide = section_with_action("content", "hide", &[]);
+        assert_eq!(
+            section_action(&hide, "top", 0),
+            Ok(SectionAction::Hide),
+            "a bare hide is the whole of the grammar"
+        );
+
+        let mut with_argv = section_with_action("content", "hide", &["btop"]);
+        with_argv.action.argv = vec!["btop".to_string()];
+        assert!(
+            section_action(&with_argv, "top", 0).is_err(),
+            "an argv on an action that runs nothing is refused"
+        );
+
+        let mut with_command = section_with_action("content", "hide", &[]);
+        with_command.action.command = "files.open".to_string();
+        assert!(section_action(&with_command, "top", 0).is_err());
+
+        let mut with_name = section_with_action("content", "hide", &[]);
+        with_name.action.name = "herdr".to_string();
+        assert!(section_action(&with_name, "top", 0).is_err());
+
+        let mut with_width = section_with_action("content", "hide", &[]);
+        with_width.action.width = Some(crate::popup_size::PopupSize::Percent(60));
+        assert!(section_action(&with_width, "top", 0).is_err());
+
+        let mut with_secondary = section_with_action("content", "hide", &[]);
+        with_secondary.action.secondary = "menu".to_string();
+        assert!(
+            section_action(&with_secondary, "top", 0).is_err(),
+            "hide opens nothing, so a second presentation has nothing to show"
+        );
     }
 
     fn section_with_action(kind: &str, action_kind: &str, argv: &[&str]) -> ShellBarSectionConfig {

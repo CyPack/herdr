@@ -40,8 +40,9 @@ pub(crate) use model::{
     ShellNode, TrackPolicy,
 };
 pub(crate) use source::{
-    bar_color, derive_desktop_shell_layout, shell_config_problems, BarColors, BarEdges, BarTint,
-    SecondaryPresentation, SectionAction, SectionWidget, ShellBarChrome, ShellBars, SidebarChrome,
+    bar_color, bar_edge_for, derive_desktop_shell_layout, shell_config_problems, BarColors,
+    BarEdge, BarEdges, BarTint, SecondaryPresentation, SectionAction, SectionWidget,
+    ShellBarChrome, ShellBars, SidebarChrome,
 };
 pub(crate) use spec::{render_text as render_shell_spec_text, shell_spec};
 pub(crate) use template::ShellTemplateId;

@@ -684,6 +684,9 @@ impl App {
                     );
                 }
             }
+            BarSectionClick::HideBar { edge } => {
+                self.state.hide_bar_edge(edge);
+            }
             BarSectionClick::FocusWorkspace { name } => {
                 // Resolved now rather than when the config was read: a bar can
                 // name a checkout nobody has opened yet, and the list this
@@ -1709,6 +1712,69 @@ mod tests {
 
     /// An app whose top bar is one cell tall and divided into a single ten-cell
     /// section that opens a popup, with the geometry computed.
+    // TP-CHROME-142, end to end: a real press on a hide section reaches the
+    // switch through the same mouse path every other section action takes, and
+    // the next frame's filter has the edge gone. The resolution and the state
+    // method have their own tests; this is the wiring between them, which is
+    // exactly the line a refactor of the click dispatch would drop first.
+    #[test]
+    fn a_real_press_on_a_hide_section_switches_the_bar_off() {
+        let mut section = crate::config::ShellBarSectionConfig {
+            kind: "fixed".to_string(),
+            cells: 10,
+            ..Default::default()
+        };
+        section.action.kind = "hide".to_string();
+
+        let bars = crate::config::ShellBarsConfig {
+            top: crate::config::ShellBarConfig {
+                enabled: true,
+                size: 1,
+                border: false,
+                color: String::new(),
+                gradient: Vec::new(),
+                sections: vec![section],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let mut app = test_app();
+        app.state.shell_presentation = crate::ui::shell::ShellPresentationState::from_restored(
+            26,
+            false,
+            None,
+            crate::ui::shell::ShellBars::from_config(&bars),
+        );
+        app.state.shell_bar_chrome =
+            crate::ui::shell::ShellBarChrome::themed_by_default(&bars, true);
+        crate::ui::compute_view(&mut app.state, ratatui::layout::Rect::new(0, 0, 106, 40));
+
+        let consumed = app.handle_bar_section_mouse(bar_mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            4,
+            0,
+            KeyModifiers::NONE,
+        ));
+
+        assert!(consumed, "the bar owns the press");
+        let off = app.state.shell_presentation.toggled_off();
+        assert!(!off.is_empty(), "the press reached the switch");
+        assert!(
+            !app.state
+                .shell_presentation
+                .bars()
+                .visible(false, off)
+                .top
+                .enabled(),
+            "and the next frame draws no top bar"
+        );
+        assert!(
+            app.state.shell_presentation.bars().top.enabled(),
+            "while the stored value never heard about it"
+        );
+    }
+
     fn app_with_a_clickable_top_bar_section() -> App {
         let mut section = crate::config::ShellBarSectionConfig {
             kind: "fixed".to_string(),

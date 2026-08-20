@@ -104,6 +104,14 @@ pub(crate) enum BarSectionClick {
     /// success, because a command that opened nothing leaves nothing to look
     /// at — only failure is worth saying out loud.
     RunCommand { argv: Vec<String> },
+    /// Switch the bar this section sits on off.
+    ///
+    /// Carries the edge rather than re-deriving it later: the layer that acts
+    /// on this has no position in hand any more, and the resolution that does
+    /// is the one place drawing, hitting and acting already agree on
+    /// (`bar_edge_for`). A second derivation is how a click on one bar comes
+    /// to hide another.
+    HideBar { edge: crate::ui::shell::BarEdge },
     /// Go to the workspace with this name.
     ///
     /// Resolved where the workspaces are, not here: pure state can answer which
@@ -241,6 +249,19 @@ impl AppState {
                     }
                     crate::ui::shell::SecondaryPresentation::Inert => BarSectionClick::Inert,
                 },
+            },
+            Some(crate::ui::shell::SectionAction::Hide) => match gesture {
+                SectionGesture::Primary => match crate::ui::shell::bar_edge_for(region) {
+                    Some(edge) => BarSectionClick::HideBar { edge },
+                    // A section only resolves inside an edge bar, so there is
+                    // nothing for this arm to be — but fail closed rather than
+                    // into whichever edge happens to be last (TP-CHROME-38's
+                    // rule, applied to the press that acts on the chrome).
+                    None => BarSectionClick::Inert,
+                },
+                // Nothing to present, and the bar stays chrome: an event that
+                // fell through would act on the surface behind it (CL12).
+                SectionGesture::Secondary => BarSectionClick::Inert,
             },
             Some(crate::ui::shell::SectionAction::InvokePlugin { action }) => match gesture {
                 SectionGesture::Primary => BarSectionClick::InvokePlugin {
@@ -516,6 +537,21 @@ impl AppState {
             return false;
         }
         self.shell_presentation.set_toggled_off(enabled);
+        true
+    }
+
+    /// Switch one edge off — the hide button's half of the gesture.
+    ///
+    /// Insert rather than replace: two hide buttons pressed in turn leave two
+    /// edges off, and the global key releases them together. No session-dirty
+    /// mark, for the reason `toggle_bars` gives.
+    pub(crate) fn hide_bar_edge(&mut self, edge: crate::ui::shell::BarEdge) -> bool {
+        let mut off = self.shell_presentation.toggled_off();
+        off.insert(edge);
+        if off == self.shell_presentation.toggled_off() {
+            return false;
+        }
+        self.shell_presentation.set_toggled_off(off);
         true
     }
 
@@ -1190,6 +1226,91 @@ mod tests {
         let area = Rect::new(0, 0, 106, 40);
         crate::ui::compute_view(&mut state, area);
         (state, area)
+    }
+
+    /// The bottom-bar twin of the fixture above, and deliberately not the top
+    /// bar: a resolution that hardcoded one edge would still pass every test
+    /// written on that edge, which is masking, not coverage.
+    fn state_with_divided_bottom_bar(
+        sections: Vec<crate::config::ShellBarSectionConfig>,
+    ) -> (AppState, Rect) {
+        let config = crate::config::ShellBarsConfig {
+            bottom: crate::config::ShellBarConfig {
+                enabled: true,
+                size: 1,
+                border: false,
+                hide_when_focused: false,
+                color: String::new(),
+                gradient: Vec::new(),
+                sections,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let mut state = AppState::test_new();
+        state.shell_presentation = crate::ui::shell::ShellPresentationState::from_restored(
+            26,
+            false,
+            None,
+            crate::ui::shell::ShellBars::from_config(&config),
+        );
+        state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::themed_by_default(&config, true);
+        let area = Rect::new(0, 0, 106, 40);
+        crate::ui::compute_view(&mut state, area);
+        (state, area)
+    }
+
+    fn hide_section(cells: u16) -> crate::config::ShellBarSectionConfig {
+        let mut section = inert_section(cells);
+        section.action.kind = "hide".to_string();
+        section
+    }
+
+    // TP-CHROME-142: a press on a hide section switches its *own* edge off —
+    // resolved on the bottom bar, so a resolution that hardcoded an edge
+    // cannot pass. The second gesture stays inert: hide opens nothing, so it
+    // has no second presentation to offer, and the bar is chrome — an event
+    // that fell through would act on the surface behind it.
+    #[test]
+    fn a_press_on_a_hide_section_names_its_own_edge() {
+        let (state, area) = state_with_divided_bottom_bar(vec![hide_section(10)]);
+        let inside = Position::new(4, area.height - 1);
+
+        assert_eq!(
+            state.bar_section_click_at(inside, SectionGesture::Primary),
+            BarSectionClick::HideBar {
+                edge: crate::ui::shell::BarEdge::Bottom
+            },
+            "the press names the edge the section actually sits on"
+        );
+        assert_eq!(
+            state.bar_section_click_at(inside, SectionGesture::Secondary),
+            BarSectionClick::Inert,
+            "hide has nothing to present, and the bar stays chrome"
+        );
+    }
+
+    // TP-CHROME-142: the state half. One edge goes quiet, the others stay,
+    // and the global key over that partial state restores rather than hides.
+    #[test]
+    fn hiding_one_edge_leaves_the_others_and_the_key_restores() {
+        let mut state = AppState::test_new();
+        state.shell_presentation.set_bars(bars_on_two_edges());
+
+        assert!(state.hide_bar_edge(crate::ui::shell::BarEdge::Top));
+        let drawn = state
+            .shell_presentation
+            .bars()
+            .visible(false, state.shell_presentation.toggled_off());
+        assert!(!drawn.top.enabled(), "the named edge is quiet");
+        assert!(drawn.right.enabled(), "its neighbour still draws");
+
+        assert!(state.toggle_bars(), "the key over a partial state acts");
+        assert!(
+            state.shell_presentation.toggled_off().is_empty(),
+            "and it restores — the press means \"give me my bars back\""
+        );
     }
 
     fn popup_section(cells: u16, argv: &[&str]) -> crate::config::ShellBarSectionConfig {

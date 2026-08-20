@@ -622,6 +622,29 @@ If a hide button (below) has switched a single edge off, the same press brings e
 back rather than switching the rest off too: over a partly quiet screen, the key means
 "give me my bars back".
 
+A bar can also carry its own hide button, the way the sidebar carries its collapse control —
+except that a bar is composed by you, so the button is too. `action = { kind = "hide" }`
+switches off the edge the section sits on:
+
+```toml
+[shell.bars.top]
+enabled = true
+size    = 1
+border  = false
+
+[[shell.bars.top.sections]]
+kind = "fill"
+
+[[shell.bars.top.sections]]
+kind   = "content"
+widget = { kind = "label", text = "hide" }
+action = { kind = "hide" }
+```
+
+`hide` reads no keys at all — it runs nothing, opens nothing and goes nowhere, so anything
+written beside it is refused by name rather than silently ignored. The way back is
+`prefix+shift+b`, which is why the two ship together.
+
 ### Putting something in a section
 
 A section is empty until it is given a widget. There are six kinds:
@@ -951,6 +974,7 @@ A section is three independent choices, and every combination is allowed:
 | `content` — between `min` and `max` | `resource` · `meter` · `sparkline` | `plugin` — invoke an installed plugin's action |
 | | `icon` | `run` — run `argv` and open nothing |
 | | `clock` | `workspace` — go to a workspace by name |
+| | | `hide` — switch this bar off; `prefix+shift+b` brings it back |
 
 The three are asked separately on purpose: adding a widget never changes how wide a section is, and adding an action never changes what it draws. A picture that opens a popup is an icon widget plus a popup action, not a fourth kind of thing.
 
