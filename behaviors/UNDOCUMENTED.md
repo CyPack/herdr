@@ -23,7 +23,7 @@ prose — what the behavior is and what breaks if it is lost.
 | TP-A3.1 | `enter_directory_appends_segment_and_focuses_child` |
 | TP-A3.2 | `enter_on_file_is_noop` |
 | TP-A3.3 | `leave_ascends_to_parent` |
-| TP-A3.3-DISPATCH | `file_double_click_stays_selected_without_entering`, `rapid_clicks_on_different_rows_do_not_activate_directory`, `repeated_directory_click_preserves_prepared_branch_without_entering`, `single_click_selects_current_row_and_refreshes_preview`, `wheel_moves_cursor_within_bounds_only_over_current_rows` |
+| TP-A3.3-DISPATCH | `file_double_click_stays_selected_without_entering`, `rapid_clicks_on_different_rows_do_not_activate_directory`, `repeated_directory_click_preserves_prepared_branch_without_entering`, `single_click_selects_current_row_and_refreshes_preview`, `wheel_scrolls_within_bounds_only_over_column_bodies` |
 | TP-A3.3-DISPATCH-STALE | `stale_row_index_is_consumed_without_selecting_another_entry` |
 | TP-A3.4 | `leave_at_root_is_noop` |
 | TP-A3.5 | `jk_moves_cursor` |
@@ -144,10 +144,10 @@ prose — what the behavior is and what breaks if it is lost.
 | TP-FM3-CURRENT-CUTOVER | `current_plain_click_uses_typed_miller_target_without_legacy_rows` |
 | TP-FM3-DIRECTORY-GENERATION | `directory_generation_changes_on_reload_not_cursor_selection` |
 | TP-FM3-NONCURRENT-CONTEXT | `right_click_live_non_current_row_opens_exact_context_menu` |
-| TP-FM3-NONCURRENT-MODIFIERS | `plain_wheel_clamps_hovered_parent_trail_selection` |
+| TP-FM3-NONCURRENT-MODIFIERS | `plain_wheel_clamps_the_hovered_parent_column_at_its_first_line` |
 | TP-FM3-OVERLAY | `overlay_blocks_every_typed_miller_row_gesture` |
-| TP-FM3-PARENT-WHEEL | `plain_wheel_clamps_hovered_parent_trail_selection` |
-| TP-FM3-PREVIEW-WHEEL | `plain_wheel_moves_only_hovered_child_trail_selection` |
+| TP-FM3-PARENT-WHEEL | `plain_wheel_clamps_the_hovered_parent_column_at_its_first_line` |
+| TP-FM3-PREVIEW-WHEEL | `plain_wheel_scrolls_only_the_hovered_child_column` |
 | TP-FM3-STALE-CONTEXT | `non_shift_modified_wheel_is_consumed_without_moving_any_axis` |
 | TP-FM3-TOCTOU | `right_click_live_non_current_row_opens_exact_context_menu` |
 | TP-FM4-APP-ADAPTER | `attachment_picker_directory_enter_is_pure_until_app_adapter`, `attachment_picker_leave_is_pure_until_app_adapter` |
@@ -174,8 +174,8 @@ prose — what the behavior is and what breaks if it is lost.
 | TP-FMN-NAV-06 | `fmstate_directory_cursor_does_not_activate_child_on_open`, `miller_resize_projection_tracks_active_owner_after_commit` |
 | TP-FMN-NAV-07 | `auto_follow_tracks_active_column_instead_of_deepest_preview` |
 | TP-FMN-RENDER-01 | `clamped_keyboard_vertical_move_declines_render`, `clamped_shift_vertical_move_is_inert_and_preserves_selection`, `clamped_vertical_wheel_declines_render`, `cursor_only_parent_move_projects_new_highlight_without_stale_child` |
-| TP-FMN-WHEEL-01 | `vertical_wheel_microburst_collapses_exact_host_triplet`, `vertical_wheel_microburst_moves_one_row_end_to_end` |
-| TP-FMN-WHEEL-02 | `vertical_wheel_filter_preserves_distinct_intent`, `vertical_wheel_microburst_moves_one_row_end_to_end` |
+| TP-FMN-WHEEL-01 | `vertical_wheel_microburst_collapses_exact_host_triplet`, `vertical_wheel_microburst_moves_one_line_end_to_end` |
+| TP-FMN-WHEEL-02 | `vertical_wheel_filter_preserves_distinct_intent`, `vertical_wheel_microburst_moves_one_line_end_to_end` |
 | TP-FMN-WHEEL-03 | `plain_wheel_moves_one_ancestor_row_without_child_focus_transfer` |
 | TP-FMP-FILE-01 | `resident_file_selection_projects_without_filesystem_reads` |
 | TP-FMP-FILE-01b | `resident_file_selection_projects_without_filesystem_reads` |

@@ -1251,6 +1251,17 @@ impl FmState {
             debug_assert!(false, "validated Trail cursor projection must install");
             return trail_snapshots::TrailCursorMoveOutcome::Rejected;
         }
+        // TP-TRAIL-VSCROLL-03: moving the cursor gives this column's window
+        // back to the selection. Without it, a reader who scrolled a column
+        // and then pressed an arrow would move a selection they cannot see.
+        if let Some(directory) = self
+            .trail
+            .cols()
+            .get(owner_col)
+            .map(|column| column.directory.clone())
+        {
+            self.miller.vertical.follow_selection(&directory);
+        }
         outcome
     }
 

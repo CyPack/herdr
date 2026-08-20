@@ -69,6 +69,11 @@ pub(crate) struct TrailColumnView {
     pub selected_entry: Option<usize>,
     pub viewport_start: usize,
     pub line_start: usize,
+    /// Logical lines this column's listing has, and how many of them fit.
+    /// TP-TRAIL-VSCROLL-01: the wheel needs both to know whether a column can
+    /// scroll at all and where its last full window starts.
+    pub line_total: usize,
+    pub line_height: usize,
     pub section_headers: Vec<TrailSectionHeaderView>,
     pub rows: Vec<TrailRowView>,
     /// Prepared non-actionable explanation for omitted entries.
@@ -144,27 +149,11 @@ pub(crate) fn project_trail_view(
         TRAIL_DETAIL_PANEL_DEFAULT_WIDTH,
         None,
         LocalCalendarAnchor::now(),
+        &crate::fm::miller::MillerVerticalViewport::default(),
     )
 }
 
-pub(crate) fn project_trail_view_with_detail_width(
-    stage: Rect,
-    trail: &TrailState,
-    snaps: &TrailSnapshots,
-    preferred_widths: &[u16],
-    detail_preferred_width: u16,
-) -> TrailViewSnapshot {
-    project_trail_view_inner(
-        stage,
-        trail,
-        snaps,
-        preferred_widths,
-        detail_preferred_width,
-        None,
-        LocalCalendarAnchor::now(),
-    )
-}
-
+#[cfg(test)]
 pub(crate) fn project_trail_view_with_origin(
     stage: Rect,
     trail: &TrailState,
@@ -173,14 +162,59 @@ pub(crate) fn project_trail_view_with_origin(
     detail_preferred_width: u16,
     requested_offset_cells: u32,
 ) -> TrailViewSnapshot {
-    project_trail_view_inner(
+    project_trail_view_both_axes(
         stage,
         trail,
         snaps,
         preferred_widths,
         detail_preferred_width,
         Some(requested_offset_cells),
+        &crate::fm::miller::MillerVerticalViewport::default(),
+    )
+}
+
+/// The production projection: both axes at once. Horizontal origin `None`
+/// means "follow the active column", exactly as the older wrappers mean it;
+/// `vertical` carries whichever columns the reader has scrolled by hand.
+/// TP-TRAIL-VSCROLL-01.
+pub(crate) fn project_trail_view_both_axes(
+    stage: Rect,
+    trail: &TrailState,
+    snaps: &TrailSnapshots,
+    preferred_widths: &[u16],
+    detail_preferred_width: u16,
+    requested_offset_cells: Option<u32>,
+    vertical: &crate::fm::miller::MillerVerticalViewport,
+) -> TrailViewSnapshot {
+    project_trail_view_inner(
+        stage,
+        trail,
+        snaps,
+        preferred_widths,
+        detail_preferred_width,
+        requested_offset_cells,
         LocalCalendarAnchor::now(),
+        vertical,
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn project_trail_view_with_vertical(
+    stage: Rect,
+    trail: &TrailState,
+    snaps: &TrailSnapshots,
+    preferred_widths: &[u16],
+    vertical: &crate::fm::miller::MillerVerticalViewport,
+) -> TrailViewSnapshot {
+    project_trail_view_inner(
+        stage,
+        trail,
+        snaps,
+        preferred_widths,
+        TRAIL_DETAIL_PANEL_DEFAULT_WIDTH,
+        None,
+        LocalCalendarAnchor::now(),
+        vertical,
     )
 }
 
@@ -200,6 +234,7 @@ pub(crate) fn project_trail_view_at(
         TRAIL_DETAIL_PANEL_DEFAULT_WIDTH,
         None,
         anchor,
+        &crate::fm::miller::MillerVerticalViewport::default(),
     )
 }
 
@@ -220,6 +255,7 @@ pub(crate) fn project_trail_view_at_with_origin(
         TRAIL_DETAIL_PANEL_DEFAULT_WIDTH,
         Some(requested_offset_cells),
         anchor,
+        &crate::fm::miller::MillerVerticalViewport::default(),
     )
 }
 
@@ -262,9 +298,21 @@ fn visible_logical_range(
     lines: &[TrailLogicalLine],
     selected_entry: Option<usize>,
     height: usize,
+    manual_start: Option<usize>,
 ) -> (usize, usize) {
     if height == 0 || lines.is_empty() {
         return (0, 0);
+    }
+    // TP-TRAIL-VSCROLL-01: a window the reader placed wins over the
+    // selection-follow default, clamped to the last full window so a scrolled
+    // column never paints half empty with content still below it.
+    if let Some(manual) = manual_start {
+        let start = manual.min(lines.len().saturating_sub(height));
+        let mut end = start.saturating_add(height).min(lines.len());
+        if end > start && matches!(lines[end - 1], TrailLogicalLine::Header { .. }) {
+            end -= 1;
+        }
+        return (start, end);
     }
     let selected_line = selected_entry.and_then(|selected| {
         lines.iter().position(|line| {
@@ -293,6 +341,7 @@ fn project_trail_view_inner(
     detail_preferred_width: u16,
     requested_offset_cells: Option<u32>,
     anchor: LocalCalendarAnchor,
+    vertical: &crate::fm::miller::MillerVerticalViewport,
 ) -> TrailViewSnapshot {
     let all_trail_cols = trail.cols();
     let all_snap_cols = snaps.cols();
@@ -384,8 +433,12 @@ fn project_trail_view_inner(
             let has_status = snap_cols[trail_index].omission_message().is_some();
             let height = usize::from(column.rect.height.saturating_sub(u16::from(has_status)));
             let logical_lines = trail_logical_lines(entries, anchor);
-            let (line_start, line_end) =
-                visible_logical_range(&logical_lines, selected_entry, height);
+            let (line_start, line_end) = visible_logical_range(
+                &logical_lines,
+                selected_entry,
+                height,
+                vertical.start_for(snap_cols[trail_index].directory()),
+            );
             let visible_lines = &logical_lines[line_start..line_end];
             let viewport_start = visible_lines
                 .iter()
@@ -526,6 +579,8 @@ fn project_trail_view_inner(
                 selected_entry,
                 viewport_start,
                 line_start,
+                line_total: logical_lines.len(),
+                line_height: height,
                 section_headers,
                 rows,
                 status_rect,
@@ -1085,6 +1140,115 @@ mod tests {
                 .iter()
                 .any(|row| row.entry_index == 25 && row.entry_path == target),
             "the selected row is inside the visible vertical window"
+        );
+    }
+
+    // TP-TRAIL-VSCROLL-01: a hovered column's own window start, honoured over
+    // the selection-follow default. The selection does not move.
+    #[test]
+    fn a_manual_line_start_moves_the_window_without_moving_the_selection() {
+        let td = TempDir::new("vmanual");
+        for file in 0..30 {
+            let path = td.root.join(format!("f{file:02}.txt"));
+            fs::write(&path, b"x").expect("file");
+            fs::File::open(path)
+                .expect("open vmanual mtime fixture")
+                .set_times(
+                    fs::FileTimes::new()
+                        .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(10)),
+                )
+                .expect("set vmanual fixture mtime");
+        }
+        let mut trail = TrailState::new(&td.root);
+        let mut snaps = TrailSnapshots::new(false);
+        snaps.sync(&trail);
+        let target = td.root.join("f00.txt");
+        assert!(trail.select_file(0, &target));
+
+        let stage = Rect::new(0, 0, 40, 10);
+        let mut vertical = crate::fm::miller::MillerVerticalViewport::default();
+        vertical.set_start(&td.root, 12);
+        let view = project_trail_view_with_vertical(stage, &trail, &snaps, &[], &vertical);
+        let column = &view.columns[0];
+
+        assert_eq!(column.line_start, 12, "the window starts where it was put");
+        assert_eq!(
+            column.selected_entry,
+            Some(0),
+            "scrolling the content does not move the selection"
+        );
+        assert!(
+            !column.rows.iter().any(|row| row.entry_path == target),
+            "the selected row is simply out of view now"
+        );
+    }
+
+    // TP-TRAIL-VSCROLL-01: the boundary — a start past the end clamps to the
+    // last full window rather than showing a half-empty column.
+    #[test]
+    fn a_manual_line_start_is_clamped_to_the_last_full_window() {
+        let td = TempDir::new("vclamp");
+        for file in 0..30 {
+            let path = td.root.join(format!("f{file:02}.txt"));
+            fs::write(&path, b"x").expect("file");
+            fs::File::open(path)
+                .expect("open vclamp mtime fixture")
+                .set_times(
+                    fs::FileTimes::new()
+                        .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(10)),
+                )
+                .expect("set vclamp fixture mtime");
+        }
+        let trail = TrailState::new(&td.root);
+        let mut snaps = TrailSnapshots::new(false);
+        snaps.sync(&trail);
+
+        let stage = Rect::new(0, 0, 40, 10);
+        let mut vertical = crate::fm::miller::MillerVerticalViewport::default();
+        vertical.set_start(&td.root, 9_000);
+        let view = project_trail_view_with_vertical(stage, &trail, &snaps, &[], &vertical);
+        let column = &view.columns[0];
+
+        assert_eq!(
+            column.line_start,
+            column.line_total.saturating_sub(column.line_height),
+            "clamped to the last full window"
+        );
+        assert!(
+            column.line_total > column.line_height,
+            "precondition: it scrolls at all"
+        );
+    }
+
+    // TP-TRAIL-VSCROLL-01: with no manual start the old selection-follow rule
+    // is exactly what it was.
+    #[test]
+    fn without_a_manual_start_the_window_still_follows_the_selection() {
+        let td = TempDir::new("vfollow");
+        for file in 0..30 {
+            let path = td.root.join(format!("f{file:02}.txt"));
+            fs::write(&path, b"x").expect("file");
+            fs::File::open(path)
+                .expect("open vfollow mtime fixture")
+                .set_times(
+                    fs::FileTimes::new()
+                        .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(10)),
+                )
+                .expect("set vfollow fixture mtime");
+        }
+        let mut trail = TrailState::new(&td.root);
+        let mut snaps = TrailSnapshots::new(false);
+        snaps.sync(&trail);
+        let target = td.root.join("f25.txt");
+        assert!(trail.select_file(0, &target));
+
+        let stage = Rect::new(0, 0, 40, 10);
+        let vertical = crate::fm::miller::MillerVerticalViewport::default();
+        let view = project_trail_view_with_vertical(stage, &trail, &snaps, &[], &vertical);
+        let column = &view.columns[0];
+        assert!(
+            column.rows.iter().any(|row| row.entry_path == target),
+            "the selected row is inside the visible window"
         );
     }
 
