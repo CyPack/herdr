@@ -788,6 +788,21 @@ impl HeadlessServer {
     }
 
     fn handle_deferred_requests_headless(&mut self) -> bool {
+        // TP-MCF-CTX-07: every request this pass consumes was queued by a
+        // person's click, and that person sits at the foreground display —
+        // the same resolution TP-SUR-BROADCAST-05 uses for plugin-raised
+        // popups. Consumed with no viewer, the focus these actions move
+        // lands in the session's default registers: the display that asked
+        // watches nothing happen, and displays that never asked follow the
+        // default. With no focused display this resolves to `None`, which
+        // is exactly the single-view behaviour it replaces.
+        let previous_viewer = self.app.state.enter_viewer(self.foreground_client_id);
+        let handled = self.handle_deferred_requests_in_viewer();
+        self.app.state.restore_viewer(previous_viewer);
+        handled
+    }
+
+    fn handle_deferred_requests_in_viewer(&mut self) -> bool {
         let mut needs_render = false;
 
         if self.app.state.request_complete_onboarding {
@@ -5191,6 +5206,63 @@ mod tests {
             })
             .expect("tab created event");
         assert_eq!(tab_created.label, "ops");
+        shutdown_test_runtimes(&mut server);
+    }
+
+    /// One display's tab focus, read through its own surface window.
+    fn display_tab_focus(server: &mut HeadlessServer, client: u64) -> (usize, usize) {
+        let previous = server.app.state.enter_viewer(Some(client));
+        let ws_idx = server.app.state.active.unwrap_or(usize::MAX);
+        let tab_idx = server
+            .app
+            .state
+            .workspaces
+            .get(ws_idx)
+            .map(|ws| ws.active_tab_index())
+            .unwrap_or(usize::MAX);
+        server.app.state.restore_viewer(previous);
+        (ws_idx, tab_idx)
+    }
+
+    // TP-MCF-CTX-07: a queued request is a display's own click, deferred —
+    // consuming it outside that display's window writes the focus move into
+    // whichever registers happen to be installed, and the display that asked
+    // watches nothing happen. The same rule TP-SUR-BROADCAST-05 pinned for
+    // plugin-raised popups, extended to the deferred-request pass.
+    #[tokio::test]
+    async fn a_deferred_new_tab_lands_in_the_display_that_asked_for_it() {
+        let event_hub = api::EventHub::default();
+        let mut server = test_headless_server_with_event_hub(event_hub.clone());
+        server
+            .app
+            .create_workspace_with_options(std::env::temp_dir(), true)
+            .unwrap();
+
+        // Two displays known to the session, each standing on tab 0 by its
+        // own hand — a per-display focus entry, not the shared default.
+        for client in [1u64, 2u64] {
+            let previous = server.app.state.enter_viewer(Some(client));
+            let ws_idx = server.app.state.active.expect("a workspace is active");
+            server.app.state.workspaces[ws_idx].set_active_tab(0);
+            server.app.state.restore_viewer(previous);
+        }
+        let before_1 = display_tab_focus(&mut server, 1);
+        let before_2 = display_tab_focus(&mut server, 2);
+        assert_eq!(before_1, before_2, "precondition: both start together");
+
+        // Display 1 holds the terminal focus; its + press queued the request.
+        server.foreground_client_id = Some(1);
+        server.app.state.request_new_tab = true;
+        assert!(server.handle_deferred_requests_headless());
+
+        let after_1 = display_tab_focus(&mut server, 1);
+        let after_2 = display_tab_focus(&mut server, 2);
+        assert_eq!(
+            after_1,
+            (before_1.0, before_1.1 + 1),
+            "the display that asked stands on the new tab"
+        );
+        assert_eq!(after_2, before_2, "the display that did not ask stays put");
         shutdown_test_runtimes(&mut server);
     }
 
