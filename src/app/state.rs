@@ -1788,6 +1788,9 @@ pub struct ViewState {
     pub tab_scroll_left_hit_area: Rect,
     pub tab_scroll_right_hit_area: Rect,
     pub new_tab_hit_area: Rect,
+    /// TP-TAB-SPLIT-01/02: split-right button beside `+`, then split-down.
+    pub split_right_hit_area: Rect,
+    pub split_down_hit_area: Rect,
     pub terminal_area: Rect,
     pub mobile_header_rect: Rect,
     /// The three targets the mobile header projects: a button at each edge and
@@ -5087,6 +5090,8 @@ impl AppState {
                 tab_scroll_left_hit_area: Rect::default(),
                 tab_scroll_right_hit_area: Rect::default(),
                 new_tab_hit_area: Rect::default(),
+                split_right_hit_area: Rect::default(),
+                split_down_hit_area: Rect::default(),
                 terminal_area: Rect::default(),
                 mobile_header_rect: Rect::default(),
                 mobile_header_hits: crate::ui::MobileHeaderHitAreas::default(),

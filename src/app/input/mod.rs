@@ -924,6 +924,9 @@ impl App {
                     MouseAction::ReviveClosedAgent { agent_id } => {
                         self.revive_closed_agent_via_api(agent_id)
                     }
+                    MouseAction::SplitFocusedPane { direction } => {
+                        self.split_focused_pane_via_api(direction);
+                    }
                     MouseAction::FocusToastTarget => self.focus_toast_target_via_api(),
                     MouseAction::MoveWorkspace {
                         source_ws_idx,

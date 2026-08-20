@@ -1,0 +1,15 @@
+# Tab strip — the label clamp and the trailing chrome
+
+The strip is the row every tab shares, so one tab's appetite is every other
+tab's reachability. Two behaviors live here: a bound on how much of the strip
+a single name may take, and the trailing buttons that act on the focused pane
+without a keyboard. Both were asked for by the user on 2026-08-20 ("tab name
+alanı maks 20 karakter görünsün — alanı rahat kullanamıyorum" · "+ butonunun
+sağına split down / split right butonları"); design notes:
+`.local/prd/session-29-usability-wave.md` §2.
+
+| ID | Behavior | What breaks if it is lost | Verified by |
+|---|---|---|---|
+| TP-TAB-NAME-01 | A tab's NAME paints at most twenty display cells, cut with an ellipsis, measured in cells not characters. The clamp runs on the name alone, before the unseen dot and the zoom suffix are attached, and inside `tab_chrome_label` — the one seam `tab_width`, the hit areas and the paint all read. | A single long name widens its tab until the neighbours scroll out of reach — the reported complaint. Clamping anywhere but the shared label seam would let the painted text, the measured width and the pressable cells disagree; clamping after the marks would let a long name swallow the unseen dot or the zoom suffix, which are state channels, not decoration. | `a_long_tab_name_is_clamped_to_twenty_cells`, `a_name_exactly_at_the_limit_is_untouched`, `a_name_under_the_limit_is_untouched`, `the_unseen_and_zoom_marks_survive_the_clamp`, `the_clamp_measures_display_cells_not_chars` |
+| TP-TAB-SPLIT-01 | Right of the `+` button stand two three-cell split buttons — right split, then down split. In overflow they are part of the reserved trailing chrome, so they stay reachable however many tabs there are. Whole width or nothing: a strip without three free cells claims no button cells at all. Keyboard-driven strips (no mouse chrome) carry none of this. | The buttons the user asked for would exist only on roomy strips, or worse: a partial button paints blank cells that still answer a press — an invisible control (TP-MOD-35's rule, restated for the strip). | `the_split_buttons_stand_right_of_the_new_tab_button`, `without_mouse_chrome_the_split_buttons_claim_nothing`, `a_strip_too_narrow_for_the_split_buttons_claims_nothing`, `a_strip_with_exactly_three_spare_cells_seats_the_right_button_alone` |
+| TP-TAB-SPLIT-02 | A press on a split button resolves to `MouseAction::SplitFocusedPane` with that button's direction and rides the same api road the keyboard split takes; the `+` press beside them still means new tab. | A second split road would be one more place for the split semantics to drift; a swallowed `+` would trade an old control for a new one instead of adding it. | `a_click_on_a_split_button_asks_for_that_direction`, `the_new_tab_button_still_makes_a_tab_beside_the_split_buttons` |

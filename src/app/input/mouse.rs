@@ -44,6 +44,10 @@ pub(super) enum MouseAction {
     ReviveClosedAgent {
         agent_id: String,
     },
+    /// TP-TAB-SPLIT-02: a split-button press, resolved to its direction.
+    SplitFocusedPane {
+        direction: crate::api::schema::SplitDirection,
+    },
     FocusToastTarget,
     ToggleProjectsActives,
     ToggleSpacesFocus,
@@ -615,6 +619,20 @@ impl AppState {
                         self.mode = Mode::Terminal;
                     }
                     return None;
+                }
+                // TP-TAB-SPLIT-02: the buttons beside + split the focused
+                // pane, riding the same api road the keyboard split takes.
+                if self.on_split_right_button(mouse.column, mouse.row) {
+                    self.mode = Mode::Terminal;
+                    return Some(MouseAction::SplitFocusedPane {
+                        direction: crate::api::schema::SplitDirection::Right,
+                    });
+                }
+                if self.on_split_down_button(mouse.column, mouse.row) {
+                    self.mode = Mode::Terminal;
+                    return Some(MouseAction::SplitFocusedPane {
+                        direction: crate::api::schema::SplitDirection::Down,
+                    });
                 }
 
                 if in_sidebar {
@@ -2122,6 +2140,14 @@ impl AppState {
         }
 
         Some(last_idx + 1)
+    }
+
+    pub(super) fn on_split_right_button(&self, col: u16, row: u16) -> bool {
+        rect_contains(self.view.split_right_hit_area, col, row)
+    }
+
+    pub(super) fn on_split_down_button(&self, col: u16, row: u16) -> bool {
+        rect_contains(self.view.split_down_hit_area, col, row)
     }
 
     pub(super) fn on_new_tab_button(&self, col: u16, row: u16) -> bool {
@@ -7019,6 +7045,82 @@ mod tests {
         assert!(!app.state.creating_new_tab);
         assert!(app.state.request_new_tab);
         assert!(app.state.requested_new_tab_name.is_none());
+    }
+
+    // TP-TAB-SPLIT-02: the split buttons act on the focused pane through the
+    // same api road the keyboard split takes — the press resolves to the
+    // action, right button rightward, down button downward.
+    #[test]
+    fn a_click_on_a_split_button_asks_for_that_direction() {
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![Workspace::test_new("one")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 120, 40));
+        let right_area = app.state.view.split_right_hit_area;
+        let down_area = app.state.view.split_down_hit_area;
+        assert!(right_area.width > 0, "precondition: the buttons are drawn");
+
+        let mut registry = TerminalRuntimeRegistry::new();
+        let action = app.state.handle_mouse(
+            &mut registry,
+            mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                right_area.x + 1,
+                right_area.y,
+            ),
+        );
+        assert!(
+            matches!(
+                action,
+                Some(MouseAction::SplitFocusedPane {
+                    direction: crate::api::schema::SplitDirection::Right
+                })
+            ),
+            "the right button splits rightward"
+        );
+
+        let action = app.state.handle_mouse(
+            &mut registry,
+            mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                down_area.x + 1,
+                down_area.y,
+            ),
+        );
+        assert!(
+            matches!(
+                action,
+                Some(MouseAction::SplitFocusedPane {
+                    direction: crate::api::schema::SplitDirection::Down
+                })
+            ),
+            "the down button splits downward"
+        );
+    }
+
+    // TP-TAB-SPLIT-02: the new-tab press still means new tab — the new
+    // neighbours must not swallow it.
+    #[test]
+    fn the_new_tab_button_still_makes_a_tab_beside_the_split_buttons() {
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![Workspace::test_new("one")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.prompt_new_tab_name = false;
+
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 120, 40));
+        let new_tab_area = app.state.view.new_tab_hit_area;
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            new_tab_area.x + 1,
+            new_tab_area.y,
+        ));
+
+        assert!(app.state.request_new_tab);
     }
 
     #[test]
