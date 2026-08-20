@@ -1435,6 +1435,43 @@ pub(crate) const fn bar_edge_for(region: RegionId) -> Option<BarEdge> {
     }
 }
 
+/// A set of edges, for naming which bars something has switched off.
+///
+/// The same four named fields as [`ShellBars`] rather than a bitmask, for the
+/// same reason that struct spells its edges out: four booleans cannot be
+/// shifted by the wrong constant, and plainly `Copy + Eq` matters more here
+/// than being compact. It stays *out* of the geometry cache key on purpose —
+/// the filter runs before the key is built and the key compares the filtered
+/// composition, which is the arrangement that keeps focus honest
+/// (TP-CHROME-131) and now keeps this switch honest the same way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct BarEdges {
+    top: bool,
+    bottom: bool,
+    left: bool,
+    right: bool,
+}
+
+impl BarEdges {
+    /// No edge: what every client starts with, and what restoring returns to.
+    /// The switch is a session gesture, not a stored fact.
+    pub(crate) const NONE: Self = Self {
+        top: false,
+        bottom: false,
+        left: false,
+        right: false,
+    };
+
+    pub(crate) const fn contains(self, edge: BarEdge) -> bool {
+        match edge {
+            BarEdge::Top => self.top,
+            BarEdge::Bottom => self.bottom,
+            BarEdge::Left => self.left,
+            BarEdge::Right => self.right,
+        }
+    }
+}
+
 /// What a click on one section of a bar does.
 ///
 /// A closed enum, like the sizing policies beside it and for the same reason
@@ -2577,6 +2614,23 @@ const SECONDARY_PRESENTATIONS: &[(&str, SecondaryPresentation)] = &[
     ("none", SecondaryPresentation::Inert),
 ];
 
+/// One edge's track, once the frame's two quieting filters have spoken.
+///
+/// Joined by OR: an edge is quiet when either filter says so, and drawn only
+/// when both let it through. The hand switch is asked first because it is
+/// absolute — focus quiets only the edges that opted in, the switch quiets
+/// the edges it names, opted in or not.
+const fn shown(track: BarTrack, focus_active: bool, switched_off: bool) -> BarTrack {
+    if switched_off {
+        return BarTrack::NONE;
+    }
+    if focus_active {
+        track.under_focus()
+    } else {
+        track
+    }
+}
+
 /// The four edges, as the tree builder sees them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub(crate) struct ShellBars {
@@ -2595,20 +2649,26 @@ impl ShellBars {
         right: BarTrack::NONE,
     };
 
-    /// The bars this frame draws, once focus has had its say.
+    /// The bars this frame draws, once focus and the hand switch have had
+    /// their say.
     ///
     /// A filter over the configured value rather than a second copy of it:
-    /// nothing has to be kept in step when focus is toggled, and a bar can
+    /// nothing has to be kept in step when either is toggled, and a bar can
     /// never disagree with the file it was read from.
-    pub(crate) const fn visible(self, focus_active: bool) -> Self {
-        if !focus_active {
-            return self;
-        }
+    pub(crate) const fn visible(self, focus_active: bool, toggled_off: BarEdges) -> Self {
         Self {
-            top: self.top.under_focus(),
-            bottom: self.bottom.under_focus(),
-            left: self.left.under_focus(),
-            right: self.right.under_focus(),
+            top: shown(self.top, focus_active, toggled_off.contains(BarEdge::Top)),
+            bottom: shown(
+                self.bottom,
+                focus_active,
+                toggled_off.contains(BarEdge::Bottom),
+            ),
+            left: shown(self.left, focus_active, toggled_off.contains(BarEdge::Left)),
+            right: shown(
+                self.right,
+                focus_active,
+                toggled_off.contains(BarEdge::Right),
+            ),
         }
     }
 
@@ -3159,7 +3219,7 @@ mod tests {
     // be rid of, so an edge that opted in goes quiet and gives its cells back.
     #[test]
     fn focus_quiets_the_edge_that_asked_to_be_quieted() {
-        let bars = bars_with_top_hidden_when_focused().visible(true);
+        let bars = bars_with_top_hidden_when_focused().visible(true, BarEdges::NONE);
 
         assert!(
             !bars.top.enabled(),
@@ -3172,7 +3232,7 @@ mod tests {
     // of both — the click does something and nothing on screen explains what.
     #[test]
     fn a_quieted_edge_offers_nothing_to_click() {
-        let bars = bars_with_top_hidden_when_focused().visible(true);
+        let bars = bars_with_top_hidden_when_focused().visible(true, BarEdges::NONE);
         let outer = Rect::new(0, 0, 80, 24);
 
         let drawn = bars.top.section_rects(RegionId::TopBar, outer);
@@ -3196,7 +3256,7 @@ mod tests {
             "storage keeps the edge the config asked for"
         );
         assert!(
-            !stored.visible(true).top.enabled(),
+            !stored.visible(true, BarEdges::NONE).top.enabled(),
             "and the frame is the only place it goes quiet"
         );
     }
@@ -3207,9 +3267,12 @@ mod tests {
     fn leaving_focus_restores_the_quieted_edge() {
         let bars = bars_with_top_hidden_when_focused();
 
-        assert!(bars.visible(false).top.enabled(), "outside focus it draws");
         assert!(
-            !bars.visible(true).top.enabled(),
+            bars.visible(false, BarEdges::NONE).top.enabled(),
+            "outside focus it draws"
+        );
+        assert!(
+            !bars.visible(true, BarEdges::NONE).top.enabled(),
             "and the same value quiets again — the filter owns no state"
         );
     }
@@ -3226,7 +3289,7 @@ mod tests {
 
         let bars = ShellBars::from_config(&config);
         assert!(
-            bars.visible(true).top.enabled(),
+            bars.visible(true, BarEdges::NONE).top.enabled(),
             "focus does not quiet a bar that never asked to be quieted"
         );
     }
@@ -3235,10 +3298,170 @@ mod tests {
     // holding the controls in use, so the choice is per edge.
     #[test]
     fn focus_quiets_only_the_edges_that_asked() {
-        let bars = bars_with_top_hidden_when_focused().visible(true);
+        let bars = bars_with_top_hidden_when_focused().visible(true, BarEdges::NONE);
 
         assert!(!bars.top.enabled(), "the opted-in edge is quiet");
         assert!(bars.right.enabled(), "its neighbour is untouched");
+    }
+
+    /// One divided edge and one plain neighbour, for the switch tests below.
+    ///
+    /// Divided on purpose: TP-CHROME-130's "offers nothing to click" was
+    /// asserted on an undivided bar, where zero section rectangles is true
+    /// before any filter runs. A claim about hit targets only means something
+    /// on a bar that has some.
+    fn divided_top_and_plain_right() -> ShellBars {
+        let mut config = ShellBarsConfig::default();
+        config.top.enabled = true;
+        config.top.size = 1;
+        config.top.border = false;
+        config.top.sections = vec![
+            ShellBarSectionConfig {
+                kind: "fill".to_string(),
+                ..Default::default()
+            },
+            ShellBarSectionConfig {
+                kind: "fill".to_string(),
+                ..Default::default()
+            },
+        ];
+        config.right.enabled = true;
+        config.right.size = 1;
+        config.right.border = false;
+        ShellBars::from_config(&config)
+    }
+
+    const fn only(edge: BarEdge) -> BarEdges {
+        let mut edges = BarEdges::NONE;
+        match edge {
+            BarEdge::Top => edges.top = true,
+            BarEdge::Bottom => edges.bottom = true,
+            BarEdge::Left => edges.left = true,
+            BarEdge::Right => edges.right = true,
+        }
+        edges
+    }
+
+    // TP-CHROME-139: the hand switch quiets an edge the way focus does — no
+    // cells, no sections, no hit targets — and the same value drawn without
+    // the switch is exactly the value that was stored. A bar that is invisible
+    // but still clickable answers a click nothing on screen explains.
+    #[test]
+    fn a_switched_off_edge_draws_nothing_and_offers_nothing_to_click() {
+        let bars = divided_top_and_plain_right();
+        let drawn = bars.visible(false, only(BarEdge::Top));
+
+        assert!(
+            !drawn.top.enabled(),
+            "the switched-off edge draws nothing at all"
+        );
+        assert_eq!(
+            drawn
+                .top
+                .section_rects(RegionId::TopBar, Rect::new(0, 0, 80, 1))
+                .occupied()
+                .count(),
+            0,
+            "and its sections went with it, so nothing inside it can be hit"
+        );
+        assert!(
+            drawn.right.enabled(),
+            "its neighbour is untouched — the switch is per edge"
+        );
+    }
+
+    // TP-CHROME-139: the switch is a view, never a deletion. The same stored
+    // value, read without the switch, is the whole bar back — sections, size
+    // and all — without the config being touched or reloaded.
+    #[test]
+    fn switching_an_edge_back_on_returns_the_track_untouched() {
+        let bars = divided_top_and_plain_right();
+
+        assert!(
+            !bars.visible(false, only(BarEdge::Top)).top.enabled(),
+            "switched off it is gone"
+        );
+        assert_eq!(
+            bars.visible(false, BarEdges::NONE),
+            bars,
+            "and with the switch released the frame draws exactly the stored value"
+        );
+    }
+
+    // TP-CHROME-139: focus and the hand switch are two independent filters
+    // joined by OR — an edge is quiet when either says so, and only drawn when
+    // both let it through. All four cells of the table are asserted, because
+    // the cell a wrong combinator gets wrong is the one where both filters are
+    // on: an XOR would draw the bar exactly then, and the three easy cells
+    // would never notice.
+    #[test]
+    fn focus_and_the_hand_switch_quiet_independently() {
+        // `top` opted into focus quieting; `right` did not.
+        let bars = bars_with_top_hidden_when_focused();
+
+        let both_off = bars.visible(false, BarEdges::NONE);
+        assert!(both_off.top.enabled() && both_off.right.enabled());
+
+        let focus_only = bars.visible(true, BarEdges::NONE);
+        assert!(!focus_only.top.enabled(), "focus quiets the opted-in edge");
+        assert!(focus_only.right.enabled(), "and only that one");
+
+        let switch_only = bars.visible(false, only(BarEdge::Right));
+        assert!(
+            switch_only.top.enabled(),
+            "the switch leaves focus's edge alone"
+        );
+        assert!(
+            !switch_only.right.enabled(),
+            "and quiets the one it names — an edge focus never touches"
+        );
+
+        let both = bars.visible(true, only(BarEdge::Top));
+        assert!(
+            !both.top.enabled(),
+            "an edge both filters quiet stays quiet — OR, not XOR"
+        );
+        assert!(both.right.enabled());
+    }
+
+    // TP-CHROME-139: what is stored is the configured bar, whichever filters
+    // are active — the same rule TP-CHROME-131 pinned for focus. If storage
+    // kept the filtered value, a snapshot taken while the bars were switched
+    // off would restore a session whose bars are simply gone.
+    #[test]
+    fn what_is_stored_survives_the_hand_switch_too() {
+        let stored = divided_top_and_plain_right();
+
+        assert!(
+            !stored.visible(false, only(BarEdge::Top)).top.enabled(),
+            "the frame goes quiet"
+        );
+        assert!(
+            stored.top.enabled(),
+            "and the stored value never heard about it"
+        );
+    }
+
+    // TP-CHROME-139: switching an edge off moves the derived revision, and
+    // releasing it moves it back. The geometry cache keys on the filtered
+    // composition; a switch that left the key where it was would leave the
+    // cached rectangles on screen and change nothing a person can see.
+    #[test]
+    fn switching_an_edge_off_moves_the_geometry_revision() {
+        let bars = divided_top_and_plain_right();
+
+        let drawn = derive_desktop_shell_layout(None, bars.visible(false, BarEdges::NONE));
+        let quieted = derive_desktop_shell_layout(None, bars.visible(false, only(BarEdge::Top)));
+        let released = derive_desktop_shell_layout(None, bars.visible(false, BarEdges::NONE));
+
+        assert_ne!(
+            drawn.revision, quieted.revision,
+            "a different composition must answer to a different identity"
+        );
+        assert_eq!(
+            drawn.revision, released.revision,
+            "and releasing the switch is the same composition again"
+        );
     }
 
     #[test]

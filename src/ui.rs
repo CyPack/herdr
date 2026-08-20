@@ -414,7 +414,10 @@ fn compute_view_internal(
     // the stored value: the geometry key below compares what is drawn, so an
     // edge going quiet has to move the key or the frame would keep the old
     // composition and nothing on screen would change.
-    let visible_bars = app.shell_presentation.bars().visible(app.spaces_focus_only);
+    let visible_bars = app
+        .shell_presentation
+        .bars()
+        .visible(app.spaces_focus_only, app.shell_presentation.toggled_off());
     let derived =
         shell::derive_desktop_shell_layout(app.shell_presentation.shell_template(), visible_bars);
     let shell_layout = derived.layout;
@@ -604,7 +607,7 @@ fn compute_view_internal(
         &app_dock::AppDockModel::for_state(app),
         app.shell_presentation
             .bars()
-            .visible(app.spaces_focus_only)
+            .visible(app.spaces_focus_only, app.shell_presentation.toggled_off())
             .left
             .inner(shell_view.regions.get(RegionId::AppDock)),
     );
@@ -1045,7 +1048,10 @@ impl compose::Component for BaseLayer {
         // inside it draws into what the border left. The dock reads the same
         // inner rectangle the hit areas were built from, so a click lands where
         // the icon is rather than one cell off it.
-        let bars = app.shell_presentation.bars().visible(app.spaces_focus_only);
+        let bars = app
+            .shell_presentation
+            .bars()
+            .visible(app.spaces_focus_only, app.shell_presentation.toggled_off());
         let colors = app.shell_presentation.bar_colors();
         for region in [
             RegionId::TopBar,

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use ratatui::layout::Position;
 
-use super::{BarColors, RegionId, ShellBars, ShellDirection, ShellTemplateId};
+use super::{BarColors, BarEdges, RegionId, ShellBars, ShellDirection, ShellTemplateId};
 
 /// Stable identity for one divider between adjacent shell regions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -276,6 +276,14 @@ pub(crate) struct ShellPresentationState {
     /// Border tones per edge. Presentation, not geometry — deliberately absent
     /// from the cache key.
     bar_colors: BarColors,
+    /// Which edges the person has switched off by hand this session.
+    ///
+    /// Deliberately absent from `ShellSnapshotV1`: that snapshot refuses
+    /// unknown fields, so a new one here would make a session file written by
+    /// this build unreadable to the build before it — and a live-handoff world
+    /// rolls back across exactly that pair. The gesture is a momentary quiet,
+    /// not a stored preference; a restart brings the bars back.
+    toggled_off: BarEdges,
 }
 
 impl ResizeUpdate {
@@ -560,6 +568,7 @@ impl ShellPresentationState {
             shell_template,
             bars,
             bar_colors: BarColors::DEFAULT_CONST,
+            toggled_off: BarEdges::NONE,
         }
     }
 
@@ -598,6 +607,11 @@ impl ShellPresentationState {
     /// The edge strips this client is presenting.
     pub(crate) const fn bars(&self) -> ShellBars {
         self.bars
+    }
+
+    /// The edges the person has switched off by hand this session.
+    pub(crate) const fn toggled_off(&self) -> BarEdges {
+        self.toggled_off
     }
 
     /// Replace the edge strips, keeping every session fact beside them.
