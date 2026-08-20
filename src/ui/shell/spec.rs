@@ -39,6 +39,12 @@ pub(crate) struct ShellSpec {
     pub edges: Vec<&'static str>,
     /// The keys `[shell.bars.<edge>]` itself takes.
     pub bar_keys: Vec<KeySpec>,
+    /// The keys any section takes, whatever its kind.
+    ///
+    /// Apart from the kind tables because they belong to none of them: every
+    /// sizing kind reads these, so filing them under one would teach a reader
+    /// that the others turn them down.
+    pub section_keys: Vec<KeySpec>,
     /// How a section asks for space.
     pub section_kinds: Vec<KindSpec>,
     /// What a section shows.
@@ -187,6 +193,26 @@ const BAR_KEYS: &[KeySpec] = &[
     },
 ];
 
+/// The keys `[[shell.bars.<edge>.sections]]` takes whatever its `kind` is.
+///
+/// Hand-written for the reason [`BAR_KEYS`] is — they are struct fields, and a
+/// struct cannot say what a missing value stands for — and kept out of the kind
+/// tables because they are not any one kind's.
+const SECTION_KEYS: &[KeySpec] = &[
+    KeySpec {
+        key: "border",
+        value_type: "boolean",
+        range: "",
+        default: "false",
+    },
+    KeySpec {
+        key: "color",
+        value_type: "string",
+        range: "",
+        default: "the bar's own colour",
+    },
+];
+
 /// Switches that live outside `[shell.bars]` and change what a bar may do.
 const SWITCHES: &[KeySpec] = &[
     KeySpec {
@@ -209,6 +235,7 @@ pub(crate) fn shell_spec() -> ShellSpec {
         version: SPEC_VERSION,
         edges: vec!["top", "bottom", "left", "right"],
         bar_keys: BAR_KEYS.iter().map(KeySpec::copied).collect(),
+        section_keys: SECTION_KEYS.iter().map(KeySpec::copied).collect(),
         section_kinds: kinds(source::sizing_kind_facts()),
         widget_kinds: kinds(source::widget_kind_facts()),
         action_kinds: kinds(source::action_kind_facts()),
@@ -274,6 +301,11 @@ pub(crate) fn render_text(spec: &ShellSpec) -> String {
 
     out.push_str("\n[shell.bars.<edge>]\n");
     for key in &spec.bar_keys {
+        out.push_str(&key_line(key));
+    }
+
+    out.push_str("\n[[shell.bars.<edge>.sections]]\n");
+    for key in &spec.section_keys {
         out.push_str(&key_line(key));
     }
 
@@ -820,6 +852,72 @@ mod tests {
         );
     }
 
+    /// I7 · a section key nothing publishes is a feature nobody can find.
+    ///
+    /// `border` and `color` are read by every sizing kind, so they belong to
+    /// none of the kind tables: filing them under `fixed` would teach a reader
+    /// that `content` turns them down. They need a list of their own, and a
+    /// list of their own needs the gate the bar keys already have — every name
+    /// on it put through the real parser, so the spec cannot offer a key this
+    /// build refuses.
+    ///
+    /// Read out of the serialised shape rather than off the struct, because
+    /// that is what a consumer actually receives: a field that stops being
+    /// emitted is invisible to a check that reads the value it was built from.
+    #[test]
+    fn every_section_key_is_one_this_build_accepts() {
+        // TP-CHROME-137: the keys every section takes are published and real.
+        let published: serde_json::Value =
+            serde_json::to_value(shell_spec()).expect("the spec serialises");
+        let listed = published["section_keys"]
+            .as_array()
+            .expect("the spec publishes the keys every section takes, whatever its kind");
+        assert!(
+            !listed.is_empty(),
+            "an empty list teaches a reader that a section takes nothing but its kind's keys"
+        );
+
+        let mut text = String::from(
+            // Five rather than three: this bar keeps its own frame, which
+            // spends two of the size, and an island needs three of what is
+            // left.
+            "[shell.bars.top]\nenabled = true\nsize = 5\nborder = true\n\n\
+             [[shell.bars.top.sections]]\nkind = \"fixed\"\ncells = 6\n",
+        );
+        for entry in listed {
+            let key = entry["key"].as_str().expect("a section key is named");
+            let value = match key {
+                "border" => "true".to_string(),
+                "color" => "\"teal\"".to_string(),
+                other => panic!("no sample value for the section key {other:?}"),
+            };
+            text.push_str(&format!("{key} = {value}\n"));
+        }
+
+        let found = problems(&text);
+        assert!(
+            found.is_empty(),
+            "a section setting every key this spec lists is refused: {found:?}\n{text}"
+        );
+
+        // And they are published once. A key that also appeared under a kind
+        // would read as that kind's, which is the misunderstanding this list
+        // exists to prevent.
+        let spec = shell_spec();
+        for entry in every_kind(&spec) {
+            for key in &entry.keys {
+                assert!(
+                    !listed
+                        .iter()
+                        .any(|section_key| section_key["key"].as_str() == Some(*key)),
+                    "{key:?} is published both as a section key and as a key of \
+                     the {:?} kind",
+                    entry.kind
+                );
+            }
+        }
+    }
+
     /// TP-SPEC-08: the spec survives the trip a consumer puts it through.
     #[test]
     fn the_spec_serialises_to_json_a_consumer_can_read() {
@@ -830,6 +928,7 @@ mod tests {
         for field in [
             "edges",
             "bar_keys",
+            "section_keys",
             "section_kinds",
             "widget_kinds",
             "action_kinds",
@@ -875,6 +974,24 @@ mod tests {
                 text.contains(art.name),
                 "the text rendering never names the bundled art {:?}",
                 art.name
+            );
+        }
+        // TP-CHROME-137: the keys every section takes reach the reader who is
+        // looking at a terminal rather than parsing JSON. Read off the block
+        // they are printed under rather than searched for in the whole dump:
+        // `border` and `color` are also bar keys, so `contains` would answer
+        // yes for a rendering that never printed the section block at all —
+        // the same false pass the colour check above is written against.
+        let section_block = text
+            .split_once("[[shell.bars.<edge>.sections]]\n")
+            .map(|(_, rest)| rest.split("\n\n").next().unwrap_or_default().to_string())
+            .unwrap_or_default();
+        for key in &spec.section_keys {
+            assert!(
+                section_block.contains(key.key),
+                "the text rendering never names the section key {:?}; the block \
+                 it would be under reads {section_block:?}",
+                key.key
             );
         }
         for name in &spec.metrics.names {

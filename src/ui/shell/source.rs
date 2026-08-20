@@ -581,6 +581,18 @@ pub(crate) enum BarConfigProblem {
         edge: &'static str,
         index: usize,
     },
+    /// A section asked for its own frame on a bar whose short axis cannot hold
+    /// one. Its own cause rather than a reuse of the bar's size refusal,
+    /// because the number to change sits on a different table from the key that
+    /// asked — and because the bar's own border is half the reason there is no
+    /// room, so a message naming only `size` would send somebody to raise a
+    /// number that was already generous.
+    SectionBorderDoesNotFitAcrossTheBar {
+        edge: &'static str,
+        index: usize,
+        needs: u16,
+        has: u16,
+    },
 }
 
 /// The accepted names of a closed set, phrased the way the refusals below already
@@ -855,6 +867,24 @@ impl std::fmt::Display for BarConfigProblem {
                 "shell.bars.{edge}.sections[{index}].widget sets text but names no widget to \
                  show it, so the text never appears"
             ),
+            Self::SectionBorderDoesNotFitAcrossTheBar {
+                edge,
+                index,
+                needs,
+                has,
+            } => {
+                let unit = if edge_is_horizontal(edge) {
+                    "rows"
+                } else {
+                    "columns"
+                };
+                write!(
+                    formatter,
+                    "shell.bars.{edge}.sections[{index}] asks for a frame, which needs \
+                     {needs} {unit} but the bar leaves {has}; raise shell.bars.{edge}.size, \
+                     two cells of which go to shell.bars.{edge}.border"
+                )
+            }
         }
     }
 }
@@ -1006,6 +1036,12 @@ pub(crate) fn shell_bar_config_problems(
             if let Err(problem) = section_policy(section, edge, index) {
                 problems.push(problem);
             }
+            // Beside the sizing rule rather than inside it: a frame is a
+            // section-level setting like a size, so its complaint reads where a
+            // reader is already looking, before the widget's and the action's.
+            if let Err(problem) = section_border_problem(section, edge, index, bar_across(bar)) {
+                problems.push(problem);
+            }
             // Asked separately from the sizing rule because the two have
             // different blast radii and a person fixing one should not have to
             // guess that the other was also refused. The widget is asked before
@@ -1044,7 +1080,7 @@ fn sections_from_config(config: &ShellBarConfig, edge: &'static str) -> BarSecti
             return BarSections::NONE;
         }
     };
-    match section_policies(&config.sections, edge, budget) {
+    match section_policies(&config.sections, edge, budget, bar_across(config)) {
         Ok(policies) => BarSections::from_policies(&policies, edge),
         Err(problem) => {
             tracing::warn!(%problem, "the bar is drawn undivided");
@@ -1064,6 +1100,7 @@ fn section_policies(
     configs: &[ShellBarSectionConfig],
     edge: &'static str,
     budget: usize,
+    across: u16,
 ) -> Result<Vec<TrackPolicy>, BarConfigProblem> {
     if let Some(problem) = section_count_problem(configs.len(), edge, budget) {
         return Err(problem);
@@ -1071,7 +1108,13 @@ fn section_policies(
     configs
         .iter()
         .enumerate()
-        .map(|(index, config)| section_policy(config, edge, index))
+        .map(|(index, config)| {
+            // All-or-nothing, like every other section rule here: dropping only
+            // the framed section would renumber every one after it, and the
+            // number is the only name a section has.
+            section_border_problem(config, edge, index, across)?;
+            section_policy(config, edge, index)
+        })
         .collect()
 }
 
@@ -1243,9 +1286,60 @@ fn fixed_policy(at: SectionAt<'_>) -> Result<TrackPolicy, BarConfigProblem> {
         });
     }
     Ok(TrackPolicy::Fixed {
-        cells: at.config.cells,
+        cells: at.config.cells.saturating_add(island_margin(at.config)),
     })
 }
+
+/// The cells one section's own frame spends along the bar, if it wears one.
+///
+/// One at each end, and charged on top of the number somebody wrote rather than
+/// taken out of it. Reading a declared size as the outer box would mean that
+/// adding `border = true` to a section showing a ten-cell picture clips that
+/// picture by two, with `config check` still saying ok and nothing on screen to
+/// explain the missing columns — U1's failure arriving through a new door.
+// TP-CHROME-133: an island's declared size is what goes inside its frame.
+const fn island_margin(config: &ShellBarSectionConfig) -> u16 {
+    if config.border {
+        ISLAND_FRAME_CELLS
+    } else {
+        0
+    }
+}
+
+/// What a frame costs on one axis: one cell at each end.
+const ISLAND_FRAME_CELLS: u16 = 2;
+
+/// Whether this bar leaves a section room to wear its own frame.
+///
+/// Asked separately from the sizing rule for the reason the widget fit is:
+/// the two have different remedies and a person fixing one should not have to
+/// guess that the other was also refused. Asked by both the checker and the
+/// deriver through this one predicate, so a frame that will not be drawn is
+/// also a frame that gets said out loud.
+// TP-CHROME-135: an island the bar's short axis cannot hold is refused.
+fn section_border_problem(
+    config: &ShellBarSectionConfig,
+    edge: &'static str,
+    index: usize,
+    across: u16,
+) -> Result<(), BarConfigProblem> {
+    if !config.border || across >= ISLAND_MINIMUM_ACROSS {
+        return Ok(());
+    }
+    Err(BarConfigProblem::SectionBorderDoesNotFitAcrossTheBar {
+        edge,
+        index,
+        needs: ISLAND_MINIMUM_ACROSS,
+        has: across,
+    })
+}
+
+/// What a framed island needs across the bar's short axis.
+///
+/// Two for the frame and at least one for what it was drawn around. The number
+/// it is measured against is [`bar_across`], which has already spent the bar's
+/// own border — so a bordered bar wanting islands needs `size >= 5`, not three.
+const ISLAND_MINIMUM_ACROSS: u16 = ISLAND_FRAME_CELLS + 1;
 
 /// A fill with no weight is the common shape of "just take the rest", and refusing
 /// it would make the simplest section the one that needs the most typing.
@@ -1281,9 +1375,15 @@ fn content_policy(at: SectionAt<'_>) -> Result<TrackPolicy, BarConfigProblem> {
             max: at.config.max,
         });
     }
+    // Both bounds describe the content, so both carry the frame: an island
+    // asking for eight cells of clock has to be given ten to have eight left.
+    let margin = island_margin(at.config);
     Ok(TrackPolicy::ContentBounded {
-        min: at.config.min,
-        max,
+        min: at.config.min.saturating_add(margin),
+        // Saturating rather than wrapping: an unwritten `max` is already
+        // `u16::MAX` by the substitution above, and two more must leave it
+        // unbounded rather than turning it into one.
+        max: max.saturating_add(margin),
     })
 }
 
@@ -1595,6 +1695,15 @@ impl SectionWidget {
 pub(crate) struct SectionChrome {
     pub(crate) widget: SectionWidget,
     pub(crate) action: SectionAction,
+    /// The tone this section's own frame wears, or `None` where it wears none.
+    ///
+    /// A tone rather than a flag: "does this section have a frame" and "what
+    /// colour is it" are one question with one answer, and splitting them would
+    /// let a bordered section carry no tone or a toned one carry no border —
+    /// two states nothing downstream could act on. It lives here rather than
+    /// beside the geometry because a colour never moves a rectangle, which is
+    /// the same rule that keeps `BarColors` out of the cache key.
+    pub(crate) border: Option<BarTint>,
 }
 
 /// One edge's sections' chrome, in the same order and addressed by the same
@@ -1636,13 +1745,45 @@ pub(crate) struct ShellBarChrome {
 }
 
 impl ShellBarChrome {
-    pub(crate) fn from_config(config: &ShellBarsConfig, glyph_icons: bool) -> Self {
+    /// Read every edge's chrome, tones included.
+    ///
+    /// The palette arrives here for the same reason it arrives at
+    /// [`BarColors::from_config`], and the two are rebuilt in the same breath
+    /// at both of their call sites: a chrome holding last theme's tone beside
+    /// a bar holding this one's is a disagreement with nothing to resolve it.
+    pub(crate) fn from_config(
+        config: &ShellBarsConfig,
+        glyph_icons: bool,
+        palette: &Palette,
+    ) -> Self {
         Self {
-            top: bar_section_chrome(&config.top, "top", glyph_icons),
-            bottom: bar_section_chrome(&config.bottom, "bottom", glyph_icons),
-            left: bar_section_chrome(&config.left, "left", glyph_icons),
-            right: bar_section_chrome(&config.right, "right", glyph_icons),
+            top: bar_section_chrome(&config.top, "top", glyph_icons, palette),
+            bottom: bar_section_chrome(&config.bottom, "bottom", glyph_icons, palette),
+            left: bar_section_chrome(&config.left, "left", glyph_icons, palette),
+            right: bar_section_chrome(&config.right, "right", glyph_icons, palette),
         }
+    }
+
+    /// The same reading, against the default theme.
+    ///
+    /// Most of what these tests ask a chrome is what a section shows and what a
+    /// press does, neither of which a palette can change; spelling one out at
+    /// every call site would put a parameter in front of them that means
+    /// nothing there. The tests that *are* about tone call `from_config` with
+    /// the palette they mean.
+    #[cfg(test)]
+    pub(crate) fn themed_by_default(config: &ShellBarsConfig, glyph_icons: bool) -> Self {
+        Self::from_config(config, glyph_icons, &Palette::catppuccin())
+    }
+
+    /// The tone the numbered section's own frame wears, if it wears one.
+    ///
+    /// Read through the same [`ShellBarChrome::for_section`] the widget and the
+    /// action are, so the frame a section is painted with, the widget drawn
+    /// inside it and the press it answers can never belong to three different
+    /// sections.
+    pub(crate) fn border_for(&self, region: RegionId, index: u8) -> Option<BarTint> {
+        self.for_section(region, index)?.border
     }
 
     /// What the numbered section of the named region shows and does, if that
@@ -1752,6 +1893,7 @@ fn bar_section_chrome(
     config: &ShellBarConfig,
     edge: &'static str,
     glyph_icons: bool,
+    palette: &Palette,
 ) -> BarSectionChrome {
     if !config.enabled || config.sections.is_empty() {
         return BarSectionChrome::EMPTY;
@@ -1762,9 +1904,13 @@ fn bar_section_chrome(
     let Ok(budget) = section_budget(config, edge) else {
         return BarSectionChrome::EMPTY;
     };
-    if section_policies(&config.sections, edge, budget).is_err() {
+    if section_policies(&config.sections, edge, budget, bar_across(config)).is_err() {
         return BarSectionChrome::EMPTY;
     }
+    // Read once for the whole edge: every island that named no colour of its own
+    // wears this, and asking the palette per section would answer the same
+    // question as many times as there are sections.
+    let inherited = bar_tint(config, palette, edge);
     let entries = config
         .sections
         .iter()
@@ -1784,6 +1930,17 @@ fn bar_section_chrome(
                     SectionAction::None
                 }
             },
+            // A section that named a colour means that colour; one that named
+            // none means its bar's. Falling back past the bar to the warm
+            // default would paint a peach box inside a mauve strip, which is
+            // two decisions where the person made one.
+            border: section.border.then(|| {
+                if section.color.trim().is_empty() {
+                    inherited
+                } else {
+                    tint_from_parts(&section.color, &[], palette, edge)
+                }
+            }),
         })
         .collect();
     BarSectionChrome { entries }
@@ -4021,7 +4178,7 @@ mod tests {
                 "the message must name the section and what is missing: {reported:?}"
             );
 
-            let actions = ShellBarChrome::from_config(&config, true);
+            let actions = ShellBarChrome::themed_by_default(&config, true);
             assert_eq!(
                 actions.action_for(RegionId::TopBar, 0),
                 Some(&SectionAction::None),
@@ -4253,7 +4410,7 @@ mod tests {
         // TP-CHROME-89: the switch defaults on and changes nothing there, because
         // shipping it must not alter a bar anybody already has.
         assert_eq!(
-            ShellBarChrome::from_config(&config, true).widget_for(RegionId::TopBar, 0),
+            ShellBarChrome::themed_by_default(&config, true).widget_for(RegionId::TopBar, 0),
             Some(&SectionWidget::Icon {
                 glyph: "★".to_string()
             }),
@@ -4263,7 +4420,7 @@ mod tests {
         // it becomes is the label that already owns clipping and geometry, not a
         // third kind of widget that would own them a second time.
         assert_eq!(
-            ShellBarChrome::from_config(&config, false).widget_for(RegionId::TopBar, 0),
+            ShellBarChrome::themed_by_default(&config, false).widget_for(RegionId::TopBar, 0),
             Some(&SectionWidget::Label {
                 text: "cpu".to_string()
             }),
@@ -4321,8 +4478,8 @@ mod tests {
         // not a font question, so turning glyphs off must not erase a picture
         // that was never at risk — that would destroy information for nothing.
         assert_eq!(
-            ShellBarChrome::from_config(&config, true).widget_for(RegionId::TopBar, 0),
-            ShellBarChrome::from_config(&config, false).widget_for(RegionId::TopBar, 0),
+            ShellBarChrome::themed_by_default(&config, true).widget_for(RegionId::TopBar, 0),
+            ShellBarChrome::themed_by_default(&config, false).widget_for(RegionId::TopBar, 0),
         );
         assert!(shell_bar_config_problems(&config, false).is_empty());
     }
@@ -4398,7 +4555,7 @@ mod tests {
             ..Default::default()
         };
 
-        let actions = ShellBarChrome::from_config(&config, true);
+        let actions = ShellBarChrome::themed_by_default(&config, true);
 
         assert_eq!(
             popup_size(&actions, RegionId::TopBar, 0),
@@ -4479,7 +4636,7 @@ mod tests {
             "a refusal has to name both numbers or it cannot be acted on: {reported:?}"
         );
 
-        let chrome = ShellBarChrome::from_config(&config, true);
+        let chrome = ShellBarChrome::themed_by_default(&config, true);
         for index in 0..4 {
             assert_eq!(
                 chrome.widget_for(RegionId::TopBar, index),
@@ -4514,7 +4671,7 @@ mod tests {
         };
 
         assert!(shell_bar_config_problems(&config, true).is_empty());
-        let chrome = ShellBarChrome::from_config(&config, true);
+        let chrome = ShellBarChrome::themed_by_default(&config, true);
         let widget = chrome
             .widget_for(RegionId::TopBar, 0)
             .expect("the section has chrome");
@@ -4635,7 +4792,7 @@ mod tests {
              one of them: {reported:?}"
         );
         assert_eq!(
-            ShellBarChrome::from_config(&config, true).widget_for(RegionId::TopBar, 0),
+            ShellBarChrome::themed_by_default(&config, true).widget_for(RegionId::TopBar, 0),
             Some(&SectionWidget::None),
             "a picture the checker refused must not be carried either"
         );
@@ -4719,7 +4876,7 @@ mod tests {
             "the message has to name the metric that was wrong: {reported:?}"
         );
 
-        let chrome = ShellBarChrome::from_config(&config, true);
+        let chrome = ShellBarChrome::themed_by_default(&config, true);
         assert_eq!(
             chrome.widget_for(RegionId::TopBar, 0),
             Some(&SectionWidget::None),
@@ -4783,6 +4940,7 @@ mod tests {
             chrome.top.entries.push(SectionChrome {
                 widget: widget.clone(),
                 action: SectionAction::None,
+                ..Default::default()
             });
             assert_eq!(
                 chrome.wants_resources(),
@@ -4827,7 +4985,7 @@ mod tests {
             "{reported:?}"
         );
 
-        let chrome = ShellBarChrome::from_config(&config, true);
+        let chrome = ShellBarChrome::themed_by_default(&config, true);
         assert_eq!(
             chrome.widget_for(RegionId::TopBar, 0),
             Some(&SectionWidget::None),
@@ -4859,8 +5017,8 @@ mod tests {
             "a label must never decide how wide its section is"
         );
         assert_ne!(
-            ShellBarChrome::from_config(&one, true),
-            ShellBarChrome::from_config(&other, true),
+            ShellBarChrome::themed_by_default(&one, true),
+            ShellBarChrome::themed_by_default(&other, true),
             "control: the chrome itself must notice, or the assertion above is empty"
         );
     }
@@ -4944,7 +5102,7 @@ mod tests {
 
         assert_eq!(shell_bar_config_problems(&config, true).len(), 1);
         assert_eq!(
-            ShellBarChrome::from_config(&config, true).action_for(RegionId::TopBar, 0),
+            ShellBarChrome::themed_by_default(&config, true).action_for(RegionId::TopBar, 0),
             Some(&SectionAction::None),
             "the section the checker complained about must carry no action at all"
         );
@@ -4971,8 +5129,8 @@ mod tests {
             "the bars value the geometry key compares must not notice a popup size"
         );
         assert_ne!(
-            ShellBarChrome::from_config(&small, true),
-            ShellBarChrome::from_config(&large, true),
+            ShellBarChrome::themed_by_default(&small, true),
+            ShellBarChrome::themed_by_default(&large, true),
             "control: the actions themselves must notice, or the test above proves nothing"
         );
     }
@@ -5018,7 +5176,7 @@ mod tests {
     /// section that exists in a vector but answers `None` at its own index is
     /// a section nothing can click.
     fn addressable_sections(config: &ShellBarsConfig, region: RegionId) -> usize {
-        let chrome = ShellBarChrome::from_config(config, true);
+        let chrome = ShellBarChrome::themed_by_default(config, true);
         (0..u8::MAX)
             .take_while(|index| chrome.for_section(region, *index).is_some())
             .count()
@@ -5191,7 +5349,7 @@ mod tests {
             ..Default::default()
         };
 
-        let actions = ShellBarChrome::from_config(&config, true);
+        let actions = ShellBarChrome::themed_by_default(&config, true);
 
         assert_eq!(
             popup_secondary(&actions, RegionId::TopBar, 0),
@@ -5237,7 +5395,7 @@ mod tests {
             ..Default::default()
         };
 
-        let actions = ShellBarChrome::from_config(&config, true);
+        let actions = ShellBarChrome::themed_by_default(&config, true);
 
         assert_eq!(
             plugin_action(&actions, RegionId::TopBar, 0).as_deref(),
@@ -5293,7 +5451,7 @@ mod tests {
                 "the message must name the field and the index: {reported:?}"
             );
 
-            let actions = ShellBarChrome::from_config(&config, true);
+            let actions = ShellBarChrome::themed_by_default(&config, true);
             assert_eq!(
                 actions.action_for(RegionId::TopBar, 0),
                 Some(&SectionAction::None),
@@ -5444,7 +5602,7 @@ mod tests {
             ..Default::default()
         };
 
-        let actions = ShellBarChrome::from_config(&config, true);
+        let actions = ShellBarChrome::themed_by_default(&config, true);
 
         assert_eq!(
             addressable_sections(&config, RegionId::TopBar),
@@ -5544,7 +5702,7 @@ mod tests {
             // TC-67-5 · a refused action costs only its own section. Measured at
             // source.rs `bar_section_chrome`: sizing and policy problems leave a
             // bar undivided, a refused action does not.
-            let actions = ShellBarChrome::from_config(&config, true);
+            let actions = ShellBarChrome::themed_by_default(&config, true);
             assert_eq!(
                 actions.action_for(RegionId::TopBar, 0),
                 Some(&SectionAction::None),
@@ -5597,7 +5755,7 @@ mod tests {
             ..Default::default()
         };
 
-        let actions = ShellBarChrome::from_config(&config, true);
+        let actions = ShellBarChrome::themed_by_default(&config, true);
 
         assert_eq!(
             popup_argv(&actions, RegionId::TopBar, 1).as_deref(),
@@ -5631,7 +5789,7 @@ mod tests {
             right: bar_with_sections(vec![section_with_action("fill", "popup", &["right-cmd"])]),
         };
 
-        let actions = ShellBarChrome::from_config(&config, true);
+        let actions = ShellBarChrome::themed_by_default(&config, true);
         let bars = ShellBars::from_config(&config);
 
         for (region, expected) in [
@@ -5677,7 +5835,7 @@ mod tests {
         };
 
         let bars = ShellBars::from_config(&config);
-        let actions = ShellBarChrome::from_config(&config, true);
+        let actions = ShellBarChrome::themed_by_default(&config, true);
 
         assert!(
             bars.top.sections().is_empty(),
@@ -5707,7 +5865,7 @@ mod tests {
         };
 
         let bars = ShellBars::from_config(&config);
-        let actions = ShellBarChrome::from_config(&config, true);
+        let actions = ShellBarChrome::themed_by_default(&config, true);
 
         assert_eq!(
             bars.top.sections().len(),
@@ -6587,6 +6745,255 @@ mod tests {
         assert_eq!(
             section_policy(&section_config("fill"), "top", 0),
             Ok(TrackPolicy::Fill { weight: 1 })
+        );
+    }
+
+    /// I2 · an island's declared size describes what goes inside it.
+    ///
+    /// The alternative — reading the number as the outer box — makes adding
+    /// `border = true` to a section that was showing a ten-cell picture clip
+    /// that picture by two, with `config check` still saying ok and nothing on
+    /// screen to explain the two missing columns. That is U1's failure with a
+    /// new cause, and this file has already paid for it once. The frame is
+    /// charged on top, so every number somebody already wrote keeps meaning
+    /// what it meant.
+    #[test]
+    fn an_islands_declared_size_is_what_goes_inside_its_frame() {
+        // TP-CHROME-133: a bordered section is widened by its frame rather than
+        // having its content narrowed by it.
+        let mut fixed = fixed_section(10);
+        fixed.border = true;
+        assert_eq!(
+            section_policy(&fixed, "top", 0),
+            Ok(TrackPolicy::Fixed { cells: 12 }),
+            "a ten-cell island must ask for twelve so ten survive inside it"
+        );
+
+        let mut bounded = ShellBarSectionConfig {
+            kind: "content".to_string(),
+            min: 8,
+            max: 8,
+            ..Default::default()
+        };
+        bounded.border = true;
+        assert_eq!(
+            section_policy(&bounded, "top", 0),
+            Ok(TrackPolicy::ContentBounded { min: 10, max: 10 }),
+            "both bounds are the content's, so the frame is charged to both"
+        );
+
+        // An unwritten `max` means "as much as there is"; adding two to that
+        // must not wrap it round to a tiny number.
+        let mut unbounded = ShellBarSectionConfig {
+            kind: "content".to_string(),
+            min: 4,
+            ..Default::default()
+        };
+        unbounded.border = true;
+        assert_eq!(
+            section_policy(&unbounded, "top", 0),
+            Ok(TrackPolicy::ContentBounded {
+                min: 6,
+                max: u16::MAX
+            }),
+            "an unbounded island stays unbounded rather than overflowing to nothing"
+        );
+
+        // A `fill` island is unchanged: it takes what is left, and the frame
+        // eats into that from the inside rather than asking for more of it.
+        let mut filling = section_config("fill");
+        filling.border = true;
+        assert_eq!(
+            section_policy(&filling, "top", 0),
+            Ok(TrackPolicy::Fill { weight: 1 })
+        );
+    }
+
+    /// I6 · a section that did not ask for a frame is sized exactly as before.
+    ///
+    /// The whole of this feature's backward compatibility in one claim: every
+    /// bar written before the key existed reads `border = false`, and a false
+    /// there has to be indistinguishable from the key never having existed.
+    #[test]
+    fn a_section_that_asked_for_no_frame_is_sized_exactly_as_before() {
+        // TP-CHROME-134: `border` unwritten changes no geometry.
+        assert_eq!(
+            section_policy(&fixed_section(10), "top", 0),
+            Ok(TrackPolicy::Fixed { cells: 10 })
+        );
+        assert_eq!(
+            section_policy(
+                &ShellBarSectionConfig {
+                    kind: "content".to_string(),
+                    min: 8,
+                    max: 8,
+                    ..Default::default()
+                },
+                "top",
+                0
+            ),
+            Ok(TrackPolicy::ContentBounded { min: 8, max: 8 })
+        );
+    }
+
+    /// I3 · a frame nobody has room for is refused, out loud.
+    ///
+    /// The number an island is measured against is not `size` but what `size`
+    /// leaves after the bar's own border, and the two differ by exactly the
+    /// amount that makes this confusing: a three-cell **bordered** bar leaves
+    /// one row, so the island that "obviously fits" does not. Drawing it anyway
+    /// would spend both rows on the frame and leave the content none — a box
+    /// with nothing in it, which is U1's shape with a new cause. Saying nothing
+    /// and drawing no frame would be worse still: the person reads their config
+    /// back, sees `border = true`, and has nothing on screen to argue with.
+    #[test]
+    fn an_island_is_refused_where_the_bar_leaves_no_room_across_it() {
+        // TP-CHROME-135: a section frame is refused when the bar's short axis
+        // cannot hold it, and the refusal names the edge, the section and both
+        // numbers.
+        let island_bar = |size: u16, border: bool| {
+            let mut section = fixed_section(4);
+            section.border = true;
+            ShellBarConfig {
+                enabled: true,
+                size,
+                border,
+                color: String::new(),
+                gradient: Vec::new(),
+                sections: vec![section],
+                ..Default::default()
+            }
+        };
+
+        // I3 · a one-row bar has room for neither half of a frame.
+        let bars = bars_with_top(island_bar(1, false));
+        let said = shell_bar_config_problems(&bars, true)
+            .into_iter()
+            .map(|problem| problem.to_string())
+            .collect::<Vec<_>>();
+        assert!(
+            said.iter()
+                .any(|problem| problem.contains("shell.bars.top.sections[0]")
+                    && problem.contains('3')
+                    && problem.contains('1')
+                    && problem.contains("shell.bars.top.size")),
+            "the refusal must name the section, what a frame needs, what the bar \
+             leaves, and the setting to change: {said:?}"
+        );
+        assert!(
+            ShellBars::from_config(&bars).top.sections().is_empty(),
+            "a division this build cannot draw must be refused, not drawn without \
+             the frame that was asked for"
+        );
+
+        // I3b · three cells is enough only when the bar keeps none for itself.
+        // This is the case §9 of the handoff had wrong, and the one a person
+        // meets first: `size = 3` is the documented minimum for a bordered bar.
+        let bordered = bars_with_top(island_bar(3, true));
+        assert!(
+            !shell_bar_config_problems(&bordered, true).is_empty(),
+            "a bordered three-cell bar leaves one row, which is not an island"
+        );
+        assert!(ShellBars::from_config(&bordered).top.sections().is_empty());
+
+        // …and enough when the bar spends nothing on its own frame.
+        let bare = bars_with_top(island_bar(3, false));
+        assert!(
+            shell_bar_config_problems(&bare, true).is_empty(),
+            "three rows with no bar border is exactly an island: {:?}",
+            shell_bar_config_problems(&bare, true)
+                .into_iter()
+                .map(|problem| problem.to_string())
+                .collect::<Vec<_>>()
+        );
+
+        // I3c · the boundary is where the arithmetic puts it, not two cells
+        // conservative of it. Without this the rule above would refuse every
+        // island anybody could actually write inside a framed bar.
+        let roomy = bars_with_top(island_bar(5, true));
+        assert!(
+            shell_bar_config_problems(&roomy, true).is_empty(),
+            "a five-cell bordered bar leaves three rows, which is an island: {:?}",
+            shell_bar_config_problems(&roomy, true)
+                .into_iter()
+                .map(|problem| problem.to_string())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(ShellBars::from_config(&roomy).top.sections().len(), 1);
+
+        // A section that never asked for a frame is untouched by any of it.
+        let plain = ShellBarConfig {
+            enabled: true,
+            size: 1,
+            border: false,
+            color: String::new(),
+            gradient: Vec::new(),
+            sections: vec![fixed_section(4)],
+            ..Default::default()
+        };
+        assert!(shell_bar_config_problems(&bars_with_top(plain), true).is_empty());
+    }
+
+    /// I5 · an island's tone is its own, and inherits its bar's when unwritten.
+    ///
+    /// Both halves matter and they pull in opposite directions. A tone that
+    /// could not be written per section would make every island the same
+    /// colour as the strip around it, which is a box drawn around nothing —
+    /// the whole point of an island is that it reads as a separate thing. And
+    /// an unwritten tone that fell back past the bar to the global warm default
+    /// would paint a peach box inside a mauve bar for nobody's reason: the
+    /// person who wrote `color = "mauve"` on the bar and nothing on the section
+    /// asked for one decision, not two.
+    #[test]
+    fn an_islands_tone_is_its_own_and_falls_back_to_the_bar_it_sits_in() {
+        // TP-CHROME-136: a section frame carries its own tone, or its bar's.
+        let palette = Palette::catppuccin();
+
+        let mut own = fixed_section(4);
+        own.border = true;
+        own.color = "teal".to_string();
+
+        let mut inherited = fixed_section(4);
+        inherited.border = true;
+
+        let plain = fixed_section(4);
+
+        let bars = bars_with_top(ShellBarConfig {
+            enabled: true,
+            size: 3,
+            border: false,
+            color: "mauve".to_string(),
+            gradient: Vec::new(),
+            sections: vec![own, inherited, plain],
+            ..Default::default()
+        });
+        let chrome = ShellBarChrome::from_config(&bars, true, &palette);
+
+        assert_eq!(
+            chrome.border_for(RegionId::TopBar, 0),
+            Some(BarTint::solid(bar_color("teal", &palette))),
+            "a section that named a colour wears that colour"
+        );
+        assert_eq!(
+            chrome.border_for(RegionId::TopBar, 1),
+            Some(BarTint::solid(bar_color("mauve", &palette))),
+            "a section that named none wears its bar's, not the global default"
+        );
+        assert_eq!(
+            chrome.border_for(RegionId::TopBar, 2),
+            None,
+            "a section that asked for no frame carries no tone to draw one with"
+        );
+
+        // The fallback is the bar's tone rather than the warm default, and
+        // those two are only distinguishable while the bar names one — so this
+        // pins that they really are different colours here, rather than the
+        // assertion above passing by coincidence.
+        assert_ne!(
+            bar_color("mauve", &palette),
+            bar_color("", &palette),
+            "this test only means something while the bar's tone differs from \
+             the unconfigured default"
         );
     }
 

@@ -1093,6 +1093,27 @@ impl compose::Component for BaseLayer {
                 .occupied()
             {
                 let index = u8::try_from(index).unwrap_or(u8::MAX);
+                // An island wears its own frame first, and what that frame
+                // leaves is where its widget goes. The inner rectangle is read
+                // back from the call that painted it rather than recomputed,
+                // for the reason `BarTrack::inner` exists: two places doing the
+                // same arithmetic are two places that can drift, and the drift
+                // shows up as a label one cell away from its box.
+                let content = match app.shell_bar_chrome.border_for(region, index) {
+                    Some(tint) => {
+                        let Some(inner) =
+                            widgets::render_bar_shell(frame, rect, tint, app.palette.panel_bg)
+                        else {
+                            // Too small for a frame that was asked for. Drawing
+                            // the widget anyway would put content where the
+                            // person is expecting a box and leave nothing to
+                            // explain the missing one.
+                            continue;
+                        };
+                        inner
+                    }
+                    None => rect,
+                };
                 if let Some(widget) = app.shell_bar_chrome.widget_for(region, index) {
                     widgets::render_section_widget(
                         frame,
@@ -1101,7 +1122,7 @@ impl compose::Component for BaseLayer {
                         &app.resource_history,
                         app.clock_now,
                         &app.palette,
-                        rect,
+                        content,
                         section_style,
                     );
                 }
@@ -1467,7 +1488,8 @@ mod tests {
             None,
             crate::ui::shell::ShellBars::from_config(&config),
         );
-        app.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config, true);
+        app.shell_bar_chrome =
+            crate::ui::shell::ShellBarChrome::from_config(&config, true, &app.palette);
         compute_view(&mut app, frame);
 
         let mut terminal =
@@ -1500,6 +1522,190 @@ mod tests {
             row.matches('四').count(),
             1,
             "clipping by display width must not paint six cells into four: {row:?}"
+        );
+    }
+
+    /// I1/I4 · an island is a frame on the screen, drawn inside its bar's own.
+    ///
+    /// The claim nothing else can make. A tone in the chrome, a rectangle from
+    /// the geometry and a widget that reads both are all present and correct in
+    /// a build that never paints the frame — the compiler counts every one of
+    /// them as used, because they are, just not by anything that draws. This
+    /// fork lost a sidebar row for a whole release to exactly that shape, and
+    /// only a buffer dump tells the two apart.
+    ///
+    /// The bar keeps its own frame here on purpose. Two frames at once is a
+    /// composition somebody may legitimately want — an outer strip holding
+    /// separate islands — so the question is not whether to refuse it but
+    /// whether the arithmetic survives it: the island has to land strictly
+    /// inside the bar's border rather than on top of it.
+    // TP-CHROME-138: an island's frame is painted, inside the bar's own rather
+    // than over it, and its widget goes into what that frame leaves.
+    #[test]
+    fn an_island_draws_its_own_frame_inside_the_bars_and_holds_its_label() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        // `size = 5` because both frames are being drawn: the bar spends two
+        // rows on its own, which leaves exactly the three an island needs.
+        let bars = |island: bool| {
+            let mut first = crate::config::ShellBarSectionConfig {
+                kind: "fixed".to_string(),
+                cells: 6,
+                border: island,
+                color: "teal".to_string(),
+                ..Default::default()
+            };
+            first.widget.kind = "label".to_string();
+            first.widget.text = "CPU".to_string();
+
+            let spacer = crate::config::ShellBarSectionConfig {
+                kind: "fill".to_string(),
+                ..Default::default()
+            };
+
+            let mut last = crate::config::ShellBarSectionConfig {
+                kind: "fixed".to_string(),
+                cells: 5,
+                border: island,
+                ..Default::default()
+            };
+            last.widget.kind = "label".to_string();
+            last.widget.text = "12:00".to_string();
+
+            crate::config::ShellBarsConfig {
+                top: crate::config::ShellBarConfig {
+                    enabled: true,
+                    size: 5,
+                    border: true,
+                    color: "mauve".to_string(),
+                    gradient: Vec::new(),
+                    sections: vec![first, spacer, last],
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        };
+
+        let draw = |config: &crate::config::ShellBarsConfig| {
+            let frame = Rect::new(0, 0, 100, 30);
+            let mut app = crate::app::state::AppState::test_new();
+            app.workspaces = vec![Workspace::test_new("one")];
+            app.active = Some(0);
+            app.selected = 0;
+            app.mode = Mode::Terminal;
+            app.shell_presentation = crate::ui::shell::ShellPresentationState::from_restored(
+                app.sidebar_width,
+                false,
+                None,
+                crate::ui::shell::ShellBars::from_config(config),
+            )
+            .with_bar_colors(crate::ui::shell::BarColors::from_config(
+                config,
+                &app.palette,
+            ));
+            app.shell_bar_chrome =
+                crate::ui::shell::ShellBarChrome::from_config(config, true, &app.palette);
+            compute_view(&mut app, frame);
+
+            let mut terminal =
+                Terminal::new(TestBackend::new(frame.width, frame.height)).expect("test backend");
+            terminal
+                .draw(|f| render(&app, f))
+                .expect("a bar with framed sections draws");
+            let buffer = terminal.backend().buffer().clone();
+            let bar = app.view.shell.regions.get(RegionId::TopBar);
+            let rects = app
+                .shell_presentation
+                .bars()
+                .track_for(RegionId::TopBar)
+                .section_rects(RegionId::TopBar, bar);
+            (buffer, bar, rects)
+        };
+
+        // Only the bar's own rectangle is read: the sidebar and the tab strip
+        // draw rounded corners of their own, and counting those would make this
+        // pass on a screen with no island anywhere in the bar.
+        let corners = |buffer: &ratatui::buffer::Buffer, bar: Rect| {
+            let mut found = Vec::new();
+            for y in bar.y..bar.bottom() {
+                for x in bar.x..bar.right() {
+                    if buffer.cell((x, y)).is_some_and(|cell| cell.symbol() == "╭") {
+                        found.push((x, y));
+                    }
+                }
+            }
+            found
+        };
+
+        let (buffer, bar, rects) = draw(&bars(true));
+
+        // I2 at the screen layer: the six cells asked for became eight on the
+        // bar, so six survive inside the frame.
+        let first = rects.get(0).expect("the first section has a rectangle");
+        assert_eq!(
+            first.width, 8,
+            "a six-cell island must occupy eight so six are left inside it"
+        );
+
+        let found = corners(&buffer, bar);
+        assert_eq!(
+            found.len(),
+            3,
+            "the bar's own frame and two islands make three top-left corners in \
+             the bar's rectangle; found {found:?}"
+        );
+        assert!(
+            found.contains(&(bar.x, bar.y)),
+            "the bar keeps its own frame: {found:?}"
+        );
+        assert!(
+            found.contains(&(first.x, first.y)),
+            "the first island's frame must start where its rectangle does: \
+             {first:?} in {found:?}"
+        );
+        // I4 · strictly inside, not on top of, the bar's own border.
+        assert!(
+            first.x > bar.x && first.y > bar.y,
+            "an island must land inside the bar's border, not over it: \
+             {first:?} in {bar:?}"
+        );
+
+        // The label moves down and in with the frame rather than being drawn
+        // under it: a frame that overwrote its own content would satisfy every
+        // corner assertion above.
+        let row = |buffer: &ratatui::buffer::Buffer, rect: Rect, y: u16| -> String {
+            (rect.x..rect.right())
+                .map(|x| {
+                    buffer
+                        .cell((x, y))
+                        .map(|cell| cell.symbol().to_string())
+                        .unwrap_or_default()
+                })
+                .collect()
+        };
+        assert!(
+            row(&buffer, first, first.y + 1).contains("CPU"),
+            "the label belongs on the island's inner row: {:?}",
+            row(&buffer, first, first.y + 1)
+        );
+        assert!(
+            !row(&buffer, first, first.y).contains("CPU"),
+            "the frame row is the frame's, not the label's: {:?}",
+            row(&buffer, first, first.y)
+        );
+
+        // The negative control. Without it every assertion above would also
+        // pass on a screen whose bar simply draws a lot of corners.
+        let (bare_buffer, bare_bar, bare_rects) = draw(&bars(false));
+        assert_eq!(
+            bare_rects.get(0).expect("a rectangle").width,
+            6,
+            "a section that asked for no frame is not widened by one"
+        );
+        assert_eq!(
+            corners(&bare_buffer, bare_bar),
+            vec![(bare_bar.x, bare_bar.y)],
+            "with no island asked for, the bar's own corner is the only one"
         );
     }
 
@@ -1558,7 +1764,8 @@ mod tests {
             None,
             crate::ui::shell::ShellBars::from_config(&config),
         );
-        app.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config, true);
+        app.shell_bar_chrome =
+            crate::ui::shell::ShellBarChrome::from_config(&config, true, &app.palette);
         compute_view(&mut app, frame);
 
         let mut terminal =
@@ -1639,7 +1846,8 @@ mod tests {
             None,
             crate::ui::shell::ShellBars::from_config(&config),
         );
-        app.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config, true);
+        app.shell_bar_chrome =
+            crate::ui::shell::ShellBarChrome::from_config(&config, true, &app.palette);
         // A reading nothing else could have produced.
         app.resources = crate::resource::ResourceSample {
             mem: Some(crate::resource::Usage {
@@ -1713,7 +1921,8 @@ mod tests {
             None,
             crate::ui::shell::ShellBars::from_config(&config),
         );
-        app.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config, true);
+        app.shell_bar_chrome =
+            crate::ui::shell::ShellBarChrome::from_config(&config, true, &app.palette);
         app
     }
 
@@ -1872,7 +2081,8 @@ mod tests {
             None,
             crate::ui::shell::ShellBars::from_config(&config),
         );
-        app.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config, true);
+        app.shell_bar_chrome =
+            crate::ui::shell::ShellBarChrome::from_config(&config, true, &app.palette);
         app.resources = sample;
         app
     }

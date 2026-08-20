@@ -1738,7 +1738,8 @@ mod tests {
             None,
             crate::ui::shell::ShellBars::from_config(&bars),
         );
-        app.state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&bars, true);
+        app.state.shell_bar_chrome =
+            crate::ui::shell::ShellBarChrome::themed_by_default(&bars, true);
         crate::ui::compute_view(&mut app.state, ratatui::layout::Rect::new(0, 0, 106, 40));
         app
     }
@@ -1751,7 +1752,7 @@ mod tests {
         };
         section.action.kind = "plugin".to_string();
         section.action.command = command.to_string();
-        crate::ui::shell::ShellBarChrome::from_config(
+        crate::ui::shell::ShellBarChrome::themed_by_default(
             &crate::config::ShellBarsConfig {
                 top: crate::config::ShellBarConfig {
                     enabled: true,
@@ -1911,7 +1912,8 @@ mod tests {
             None,
             crate::ui::shell::ShellBars::from_config(&bars),
         );
-        app.state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&bars, true);
+        app.state.shell_bar_chrome =
+            crate::ui::shell::ShellBarChrome::themed_by_default(&bars, true);
         crate::ui::compute_view(&mut app.state, ratatui::layout::Rect::new(0, 0, 106, 40));
 
         let consumed = app.handle_bar_section_mouse(bar_mouse(
@@ -2003,7 +2005,8 @@ mod tests {
             None,
             crate::ui::shell::ShellBars::from_config(&bars),
         );
-        app.state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&bars, true);
+        app.state.shell_bar_chrome =
+            crate::ui::shell::ShellBarChrome::themed_by_default(&bars, true);
         crate::ui::compute_view(&mut app.state, ratatui::layout::Rect::new(0, 0, 106, 40));
         app
     }
@@ -2315,7 +2318,8 @@ mod tests {
             None,
             crate::ui::shell::ShellBars::from_config(&bars),
         );
-        app.state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&bars, true);
+        app.state.shell_bar_chrome =
+            crate::ui::shell::ShellBarChrome::themed_by_default(&bars, true);
         crate::ui::compute_view(&mut app.state, ratatui::layout::Rect::new(0, 0, 106, 40));
         app
     }
@@ -2391,7 +2395,7 @@ mod tests {
             section.action.kind = "popup".to_string();
             section.action.argv = vec!["btop".to_string()];
             section.action.secondary = "tab".to_string();
-            crate::ui::shell::ShellBarChrome::from_config(
+            crate::ui::shell::ShellBarChrome::themed_by_default(
                 &crate::config::ShellBarsConfig {
                     top: crate::config::ShellBarConfig {
                         enabled: true,

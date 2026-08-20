@@ -1051,7 +1051,8 @@ mod tests {
         app.state.workspaces.push(Workspace::test_new("test"));
         app.state.active = Some(0);
         app.state.selected = 0;
-        app.state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config, true);
+        app.state.shell_bar_chrome =
+            crate::ui::shell::ShellBarChrome::themed_by_default(&config, true);
         app
     }
 
@@ -1267,7 +1268,8 @@ mod tests {
             None,
             crate::ui::shell::ShellBars::from_config(&config),
         );
-        app.state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config, true);
+        app.state.shell_bar_chrome =
+            crate::ui::shell::ShellBarChrome::themed_by_default(&config, true);
         app
     }
 
@@ -1356,7 +1358,7 @@ mod tests {
         };
         let mut app = app_with_shell(shell);
         app.state.shell_bar_chrome =
-            crate::ui::shell::ShellBarChrome::from_config(&resource_bars_config(), true);
+            crate::ui::shell::ShellBarChrome::themed_by_default(&resource_bars_config(), true);
 
         assert_eq!(
             app.state.resource_sample_interval,

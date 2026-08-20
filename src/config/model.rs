@@ -1068,6 +1068,28 @@ pub struct ShellBarSectionConfig {
     pub weight: u16,
     pub min: u16,
     pub max: u16,
+    /// Draw this one part as its own framed island rather than as a stretch of
+    /// the bar.
+    ///
+    /// Off by default, so every section written before this key keeps the
+    /// shape it had. The numbers above keep describing what goes *inside*: a
+    /// frame costs one cell on each side and that cost is charged on top of
+    /// them, because a `cells = 10` section that was showing a ten-cell
+    /// picture must not start clipping it the moment somebody asks for a box
+    /// around it.
+    pub border: bool,
+    /// This island's frame tone. A palette token (`accent`, `mauve`, `teal`, …)
+    /// follows the active theme; anything else is read as a literal colour.
+    ///
+    /// Empty inherits the bar's own tone rather than the global default: an
+    /// island belongs to the strip it sits in unless somebody says otherwise,
+    /// and falling back past the bar would paint a peach box inside a mauve
+    /// bar for nobody's reason.
+    ///
+    /// No `gradient` here on purpose — a fade needs a run of cells to happen
+    /// across and an island is a handful of them, so it would finish inside
+    /// the first one.
+    pub color: String,
     /// What a click on this part does. Absent means the part is an indicator
     /// rather than a button: a surface nobody asked to be clickable should not
     /// answer clicks, because the person cannot know what it would do.

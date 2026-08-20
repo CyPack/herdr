@@ -1085,7 +1085,7 @@ mod tests {
             None,
             crate::ui::shell::ShellBars::from_config(&config),
         );
-        state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config, true);
+        state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::themed_by_default(&config, true);
         let area = Rect::new(0, 0, 106, 40);
         crate::ui::compute_view(&mut state, area);
         (state, area)
@@ -1179,7 +1179,7 @@ mod tests {
             None,
             crate::ui::shell::ShellBars::from_config(&config),
         );
-        state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config, true);
+        state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::themed_by_default(&config, true);
         crate::ui::compute_view(&mut state, Rect::new(0, 0, 106, 40));
 
         let mut answered = Vec::new();

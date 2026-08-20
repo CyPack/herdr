@@ -1082,6 +1082,7 @@ impl App {
             shell_bar_chrome: crate::ui::shell::ShellBarChrome::from_config(
                 &config.shell.bars,
                 config.shell.glyph_icons,
+                &theme_palette,
             ),
             drag: None,
             workspace_press: None,
@@ -2286,6 +2287,7 @@ impl App {
             self.state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(
                 &config.shell.bars,
                 config.shell.glyph_icons,
+                &self.state.palette,
             );
         }
 
