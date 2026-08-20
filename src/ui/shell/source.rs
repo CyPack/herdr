@@ -6907,6 +6907,22 @@ mod tests {
                 .collect::<Vec<_>>()
         );
 
+        // The cell the boundary actually lives in. One row is obviously too
+        // few and three is obviously enough; two is the one that looks like it
+        // works — the frame fits and leaves nothing inside it, which is a box
+        // drawn around nothing. Found by mutation: moving the comparison by
+        // one accepted two and every assertion here still passed, because the
+        // cases either side of the boundary say nothing about the boundary.
+        for (size, border) in [(2u16, false), (4, true)] {
+            let squeezed = bars_with_top(island_bar(size, border));
+            assert!(
+                !shell_bar_config_problems(&squeezed, true).is_empty(),
+                "a bar leaving two cells has room for the frame and none for \
+                 what it was drawn around (size {size}, border {border})"
+            );
+            assert!(ShellBars::from_config(&squeezed).top.sections().is_empty());
+        }
+
         // I3c · the boundary is where the arithmetic puts it, not two cells
         // conservative of it. Without this the rule above would refuse every
         // island anybody could actually write inside a framed bar.
