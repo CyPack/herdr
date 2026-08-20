@@ -390,6 +390,10 @@ impl App {
                     .set_sidebar_collapsed(!self.state.sidebar_collapsed);
                 leave_navigate_mode(&mut self.state);
             }
+            NavigateAction::ToggleBars => {
+                self.state.toggle_bars();
+                leave_navigate_mode(&mut self.state);
+            }
             NavigateAction::ToggleFileManager => {
                 self.state.toggle_file_manager();
                 leave_navigate_mode(&mut self.state);
@@ -1349,6 +1353,7 @@ pub(crate) enum NavigateAction {
     Zoom,
     EnterResizeMode,
     ToggleSidebar,
+    ToggleBars,
     ToggleFileManager,
     OpenAgentAttachmentPicker,
     CyclePaneNext,
@@ -1488,6 +1493,7 @@ fn non_indexed_action_for_key(
         (&kb.zoom, NavigateAction::Zoom),
         (&kb.resize_mode, NavigateAction::EnterResizeMode),
         (&kb.toggle_sidebar, NavigateAction::ToggleSidebar),
+        (&kb.toggle_bars, NavigateAction::ToggleBars),
         (&kb.toggle_file_manager, NavigateAction::ToggleFileManager),
         (
             &kb.agent_attachment_picker,
@@ -1747,6 +1753,10 @@ pub(super) fn execute_navigate_action_in_context(
             state.set_sidebar_collapsed(!state.sidebar_collapsed);
             leave_navigate_mode(state);
         }
+        NavigateAction::ToggleBars => {
+            state.toggle_bars();
+            leave_navigate_mode(state);
+        }
         NavigateAction::ToggleFileManager => {
             state.toggle_file_manager();
             leave_navigate_mode(state);
@@ -1923,6 +1933,59 @@ mod tests {
             checkout_path: format!("/repo/worktree-{ws_idx}").into(),
             is_linked_worktree: ws_idx != 0,
         });
+    }
+
+    fn bars_on_top() -> crate::ui::shell::ShellBars {
+        let mut config = crate::config::ShellBarsConfig::default();
+        config.top.enabled = true;
+        config.top.size = 1;
+        config.top.border = false;
+        crate::ui::shell::ShellBars::from_config(&config)
+    }
+
+    // TP-CHROME-141: the default binding reaches the switch through the
+    // connected client's dispatcher. This file dispatches the same action from
+    // two places — the runtime-connected method and the pure-state function —
+    // and an arm added to only one of them dies silently in the other, which
+    // is why each has its own test.
+    #[tokio::test]
+    async fn the_bars_keybind_reaches_the_switch_in_the_connected_client() {
+        let mut app = app_with_test_workspaces(&["one"]);
+        app.state.keybinds = Config::default().keybinds();
+        app.state.shell_presentation.set_bars(bars_on_top());
+        app.state.mode = Mode::Navigate;
+
+        app.handle_navigate_key(TerminalKey::new(KeyCode::Char('b'), KeyModifiers::SHIFT));
+
+        assert!(
+            !app.state.shell_presentation.toggled_off().is_empty(),
+            "prefix+shift+b switches the configured bars off"
+        );
+        assert_eq!(
+            app.state.mode,
+            Mode::Terminal,
+            "and the gesture leaves navigate mode, like its sidebar sibling"
+        );
+    }
+
+    // TP-CHROME-141: the same binding, through the pure-state dispatcher.
+    #[test]
+    fn the_bars_keybind_reaches_the_switch_in_pure_state() {
+        let mut state = state_with_workspaces(&["one"]);
+        state.keybinds = Config::default().keybinds();
+        state.shell_presentation.set_bars(bars_on_top());
+        state.mode = Mode::Navigate;
+
+        handle_navigate_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('B'), KeyModifiers::SHIFT),
+        );
+
+        assert!(
+            !state.shell_presentation.toggled_off().is_empty(),
+            "the free-function dispatcher reaches the same switch"
+        );
+        assert_eq!(state.mode, Mode::Terminal);
     }
 
     fn app_with_test_workspaces(names: &[&str]) -> App {

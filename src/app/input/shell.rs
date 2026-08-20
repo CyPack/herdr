@@ -491,6 +491,34 @@ impl AppState {
         true
     }
 
+    /// Switch every configured bar off, or every switched-off bar back on.
+    ///
+    /// A filled switch — however it was filled — empties. The global key and
+    /// the per-edge hide button share one set, and the person pressing the key
+    /// over a partial state is asking for their bars back, not for the rest to
+    /// disappear too: filling from partial would make the restore press hide
+    /// things, the opposite of what it says. An empty config is inert rather
+    /// than "changed": a press that flipped an empty set to an empty set would
+    /// report work nobody can see.
+    ///
+    /// No session-dirty mark on purpose: the switch is deliberately unsaved
+    /// (see `ShellPresentationState::toggled_off`), and marking the session
+    /// dirty for a value the snapshot never records would schedule a write
+    /// that changes nothing.
+    pub(crate) fn toggle_bars(&mut self) -> bool {
+        if !self.shell_presentation.toggled_off().is_empty() {
+            self.shell_presentation
+                .set_toggled_off(crate::ui::shell::BarEdges::NONE);
+            return true;
+        }
+        let enabled = self.shell_presentation.bars().enabled_edges();
+        if enabled.is_empty() {
+            return false;
+        }
+        self.shell_presentation.set_toggled_off(enabled);
+        true
+    }
+
     #[cfg(test)]
     fn sidebar_collapse_snapshot_for_test(&self) -> (u16, u64) {
         (
@@ -646,6 +674,79 @@ mod tests {
     use ratatui::layout::{Position, Rect};
 
     use super::*;
+
+    fn bars_on_two_edges() -> crate::ui::shell::ShellBars {
+        let mut config = crate::config::ShellBarsConfig::default();
+        config.top.enabled = true;
+        config.top.size = 1;
+        config.top.border = false;
+        config.right.enabled = true;
+        config.right.size = 1;
+        config.right.border = false;
+        crate::ui::shell::ShellBars::from_config(&config)
+    }
+
+    // TP-CHROME-140: the gesture is global and the model is per edge. One
+    // press fills the switch with every edge this config put something on;
+    // the next empties it, whatever it holds.
+    #[test]
+    fn the_bar_switch_fills_with_every_enabled_edge_and_empties_again() {
+        let mut state = AppState::test_new();
+        state.shell_presentation.set_bars(bars_on_two_edges());
+
+        assert!(state.toggle_bars(), "the first press changes something");
+        let off = state.shell_presentation.toggled_off();
+        let drawn = state.shell_presentation.bars().visible(false, off);
+        assert!(
+            !drawn.top.enabled() && !drawn.right.enabled(),
+            "every configured edge went quiet together"
+        );
+
+        assert!(state.toggle_bars(), "the second press changes it back");
+        assert!(
+            state.shell_presentation.toggled_off().is_empty(),
+            "the switch is empty again"
+        );
+    }
+
+    // TP-CHROME-140: a partly filled switch empties rather than filling.
+    //
+    // The cell the two easy transitions never visit. A per-edge gesture — the
+    // hide button — can leave one edge off while others draw, and the person
+    // pressing the global key there is asking for their bars back, not for
+    // the rest to disappear too. Filling from a partial state would make the
+    // restore press hide things, which is the opposite of what it says.
+    #[test]
+    fn a_partly_filled_switch_empties_rather_than_filling() {
+        let mut state = AppState::test_new();
+        state.shell_presentation.set_bars(bars_on_two_edges());
+        // A one-edge set, built the way the hide button will build it: from a
+        // composition that has exactly that edge.
+        let mut top_only = crate::config::ShellBarsConfig::default();
+        top_only.top.enabled = true;
+        top_only.top.size = 1;
+        top_only.top.border = false;
+        state
+            .shell_presentation
+            .set_toggled_off(crate::ui::shell::ShellBars::from_config(&top_only).enabled_edges());
+
+        assert!(state.toggle_bars(), "the press changes something");
+        assert!(
+            state.shell_presentation.toggled_off().is_empty(),
+            "a partial switch is released, never topped up"
+        );
+    }
+
+    // TP-CHROME-140: with nothing configured the gesture is inert — it says
+    // so, and it leaves no state behind. A press that "changed" an empty set
+    // to an empty set would mark work nobody can see.
+    #[test]
+    fn the_switch_is_inert_with_no_bar_to_switch() {
+        let mut state = AppState::test_new();
+
+        assert!(!state.toggle_bars(), "nothing to switch, nothing changed");
+        assert!(state.shell_presentation.toggled_off().is_empty());
+    }
 
     #[test]
     fn active_sidebar_capture_right_arrow_previews_one_cell() {

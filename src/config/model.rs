@@ -1379,6 +1379,7 @@ pub struct KeysConfig {
     pub resize_mode: BindingConfig,
     /// Toggle sidebar collapse. Default: "prefix+b"
     pub toggle_sidebar: BindingConfig,
+    pub toggle_bars: BindingConfig,
     /// Toggle the native file manager. Default: "prefix+f"
     pub toggle_file_manager: BindingConfig,
     /// Open the focused-agent attachment picker. Default: "prefix+a"
@@ -1503,6 +1504,7 @@ pub(crate) struct KeysConfigOverlay {
     resize_mode: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     toggle_sidebar: Option<BindingConfig>,
+    toggle_bars: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     toggle_file_manager: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1584,6 +1586,7 @@ impl<'de> Deserialize<'de> for KeysConfig {
         apply_field!(zoom);
         apply_field!(resize_mode);
         apply_field!(toggle_sidebar);
+        apply_field!(toggle_bars);
         apply_field!(toggle_file_manager);
         apply_field!(agent_attachment_picker);
         apply_field!(indexed);
@@ -1685,6 +1688,7 @@ impl KeysConfig {
         copy_effective_action_field!(zoom, keybinds.zoom);
         copy_effective_action_field!(resize_mode, keybinds.resize_mode);
         copy_effective_action_field!(toggle_sidebar, keybinds.toggle_sidebar);
+        copy_effective_action_field!(toggle_bars, keybinds.toggle_bars);
         copy_effective_action_field!(toggle_file_manager, keybinds.toggle_file_manager);
         copy_effective_action_field!(agent_attachment_picker, keybinds.agent_attachment_picker);
         copy_user_field!(indexed);
@@ -1989,6 +1993,7 @@ impl Default for KeysConfig {
             zoom: BindingConfig::one("prefix+z"),
             resize_mode: BindingConfig::one("prefix+r"),
             toggle_sidebar: BindingConfig::one("prefix+b"),
+            toggle_bars: BindingConfig::one("prefix+shift+b"),
             toggle_file_manager: BindingConfig::one("prefix+f"),
             agent_attachment_picker: BindingConfig::one("prefix+a"),
             indexed: IndexedKeysConfig::default(),

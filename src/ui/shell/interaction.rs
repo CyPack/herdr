@@ -614,6 +614,12 @@ impl ShellPresentationState {
         self.toggled_off
     }
 
+    /// Replace the hand switch. Session-owned, like the fold beside it —
+    /// `set_bars` replaces the config half and leaves this alone.
+    pub(crate) fn set_toggled_off(&mut self, edges: BarEdges) {
+        self.toggled_off = edges;
+    }
+
     /// Replace the edge strips, keeping every session fact beside them.
     ///
     /// A reload that rebuilt this whole aggregate would take the panel width,

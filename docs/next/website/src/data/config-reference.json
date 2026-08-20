@@ -524,6 +524,12 @@
           "description": "Toggle sidebar collapse."
         },
         {
+          "key": "keys.toggle_bars",
+          "type": "keybinding",
+          "default": "\"prefix+shift+b\"",
+          "description": "Switch every configured edge bar off, or every switched-off bar back on. Session-local: a restart brings the bars back."
+        },
+        {
           "key": "keys.indexed.tabs",
           "type": "string",
           "default": "unset",

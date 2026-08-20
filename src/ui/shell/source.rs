@@ -370,7 +370,7 @@ impl BarTrack {
         }
     }
 
-    const fn enabled(self) -> bool {
+    pub(crate) const fn enabled(self) -> bool {
         self.cells.is_some()
     }
 }
@@ -1469,6 +1469,10 @@ impl BarEdges {
             BarEdge::Left => self.left,
             BarEdge::Right => self.right,
         }
+    }
+
+    pub(crate) const fn is_empty(self) -> bool {
+        !(self.top || self.bottom || self.left || self.right)
     }
 }
 
@@ -2678,6 +2682,21 @@ impl ShellBars {
             bottom: BarTrack::from_config(&config.bottom, "bottom"),
             left: BarTrack::from_config(&config.left, "left"),
             right: BarTrack::from_config(&config.right, "right"),
+        }
+    }
+
+    /// The edges that actually carry a strip, as a set.
+    ///
+    /// What the global gesture switches off: not the four compass points but
+    /// the ones this config put something on. Filling the switch with an edge
+    /// that draws nothing would make the first press a no-op on screen and
+    /// the second press "restore" bars that were never gone.
+    pub(crate) const fn enabled_edges(self) -> BarEdges {
+        BarEdges {
+            top: self.top.enabled(),
+            bottom: self.bottom.enabled(),
+            left: self.left.enabled(),
+            right: self.right.enabled(),
         }
     }
 

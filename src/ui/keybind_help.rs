@@ -148,6 +148,7 @@ pub(super) fn keybind_help_groups(app: &AppState) -> Vec<HelpGroup> {
         help_entry(keybind_label(&kb.zoom), "zoom pane"),
         help_entry(keybind_label(&kb.resize_mode), "resize mode"),
         help_entry(keybind_label(&kb.toggle_sidebar), "toggle sidebar"),
+        help_entry(keybind_label(&kb.toggle_bars), "toggle bars"),
         help_entry(
             keybind_label(&kb.toggle_file_manager),
             "toggle file manager",

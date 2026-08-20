@@ -607,6 +607,21 @@ Only the frame is affected. What the file says is still what is stored, so leavi
 the bar back with its sections, colours and actions intact — and a session saved while focus was
 on does not come back missing a bar.
 
+### Switching the bars off by hand
+
+`prefix+shift+b` switches every configured bar off at once, and back on with the same press —
+the sibling of `prefix+b`, which does the same for the sidebar. Rebind it with
+`keys.toggle_bars`.
+
+The switch is for the session: a restart brings the bars back, and what the file says is
+always what is stored, so a session saved while the bars were off does not come back missing
+them. It is also independent of focus mode — either can quiet a bar, and a bar is drawn only
+when both let it through.
+
+If a hide button (below) has switched a single edge off, the same press brings everything
+back rather than switching the rest off too: over a partly quiet screen, the key means
+"give me my bars back".
+
 ### Putting something in a section
 
 A section is empty until it is given a widget. There are six kinds:

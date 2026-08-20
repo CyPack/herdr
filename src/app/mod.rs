@@ -3828,6 +3828,71 @@ mod tests {
     // TP-CHROME-127 fixed for the bars and the same one it would be strange to
     // leave standing next to it.
     #[test]
+    fn reloading_config_keeps_the_hand_switch_and_filters_the_new_bars() {
+        // TP-CHROME-141: the hand switch is the session half of the
+        // presentation aggregate. A reload replaces the config half —
+        // `set_bars` — and must leave the switch alone, exactly as it leaves
+        // the panel width; and the switch must then quiet the *new* bars,
+        // because a filter that only knew the old composition would draw
+        // whatever the reload just added.
+        let _guard = config_env_lock().lock().unwrap();
+        let path = temp_config_path("reload-bar-switch");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let quiet_update = "[update]\nversion_check = false\nmanifest_check = false\n";
+        std::fs::write(&path, quiet_update).unwrap();
+        std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
+
+        let mut app = test_app();
+        let mut bars_config = crate::config::ShellBarsConfig::default();
+        bars_config.top.enabled = true;
+        bars_config.top.size = 1;
+        bars_config.top.border = false;
+        app.state
+            .shell_presentation
+            .set_bars(crate::ui::shell::ShellBars::from_config(&bars_config));
+        assert!(
+            app.state.toggle_bars(),
+            "the switch takes the configured bar"
+        );
+        let off = app.state.shell_presentation.toggled_off();
+        assert!(!off.is_empty());
+
+        // The reload grows the bar; the switch must survive and cover it.
+        std::fs::write(
+            &path,
+            format!("{quiet_update}[shell.bars.top]\nenabled = true\nsize = 3\nborder = true\n"),
+        )
+        .unwrap();
+        let report = app.reload_config();
+        assert_eq!(report.status, crate::config::ConfigReloadStatus::Applied);
+
+        assert_eq!(
+            app.state.shell_presentation.toggled_off(),
+            off,
+            "the reload replaced the config half and left the session half alone"
+        );
+        assert!(
+            app.state.shell_presentation.bars().top.enabled(),
+            "the stored value is the new config"
+        );
+        assert!(
+            !app.state
+                .shell_presentation
+                .bars()
+                .visible(
+                    app.state.spaces_focus_only,
+                    app.state.shell_presentation.toggled_off()
+                )
+                .top
+                .enabled(),
+            "and the switch quiets the reloaded bar, not just the one it was pressed over"
+        );
+
+        std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
     fn reloading_config_applies_the_focus_filter_to_the_running_client() {
         let _guard = config_env_lock().lock().unwrap();
         let path = temp_config_path("reload-focus");
