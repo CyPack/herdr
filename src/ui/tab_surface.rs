@@ -338,9 +338,14 @@ mod tests {
         // rects are unchanged — again the kind of change this digest exists
         // to surface rather than hide, and again every structural assertion
         // above still holds.
+        //
+        // Re-baselined 2026-08-20: the tab strip seats two split buttons
+        // right of "+" (TP-TAB-SPLIT-01) — two more painted glyphs on the
+        // strip, rects and structure untouched. Exactly the change this
+        // digest exists to surface.
         assert_eq!(
             frame_digest(&frame),
-            "ec297df7e32799ec66160455c2971bc62d00d719dff6404020b3710ca4f3db8d"
+            "dcd45118d8664adb601ffcbe1ac216d2be1766e21704b6bd9dfaa0f52070bfe1"
         );
     }
 
