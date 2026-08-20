@@ -83,10 +83,20 @@ NEUTRAL_HOME_NAMES = frozenset(
 
 # Addresses that may appear because they are not ours to remove: the project's
 # own contact addresses, upstream's maintainer, the FSF (quoted by the licence
-# analysis), a code host's noreply domain and SSH user, and reserved example
-# domains.
+# analysis), a code host's noreply domain and SSH user, reserved example
+# domains, and the assistant-vendor noreply sink the commit gate refuses by
+# name.
+#
+# That last one is the address this check exists to keep out of the tree, in
+# the one place it has to appear: `scripts/conventional_commits.py` refuses a
+# commit trailer that credits an assistant as an author, and a rule that names
+# an address cannot be tested without writing it down. It belongs to nobody —
+# it is a no-reply sink, the same class as the code host's above — so it is
+# listed rather than smuggled past this check by splitting the string, which
+# would defeat the check for everything else too.
 ALLOWED_MAIL_PATTERNS = (
     re.compile(r"@users\.noreply\.github\.com$"),
+    re.compile(r"^noreply@anthropic\.com$"),
     re.compile(r"@(example|invalid|test)\.(com|org|net|invalid)$"),
     re.compile(r"@herdr\.dev$"),
     re.compile(r"@fsf\.org$"),
