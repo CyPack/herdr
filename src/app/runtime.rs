@@ -1017,7 +1017,7 @@ mod tests {
             top: crate::config::ShellBarConfig {
                 enabled: true,
                 size: 1,
-                border: false,
+                border: Some(false),
                 color: String::new(),
                 gradient: Vec::new(),
                 sections: vec![section],

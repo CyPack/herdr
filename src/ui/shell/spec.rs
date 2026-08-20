@@ -162,10 +162,16 @@ const BAR_KEYS: &[KeySpec] = &[
         default: "3",
     },
     KeySpec {
+        key: "style",
+        value_type: "string",
+        range: "framed, islands, plain",
+        default: "framed",
+    },
+    KeySpec {
         key: "border",
         value_type: "boolean",
         range: "",
-        default: "true",
+        default: "the style's — framed: true",
     },
     KeySpec {
         key: "color",
@@ -199,6 +205,12 @@ const BAR_KEYS: &[KeySpec] = &[
 /// struct cannot say what a missing value stands for — and kept out of the kind
 /// tables because they are not any one kind's.
 const SECTION_KEYS: &[KeySpec] = &[
+    KeySpec {
+        key: "group",
+        value_type: "string",
+        range: "",
+        default: "",
+    },
     KeySpec {
         key: "border",
         value_type: "boolean",
@@ -838,6 +850,7 @@ mod tests {
             let value = match key.key {
                 "enabled" => "true".to_string(),
                 "size" => "3".to_string(),
+                "style" => "\"islands\"".to_string(),
                 "border" => "true".to_string(),
                 "color" => "\"mauve\"".to_string(),
                 "gradient" => "[\"mauve\", \"teal\"]".to_string(),
@@ -880,28 +893,40 @@ mod tests {
             "an empty list teaches a reader that a section takes nothing but its kind's keys"
         );
 
-        let mut text = String::from(
-            // Five rather than three: this bar keeps its own frame, which
-            // spends two of the size, and an island needs three of what is
-            // left.
-            "[shell.bars.top]\nenabled = true\nsize = 5\nborder = true\n\n\
-             [[shell.bars.top.sections]]\nkind = \"fixed\"\ncells = 6\n",
-        );
+        // Two documents rather than one, because the vocabulary itself has a
+        // deliberate exclusion in it: a grouped section's frame comes from its
+        // group, so `group` and `border` on one section is refused by name.
+        // One document per shape proves every key is real without asking the
+        // parser to accept a combination this build refuses on purpose.
+        // Five rather than three: this bar keeps its own frame, which spends
+        // two of the size, and an island needs three of what is left.
+        let header = "[shell.bars.top]\nenabled = true\nsize = 5\nborder = true\n\n\
+             [[shell.bars.top.sections]]\nkind = \"fixed\"\ncells = 6\n";
+        let mut solo = String::from(header);
+        let mut grouped = String::from(header);
         for entry in listed {
             let key = entry["key"].as_str().expect("a section key is named");
             let value = match key {
+                "group" => "\"sys\"".to_string(),
                 "border" => "true".to_string(),
                 "color" => "\"teal\"".to_string(),
                 other => panic!("no sample value for the section key {other:?}"),
             };
-            text.push_str(&format!("{key} = {value}\n"));
+            if key != "group" {
+                solo.push_str(&format!("{key} = {value}\n"));
+            }
+            if key != "border" {
+                grouped.push_str(&format!("{key} = {value}\n"));
+            }
         }
 
-        let found = problems(&text);
-        assert!(
-            found.is_empty(),
-            "a section setting every key this spec lists is refused: {found:?}\n{text}"
-        );
+        for (shape, text) in [("solo", &solo), ("grouped", &grouped)] {
+            let found = problems(text);
+            assert!(
+                found.is_empty(),
+                "a {shape} section setting every key it may take is refused: {found:?}\n{text}"
+            );
+        }
 
         // And they are published once. A key that also appeared under a kind
         // would read as that kind's, which is the misunderstanding this list

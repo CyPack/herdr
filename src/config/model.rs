@@ -967,12 +967,23 @@ impl Default for ShellBarsConfig {
 pub struct ShellBarConfig {
     pub enabled: bool,
     pub size: u16,
+    /// Which look this bar wears when its parts do not say otherwise.
+    ///
+    /// A preset over the primitives, never a replacement for them: `"framed"`
+    /// (the default, and what an unwritten style means) draws the bar's own
+    /// panel and leaves sections bare; `"islands"` drops the outer panel and
+    /// frames each section; `"plain"` draws neither. It only fills in
+    /// *unwritten* `border` keys — anything written explicitly, on the bar or
+    /// on a section, wins over the style in both directions. Changing the
+    /// whole look is therefore one line, and disagreeing with it is one more.
+    pub style: String,
     /// Draw the strip as a bordered panel rather than a bare band.
     ///
-    /// On by default because a bar that is only a gap reads as a rendering
-    /// fault rather than a surface. A border costs one cell on each side, so a
-    /// bordered bar needs `size >= 3` to have anything left to put inside it.
-    pub border: bool,
+    /// Unwritten means "whatever the style says" — `framed` says yes, because
+    /// a bar that is only a gap reads as a rendering fault rather than a
+    /// surface. A border costs one cell on each side, so a bordered bar needs
+    /// `size >= 3` to have anything left to put inside it.
+    pub border: Option<bool>,
     /// Border tone. A palette token (`accent`, `mauve`, `blue`, …) follows the
     /// active theme; anything else is read as a literal colour. Empty means the
     /// subdued separator tone.
@@ -1028,7 +1039,8 @@ impl ShellBarConfig {
         Self {
             enabled: false,
             size: 3,
-            border: true,
+            style: String::new(),
+            border: None,
             color: String::new(),
             gradient: Vec::new(),
             sections: Vec::new(),
@@ -1041,7 +1053,8 @@ impl ShellBarConfig {
         Self {
             enabled: false,
             size: 12,
-            border: true,
+            style: String::new(),
+            border: None,
             color: String::new(),
             gradient: Vec::new(),
             sections: Vec::new(),
@@ -1071,13 +1084,22 @@ pub struct ShellBarSectionConfig {
     /// Draw this one part as its own framed island rather than as a stretch of
     /// the bar.
     ///
-    /// Off by default, so every section written before this key keeps the
-    /// shape it had. The numbers above keep describing what goes *inside*: a
-    /// frame costs one cell on each side and that cost is charged on top of
-    /// them, because a `cells = 10` section that was showing a ten-cell
-    /// picture must not start clipping it the moment somebody asks for a box
-    /// around it.
-    pub border: bool,
+    /// Unwritten means "whatever the bar's `style` says" — `islands` frames
+    /// every section that does not opt out, everything else leaves them bare —
+    /// so every section written before this key keeps the shape it had. The
+    /// numbers above keep describing what goes *inside*: a frame costs one
+    /// cell on each side and that cost is charged on top of them, because a
+    /// `cells = 10` section that was showing a ten-cell picture must not start
+    /// clipping it the moment somebody asks for a box around it.
+    pub border: Option<bool>,
+    /// Which island this section belongs to, by name.
+    ///
+    /// Adjacent sections naming the same group share one frame: cpu, mem and
+    /// swap can sit inside a single box instead of three. Empty means the
+    /// section stands alone. A grouped section's own `border` key is refused —
+    /// its frame comes from the group — and the same name split apart by an
+    /// ungrouped neighbour is refused too, because a frame is one rectangle.
+    pub group: String,
     /// This island's frame tone. A palette token (`accent`, `mauve`, `teal`, …)
     /// follows the active theme; anything else is read as a literal colour.
     ///

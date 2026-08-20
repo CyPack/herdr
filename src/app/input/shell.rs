@@ -715,10 +715,10 @@ mod tests {
         let mut config = crate::config::ShellBarsConfig::default();
         config.top.enabled = true;
         config.top.size = 1;
-        config.top.border = false;
+        config.top.border = Some(false);
         config.right.enabled = true;
         config.right.size = 1;
-        config.right.border = false;
+        config.right.border = Some(false);
         crate::ui::shell::ShellBars::from_config(&config)
     }
 
@@ -761,7 +761,7 @@ mod tests {
         let mut top_only = crate::config::ShellBarsConfig::default();
         top_only.top.enabled = true;
         top_only.top.size = 1;
-        top_only.top.border = false;
+        top_only.top.border = Some(false);
         state
             .shell_presentation
             .set_toggled_off(crate::ui::shell::ShellBars::from_config(&top_only).enabled_edges());
@@ -1201,11 +1201,18 @@ mod tests {
     fn state_with_divided_top_bar(
         sections: Vec<crate::config::ShellBarSectionConfig>,
     ) -> (AppState, Rect) {
+        state_with_divided_top_bar_of_size(sections, 1)
+    }
+
+    fn state_with_divided_top_bar_of_size(
+        sections: Vec<crate::config::ShellBarSectionConfig>,
+        size: u16,
+    ) -> (AppState, Rect) {
         let config = crate::config::ShellBarsConfig {
             top: crate::config::ShellBarConfig {
                 enabled: true,
-                size: 1,
-                border: false,
+                size,
+                border: Some(false),
                 hide_when_focused: false,
                 color: String::new(),
                 gradient: Vec::new(),
@@ -1238,7 +1245,7 @@ mod tests {
             bottom: crate::config::ShellBarConfig {
                 enabled: true,
                 size: 1,
-                border: false,
+                border: Some(false),
                 hide_when_focused: false,
                 color: String::new(),
                 gradient: Vec::new(),
@@ -1313,6 +1320,25 @@ mod tests {
         );
     }
 
+    /// G8 · the frame is chrome; the address stays the section's. A press on
+    /// a grouped run's middle member fires that member's own action.
+    #[test]
+    fn a_press_inside_a_group_lands_on_the_member_it_is_over() {
+        // TP-CHROME-145.
+        let mut first = popup_section(9, &["one"]);
+        first.group = "sys".to_string();
+        let mut second = popup_section(9, &["two"]);
+        second.group = "sys".to_string();
+        let mut third = popup_section(9, &["three"]);
+        third.group = "sys".to_string();
+        let (state, _) = state_with_divided_top_bar_of_size(vec![first, second, third], 3);
+
+        match state.bar_section_click_at(Position::new(13, 1), SectionGesture::Primary) {
+            BarSectionClick::OpenPopup { argv, .. } => assert_eq!(argv, vec!["two".to_string()]),
+            other => panic!("the middle member answers with its own action, got {other:?}"),
+        }
+    }
+
     fn popup_section(cells: u16, argv: &[&str]) -> crate::config::ShellBarSectionConfig {
         let mut section = inert_section(cells);
         section.action.kind = "popup".to_string();
@@ -1384,12 +1410,13 @@ mod tests {
             top: crate::config::ShellBarConfig {
                 enabled: true,
                 size: 1,
-                border: false,
+                border: Some(false),
                 color: String::new(),
                 gradient: Vec::new(),
                 sections,
                 max_sections: COUNT as u16,
                 hide_when_focused: false,
+                style: String::new(),
             },
             ..Default::default()
         };

@@ -344,7 +344,7 @@ impl BarTrack {
             tracing::warn!(%problem, "shell bar size refused; the bar is not drawn");
             return Self::NONE;
         }
-        let track = if config.border {
+        let track = if resolved_bar_border(config) {
             Self::bordered(config.size)
         } else {
             Self::of(config.size)
@@ -473,6 +473,28 @@ pub(crate) enum BarConfigProblem {
         edge: &'static str,
         index: usize,
         kind: &'static str,
+    },
+    /// A `style` naming a look this build does not know.
+    UnknownBarStyle {
+        edge: &'static str,
+        style: String,
+    },
+    /// A `border` key on a section whose frame comes from its group.
+    GroupedSectionWithBorder {
+        edge: &'static str,
+        index: usize,
+    },
+    /// One group name, two separate runs of sections.
+    GroupSplitApart {
+        edge: &'static str,
+        name: String,
+    },
+    /// Two members of one group naming two different frame tones.
+    GroupColoursDisagree {
+        edge: &'static str,
+        name: String,
+        first: String,
+        second: String,
     },
     /// A `hide` action carrying a command line.
     ///
@@ -742,6 +764,32 @@ impl std::fmt::Display for BarConfigProblem {
                 "shell.bars.{edge}.sections[{index}].action.name is set on a \"{kind}\" \
                  action, which goes to no workspace, so the name is never read"
             ),
+            Self::UnknownBarStyle { edge, style } => write!(
+                formatter,
+                "shell.bars.{edge}.style is {style:?}, which is not a look this build \
+                 knows; it accepts {}",
+                accepted_names(BAR_STYLE_NAMES)
+            ),
+            Self::GroupedSectionWithBorder { edge, index } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}] sets border, but it is grouped — its \
+                 frame comes from the group, so the key is never read"
+            ),
+            Self::GroupSplitApart { edge, name } => write!(
+                formatter,
+                "shell.bars.{edge} names the group {name:?} in two separate places; a \
+                 group's frame is one rectangle, so its sections have to sit together"
+            ),
+            Self::GroupColoursDisagree {
+                edge,
+                name,
+                first,
+                second,
+            } => write!(
+                formatter,
+                "shell.bars.{edge}'s group {name:?} is asked to be {first:?} and {second:?} \
+                 at once; the frame is one frame, so its members must agree"
+            ),
             Self::HideActionWithCommand { edge, index, field } => write!(
                 formatter,
                 "shell.bars.{edge}.sections[{index}].action sets {field}, but \"hide\" runs \
@@ -905,6 +953,60 @@ impl std::fmt::Display for BarConfigProblem {
 }
 
 /// Why this edge's size cannot be drawn, if it cannot.
+/// The looks a bar can name with `style`.
+///
+/// A closed set, like the section kinds and for the same reason: a name this
+/// build does not know is a config that means nothing, and guessing which
+/// look was meant would hand somebody a bar they did not write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BarStyle {
+    Framed,
+    Islands,
+    Plain,
+}
+
+/// The accepted style names, for the refusal that offers them.
+const BAR_STYLE_NAMES: &[&str] = &["framed", "islands", "plain"];
+
+/// Read one bar's style, refusing a name this build does not know.
+///
+/// Unwritten means `framed`: that is what every bar written before the key
+/// existed was, so the preset layer arrives with zero effect (k33).
+fn bar_style(config: &ShellBarConfig) -> Result<BarStyle, &str> {
+    match config.style.trim() {
+        "" | "framed" => Ok(BarStyle::Framed),
+        "islands" => Ok(BarStyle::Islands),
+        "plain" => Ok(BarStyle::Plain),
+        other => Err(other),
+    }
+}
+
+/// Whether this bar wears its own panel, once the style has had its say.
+///
+/// An explicit `border` wins in both directions — the style only fills in
+/// what was left unwritten. An unknown style resolves as `framed` here, but
+/// only after `bar_size_problem` has already refused the bar out loud; this
+/// function is called from paths that still need *an* answer for it.
+fn resolved_bar_border(config: &ShellBarConfig) -> bool {
+    config
+        .border
+        .unwrap_or(match bar_style(config).unwrap_or(BarStyle::Framed) {
+            BarStyle::Framed => true,
+            BarStyle::Islands | BarStyle::Plain => false,
+        })
+}
+
+/// Whether one ungrouped section wears its own frame, once the style has had
+/// its say. The explicit key wins in both directions.
+fn resolved_section_border(bar: &ShellBarConfig, section: &ShellBarSectionConfig) -> bool {
+    section
+        .border
+        .unwrap_or(match bar_style(bar).unwrap_or(BarStyle::Framed) {
+            BarStyle::Islands => true,
+            BarStyle::Framed | BarStyle::Plain => false,
+        })
+}
+
 /// How many cells a bar leaves across its short axis, after its border.
 ///
 /// Rows for a top or bottom bar, columns for a left or right one. `size` counts
@@ -913,7 +1015,7 @@ impl std::fmt::Display for BarConfigProblem {
 fn bar_across(config: &ShellBarConfig) -> u16 {
     config
         .size
-        .saturating_sub(if config.border { 2 } else { 0 })
+        .saturating_sub(if resolved_bar_border(config) { 2 } else { 0 })
 }
 
 /// Whether this edge runs left to right.
@@ -938,7 +1040,13 @@ fn bar_size_problem(config: &ShellBarConfig, edge: &'static str) -> Option<BarCo
     // Refused rather than drawn borderless: someone who asked for a bordered
     // bar and got a bare band would read it as the border failing, not as
     // their size being impossible — which is why this is its own message.
-    if config.border && config.size < MIN_BORDERED_BAR_CELLS {
+    if let Err(unknown) = bar_style(config) {
+        return Some(BarConfigProblem::UnknownBarStyle {
+            edge,
+            style: unknown.to_string(),
+        });
+    }
+    if resolved_bar_border(config) && config.size < MIN_BORDERED_BAR_CELLS {
         return Some(BarConfigProblem::BorderedBarTooThin {
             edge,
             size: config.size,
@@ -1047,6 +1155,19 @@ pub(crate) fn shell_bar_config_problems(
             problems.push(problem);
             continue;
         }
+        match island_runs(bar, edge) {
+            Ok(runs) => {
+                for run in runs {
+                    if let Err(problem) =
+                        section_border_problem(true, edge, run.start, bar_across(bar))
+                    {
+                        problems.push(problem);
+                        break;
+                    }
+                }
+            }
+            Err(problem) => problems.push(problem),
+        }
         for (index, section) in bar.sections.iter().enumerate() {
             if let Err(problem) = section_policy(section, edge, index) {
                 problems.push(problem);
@@ -1054,9 +1175,7 @@ pub(crate) fn shell_bar_config_problems(
             // Beside the sizing rule rather than inside it: a frame is a
             // section-level setting like a size, so its complaint reads where a
             // reader is already looking, before the widget's and the action's.
-            if let Err(problem) = section_border_problem(section, edge, index, bar_across(bar)) {
-                problems.push(problem);
-            }
+
             // Asked separately from the sizing rule because the two have
             // different blast radii and a person fixing one should not have to
             // guess that the other was also refused. The widget is asked before
@@ -1095,7 +1214,7 @@ fn sections_from_config(config: &ShellBarConfig, edge: &'static str) -> BarSecti
             return BarSections::NONE;
         }
     };
-    match section_policies(&config.sections, edge, budget, bar_across(config)) {
+    match section_policies(config, edge, budget, bar_across(config)) {
         Ok(policies) => BarSections::from_policies(&policies, edge),
         Err(problem) => {
             tracing::warn!(%problem, "the bar is drawn undivided");
@@ -1112,25 +1231,58 @@ fn sections_from_config(config: &ShellBarConfig, edge: &'static str) -> BarSecti
 /// predicate — the action table below asks the same question, and a second copy
 /// of the rule would let a refused division keep an addressable action list.
 fn section_policies(
-    configs: &[ShellBarSectionConfig],
+    bar: &ShellBarConfig,
     edge: &'static str,
     budget: usize,
     across: u16,
 ) -> Result<Vec<TrackPolicy>, BarConfigProblem> {
+    let configs = &bar.sections;
     if let Some(problem) = section_count_problem(configs.len(), edge, budget) {
         return Err(problem);
     }
-    configs
+    // All-or-nothing, like every other section rule here: a refused frame
+    // layout costs the division, because dropping one section would renumber
+    // every one after it, and the number is the only name a section has.
+    let runs = island_runs(bar, edge)?;
+    if let Some(run) = runs.first() {
+        // Every run needs the same rows, so asking the first is asking all —
+        // and the refusal names the first framed section, which is the line
+        // the person will go and look at.
+        section_border_problem(true, edge, run.start, across)?;
+    }
+    let mut policies = configs
         .iter()
         .enumerate()
-        .map(|(index, config)| {
-            // All-or-nothing, like every other section rule here: dropping only
-            // the framed section would renumber every one after it, and the
-            // number is the only name a section has.
-            section_border_problem(config, edge, index, across)?;
-            section_policy(config, edge, index)
-        })
-        .collect()
+        .map(|(index, config)| section_policy(config, edge, index))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // The frame's cells along the bar, charged here rather than inside the
+    // sizing builders: the cost belongs to the *edges of an island*, and only
+    // the pass that sees the whole list knows where a run's edges are. One
+    // rule — a run's first section pays one cell, its last pays one — and a
+    // solo island is a run of one, paying both, which is exactly the two
+    // cells it always paid.
+    // TP-CHROME-133: an island's declared size is what goes inside its frame.
+    for run in &runs {
+        for index in [run.start, run.end] {
+            let policy = &mut policies[index];
+            *policy = match *policy {
+                TrackPolicy::Fixed { cells } => TrackPolicy::Fixed {
+                    cells: cells.saturating_add(1),
+                },
+                // Saturating rather than wrapping: an unwritten `max` is
+                // already `u16::MAX`, and one more must leave it unbounded
+                // rather than turning it into one.
+                TrackPolicy::ContentBounded { min, max } => TrackPolicy::ContentBounded {
+                    min: min.saturating_add(1),
+                    max: max.saturating_add(1),
+                },
+                // A fill takes what is left; its frame eats from the inside.
+                other => other,
+            };
+        }
+    }
+    Ok(policies)
 }
 
 /// One accepted name and the thing it builds.
@@ -1301,24 +1453,8 @@ fn fixed_policy(at: SectionAt<'_>) -> Result<TrackPolicy, BarConfigProblem> {
         });
     }
     Ok(TrackPolicy::Fixed {
-        cells: at.config.cells.saturating_add(island_margin(at.config)),
+        cells: at.config.cells,
     })
-}
-
-/// The cells one section's own frame spends along the bar, if it wears one.
-///
-/// One at each end, and charged on top of the number somebody wrote rather than
-/// taken out of it. Reading a declared size as the outer box would mean that
-/// adding `border = true` to a section showing a ten-cell picture clips that
-/// picture by two, with `config check` still saying ok and nothing on screen to
-/// explain the missing columns — U1's failure arriving through a new door.
-// TP-CHROME-133: an island's declared size is what goes inside its frame.
-const fn island_margin(config: &ShellBarSectionConfig) -> u16 {
-    if config.border {
-        ISLAND_FRAME_CELLS
-    } else {
-        0
-    }
 }
 
 /// What a frame costs on one axis: one cell at each end.
@@ -1333,12 +1469,12 @@ const ISLAND_FRAME_CELLS: u16 = 2;
 /// also a frame that gets said out loud.
 // TP-CHROME-135: an island the bar's short axis cannot hold is refused.
 fn section_border_problem(
-    config: &ShellBarSectionConfig,
+    framed: bool,
     edge: &'static str,
     index: usize,
     across: u16,
 ) -> Result<(), BarConfigProblem> {
-    if !config.border || across >= ISLAND_MINIMUM_ACROSS {
+    if !framed || across >= ISLAND_MINIMUM_ACROSS {
         return Ok(());
     }
     Err(BarConfigProblem::SectionBorderDoesNotFitAcrossTheBar {
@@ -1347,6 +1483,95 @@ fn section_border_problem(
         needs: ISLAND_MINIMUM_ACROSS,
         has: across,
     })
+}
+
+/// One island: a run of adjacent sections sharing a single frame.
+///
+/// `start..=end`, section indices. A solo island is a run of one, which is
+/// what lets one rule size every frame: a run's first section pays one cell
+/// for the left edge, its last pays one for the right, and a run of one pays
+/// both — the two cells a solo always paid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct IslandRun {
+    start: usize,
+    end: usize,
+}
+
+/// Every island on one bar, in order — or the first reason the layout of
+/// frames cannot stand.
+///
+/// One predicate for the checker and the deriver, like every refusal on this
+/// surface: a frame that will not be drawn is a frame that gets said out loud.
+fn island_runs(
+    bar: &ShellBarConfig,
+    edge: &'static str,
+) -> Result<Vec<IslandRun>, BarConfigProblem> {
+    let mut runs: Vec<IslandRun> = Vec::new();
+    let mut closed: Vec<&str> = Vec::new();
+    let mut index = 0usize;
+    while index < bar.sections.len() {
+        let section = &bar.sections[index];
+        let name = section.group.trim();
+        if name.is_empty() {
+            if resolved_section_border(bar, section) {
+                runs.push(IslandRun {
+                    start: index,
+                    end: index,
+                });
+            }
+            index += 1;
+            continue;
+        }
+
+        // A grouped section's frame comes from its group; its own key would
+        // never be read, and a line nothing reads is refused, not ignored.
+        if section.border.is_some() {
+            return Err(BarConfigProblem::GroupedSectionWithBorder { edge: edge, index });
+        }
+        // The same name reappearing after its run closed is two rectangles
+        // asked of one frame.
+        if closed.contains(&name) {
+            return Err(BarConfigProblem::GroupSplitApart {
+                edge: edge,
+                name: name.to_string(),
+            });
+        }
+
+        // Walk the run, holding the one tone its writers are allowed.
+        let start = index;
+        let mut tone: Option<&str> = None;
+        while index < bar.sections.len() {
+            let member = &bar.sections[index];
+            if member.group.trim() != name {
+                break;
+            }
+            if member.border.is_some() {
+                return Err(BarConfigProblem::GroupedSectionWithBorder { edge: edge, index });
+            }
+            let written = member.color.trim();
+            if !written.is_empty() {
+                match tone {
+                    None => tone = Some(written),
+                    Some(first) if first != written => {
+                        return Err(BarConfigProblem::GroupColoursDisagree {
+                            edge: edge,
+                            name: name.to_string(),
+                            first: first.to_string(),
+                            second: written.to_string(),
+                        });
+                    }
+                    Some(_) => {}
+                }
+            }
+            index += 1;
+        }
+        runs.push(IslandRun {
+            start,
+            end: index - 1,
+        });
+        closed.push(name);
+    }
+    Ok(runs)
 }
 
 /// What a framed island needs across the bar's short axis.
@@ -1390,15 +1615,9 @@ fn content_policy(at: SectionAt<'_>) -> Result<TrackPolicy, BarConfigProblem> {
             max: at.config.max,
         });
     }
-    // Both bounds describe the content, so both carry the frame: an island
-    // asking for eight cells of clock has to be given ten to have eight left.
-    let margin = island_margin(at.config);
     Ok(TrackPolicy::ContentBounded {
-        min: at.config.min.saturating_add(margin),
-        // Saturating rather than wrapping: an unwritten `max` is already
-        // `u16::MAX` by the substitution above, and two more must leave it
-        // unbounded rather than turning it into one.
-        max: max.saturating_add(margin),
+        min: at.config.min,
+        max,
     })
 }
 
@@ -1768,15 +1987,26 @@ impl SectionWidget {
 pub(crate) struct SectionChrome {
     pub(crate) widget: SectionWidget,
     pub(crate) action: SectionAction,
-    /// The tone this section's own frame wears, or `None` where it wears none.
+    /// This section's place in an island, or `None` where it is in none.
     ///
-    /// A tone rather than a flag: "does this section have a frame" and "what
-    /// colour is it" are one question with one answer, and splitting them would
-    /// let a bordered section carry no tone or a toned one carry no border —
-    /// two states nothing downstream could act on. It lives here rather than
-    /// beside the geometry because a colour never moves a rectangle, which is
-    /// the same rule that keeps `BarColors` out of the cache key.
-    pub(crate) border: Option<BarTint>,
+    /// Tone and position together, because they are one fact about one frame:
+    /// splitting them would let a framed section carry no tone or a toned one
+    /// carry no frame — states nothing downstream could act on. It lives here
+    /// rather than beside the geometry because a colour never moves a
+    /// rectangle, the same rule that keeps `BarColors` out of the cache key.
+    pub(crate) island: Option<IslandSlot>,
+}
+
+/// Where one section sits inside its island's frame.
+///
+/// `first` and `last` are both true for a solo island — a run of one — which
+/// is what lets the drawing pass treat every island the same way: open the
+/// frame at a `first`, close and paint it at a `last`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct IslandSlot {
+    pub(crate) tint: BarTint,
+    pub(crate) first: bool,
+    pub(crate) last: bool,
 }
 
 /// One edge's sections' chrome, in the same order and addressed by the same
@@ -1856,7 +2086,12 @@ impl ShellBarChrome {
     /// inside it and the press it answers can never belong to three different
     /// sections.
     pub(crate) fn border_for(&self, region: RegionId, index: u8) -> Option<BarTint> {
-        self.for_section(region, index)?.border
+        Some(self.island_for(region, index)?.tint)
+    }
+
+    /// The numbered section's place in its island, if it is in one.
+    pub(crate) fn island_for(&self, region: RegionId, index: u8) -> Option<IslandSlot> {
+        self.for_section(region, index)?.island
     }
 
     /// What the numbered section of the named region shows and does, if that
@@ -1977,13 +2212,34 @@ fn bar_section_chrome(
     let Ok(budget) = section_budget(config, edge) else {
         return BarSectionChrome::EMPTY;
     };
-    if section_policies(&config.sections, edge, budget, bar_across(config)).is_err() {
+    if section_policies(config, edge, budget, bar_across(config)).is_err() {
         return BarSectionChrome::EMPTY;
     }
-    // Read once for the whole edge: every island that named no colour of its own
-    // wears this, and asking the palette per section would answer the same
+    // Read once for the whole edge: every island that named no colour of its
+    // own wears this, and asking the palette per section would answer the same
     // question as many times as there are sections.
     let inherited = bar_tint(config, palette, edge);
+    // The same runs the sizing pass stood on. A refused layout of frames left
+    // no chrome above, so this cannot fail here — but stay honest if it does.
+    let runs = island_runs(config, edge).unwrap_or_default();
+    let slot_for = |index: usize| -> Option<IslandSlot> {
+        let run = runs
+            .iter()
+            .find(|run| run.start <= index && index <= run.end)?;
+        // One frame, one tone: the run's single written colour, or the bar's.
+        let tone = config.sections[run.start..=run.end]
+            .iter()
+            .map(|member| member.color.trim())
+            .find(|written| !written.is_empty());
+        Some(IslandSlot {
+            tint: match tone {
+                Some(written) => tint_from_parts(written, &[], palette, edge),
+                None => inherited,
+            },
+            first: index == run.start,
+            last: index == run.end,
+        })
+    };
     let entries = config
         .sections
         .iter()
@@ -2003,17 +2259,7 @@ fn bar_section_chrome(
                     SectionAction::None
                 }
             },
-            // A section that named a colour means that colour; one that named
-            // none means its bar's. Falling back past the bar to the warm
-            // default would paint a peach box inside a mauve strip, which is
-            // two decisions where the person made one.
-            border: section.border.then(|| {
-                if section.color.trim().is_empty() {
-                    inherited
-                } else {
-                    tint_from_parts(&section.color, &[], palette, edge)
-                }
-            }),
+            island: slot_for(index),
         })
         .collect();
     BarSectionChrome { entries }
@@ -3314,11 +3560,11 @@ mod tests {
         let mut config = ShellBarsConfig::default();
         config.top.enabled = true;
         config.top.size = 1;
-        config.top.border = false;
+        config.top.border = Some(false);
         config.top.hide_when_focused = true;
         config.right.enabled = true;
         config.right.size = 1;
-        config.right.border = false;
+        config.right.border = Some(false);
         ShellBars::from_config(&config)
     }
 
@@ -3393,7 +3639,7 @@ mod tests {
         let mut config = ShellBarsConfig::default();
         config.top.enabled = true;
         config.top.size = 1;
-        config.top.border = false;
+        config.top.border = Some(false);
 
         let bars = ShellBars::from_config(&config);
         assert!(
@@ -3422,7 +3668,7 @@ mod tests {
         let mut config = ShellBarsConfig::default();
         config.top.enabled = true;
         config.top.size = 1;
-        config.top.border = false;
+        config.top.border = Some(false);
         config.top.sections = vec![
             ShellBarSectionConfig {
                 kind: "fill".to_string(),
@@ -3435,7 +3681,7 @@ mod tests {
         ];
         config.right.enabled = true;
         config.right.size = 1;
-        config.right.border = false;
+        config.right.border = Some(false);
         ShellBars::from_config(&config)
     }
 
@@ -3638,7 +3884,7 @@ mod tests {
         ShellBarConfig {
             enabled,
             size,
-            border: false,
+            border: Some(false),
             color: String::new(),
             gradient: Vec::new(),
             sections: Vec::new(),
@@ -4755,7 +5001,7 @@ mod tests {
         ShellBarConfig {
             enabled: true,
             size: 1,
-            border: false,
+            border: Some(false),
             color: String::new(),
             gradient: Vec::new(),
             sections,
@@ -5081,7 +5327,7 @@ mod tests {
         };
         let side_bar = |size: u16, sections| ShellBarConfig {
             size,
-            border: false,
+            border: Some(false),
             ..bar_with_sections(sections)
         };
 
@@ -5188,7 +5434,7 @@ mod tests {
         };
         let bar = |size: u16, border: bool| ShellBarConfig {
             size,
-            border,
+            border: Some(border),
             ..bar_with_sections(vec![picture()])
         };
 
@@ -6310,7 +6556,7 @@ mod tests {
         ShellBarConfig {
             enabled: true,
             size,
-            border: true,
+            border: Some(true),
             color: String::new(),
             gradient: Vec::new(),
             sections: Vec::new(),
@@ -6585,7 +6831,7 @@ mod tests {
         ShellBarConfig {
             enabled: true,
             size: 3,
-            border: true,
+            border: Some(true),
             color: String::new(),
             gradient: stops.iter().map(|s| (*s).to_string()).collect(),
             sections: Vec::new(),
@@ -6930,7 +7176,7 @@ mod tests {
         let bar = |sections: Vec<ShellBarSectionConfig>| ShellBarConfig {
             enabled: true,
             size: 1,
-            border: false,
+            border: Some(false),
             color: String::new(),
             gradient: Vec::new(),
             sections,
@@ -7120,6 +7366,334 @@ mod tests {
         );
     }
 
+    /// S2 · `style = "islands"` is the whole look in one line — and only a
+    /// default. The bar's own panel goes, every section that says nothing gets
+    /// a frame, and anything written explicitly wins over the style in both
+    /// directions: a bar that insists on its panel keeps it, a section that
+    /// opts out stays bare. A preset that could not be overridden would make
+    /// the primitives beneath it unreachable; one that did not fill defaults
+    /// would be a word that changes nothing.
+    #[test]
+    fn the_islands_style_fills_every_unwritten_border_and_loses_to_written_ones() {
+        // TP-CHROME-143: the style fills unwritten borders, in both directions.
+        let mut says_nothing = fixed_section(10);
+        says_nothing.border = None;
+        let mut opts_out = fixed_section(10);
+        opts_out.border = Some(false);
+
+        let bar = ShellBarConfig {
+            enabled: true,
+            size: 3,
+            style: "islands".to_string(),
+            border: None,
+            sections: vec![says_nothing, opts_out],
+            ..Default::default()
+        };
+
+        assert!(
+            !resolved_bar_border(&bar),
+            "islands drops the outer panel the bar did not ask for"
+        );
+        assert!(
+            resolved_section_border(&bar, &bar.sections[0]),
+            "and frames the section that said nothing"
+        );
+        assert!(
+            !resolved_section_border(&bar, &bar.sections[1]),
+            "while a section that opted out stays bare — the written key wins"
+        );
+
+        let policies =
+            section_policies(&bar, "top", 8, bar_across(&bar)).expect("the division stands");
+        assert_eq!(
+            policies[0],
+            TrackPolicy::Fixed { cells: 12 },
+            "the styled frame charges the same two cells an explicit one does"
+        );
+        assert_eq!(policies[1], TrackPolicy::Fixed { cells: 10 });
+
+        // The other direction of the override: a bar that insists on its
+        // panel keeps it, style or no style.
+        let mut insists = bar;
+        insists.border = Some(true);
+        assert!(resolved_bar_border(&insists));
+    }
+
+    /// S3 · `plain` is the third leg: no panel, no frames, just the strip.
+    #[test]
+    fn the_plain_style_leaves_both_layers_bare() {
+        // TP-CHROME-143: plain resolves both defaults to bare.
+        let bar = ShellBarConfig {
+            enabled: true,
+            size: 1,
+            style: "plain".to_string(),
+            border: None,
+            sections: vec![fixed_section(10)],
+            ..Default::default()
+        };
+        assert!(!resolved_bar_border(&bar));
+        assert!(!resolved_section_border(&bar, &bar.sections[0]));
+    }
+
+    /// S4 · a style this build does not know is refused by name — and the bar
+    /// is not drawn, rather than drawn in whichever look a guess lands on.
+    #[test]
+    fn an_unknown_style_is_refused_and_the_bar_is_not_guessed_at() {
+        // TP-CHROME-143: the style names are a closed set.
+        let bar = ShellBarConfig {
+            enabled: true,
+            size: 3,
+            style: "rounded".to_string(),
+            ..Default::default()
+        };
+        let bars = bars_with_top(bar);
+
+        let said = shell_bar_config_problems(&bars, true)
+            .into_iter()
+            .map(|problem| problem.to_string())
+            .collect::<Vec<_>>();
+        assert!(
+            said.iter().any(|problem| problem.contains("style")
+                && problem.contains("rounded")
+                && problem.contains("framed")),
+            "the refusal names the key, the word written, and the accepted set: {said:?}"
+        );
+        assert!(
+            !ShellBars::from_config(&bars).top.enabled(),
+            "a look this build cannot draw is refused, never guessed at"
+        );
+    }
+
+    /// S5 · the style layer cannot break the physics underneath it. Asking for
+    /// islands while insisting on the bar's own panel at `size = 3` leaves one
+    /// row across — and the existing refusal fires with both numbers, exactly
+    /// as it does for an explicit frame.
+    #[test]
+    fn the_islands_style_meets_the_across_rule_like_an_explicit_frame_does() {
+        // TP-CHROME-143 × TP-CHROME-135: layers compose, physics stays.
+        let bar = ShellBarConfig {
+            enabled: true,
+            size: 3,
+            style: "islands".to_string(),
+            border: Some(true),
+            sections: vec![fixed_section(4)],
+            ..Default::default()
+        };
+        let bars = bars_with_top(bar);
+        assert!(
+            shell_bar_config_problems(&bars, true)
+                .iter()
+                .any(|problem| matches!(
+                    problem,
+                    BarConfigProblem::SectionBorderDoesNotFitAcrossTheBar { has: 1, .. }
+                )),
+            "one row across cannot hold a styled frame any more than an explicit one"
+        );
+        assert!(ShellBars::from_config(&bars).top.sections().is_empty());
+    }
+
+    fn grouped(cells: u16, name: &str) -> ShellBarSectionConfig {
+        let mut section = fixed_section(cells);
+        section.group = name.to_string();
+        section
+    }
+
+    /// G1 · one frame, one rule: a run's first section pays one cell, its
+    /// last pays one, its middles pay nothing — and a solo island is a run of
+    /// one, paying both. Asserted as an *equivalence*: if solo and
+    /// run-of-one ever drift apart, two features have quietly become two
+    /// implementations.
+    #[test]
+    fn a_group_pays_its_frame_at_the_edges_and_a_solo_is_a_run_of_one() {
+        // TP-CHROME-144: the frame's cost sits on the run's edges.
+        let bar = ShellBarConfig {
+            enabled: true,
+            size: 3,
+            border: Some(false),
+            sections: vec![grouped(10, "sys"), grouped(10, "sys"), grouped(10, "sys")],
+            ..Default::default()
+        };
+        let policies =
+            section_policies(&bar, "top", 8, bar_across(&bar)).expect("the division stands");
+        assert_eq!(
+            policies,
+            vec![
+                TrackPolicy::Fixed { cells: 11 },
+                TrackPolicy::Fixed { cells: 10 },
+                TrackPolicy::Fixed { cells: 11 },
+            ],
+            "three sections, one frame: two cells total, charged at the edges"
+        );
+
+        let mut solo_section = fixed_section(10);
+        solo_section.border = Some(true);
+        let solo = ShellBarConfig {
+            enabled: true,
+            size: 3,
+            border: Some(false),
+            sections: vec![solo_section],
+            ..Default::default()
+        };
+        let mut run_of_one = ShellBarConfig {
+            enabled: true,
+            size: 3,
+            border: Some(false),
+            sections: vec![grouped(10, "alone")],
+            ..Default::default()
+        };
+        run_of_one.style = String::new();
+        assert_eq!(
+            section_policies(&solo, "top", 8, bar_across(&solo)).expect("stands"),
+            section_policies(&run_of_one, "top", 8, bar_across(&run_of_one)).expect("stands"),
+            "a solo island and a run of one are the same thing, sized by the same rule"
+        );
+    }
+
+    /// G2 · one name, one rectangle. The same group split apart by an
+    /// ungrouped neighbour is refused by name rather than drawn as two boxes
+    /// the person never wrote.
+    #[test]
+    fn a_group_split_apart_is_refused_by_name() {
+        // TP-CHROME-144: a group's sections have to sit together.
+        let bar = ShellBarConfig {
+            enabled: true,
+            size: 3,
+            border: Some(false),
+            sections: vec![grouped(4, "sys"), fixed_section(4), grouped(4, "sys")],
+            ..Default::default()
+        };
+        let problem = section_policies(&bar, "top", 8, bar_across(&bar))
+            .expect_err("a torn group cannot stand");
+        assert!(
+            matches!(&problem, BarConfigProblem::GroupSplitApart { name, .. } if name == "sys"),
+            "the refusal names the group: {problem}"
+        );
+    }
+
+    /// G3 · a grouped section's frame comes from its group, so its own
+    /// `border` key — either value — is a line that is never read, and a line
+    /// that is never read is refused rather than silently ignored.
+    #[test]
+    fn a_border_key_on_a_grouped_section_is_refused() {
+        // TP-CHROME-144: no key that nothing reads.
+        for wrote in [true, false] {
+            let mut section = grouped(4, "sys");
+            section.border = Some(wrote);
+            let bar = ShellBarConfig {
+                enabled: true,
+                size: 3,
+                border: Some(false),
+                sections: vec![section, grouped(4, "sys")],
+                ..Default::default()
+            };
+            let problem = section_policies(&bar, "top", 8, bar_across(&bar))
+                .expect_err("the unread key is refused");
+            assert!(
+                matches!(
+                    problem,
+                    BarConfigProblem::GroupedSectionWithBorder { index: 0, .. }
+                ),
+                "border = {wrote} on a grouped section is refused at its index"
+            );
+        }
+    }
+
+    /// G4 · the group's frame is one frame, so members that write a colour
+    /// must write the same one. One writer paints the whole frame; two
+    /// disagreeing writers are refused with both words quoted.
+    #[test]
+    fn group_members_that_write_colours_must_agree() {
+        // TP-CHROME-144: one frame, one tone.
+        let mut teal = grouped(4, "sys");
+        teal.color = "teal".to_string();
+        let mut green = grouped(4, "sys");
+        green.color = "green".to_string();
+        let bar = ShellBarConfig {
+            enabled: true,
+            size: 3,
+            border: Some(false),
+            sections: vec![teal, green],
+            ..Default::default()
+        };
+        let problem = section_policies(&bar, "top", 8, bar_across(&bar))
+            .expect_err("two tones for one frame cannot stand");
+        assert!(
+            matches!(
+                &problem,
+                BarConfigProblem::GroupColoursDisagree { first, second, .. }
+                    if first == "teal" && second == "green"
+            ),
+            "the refusal quotes both words: {problem}"
+        );
+
+        // Agreement — or a single writer — stands.
+        let mut also_teal = grouped(4, "sys");
+        also_teal.color = "teal".to_string();
+        let mut silent = grouped(4, "sys");
+        silent.color = String::new();
+        let agreeing = ShellBarConfig {
+            enabled: true,
+            size: 3,
+            border: Some(false),
+            sections: vec![also_teal, silent],
+            ..Default::default()
+        };
+        assert!(section_policies(&agreeing, "top", 8, bar_across(&agreeing)).is_ok());
+    }
+
+    /// G5 · the physics of the across-axis holds for groups exactly as it
+    /// does for solos: a frame needs three rows whoever shares it.
+    #[test]
+    fn a_group_meets_the_across_rule_like_a_solo_does() {
+        // TP-CHROME-144 × TP-CHROME-135.
+        let bar = ShellBarConfig {
+            enabled: true,
+            size: 1,
+            border: Some(false),
+            sections: vec![grouped(4, "sys"), grouped(4, "sys")],
+            ..Default::default()
+        };
+        let problem = section_policies(&bar, "top", 8, bar_across(&bar))
+            .expect_err("one row cannot hold a shared frame either");
+        assert!(matches!(
+            problem,
+            BarConfigProblem::SectionBorderDoesNotFitAcrossTheBar { has: 1, .. }
+        ));
+    }
+
+    /// G7 · grouping is geometry: the same sections grouped and ungrouped are
+    /// different compositions, and the geometry key compares the composition
+    /// itself (TP-CHROME-30), so the cache recomposes. Asserted on the value
+    /// the key actually carries rather than on the revision — session 24's Q4
+    /// showed the revision and the carried value are deliberately redundant,
+    /// and the value is the half that cannot go stale.
+    #[test]
+    fn grouping_moves_the_geometry_revision() {
+        // TP-CHROME-145.
+        let build = |grouped: bool| {
+            let mut sections = vec![fixed_section(9), fixed_section(9)];
+            if grouped {
+                for section in &mut sections {
+                    section.group = "sys".to_string();
+                }
+            }
+            let mut config = ShellBarsConfig::default();
+            config.top = ShellBarConfig {
+                enabled: true,
+                size: 3,
+                border: Some(false),
+                sections,
+                ..Default::default()
+            };
+            ShellBars::from_config(&config)
+        };
+        assert_ne!(
+            build(true),
+            build(false),
+            "two different frame layouts must never answer to one identity"
+        );
+    }
+
     /// I2 · an island's declared size describes what goes inside it.
     ///
     /// The alternative — reading the number as the outer box — makes adding
@@ -7129,83 +7703,96 @@ mod tests {
     /// new cause, and this file has already paid for it once. The frame is
     /// charged on top, so every number somebody already wrote keeps meaning
     /// what it meant.
+    ///
+    /// Asserted through `section_policies` rather than `section_policy`: the
+    /// cost belongs to the edges of an island, and once islands can span
+    /// several sections only the pass that sees the whole list knows where an
+    /// edge is. The claim is unchanged; the door it is checked at moved.
     #[test]
     fn an_islands_declared_size_is_what_goes_inside_its_frame() {
         // TP-CHROME-133: a bordered section is widened by its frame rather than
         // having its content narrowed by it.
         let mut fixed = fixed_section(10);
-        fixed.border = true;
-        assert_eq!(
-            section_policy(&fixed, "top", 0),
-            Ok(TrackPolicy::Fixed { cells: 12 }),
-            "a ten-cell island must ask for twelve so ten survive inside it"
-        );
-
+        fixed.border = Some(true);
         let mut bounded = ShellBarSectionConfig {
             kind: "content".to_string(),
             min: 8,
             max: 8,
             ..Default::default()
         };
-        bounded.border = true;
-        assert_eq!(
-            section_policy(&bounded, "top", 0),
-            Ok(TrackPolicy::ContentBounded { min: 10, max: 10 }),
-            "both bounds are the content's, so the frame is charged to both"
-        );
-
-        // An unwritten `max` means "as much as there is"; adding two to that
-        // must not wrap it round to a tiny number.
+        bounded.border = Some(true);
         let mut unbounded = ShellBarSectionConfig {
             kind: "content".to_string(),
             min: 4,
             ..Default::default()
         };
-        unbounded.border = true;
+        unbounded.border = Some(true);
+        let mut filling = section_config("fill");
+        filling.border = Some(true);
+
+        let bar = ShellBarConfig {
+            enabled: true,
+            size: 3,
+            border: Some(false),
+            sections: vec![fixed, bounded, unbounded, filling],
+            ..Default::default()
+        };
+        let policies =
+            section_policies(&bar, "top", 8, bar_across(&bar)).expect("the division stands");
+
         assert_eq!(
-            section_policy(&unbounded, "top", 0),
-            Ok(TrackPolicy::ContentBounded {
+            policies[0],
+            TrackPolicy::Fixed { cells: 12 },
+            "a ten-cell island must ask for twelve so ten survive inside it"
+        );
+        assert_eq!(
+            policies[1],
+            TrackPolicy::ContentBounded { min: 10, max: 10 },
+            "both bounds are the content's, so the frame is charged to both"
+        );
+        // An unwritten `max` means "as much as there is"; adding two to that
+        // must not wrap it round to a tiny number.
+        assert_eq!(
+            policies[2],
+            TrackPolicy::ContentBounded {
                 min: 6,
                 max: u16::MAX
-            }),
+            },
             "an unbounded island stays unbounded rather than overflowing to nothing"
         );
-
         // A `fill` island is unchanged: it takes what is left, and the frame
         // eats into that from the inside rather than asking for more of it.
-        let mut filling = section_config("fill");
-        filling.border = true;
-        assert_eq!(
-            section_policy(&filling, "top", 0),
-            Ok(TrackPolicy::Fill { weight: 1 })
-        );
+        assert_eq!(policies[3], TrackPolicy::Fill { weight: 1 });
     }
 
     /// I6 · a section that did not ask for a frame is sized exactly as before.
     ///
-    /// The whole of this feature's backward compatibility in one claim: every
-    /// bar written before the key existed reads `border = false`, and a false
-    /// there has to be indistinguishable from the key never having existed.
+    /// The whole of this feature's backward compatibility in one claim, held
+    /// at the same door as its sibling above: an unwritten `border` (and an
+    /// unwritten style) has to be indistinguishable from the key never having
+    /// existed.
     #[test]
     fn a_section_that_asked_for_no_frame_is_sized_exactly_as_before() {
         // TP-CHROME-134: `border` unwritten changes no geometry.
-        assert_eq!(
-            section_policy(&fixed_section(10), "top", 0),
-            Ok(TrackPolicy::Fixed { cells: 10 })
-        );
-        assert_eq!(
-            section_policy(
-                &ShellBarSectionConfig {
+        let bar = ShellBarConfig {
+            enabled: true,
+            size: 1,
+            border: Some(false),
+            sections: vec![
+                fixed_section(10),
+                ShellBarSectionConfig {
                     kind: "content".to_string(),
                     min: 8,
                     max: 8,
                     ..Default::default()
                 },
-                "top",
-                0
-            ),
-            Ok(TrackPolicy::ContentBounded { min: 8, max: 8 })
-        );
+            ],
+            ..Default::default()
+        };
+        let policies =
+            section_policies(&bar, "top", 8, bar_across(&bar)).expect("the division stands");
+        assert_eq!(policies[0], TrackPolicy::Fixed { cells: 10 });
+        assert_eq!(policies[1], TrackPolicy::ContentBounded { min: 8, max: 8 });
     }
 
     /// I3 · a frame nobody has room for is refused, out loud.
@@ -7225,11 +7812,11 @@ mod tests {
         // numbers.
         let island_bar = |size: u16, border: bool| {
             let mut section = fixed_section(4);
-            section.border = true;
+            section.border = Some(true);
             ShellBarConfig {
                 enabled: true,
                 size,
-                border,
+                border: Some(border),
                 color: String::new(),
                 gradient: Vec::new(),
                 sections: vec![section],
@@ -7313,7 +7900,7 @@ mod tests {
         let plain = ShellBarConfig {
             enabled: true,
             size: 1,
-            border: false,
+            border: Some(false),
             color: String::new(),
             gradient: Vec::new(),
             sections: vec![fixed_section(4)],
@@ -7338,18 +7925,18 @@ mod tests {
         let palette = Palette::catppuccin();
 
         let mut own = fixed_section(4);
-        own.border = true;
+        own.border = Some(true);
         own.color = "teal".to_string();
 
         let mut inherited = fixed_section(4);
-        inherited.border = true;
+        inherited.border = Some(true);
 
         let plain = fixed_section(4);
 
         let bars = bars_with_top(ShellBarConfig {
             enabled: true,
             size: 3,
-            border: false,
+            border: Some(false),
             color: "mauve".to_string(),
             gradient: Vec::new(),
             sections: vec![own, inherited, plain],
@@ -7398,7 +7985,7 @@ mod tests {
         ShellBarConfig {
             enabled: true,
             size,
-            border,
+            border: Some(border),
             color: String::new(),
             gradient: Vec::new(),
             sections: Vec::new(),
@@ -7538,11 +8125,11 @@ mod tests {
 
             assert_eq!(
                 drawn, expected_drawn,
-                "size={size} border={border}: drawing disagrees with the case table"
+                "size={size} border={border:?}: drawing disagrees with the case table"
             );
             assert_eq!(
                 reported, drawn,
-                "size={size} border={border}: the checker says {reported} but the bar is \
+                "size={size} border={border:?}: the checker says {reported} but the bar is \
                  drawn={drawn} — the two read different rules"
             );
         }

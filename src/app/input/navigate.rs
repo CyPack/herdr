@@ -1939,7 +1939,7 @@ mod tests {
         let mut config = crate::config::ShellBarsConfig::default();
         config.top.enabled = true;
         config.top.size = 1;
-        config.top.border = false;
+        config.top.border = Some(false);
         crate::ui::shell::ShellBars::from_config(&config)
     }
 

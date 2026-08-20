@@ -3846,7 +3846,7 @@ mod tests {
         let mut bars_config = crate::config::ShellBarsConfig::default();
         bars_config.top.enabled = true;
         bars_config.top.size = 1;
-        bars_config.top.border = false;
+        bars_config.top.border = Some(false);
         app.state
             .shell_presentation
             .set_bars(crate::ui::shell::ShellBars::from_config(&bars_config));

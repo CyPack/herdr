@@ -1093,34 +1093,60 @@ impl compose::Component for BaseLayer {
             if outer.is_empty() {
                 continue;
             }
-            for (index, rect) in bars
-                .track_for(region)
-                .section_rects(region, outer)
-                .occupied()
-            {
-                let index = u8::try_from(index).unwrap_or(u8::MAX);
-                // An island wears its own frame first, and what that frame
-                // leaves is where its widget goes. The inner rectangle is read
-                // back from the call that painted it rather than recomputed,
-                // for the reason `BarTrack::inner` exists: two places doing the
-                // same arithmetic are two places that can drift, and the drift
-                // shows up as a label one cell away from its box.
-                let content = match app.shell_bar_chrome.border_for(region, index) {
-                    Some(tint) => {
-                        let Some(inner) =
-                            widgets::render_bar_shell(frame, rect, tint, app.palette.panel_bg)
+            // Two passes, because an island can now span several sections:
+            // every frame is painted before any widget is, or the frame that
+            // closes at a run's last member would paint over the widgets its
+            // earlier members already drew.
+            let rects = bars.track_for(region).section_rects(region, outer);
+            let mut inners: Vec<(usize, usize, Rect)> = Vec::new();
+            let mut open: Option<(usize, Rect, crate::ui::shell::BarTint)> = None;
+            for (index, rect) in rects.occupied() {
+                let slot_index = u8::try_from(index).unwrap_or(u8::MAX);
+                let Some(slot) = app.shell_bar_chrome.island_for(region, slot_index) else {
+                    continue;
+                };
+                if slot.first {
+                    open = Some((index, rect, slot.tint));
+                }
+                let Some((start, start_rect, tint)) = open else {
+                    continue;
+                };
+                if slot.last {
+                    let island = start_rect.union(rect);
+                    // The inner rectangle is read back from the call that
+                    // painted it rather than recomputed, for the reason
+                    // `BarTrack::inner` exists: two places doing the same
+                    // arithmetic are two places that can drift, and the drift
+                    // shows up as a label one cell away from its box.
+                    if let Some(inner) =
+                        widgets::render_bar_shell(frame, island, tint, app.palette.panel_bg)
+                    {
+                        inners.push((start, index, inner));
+                    }
+                    open = None;
+                }
+            }
+            for (index, rect) in rects.occupied() {
+                let slot_index = u8::try_from(index).unwrap_or(u8::MAX);
+                let content = match app.shell_bar_chrome.island_for(region, slot_index) {
+                    None => rect,
+                    Some(_) => {
+                        let Some(inner) = inners
+                            .iter()
+                            .find(|(start, end, _)| *start <= index && index <= *end)
+                            .map(|(_, _, inner)| rect.intersection(*inner))
+                            .filter(|content| !content.is_empty())
                         else {
-                            // Too small for a frame that was asked for. Drawing
-                            // the widget anyway would put content where the
-                            // person is expecting a box and leave nothing to
-                            // explain the missing one.
+                            // Too small for the frame that was asked for.
+                            // Drawing the widget anyway would put content where
+                            // the person is expecting a box and leave nothing
+                            // to explain the missing one.
                             continue;
                         };
                         inner
                     }
-                    None => rect,
                 };
-                if let Some(widget) = app.shell_bar_chrome.widget_for(region, index) {
+                if let Some(widget) = app.shell_bar_chrome.widget_for(region, slot_index) {
                     widgets::render_section_widget(
                         frame,
                         widget,
@@ -1473,7 +1499,7 @@ mod tests {
             top: crate::config::ShellBarConfig {
                 enabled: true,
                 size: 1,
-                border: false,
+                border: Some(false),
                 color: String::new(),
                 gradient: Vec::new(),
                 sections: vec![first, second],
@@ -1531,6 +1557,96 @@ mod tests {
         );
     }
 
+    /// G6 · a group is ONE frame on the screen: three sections, one box, the
+    /// members' widgets inside it. Counted in the buffer, because a chrome
+    /// that carries the slots and a geometry that carries the rects are both
+    /// present and correct in a build that paints three frames — or none.
+    #[test]
+    fn a_grouped_run_is_painted_as_one_frame_with_its_members_inside() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let section = |text: &str| {
+            let mut section = crate::config::ShellBarSectionConfig {
+                kind: "content".to_string(),
+                min: 9,
+                max: 9,
+                group: "sys".to_string(),
+                ..Default::default()
+            };
+            section.widget.kind = "label".to_string();
+            section.widget.text = text.to_string();
+            section
+        };
+        let config = crate::config::ShellBarsConfig {
+            top: crate::config::ShellBarConfig {
+                enabled: true,
+                size: 3,
+                border: Some(false),
+                sections: vec![section("CPUX"), section("MEMX"), section("SWPX")],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let frame_area = Rect::new(0, 0, 100, 30);
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.shell_presentation = crate::ui::shell::ShellPresentationState::from_restored(
+            app.sidebar_width,
+            false,
+            None,
+            crate::ui::shell::ShellBars::from_config(&config),
+        );
+        app.shell_bar_chrome =
+            crate::ui::shell::ShellBarChrome::from_config(&config, true, &app.palette);
+        compute_view(&mut app, frame_area);
+
+        let mut terminal = Terminal::new(TestBackend::new(frame_area.width, frame_area.height))
+            .expect("test backend");
+        terminal
+            .draw(|f| render(&app, f))
+            .expect("a grouped bar draws");
+        let buffer = terminal.backend().buffer().clone();
+        let bar = app.view.shell.regions.get(RegionId::TopBar);
+
+        let mut corners = Vec::new();
+        for y in bar.y..bar.bottom() {
+            for x in bar.x..bar.right() {
+                if buffer.cell((x, y)).is_some_and(|cell| cell.symbol() == "╭") {
+                    corners.push((x, y));
+                }
+            }
+        }
+        assert_eq!(
+            corners.len(),
+            1,
+            "three grouped sections share ONE frame — one top-left corner, not \
+             three and not none: {corners:?}"
+        );
+
+        let row: String = (bar.x..bar.right())
+            .map(|x| {
+                buffer
+                    .cell((x, bar.y + 1))
+                    .map(|cell| cell.symbol().to_string())
+                    .unwrap_or_default()
+            })
+            .collect();
+        for label in ["CPUX", "MEMX", "SWPX"] {
+            assert!(
+                row.contains(label),
+                "every member's widget belongs on the frame's inner row: {row:?}"
+            );
+        }
+        assert!(
+            !row.trim_start().starts_with("CPUX"),
+            "the first member sits inside the frame, not on the frame column: {row:?}"
+        );
+    }
+
     /// I1/I4 · an island is a frame on the screen, drawn inside its bar's own.
     ///
     /// The claim nothing else can make. A tone in the chrome, a rectangle from
@@ -1557,7 +1673,7 @@ mod tests {
             let mut first = crate::config::ShellBarSectionConfig {
                 kind: "fixed".to_string(),
                 cells: 6,
-                border: island,
+                border: Some(island),
                 color: "teal".to_string(),
                 ..Default::default()
             };
@@ -1572,7 +1688,7 @@ mod tests {
             let mut last = crate::config::ShellBarSectionConfig {
                 kind: "fixed".to_string(),
                 cells: 5,
-                border: island,
+                border: Some(island),
                 ..Default::default()
             };
             last.widget.kind = "label".to_string();
@@ -1582,7 +1698,7 @@ mod tests {
                 top: crate::config::ShellBarConfig {
                     enabled: true,
                     size: 5,
-                    border: true,
+                    border: Some(true),
                     color: "mauve".to_string(),
                     gradient: Vec::new(),
                     sections: vec![first, spacer, last],
@@ -1749,7 +1865,7 @@ mod tests {
                 size: 3,
                 // The border is the point: it makes the shell paint the bar's
                 // interior, which is the surface the label has to survive.
-                border: true,
+                border: Some(true),
                 color: "mauve".to_string(),
                 gradient: Vec::new(),
                 sections: vec![section],
@@ -1831,7 +1947,7 @@ mod tests {
             top: crate::config::ShellBarConfig {
                 enabled: true,
                 size: 1,
-                border: false,
+                border: Some(false),
                 color: String::new(),
                 gradient: Vec::new(),
                 sections: vec![section],
@@ -1904,7 +2020,7 @@ mod tests {
             top: crate::config::ShellBarConfig {
                 enabled: true,
                 size: 3,
-                border: false,
+                border: Some(false),
                 color: String::new(),
                 gradient: Vec::new(),
                 sections: vec![section],
@@ -2068,7 +2184,7 @@ mod tests {
             top: crate::config::ShellBarConfig {
                 enabled: true,
                 size: 2,
-                border: false,
+                border: Some(false),
                 color: String::new(),
                 gradient: Vec::new(),
                 sections: vec![section],
@@ -2220,7 +2336,7 @@ mod tests {
             left: crate::config::ShellBarConfig {
                 enabled: true,
                 size: 5,
-                border: false,
+                border: Some(false),
                 color: String::new(),
                 gradient: Vec::new(),
                 sections: Vec::new(),
@@ -2229,7 +2345,7 @@ mod tests {
             top: crate::config::ShellBarConfig {
                 enabled: true,
                 size: 1,
-                border: false,
+                border: Some(false),
                 color: String::new(),
                 gradient: Vec::new(),
                 sections: Vec::new(),
@@ -2294,7 +2410,7 @@ mod tests {
             top: crate::config::ShellBarConfig {
                 enabled: true,
                 size: 3,
-                border: true,
+                border: Some(true),
                 color: "orange".to_string(),
                 gradient: Vec::new(),
                 sections: Vec::new(),

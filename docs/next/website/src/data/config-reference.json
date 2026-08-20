@@ -1354,6 +1354,12 @@
       "title": "Shell",
       "keys": [
         {
+          "key": "shell.bars.bottom.style",
+          "type": "string",
+          "default": "\"framed\"",
+          "description": "The look this bar wears when its parts do not say otherwise: framed draws the bar's own panel, islands frames each section instead, plain draws neither. It only fills in unwritten border keys — anything written explicitly wins."
+        },
+        {
           "key": "shell.bars.bottom.border",
           "type": "boolean",
           "default": "true",
@@ -1394,6 +1400,12 @@
           "type": "integer",
           "default": "3",
           "description": "Thickness of the bottom bar in rows, border included. Values outside 1-32 leave the bar undrawn, and a bordered bar needs at least 3."
+        },
+        {
+          "key": "shell.bars.left.style",
+          "type": "string",
+          "default": "\"framed\"",
+          "description": "The look this bar wears when its parts do not say otherwise: framed draws the bar's own panel, islands frames each section instead, plain draws neither. It only fills in unwritten border keys — anything written explicitly wins."
         },
         {
           "key": "shell.bars.left.border",
@@ -1438,6 +1450,12 @@
           "description": "Thickness of the left bar in columns, border included. Values outside 1-32 leave the bar undrawn, and a bordered bar needs at least 3."
         },
         {
+          "key": "shell.bars.right.style",
+          "type": "string",
+          "default": "\"framed\"",
+          "description": "The look this bar wears when its parts do not say otherwise: framed draws the bar's own panel, islands frames each section instead, plain draws neither. It only fills in unwritten border keys — anything written explicitly wins."
+        },
+        {
           "key": "shell.bars.right.border",
           "type": "boolean",
           "default": "true",
@@ -1478,6 +1496,12 @@
           "type": "integer",
           "default": "12",
           "description": "Thickness of the right bar in columns, border included. Values outside 1-32 leave the bar undrawn, and a bordered bar needs at least 3."
+        },
+        {
+          "key": "shell.bars.top.style",
+          "type": "string",
+          "default": "\"framed\"",
+          "description": "The look this bar wears when its parts do not say otherwise: framed draws the bar's own panel, islands frames each section instead, plain draws neither. It only fills in unwritten border keys — anything written explicitly wins."
         },
         {
           "key": "shell.bars.top.border",
