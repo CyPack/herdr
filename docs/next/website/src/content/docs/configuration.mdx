@@ -607,6 +607,55 @@ Only the frame is affected. What the file says is still what is stored, so leavi
 the bar back with its sections, colours and actions intact — and a session saved while focus was
 on does not come back missing a bar.
 
+### One key for the whole look
+
+`style` names the bar's look once, instead of a border key per section:
+
+```toml
+[shell.bars.top]
+enabled = true
+size    = 3
+style   = "islands"
+```
+
+`framed` — the default, and what an unwritten style means — draws the bar's own panel and
+leaves sections bare. `islands` drops the panel and frames each section instead. `plain`
+draws neither. The style only fills in *unwritten* `border` keys: anything written
+explicitly, on the bar or on a section, wins over it in both directions, so switching looks
+is one line and disagreeing with the look is one more.
+
+Sections that belong together can share one frame. Adjacent sections naming the same
+`group` become a single island:
+
+```toml
+[shell.bars.top]
+enabled = true
+size    = 3
+style   = "islands"
+
+[[shell.bars.top.sections]]
+kind   = "content"
+min    = 9
+max    = 10
+group  = "sys"
+widget = { kind = "resource", metric = "cpu" }
+
+[[shell.bars.top.sections]]
+kind   = "content"
+min    = 12
+max    = 14
+group  = "sys"
+widget = { kind = "resource", metric = "mem" }
+```
+
+One frame is one frame: a grouped section's own `border` key is refused rather than
+silently ignored, the same name split apart by an ungrouped neighbour is refused, and
+members that write a colour must write the same one — a single writer paints the whole
+frame, and none at all inherits the bar's tone. A press inside the group still lands on
+the section it is over. Ungrouping is deleting the `group` lines; regrouping is writing
+them back — the sizing rule is the same either way, so the numbers you wrote keep meaning
+what they meant.
+
 ### Switching the bars off by hand
 
 `prefix+shift+b` switches every configured bar off at once, and back on with the same press —

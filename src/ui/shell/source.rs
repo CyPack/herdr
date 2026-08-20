@@ -1002,7 +1002,12 @@ fn resolved_section_border(bar: &ShellBarConfig, section: &ShellBarSectionConfig
     section
         .border
         .unwrap_or(match bar_style(bar).unwrap_or(BarStyle::Framed) {
-            BarStyle::Islands => true,
+            // A `fill` is the space between islands, not an island: framing
+            // the spacer draws a large empty box across the middle of the
+            // bar, which is exactly what the style exists to avoid asking
+            // for. Writing `border = true` on a fill still frames it — the
+            // explicit key wins, as it does everywhere else.
+            BarStyle::Islands => !section.kind.trim().eq_ignore_ascii_case("fill"),
             BarStyle::Framed | BarStyle::Plain => false,
         })
 }
@@ -1526,13 +1531,13 @@ fn island_runs(
         // A grouped section's frame comes from its group; its own key would
         // never be read, and a line nothing reads is refused, not ignored.
         if section.border.is_some() {
-            return Err(BarConfigProblem::GroupedSectionWithBorder { edge: edge, index });
+            return Err(BarConfigProblem::GroupedSectionWithBorder { edge, index });
         }
         // The same name reappearing after its run closed is two rectangles
         // asked of one frame.
         if closed.contains(&name) {
             return Err(BarConfigProblem::GroupSplitApart {
-                edge: edge,
+                edge,
                 name: name.to_string(),
             });
         }
@@ -1546,7 +1551,7 @@ fn island_runs(
                 break;
             }
             if member.border.is_some() {
-                return Err(BarConfigProblem::GroupedSectionWithBorder { edge: edge, index });
+                return Err(BarConfigProblem::GroupedSectionWithBorder { edge, index });
             }
             let written = member.color.trim();
             if !written.is_empty() {
@@ -1554,7 +1559,7 @@ fn island_runs(
                     None => tone = Some(written),
                     Some(first) if first != written => {
                         return Err(BarConfigProblem::GroupColoursDisagree {
-                            edge: edge,
+                            edge,
                             name: name.to_string(),
                             first: first.to_string(),
                             second: written.to_string(),
@@ -2085,10 +2090,6 @@ impl ShellBarChrome {
     /// action are, so the frame a section is painted with, the widget drawn
     /// inside it and the press it answers can never belong to three different
     /// sections.
-    pub(crate) fn border_for(&self, region: RegionId, index: u8) -> Option<BarTint> {
-        Some(self.island_for(region, index)?.tint)
-    }
-
     /// The numbered section's place in its island, if it is in one.
     pub(crate) fn island_for(&self, region: RegionId, index: u8) -> Option<IslandSlot> {
         self.for_section(region, index)?.island
@@ -7402,6 +7403,17 @@ mod tests {
             !resolved_section_border(&bar, &bar.sections[1]),
             "while a section that opted out stays bare — the written key wins"
         );
+        let spacer = section_config("fill");
+        assert!(
+            !resolved_section_border(&bar, &spacer),
+            "a fill is the space between islands, not an island"
+        );
+        let mut framed_spacer = section_config("fill");
+        framed_spacer.border = Some(true);
+        assert!(
+            resolved_section_border(&bar, &framed_spacer),
+            "unless somebody frames it on purpose — the written key wins here too"
+        );
 
         let policies =
             section_policies(&bar, "top", 8, bar_across(&bar)).expect("the division stands");
@@ -7490,6 +7502,10 @@ mod tests {
             "one row across cannot hold a styled frame any more than an explicit one"
         );
         assert!(ShellBars::from_config(&bars).top.sections().is_empty());
+    }
+
+    fn chrome_border_for(chrome: &ShellBarChrome, region: RegionId, index: u8) -> Option<BarTint> {
+        Some(chrome.island_for(region, index)?.tint)
     }
 
     fn grouped(cells: u16, name: &str) -> ShellBarSectionConfig {
@@ -7677,12 +7693,14 @@ mod tests {
                     section.group = "sys".to_string();
                 }
             }
-            let mut config = ShellBarsConfig::default();
-            config.top = ShellBarConfig {
-                enabled: true,
-                size: 3,
-                border: Some(false),
-                sections,
+            let config = ShellBarsConfig {
+                top: ShellBarConfig {
+                    enabled: true,
+                    size: 3,
+                    border: Some(false),
+                    sections,
+                    ..Default::default()
+                },
                 ..Default::default()
             };
             ShellBars::from_config(&config)
@@ -7945,17 +7963,17 @@ mod tests {
         let chrome = ShellBarChrome::from_config(&bars, true, &palette);
 
         assert_eq!(
-            chrome.border_for(RegionId::TopBar, 0),
+            chrome_border_for(&chrome, RegionId::TopBar, 0),
             Some(BarTint::solid(bar_color("teal", &palette))),
             "a section that named a colour wears that colour"
         );
         assert_eq!(
-            chrome.border_for(RegionId::TopBar, 1),
+            chrome_border_for(&chrome, RegionId::TopBar, 1),
             Some(BarTint::solid(bar_color("mauve", &palette))),
             "a section that named none wears its bar's, not the global default"
         );
         assert_eq!(
-            chrome.border_for(RegionId::TopBar, 2),
+            chrome_border_for(&chrome, RegionId::TopBar, 2),
             None,
             "a section that asked for no frame carries no tone to draw one with"
         );
