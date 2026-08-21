@@ -1173,6 +1173,89 @@ impl App {
         }
     }
 
+    /// TP-TRAIL-VSCROLL-02: the wheel scrolls the CONTENT of the column under
+    /// the pointer, the way a file manager does — the selection stays where
+    /// the reader put it.
+    ///
+    /// Returns false for a column with nothing to scroll (its listing already
+    /// fits). That is not a silent drop: a column with no vertical content to
+    /// move is exactly where the horizontal fallback still has to mean
+    /// something, and it is the only horizontal road on hosts that report a
+    /// sideways gesture as a plain vertical wheel (TP-TRAIL-WHEEL-FALLBACK-01).
+    fn handle_file_manager_hover_column_scroll(
+        &mut self,
+        mouse: &MouseEvent,
+        delta: isize,
+        now: std::time::Instant,
+    ) -> bool {
+        let Some((trail_col, directory, line_start, max_start)) = self
+            .state
+            .view
+            .file_manager_trail
+            .columns
+            .iter()
+            .find(|column| rect_contains(column.rect, mouse.column, mouse.row))
+            .map(|column| {
+                (
+                    column.trail_index,
+                    column.directory.clone(),
+                    column.line_start,
+                    column.line_total.saturating_sub(column.line_height),
+                )
+            })
+        else {
+            return false;
+        };
+        if max_start == 0 {
+            return false;
+        }
+        let Some(files_generation) = self.state.stage.active_instance_generation() else {
+            return false;
+        };
+        // The same detent filter the cursor road uses: this host reports one
+        // physical notch as three packets, and one notch is one step whatever
+        // the wheel is moving (TP-FMN-WHEEL-01/02). Coalesced events are still
+        // CONSUMED — falling through would flip the axis mid-gesture.
+        let direction = if delta < 0 { -1 } else { 1 };
+        if !self.file_manager_vertical_wheel_gate.accept_at(
+            files_generation,
+            trail_col,
+            direction,
+            mouse.column,
+            mouse.row,
+            now,
+        ) {
+            self.file_manager_mouse_render_override = Some(false);
+            crate::render_prof::event("fm.vertical_wheel.coalesced");
+            return true;
+        }
+        crate::render_prof::event("fm.vertical_wheel.accepted");
+        let Some(file_manager) = self.state.file_manager.as_mut() else {
+            return false;
+        };
+        // The register, not the projection: the view is only rebuilt on the
+        // next render, so reading `line_start` for every event of a burst
+        // would compute each step from the same stale start and the gesture
+        // would never accumulate. Where no register exists yet, the projected
+        // window IS the truth — it is where the selection-follow rule put it.
+        let current = file_manager
+            .miller
+            .vertical
+            .start_for(&directory)
+            .unwrap_or(line_start);
+        let next = if delta < 0 {
+            current.saturating_sub(1)
+        } else {
+            current.saturating_add(1).min(max_start)
+        };
+        file_manager.miller.vertical.set_start(&directory, next);
+        // At either end the gesture is still this column's — consuming it
+        // keeps the axis from flipping under the reader at the boundary — but
+        // an unchanged window is not worth a frame.
+        self.file_manager_mouse_render_override = Some(next != current);
+        true
+    }
+
     fn handle_file_manager_vertical_wheel(
         &mut self,
         mouse: &MouseEvent,
@@ -1575,6 +1658,26 @@ impl App {
                 action: area.action,
                 entry_path: area.entry_path.clone(),
             });
+
+        // TP-TRAIL-VSCROLL-02: one rule for the whole column body — rows,
+        // headers and empty space alike. A column that can scroll scrolls;
+        // one that cannot leaves the event to the horizontal fallback below.
+        if trail_frame_is_live
+            && mouse.modifiers.is_empty()
+            && matches!(
+                mouse.kind,
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+            )
+        {
+            let delta = if matches!(mouse.kind, MouseEventKind::ScrollUp) {
+                -1
+            } else {
+                1
+            };
+            if self.handle_file_manager_hover_column_scroll(&mouse, delta, now) {
+                return FileManagerMouseDispatch::Consumed;
+            }
+        }
 
         if let Some(header) = trail_section_header_target.as_ref() {
             if mouse.modifiers.is_empty()
@@ -7031,11 +7134,12 @@ command = ["view"]
         ));
     }
 
-    // TP-FMN-WHEEL-01/02 integration: decoding three same-detent packets
-    // advances one row, while the next 5 ms detent and immediate reversal are
-    // both preserved. Profiler counters expose the normalization live.
+    // TP-FMN-WHEEL-01/02 integration, now over the column window
+    // (TP-TRAIL-VSCROLL-02): decoding three same-detent packets advances ONE
+    // line, while the next 5 ms detent and immediate reversal are both
+    // preserved. Profiler counters expose the normalization live.
     #[test]
-    fn vertical_wheel_microburst_moves_one_row_end_to_end() {
+    fn vertical_wheel_microburst_moves_one_line_end_to_end() {
         let td = TempDir::new("vertical-wheel-end-to-end");
         for index in 0..5 {
             td.file(&format!("{index:02}.txt"));
@@ -7053,9 +7157,15 @@ command = ["view"]
             let _ = app.handle_file_manager_mouse_at(down, started + Duration::from_micros(250));
             assert_eq!(app.file_manager_mouse_render_override, Some(false));
             assert_eq!(
-                app.state.file_manager.as_ref().expect("open FM").cursor,
-                1,
-                "one host triplet is one semantic row step"
+                app.state
+                    .file_manager
+                    .as_ref()
+                    .expect("open FM")
+                    .miller
+                    .vertical
+                    .start_for(&td.root),
+                Some(1),
+                "one host triplet is one semantic line step"
             );
 
             let _ = app.handle_file_manager_mouse_at(down, started + Duration::from_millis(5));
@@ -7065,7 +7175,17 @@ command = ["view"]
             );
         });
 
-        assert_eq!(app.state.file_manager.as_ref().expect("open FM").cursor, 1);
+        assert_eq!(
+            app.state
+                .file_manager
+                .as_ref()
+                .expect("open FM")
+                .miller
+                .vertical
+                .start_for(&td.root),
+            Some(1),
+            "the 5 ms detent and its immediate reversal cancel out"
+        );
         assert_eq!(profile.counter("fm.vertical_wheel.accepted"), 3);
         assert_eq!(profile.counter("fm.vertical_wheel.coalesced"), 2);
     }
@@ -7854,10 +7974,92 @@ command = ["view"]
         assert_eq!(fm.trail.cols()[1].directory, td.root.join("beta-dir"));
     }
 
-    // TP-A3.3-DISPATCH: wheel input over CURRENT moves one bounded row per
-    // event. The FM header is not a list target and leaves cursor unchanged.
+    // TP-TRAIL-VSCROLL-03: an arrow press gives the scrolled column back to
+    // the selection — otherwise the reader moves a selection they can no
+    // longer see.
     #[test]
-    fn wheel_moves_cursor_within_bounds_only_over_current_rows() {
+    fn moving_the_cursor_gives_the_scrolled_column_back_to_the_selection() {
+        let td = TempDir::new("wheel-then-arrow");
+        for index in 0..30 {
+            td.file(&format!("{index:02}.txt"));
+        }
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        let row = trail_row_by_index(&app, 0);
+        let mut now = Instant::now();
+        for _ in 0..5 {
+            now += Duration::from_millis(5);
+            let _ = app.handle_file_manager_mouse_at(
+                mouse(MouseEventKind::ScrollDown, row.name_rect.x, row.name_rect.y),
+                now,
+            );
+        }
+        let fm = app.state.file_manager.as_mut().expect("open fm");
+        assert!(
+            fm.miller.vertical.start_for(&td.root).is_some(),
+            "precondition: scrolled"
+        );
+
+        let _ = fm.move_trail_cursor(1);
+        assert_eq!(
+            fm.miller.vertical.start_for(&td.root),
+            None,
+            "the window follows the selection again"
+        );
+    }
+
+    // TP-TRAIL-VSCROLL-02 boundary: the register clamps AT the last full
+    // window. Without the input-side clamp the stored start keeps growing
+    // past it; the projection hides the excess, but the first detents back
+    // up then spend themselves shrinking it — a rubber band at the bottom
+    // edge. Pinned absolutely: however many detents land, the register never
+    // exceeds what the projection calls the last window.
+    #[test]
+    fn the_register_never_exceeds_the_last_full_window() {
+        let td = TempDir::new("wheel-rubber-band");
+        for index in 0..30 {
+            td.file(&format!("{index:02}.txt"));
+        }
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        let row = trail_row_by_index(&app, 0);
+        let mut now = Instant::now();
+
+        for _ in 0..60 {
+            now += Duration::from_millis(5);
+            let _ = app.handle_file_manager_mouse_at(
+                mouse(MouseEventKind::ScrollDown, row.name_rect.x, row.name_rect.y),
+                now,
+            );
+        }
+        // Read the same view the events resolved against — a fresh frame
+        // would carry a different height and call a different window "last".
+        let column = app
+            .state
+            .view
+            .file_manager_trail
+            .columns
+            .first()
+            .cloned()
+            .expect("visible column");
+        let last_window = column.line_total - column.line_height;
+        assert!(last_window > 0, "precondition: the listing overflows");
+        assert_eq!(
+            app.state
+                .file_manager
+                .as_ref()
+                .expect("open fm")
+                .miller
+                .vertical
+                .start_for(&td.root),
+            Some(last_window),
+            "sixty detents stop exactly at the last full window"
+        );
+    }
+
+    // TP-TRAIL-VSCROLL-02 (was TP-A3.3-DISPATCH, which pinned the cursor road
+    // this replaces): wheel input over a column moves its window one bounded
+    // line per detent. The FM header is not a column and moves nothing.
+    #[test]
+    fn wheel_scrolls_within_bounds_only_over_column_bodies() {
         let td = TempDir::new("mouse-wheel");
         for index in 0..6 {
             td.file(&format!("{index:02}.txt"));
@@ -7866,11 +8068,25 @@ command = ["view"]
         let row = trail_row_by_index(&app, 0);
         let mut now = Instant::now();
 
+        let start_of = |app: &App| {
+            app.state
+                .file_manager
+                .as_ref()
+                .expect("open fm")
+                .miller
+                .vertical
+                .start_for(&td.root)
+        };
+
         let _ = app.handle_file_manager_mouse_at(
             mouse(MouseEventKind::ScrollUp, row.name_rect.x, row.name_rect.y),
             now,
         );
-        assert_eq!(app.state.file_manager.as_ref().expect("open fm").cursor, 0);
+        assert_eq!(
+            start_of(&app),
+            Some(0),
+            "already at the top, it stays there"
+        );
 
         for _ in 0..20 {
             now += Duration::from_millis(5);
@@ -7879,11 +8095,16 @@ command = ["view"]
                 now,
             );
         }
-        assert_eq!(app.state.file_manager.as_ref().expect("open fm").cursor, 5);
+        let bottom = start_of(&app).expect("the column carries a window now");
+        assert!(bottom > 0, "twenty detents moved it down");
 
         now += Duration::from_millis(5);
         let _ = app.handle_file_manager_mouse_at(mouse(MouseEventKind::ScrollDown, 27, 0), now);
-        assert_eq!(app.state.file_manager.as_ref().expect("open fm").cursor, 5);
+        assert_eq!(
+            start_of(&app),
+            Some(bottom),
+            "the header is not a column body"
+        );
 
         for _ in 0..20 {
             now += Duration::from_millis(5);
@@ -7892,7 +8113,12 @@ command = ["view"]
                 now,
             );
         }
-        assert_eq!(app.state.file_manager.as_ref().expect("open fm").cursor, 0);
+        assert_eq!(start_of(&app), Some(0), "and back to the first line");
+        assert_eq!(
+            app.state.file_manager.as_ref().expect("open fm").cursor,
+            0,
+            "the cursor sat still through all of it"
+        );
     }
 
     // MTIME-5 RED: date headers are typed non-row terrain. Every button and
@@ -8115,11 +8341,12 @@ command = ["view"]
         assert_eq!(after.trail.cols()[1].directory, td.root.join("01-bravo"));
     }
 
-    // TP-FM3-PREVIEW-WHEEL / TP-TRAIL-T7-INPUT-03: human-scale wheel detents
-    // over the active child move its ephemeral cursor one row at a time
-    // without rewriting the activated branch.
+    // TP-TRAIL-VSCROLL-02 (was TP-FM3-PREVIEW-WHEEL / TP-TRAIL-T7-INPUT-03,
+    // which pinned the cursor road this replaces): human-scale wheel detents
+    // over the hovered child scroll ITS content, one line per detent, and
+    // leave both the cursor and the activated branch where they were.
     #[test]
-    fn plain_wheel_moves_only_hovered_child_trail_selection() {
+    fn plain_wheel_scrolls_only_the_hovered_child_column() {
         let td = TempDir::new("preview-wheel");
         let preview_directory = td.root.join("preview-directory");
         fs::create_dir_all(&preview_directory).expect("create preview directory");
@@ -8152,6 +8379,13 @@ command = ["view"]
             .cloned()
             .expect("visible child Trail column");
         let probe = child_column.rows[0].name_rect;
+        let selected_before = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("open FM")
+            .selected()
+            .map(|entry| entry.path.clone());
 
         let mut now = Instant::now();
         for _ in 0..3 {
@@ -8162,23 +8396,33 @@ command = ["view"]
             now += Duration::from_millis(5);
         }
         let after = app.state.file_manager.as_ref().expect("open FM");
-        assert_eq!(after.trail.active_col(), 1);
-        assert_eq!(after.trail.cols()[1].directory, preview_directory);
         assert_eq!(
-            after.selected().map(|entry| entry.path.as_path()),
-            Some(preview_directory.join("02.txt").as_path())
+            after.miller.vertical.start_for(&preview_directory),
+            Some(3),
+            "three detents moved this column's window three lines"
+        );
+        assert_eq!(
+            after.miller.vertical.start_for(&td.root),
+            None,
+            "and left every other column alone"
+        );
+        assert_eq!(
+            after.selected().map(|entry| entry.path.clone()),
+            selected_before,
+            "scrolling the content does not move the selection"
         );
         assert_eq!(
             after.trail.cols()[1].selected,
             None,
-            "vertical cursor movement cannot activate a file branch"
+            "nor can it activate a file branch"
         );
     }
 
-    // TP-FM3-PARENT-WHEEL / TP-TRAIL-T7-INPUT-03: repeated wheel movement in
-    // one Trail column remains bounded at its first entry.
+    // TP-TRAIL-VSCROLL-02 (was TP-FM3-PARENT-WHEEL / TP-TRAIL-T7-INPUT-03):
+    // repeated wheel movement in one column remains bounded at the top of
+    // its listing, and the activated branch under it is untouched.
     #[test]
-    fn plain_wheel_clamps_hovered_parent_trail_selection() {
+    fn plain_wheel_clamps_the_hovered_parent_column_at_its_first_line() {
         let td = TempDir::new("prepared-parent-wheel");
         for index in 0..10 {
             td.dir(&format!("{index:02}-sibling"));
@@ -8207,6 +8451,7 @@ command = ["view"]
             .cloned()
             .expect("visible parent Trail column");
         let target = parent_column.rows[0].clone();
+        let cursor_before = app.state.file_manager.as_ref().expect("open FM").cursor;
 
         let mut now = Instant::now();
         for _ in 0..30 {
@@ -8221,19 +8466,23 @@ command = ["view"]
             now += Duration::from_millis(5);
         }
 
-        let pending = app.state.file_manager.as_ref().expect("open FM");
-        assert_eq!(pending.trail.active_col(), 0);
-        assert_eq!(pending.cursor, 0);
-        assert_eq!(pending.trail.cols()[1].directory, current);
-        assert!(app.complete_file_manager_io_for_test());
-
         let after = app.state.file_manager.as_ref().expect("open FM");
-        assert_eq!(after.trail.active_col(), 0);
         assert_eq!(
-            after.trail.cols()[0].selected.as_deref(),
-            Some(td.root.join("00-sibling").as_path())
+            after.miller.vertical.start_for(&td.root),
+            Some(0),
+            "thirty detents upward stop at the first line, they do not wrap or underflow"
         );
-        assert_eq!(after.trail.cols()[1].directory, td.root.join("00-sibling"));
+        assert_eq!(
+            after.trail.active_col(),
+            1,
+            "hover is not focus: scrolling the parent leaves the child active"
+        );
+        assert_eq!(after.cursor, cursor_before, "the cursor never moved");
+        assert_eq!(
+            after.trail.cols()[1].directory,
+            current,
+            "and the activated branch under it is untouched"
+        );
     }
 
     // TP-FM3-NONCURRENT-MODIFIERS: Ctrl/Shift selection authority is confined

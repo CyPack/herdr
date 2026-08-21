@@ -43,6 +43,44 @@ impl Default for MillerHorizontalViewport {
     }
 }
 
+/// Per-column manual vertical window starts, keyed by the column's directory.
+///
+/// The vertical twin of [`MillerHorizontalViewport`], with the same contract:
+/// an entry means "this column's window is where the reader put it"; its
+/// absence means the window follows the selection, which is what it did
+/// before anyone touched the wheel. Keyed by directory rather than by trail
+/// index because a branch shifts every index below it, and a scroll position
+/// belongs to a listing, not to a slot.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct MillerVerticalViewport {
+    starts: std::collections::BTreeMap<PathBuf, usize>,
+}
+
+impl MillerVerticalViewport {
+    /// Where this column's window was put, if the reader put it anywhere.
+    pub(crate) fn start_for(&self, directory: &Path) -> Option<usize> {
+        self.starts.get(directory).copied()
+    }
+
+    /// Put this column's window at `start`. Clamping is the projection's job:
+    /// it is the only layer that knows how many lines the listing has and how
+    /// tall the column is drawn.
+    pub(crate) fn set_start(&mut self, directory: &Path, start: usize) {
+        self.starts.insert(directory.to_path_buf(), start);
+    }
+
+    /// Give this column back to the selection.
+    pub(crate) fn follow_selection(&mut self, directory: &Path) {
+        self.starts.remove(directory);
+    }
+
+    /// Give every column back to the selection — what a branch means: the
+    /// chain the reader was looking at is not the chain any more.
+    pub(crate) fn follow_selection_everywhere(&mut self) {
+        self.starts.clear();
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum MillerAdjacentWidthTarget {
     Directory(PathBuf),
@@ -53,6 +91,7 @@ pub(crate) enum MillerAdjacentWidthTarget {
 pub(crate) struct MillerState {
     pub chain: VecDeque<MillerPathSegment>,
     pub horizontal: MillerHorizontalViewport,
+    pub vertical: MillerVerticalViewport,
     pub focused_directory: PathBuf,
     pub preview_preferred_width: u16,
     pub revision: u64,
@@ -71,6 +110,7 @@ impl MillerState {
         Self {
             chain: VecDeque::from(segments),
             horizontal: MillerHorizontalViewport::default(),
+            vertical: MillerVerticalViewport::default(),
             focused_directory: cwd,
             preview_preferred_width: MILLER_COLUMN_PREFERRED_WIDTH,
             revision: 0,
@@ -93,6 +133,9 @@ impl MillerState {
         }
         self.clamp_horizontal_offset_to_content();
         self.horizontal.follow_active = true;
+        // A branch redraws the chain; a window the reader scrolled in the old
+        // chain would hide the new selection.
+        self.vertical.follow_selection_everywhere();
         self.focused_directory = directory;
         self.revision = self.revision.saturating_add(1);
     }
