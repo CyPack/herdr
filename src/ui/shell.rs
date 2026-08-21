@@ -44,9 +44,9 @@ pub(crate) use model::{
 #[cfg(test)]
 pub(crate) use source::pill_tones;
 pub(crate) use source::{
-    bar_color, bar_edge_for, derive_desktop_shell_layout, shell_config_problems, BarColors,
-    BarEdge, BarEdges, BarTint, IslandSlot, SecondaryPresentation, SectionAction, SectionWidget,
-    ShellBarChrome, ShellBars, SidebarChrome, SlotChrome,
+    bar_color, bar_color_tokens, bar_edge_for, derive_desktop_shell_layout, shell_config_problems,
+    BarColors, BarEdge, BarEdges, BarTint, IslandSlot, SecondaryPresentation, SectionAction,
+    SectionWidget, ShellBarChrome, ShellBars, SidebarChrome, SlotChrome,
 };
 pub(crate) use spec::{render_text as render_shell_spec_text, shell_spec};
 pub(crate) use template::ShellTemplateId;

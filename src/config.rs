@@ -9,9 +9,9 @@ mod theme;
 
 pub use self::{
     io::{
-        config_diagnostic_summary, config_dir, config_path, load_live_config, managed_spaces_path,
-        remove_keybinding_config_sections, remove_section_key, state_dir, upsert_section_bool,
-        upsert_section_value,
+        config_diagnostic_summary, config_dir, config_path, load_live_config, managed_bars_path,
+        managed_spaces_path, remove_keybinding_config_sections, remove_section_key, state_dir,
+        upsert_section_bool, upsert_section_value,
     },
     keybinds::{
         format_key_combo, normalize_key_combo, terminal_key_matches_combo, ActionKeybinds,
@@ -34,7 +34,7 @@ pub use self::{
     theme::{parse_color, CustomThemeColors, ThemeConfig},
 };
 
-pub(crate) use self::io::upsert_top_level_bool;
+pub(crate) use self::io::{upsert_top_level_bool, ManagedBarOverride};
 pub(crate) use self::keybinds::parse_key_combo;
 
 pub const CONFIG_PATH_ENV_VAR: &str = "HERDR_CONFIG_PATH";

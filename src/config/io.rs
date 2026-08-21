@@ -173,7 +173,7 @@ pub fn managed_bars_path() -> PathBuf {
 /// overlay cannot carry is a field it can never silently pin. `border` is a
 /// word rather than a bool because the panel has three states to persist —
 /// auto / on / off — and TOML cannot write "explicitly none".
-#[derive(Debug, Default, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Deserialize)]
 #[serde(default)]
 pub(crate) struct ManagedBarOverride {
     pub(crate) enabled: Option<bool>,
@@ -182,6 +182,26 @@ pub(crate) struct ManagedBarOverride {
     pub(crate) border: Option<String>,
     pub(crate) color: Option<String>,
     pub(crate) background: Option<String>,
+}
+
+impl ManagedBarOverride {
+    /// True when the override carries nothing — the empty diff Apply skips.
+    pub(crate) fn is_empty(&self) -> bool {
+        let Self {
+            enabled,
+            size,
+            style,
+            border,
+            color,
+            background,
+        } = self;
+        enabled.is_none()
+            && size.is_none()
+            && style.is_none()
+            && border.is_none()
+            && color.is_none()
+            && background.is_none()
+    }
 }
 
 /// Merge a `bars.managed.toml` document into an already-loaded config.

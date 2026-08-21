@@ -12,6 +12,7 @@ pub(crate) mod agent_view;
 mod agents;
 mod api;
 mod api_helpers;
+pub(crate) mod bar_config_panel;
 pub(crate) mod closed_agents;
 mod config_io;
 mod creation;
