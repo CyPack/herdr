@@ -755,9 +755,10 @@ impl crate::app::App {
         let Some(row) = rows.get(row_idx) else {
             return;
         };
-        if !row.live {
-            return;
-        }
+        // No separate liveness guard: the action lookup below IS the guard —
+        // a dead-end row has no summarizable action to find, and the mutant
+        // that removed an explicit check here changed nothing (T5, quadruple:
+        // redundant). `live` stays a render fact: the grey the eye reads.
         let bar = edge_config(&panel.original, panel.edge).clone();
         let action = row
             .section_indices
