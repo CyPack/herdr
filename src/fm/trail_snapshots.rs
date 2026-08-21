@@ -1808,6 +1808,17 @@ mod tests {
             "an empty pattern hides nothing"
         );
         snaps.set_filter(td.root.clone(), "alp".to_string());
+        // the live proof of the directory key: with the filter ACTIVE on the
+        // root, a sibling column showing another directory is untouched —
+        // this is what keeps a pattern from leaking into parent/preview
+        // columns, independent of the clear-on-enter below.
+        snaps.select_dir(&mut trail, 0, &alpha);
+        // select_dir cleared it; retype over ALPHA and look back at ROOT:
+        snaps.set_filter(alpha.clone(), "inn".to_string());
+        assert!(
+            snaps.filtered_indices(&snaps.cols()[0]).is_none(),
+            "a filter typed over one directory must not narrow another column"
+        );
         snaps.select_dir(&mut trail, 0, &alpha);
         let alpha_col_idx = trail.active_col();
         assert!(alpha_col_idx > 0, "entering branched a new column");
