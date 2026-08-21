@@ -222,6 +222,14 @@ impl AppState {
         // over the surface is consumed.
         if self.mode == Mode::BarConfigPanel {
             if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+                // TP-CHROME-153: the strip's two tab labels switch faces in
+                // place — a state-only turn, nothing to dispatch.
+                if let Some(tab) = self.bar_config_panel_tab_at(mouse.column, mouse.row) {
+                    if let Some(panel) = self.bar_config_panel.as_mut() {
+                        panel.switch_tab(tab);
+                    }
+                    return None;
+                }
                 if let Some(idx) = self.bar_config_panel_row_at(mouse.column, mouse.row) {
                     if let Some(panel) = self.bar_config_panel.as_mut() {
                         panel.selected = idx;

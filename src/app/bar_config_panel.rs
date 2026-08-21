@@ -483,7 +483,7 @@ pub(crate) fn section_app_rows(bar: &ShellBarConfig) -> Vec<BarAppRow> {
     let mut run: Vec<usize> = Vec::new();
     let mut run_group = String::new();
     let sections = &bar.sections;
-    let mut flush = |run: &mut Vec<usize>, rows: &mut Vec<BarAppRow>| {
+    let flush = |run: &mut Vec<usize>, rows: &mut Vec<BarAppRow>| {
         if run.is_empty() {
             return;
         }
@@ -590,8 +590,13 @@ impl crate::app::state::AppState {
     pub(crate) fn bar_config_panel_popup_rect(&self) -> Option<ratatui::layout::Rect> {
         let panel = self.bar_config_panel.as_ref()?;
         let area = self.view.terminal_area;
-        let width = 44u16.min(area.width.saturating_sub(2)).max(4);
-        let height = (panel.rows().len() as u16)
+        let width = match panel.tab {
+            BarPanelTab::Apps => 56u16,
+            BarPanelTab::Configure => 44u16,
+        }
+        .min(area.width.saturating_sub(2))
+        .max(4);
+        let height = (panel.forward_row_count() as u16)
             .saturating_add(4)
             .min(area.height.saturating_sub(2))
             .max(4);
@@ -616,15 +621,38 @@ impl crate::app::state::AppState {
             popup.width.saturating_sub(2),
             popup.height.saturating_sub(4),
         );
-        panel
-            .rows()
-            .iter()
-            .enumerate()
+        (0..panel.forward_row_count())
             .take(inner.height as usize)
-            .map(|(idx, _)| {
-                ratatui::layout::Rect::new(inner.x, inner.y + idx as u16, inner.width, 1)
+            .map(|idx| ratatui::layout::Rect::new(inner.x, inner.y + idx as u16, inner.width, 1))
+            .collect()
+    }
+
+    /// The two tab labels' rects on the strip line (popup.y + 2), in
+    /// `BarPanelTab::ALL` order.
+    pub(crate) fn bar_config_panel_tab_hit_areas(&self) -> Vec<ratatui::layout::Rect> {
+        let Some(popup) = self.bar_config_panel_popup_rect() else {
+            return Vec::new();
+        };
+        let mut x = popup.x + 1;
+        let y = popup.y + 2;
+        BarPanelTab::ALL
+            .iter()
+            .map(|tab| {
+                let width = tab.label().len() as u16 + 2;
+                let rect = ratatui::layout::Rect::new(x, y, width, 1);
+                x = x.saturating_add(width.saturating_add(1));
+                rect
             })
             .collect()
+    }
+
+    pub(crate) fn bar_config_panel_tab_at(&self, column: u16, row: u16) -> Option<BarPanelTab> {
+        self.bar_config_panel_tab_hit_areas()
+            .iter()
+            .position(|rect| {
+                column >= rect.x && column < rect.right() && row >= rect.y && row < rect.bottom()
+            })
+            .map(|idx| BarPanelTab::ALL[idx])
     }
 
     pub(crate) fn bar_config_panel_row_at(&self, column: u16, row: u16) -> Option<usize> {
@@ -696,17 +724,88 @@ impl crate::app::App {
         }
     }
 
-    /// Enter / click on the selected row: the verbs act, everything else
-    /// adjusts forward.
+    /// Enter / click on the selected row. On the Configure face the verbs
+    /// act and everything else adjusts forward; on the Apps face the row's
+    /// own app is reached (TP-CHROME-153).
     pub(crate) fn press_bar_config_panel_row(&mut self) {
         let Some(panel) = self.state.bar_config_panel.as_ref() else {
             return;
         };
-        match panel.rows().get(panel.selected) {
-            Some(BarPanelRow::Apply) => self.apply_bar_config_panel(),
-            Some(BarPanelRow::Cancel) => self.cancel_bar_config_panel(),
-            Some(_) => self.adjust_bar_config_panel(true),
-            None => {}
+        match panel.tab {
+            BarPanelTab::Apps => self.run_bar_app_row(panel.selected),
+            BarPanelTab::Configure => match panel.rows().get(panel.selected) {
+                Some(BarPanelRow::Apply) => self.apply_bar_config_panel(),
+                Some(BarPanelRow::Cancel) => self.cancel_bar_config_panel(),
+                Some(_) => self.adjust_bar_config_panel(true),
+                None => {}
+            },
+        }
+    }
+
+    /// Reach the app an Apps row points at — the popup/run/workspace kinds,
+    /// through the SAME App roads the bar's own click takes, so there is one
+    /// owner of "what running a section means". A plugin or hide row is
+    /// honest about its limit rather than growing a second resolution
+    /// machine: the bar itself is where those fire (TP-CHROME-153).
+    pub(crate) fn run_bar_app_row(&mut self, row_idx: usize) {
+        let Some(panel) = self.state.bar_config_panel.as_ref() else {
+            return;
+        };
+        let rows = panel.app_rows();
+        let Some(row) = rows.get(row_idx) else {
+            return;
+        };
+        if !row.live {
+            return;
+        }
+        let bar = edge_config(&panel.original, panel.edge).clone();
+        let action = row
+            .section_indices
+            .iter()
+            .filter_map(|&idx| bar.sections.get(idx))
+            .map(|section| section.action.clone())
+            .find(|action| action_summary(action).is_some());
+        let Some(action) = action else {
+            return;
+        };
+        match action.kind.as_str() {
+            "popup" => {
+                if let Err(err) = self.spawn_popup_argv_command(
+                    &action.argv,
+                    None,
+                    Vec::new(),
+                    crate::app::popup::PopupGeometry {
+                        width: action.width,
+                        height: action.height,
+                    },
+                ) {
+                    self.warn_about_bar_section_action(
+                        "bar section action failed",
+                        err.to_string(),
+                    );
+                }
+            }
+            "run" => {
+                if let Err(err) = self.run_bar_section_command(&action.argv) {
+                    self.warn_about_bar_section_action(
+                        "bar section action failed",
+                        err.to_string(),
+                    );
+                }
+            }
+            "workspace" => match self.state.workspace_index_named(&action.name) {
+                Some(ws_idx) => self.focus_workspace_idx_via_api(ws_idx),
+                None => self.warn_about_bar_section_action(
+                    "no workspace by that name",
+                    format!("nothing open is called {:?}", action.name),
+                ),
+            },
+            other => {
+                self.warn_about_bar_section_action(
+                    "open it from the bar",
+                    format!("a {other:?} action fires from its own section"),
+                );
+            }
         }
     }
 
@@ -749,11 +848,34 @@ impl crate::app::App {
         match key.code {
             crossterm::event::KeyCode::Esc => self.cancel_bar_config_panel(),
             crossterm::event::KeyCode::Enter => self.press_bar_config_panel_row(),
+            crossterm::event::KeyCode::Tab => {
+                if let Some(panel) = self.state.bar_config_panel.as_mut() {
+                    let next = match panel.tab {
+                        BarPanelTab::Apps => BarPanelTab::Configure,
+                        BarPanelTab::Configure => BarPanelTab::Apps,
+                    };
+                    panel.switch_tab(next);
+                }
+            }
             crossterm::event::KeyCode::Left | crossterm::event::KeyCode::Char('h') => {
-                self.adjust_bar_config_panel(false);
+                if self
+                    .state
+                    .bar_config_panel
+                    .as_ref()
+                    .is_some_and(|panel| panel.tab == BarPanelTab::Configure)
+                {
+                    self.adjust_bar_config_panel(false);
+                }
             }
             crossterm::event::KeyCode::Right | crossterm::event::KeyCode::Char('l') => {
-                self.adjust_bar_config_panel(true);
+                if self
+                    .state
+                    .bar_config_panel
+                    .as_ref()
+                    .is_some_and(|panel| panel.tab == BarPanelTab::Configure)
+                {
+                    self.adjust_bar_config_panel(true);
+                }
             }
             crossterm::event::KeyCode::Up | crossterm::event::KeyCode::Char('k') => {
                 if let Some(panel) = self.state.bar_config_panel.as_mut() {
@@ -762,7 +884,7 @@ impl crate::app::App {
             }
             crossterm::event::KeyCode::Down | crossterm::event::KeyCode::Char('j') => {
                 if let Some(panel) = self.state.bar_config_panel.as_mut() {
-                    if panel.selected.saturating_add(1) < panel.rows().len() {
+                    if panel.selected.saturating_add(1) < panel.forward_row_count() {
                         panel.selected += 1;
                     }
                 }
@@ -1000,11 +1122,20 @@ mod tests {
         let rows = section_app_rows(&bar);
         assert_eq!(rows.len(), 3);
         assert_eq!(rows[0].shows, "resource cpu");
-        assert_eq!(rows[0].does, "\u{2192} btop [popup]", "argv is shown by basename");
+        assert_eq!(
+            rows[0].does, "\u{2192} btop [popup]",
+            "argv is shown by basename"
+        );
         assert!(rows[0].live);
-        assert_eq!(rows[1].shows, "clock %H:%M", "an unwritten format is the default");
+        assert_eq!(
+            rows[1].shows, "clock %H:%M",
+            "an unwritten format is the default"
+        );
         assert_eq!(rows[1].does, "\u{2014}");
-        assert!(!rows[1].live, "an indicator is offered greyed, never silent");
+        assert!(
+            !rows[1].live,
+            "an indicator is offered greyed, never silent"
+        );
         assert_eq!(rows[2].shows, "fill");
         assert_eq!(rows[0].section_indices, vec![0]);
     }
@@ -1055,13 +1186,86 @@ mod tests {
         assert!(state.switch_tab(BarPanelTab::Apps));
         assert_eq!(state.selected, 0, "an index carried across tabs is a ghost");
         assert!(!state.switch_tab(BarPanelTab::Apps), "same tab is a no-op");
-        assert_eq!(state.forward_row_count(), 1, "the undivided strip's one row");
+        assert_eq!(
+            state.forward_row_count(),
+            1,
+            "the undivided strip's one row"
+        );
 
         state.adjust_row(BarPanelRow::Enabled, true); // draft flips on the other face
         assert_eq!(
             state.app_rows(),
             section_app_rows(&bars.top),
             "the inventory is the snapshot, not the draft"
+        );
+    }
+
+    // TP-CHROME-153: Tab turns the face, arrows stay Configure's knobs, and
+    // Enter on a live Apps row reaches its app through the same popup road
+    // the bar's own click takes.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_apps_face_runs_its_row_on_the_panels_own_key_road() {
+        let mut app = test_app();
+        // a bar with one btop popup section, loaded as the snapshot
+        let mut bars = crate::config::ShellBarsConfig::default();
+        bars.top.enabled = true;
+        let mut sec = crate::config::ShellBarSectionConfig {
+            kind: "content".to_string(),
+            ..Default::default()
+        };
+        sec.widget.kind = "resource".to_string();
+        sec.widget.metric = "cpu".to_string();
+        sec.action.kind = "popup".to_string();
+        sec.action.argv = vec!["sh".to_string(), "-c".to_string(), "sleep 5".to_string()];
+        bars.top.sections = vec![sec];
+        app.state.shell_bars_config = bars;
+
+        app.open_bar_config_panel(BarEdge::Top);
+        app.handle_bar_config_panel_key(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Tab,
+        ));
+        assert_eq!(
+            app.state.bar_config_panel.as_ref().unwrap().tab,
+            BarPanelTab::Apps
+        );
+        // arrows are Configure's knobs — on Apps they must not edit the draft
+        let draft_before = app.state.bar_config_panel.as_ref().unwrap().draft.clone();
+        app.handle_bar_config_panel_key(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Right,
+        ));
+        assert_eq!(
+            app.state.bar_config_panel.as_ref().unwrap().draft,
+            draft_before,
+            "an arrow on the Apps face turned a knob"
+        );
+        app.handle_bar_config_panel_key(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Enter,
+        ));
+        assert!(
+            app.state.popup_pane.is_some(),
+            "Enter on the btop row opened the popup"
+        );
+    }
+
+    // TP-CHROME-153: a dead-end Apps row is honest — Enter runs nothing.
+    #[test]
+    fn a_dead_end_apps_row_is_inert_on_enter() {
+        let mut app = test_app();
+        let mut bars = crate::config::ShellBarsConfig::default();
+        bars.top.enabled = true;
+        app.state.shell_bars_config = bars;
+        app.open_bar_config_panel(BarEdge::Top);
+        if let Some(panel) = app.state.bar_config_panel.as_mut() {
+            panel.switch_tab(BarPanelTab::Apps);
+        }
+        app.handle_bar_config_panel_key(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Enter,
+        ));
+        assert!(app.state.popup_pane.is_none());
+        assert!(
+            app.state.bar_config_panel.is_some(),
+            "an inert press neither runs nor closes"
         );
     }
 
