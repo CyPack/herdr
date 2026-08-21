@@ -896,6 +896,78 @@ mod tests {
         );
     }
 
+    // TP-CLICKOPEN-01: the same gesture's second token type. A path that is
+    // not there answers with a toast, never silence — and never leaks the
+    // press to the pane.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn ctrl_click_on_a_missing_path_answers_with_a_toast() {
+        let line = "edit src/definitely-missing.rs:42 now";
+        let col = line.find("definitely").unwrap() as u16;
+        let (mut app, info) = app_with_screen_bytes(line.as_bytes());
+        app.handle_mouse(modified_mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            info.inner_rect.x + col,
+            info.inner_rect.y,
+            KeyModifiers::CONTROL,
+        ));
+        let toast = app.state.toast.as_ref().expect("the miss is spoken");
+        assert_eq!(toast.title, "no such path");
+        assert!(
+            toast.context.contains("definitely-missing.rs"),
+            "{:?}",
+            toast.context
+        );
+        assert!(app.state.preview_viewer.is_none());
+    }
+
+    // TP-CLICKOPEN-01: an existing image path opens the preview viewer on
+    // the right — the fallback when no plugin claims the file.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn ctrl_click_on_an_existing_image_path_opens_the_viewer() {
+        let file = std::env::temp_dir().join(format!("herdr-clickopen-{}.png", std::process::id()));
+        std::fs::write(&file, b"png").unwrap();
+        let line = format!("shot {} saved", file.display());
+        let col = line.find("herdr-clickopen").unwrap() as u16;
+        let (mut app, info) = app_with_screen_bytes(line.as_bytes());
+        app.handle_mouse(modified_mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            info.inner_rect.x + col,
+            info.inner_rect.y,
+            KeyModifiers::CONTROL,
+        ));
+        let viewer = app
+            .state
+            .preview_viewer
+            .as_ref()
+            .expect("the viewer opened");
+        assert_eq!(viewer.source_path, file);
+        assert_eq!(app.state.mode, crate::app::state::Mode::PreviewViewer);
+        let _ = std::fs::remove_file(&file);
+    }
+
+    // TP-CLICKOPEN-01: a directory opens the Files surface at that
+    // directory.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn ctrl_click_on_a_directory_opens_files_there() {
+        let dir = std::env::temp_dir().join(format!("herdr-clickopen-dir-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let line = format!("cd {} ok", dir.display());
+        let col = line.find("herdr-clickopen-dir").unwrap() as u16;
+        let (mut app, info) = app_with_screen_bytes(line.as_bytes());
+        app.handle_mouse(modified_mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            info.inner_rect.x + col,
+            info.inner_rect.y,
+            KeyModifiers::CONTROL,
+        ));
+        let fm = app.state.file_manager.as_ref().expect("Files opened");
+        assert_eq!(fm.cwd, dir);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn ctrl_click_url_invokes_plugin_link_handler_but_super_click_does_not() {

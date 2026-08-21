@@ -3812,6 +3812,30 @@ impl AppState {
             return safe_web_url(&uri).map(str::to_owned);
         }
 
+        let (line, logical_col) =
+            self.visible_line_at_pane_cell(terminal_runtimes, pane_id, viewport_row, col)?;
+        url_at_column(&line, logical_col).map(str::to_owned)
+    }
+
+    /// The soft-wrap-aware logical line under a pane cell, with the cell's
+    /// column inside it — the walk `url_at_pane_cell` proved, extracted so
+    /// the path-token resolver reads the same line the URL resolver does
+    /// (TP-CLICKOPEN-01).
+    fn visible_line_at_pane_cell(
+        &self,
+        terminal_runtimes: &crate::terminal::TerminalRuntimeRegistry,
+        pane_id: crate::layout::PaneId,
+        viewport_row: u16,
+        col: u16,
+    ) -> Option<(String, u16)> {
+        let ws_idx = self
+            .active
+            .filter(|idx| self.workspaces.get(*idx).is_some())?;
+        let info = self.pane_info_by_id(pane_id)?;
+        if viewport_row >= info.inner_rect.height || col >= info.inner_rect.width {
+            return None;
+        }
+        let rt = self.runtime_for_pane_in_workspace(terminal_runtimes, ws_idx, pane_id)?;
         let metrics = self.pane_scroll_metrics(terminal_runtimes, pane_id);
         let visible_selection = Selection::line_range(
             pane_id,
@@ -3829,7 +3853,22 @@ impl AppState {
             .find('\n')
             .map_or(visible_text.len(), |idx| logical_cell.byte_index + idx);
         let line = visible_text.get(line_start..line_end)?;
-        url_at_column(line, logical_cell.logical_col).map(str::to_owned)
+        Some((line.to_string(), logical_cell.logical_col))
+    }
+
+    /// A filesystem-path token under a pane cell — the second thing the
+    /// modified click understands (TP-CLICKOPEN-01). `None` over URLs: the
+    /// URL pass runs first and owns them.
+    pub(crate) fn path_token_at_pane_cell(
+        &self,
+        terminal_runtimes: &crate::terminal::TerminalRuntimeRegistry,
+        pane_id: crate::layout::PaneId,
+        viewport_row: u16,
+        col: u16,
+    ) -> Option<String> {
+        let (line, logical_col) =
+            self.visible_line_at_pane_cell(terminal_runtimes, pane_id, viewport_row, col)?;
+        path_token_at_column(&line, usize::from(logical_col))
     }
 
     pub fn copy_selection(&mut self, terminal_runtimes: &crate::terminal::TerminalRuntimeRegistry) {
@@ -3916,6 +3955,91 @@ pub(crate) fn url_at_column(row: &str, col: u16) -> Option<&str> {
     let start_byte = byte_index_for_cell(row, span.start);
     let end_byte = byte_index_after_cell(row, span.end);
     safe_web_url(row.get(start_byte..end_byte)?)
+}
+
+/// The path token whose span covers `col`, or `None` when the press is not
+/// on one (TP-CLICKOPEN-01).
+///
+/// Two capture shapes: a quoted span (`'a b.txt'` — the one way a space
+/// survives, the double-click precedent), else a run of path characters.
+/// A trailing `:12` or `:12:5` — the compiler's and CC's favourite suffix —
+/// is stripped; so is trailing punctuation, so `see src/ui.rs.` opens the
+/// file and not a typo. URLs are refused here: the URL pass owns them.
+pub(crate) fn path_token_at_column(line: &str, col: usize) -> Option<String> {
+    let chars: Vec<char> = line.chars().collect();
+    if col >= chars.len() {
+        return None;
+    }
+    let is_path_char =
+        |c: char| c.is_alphanumeric() || matches!(c, '_' | '@' | '.' | '/' | '~' | '+' | '-' | ':');
+
+    // Quoted capture first: the nearest quote left of the press, its twin
+    // right of it, nothing but one line between them.
+    for quote in ['\'', '"'] {
+        let left = chars[..col].iter().rposition(|&c| c == quote);
+        let right = chars[col..]
+            .iter()
+            .position(|&c| c == quote)
+            .map(|i| i + col);
+        if let (Some(l), Some(r)) = (left, right) {
+            if r > l + 1 {
+                let inner: String = chars[l + 1..r].iter().collect();
+                if inner.contains('/') || looks_like_file_name(&inner) {
+                    return finish_path_token(inner);
+                }
+            }
+        }
+    }
+
+    if !is_path_char(chars[col]) {
+        return None;
+    }
+    let mut start = col;
+    while start > 0 && is_path_char(chars[start - 1]) {
+        start -= 1;
+    }
+    let mut end = col + 1;
+    while end < chars.len() && is_path_char(chars[end]) {
+        end += 1;
+    }
+    let token: String = chars[start..end].iter().collect();
+    if token.contains("://") {
+        return None;
+    }
+    finish_path_token(token)
+}
+
+fn looks_like_file_name(token: &str) -> bool {
+    token.rsplit_once('.').is_some_and(|(stem, ext)| {
+        !stem.is_empty()
+            && !ext.is_empty()
+            && ext.chars().all(|c| c.is_ascii_alphanumeric())
+            && ext.chars().any(|c| c.is_ascii_alphabetic())
+    })
+}
+
+fn finish_path_token(token: String) -> Option<String> {
+    // Punctuation first, THEN the :line loop, then punctuation again — a
+    // sentence-final "mod.rs:12:7." must lose its dot before the digit
+    // check can see a clean :7.
+    let mut token = token
+        .trim_end_matches(['.', ',', ';', ')', ']', '}', '\'', '"'])
+        .to_string();
+    // strip a trailing :LINE or :LINE:COL suffix, then stray punctuation again
+    while let Some((head, tail)) = token.rsplit_once(':') {
+        if tail.is_empty() || !tail.chars().all(|c| c.is_ascii_digit()) {
+            break;
+        }
+        token = head.to_string();
+    }
+    let token = token
+        .trim_end_matches(['.', ',', ';', ':', ')', ']', '}'])
+        .to_string();
+    if token.is_empty() {
+        return None;
+    }
+    let pathish = token.contains('/') || token.starts_with('~') || looks_like_file_name(&token);
+    pathish.then_some(token)
 }
 
 fn url_spans(cells: &[TextCell]) -> Vec<CellSpan> {
@@ -8506,6 +8630,54 @@ mod tests {
         assert!(
             !state.expanded_chat_workspaces.contains(&key),
             "no history, no reveal"
+        );
+    }
+    // TP-CLICKOPEN-01: the token scanner — class expansion, quote capture,
+    // :line stripping, punctuation trimming, and the refusals that keep a
+    // URL and a bare word out of the path road.
+    #[test]
+    fn path_tokens_are_found_stripped_and_refused_by_class() {
+        let line = "edit src/ui.rs:42, then done";
+        let col = line.find("ui.rs").unwrap();
+        assert_eq!(
+            path_token_at_column(line, col).as_deref(),
+            Some("src/ui.rs"),
+            "the :line suffix and the comma both fall away"
+        );
+        assert_eq!(
+            path_token_at_column("at src/app/mod.rs:12:7.", 6).as_deref(),
+            Some("src/app/mod.rs"),
+            ":line:col strips whole"
+        );
+        let quoted = "open 'a b.txt' now";
+        assert_eq!(
+            path_token_at_column(quoted, quoted.find("b.txt").unwrap()).as_deref(),
+            Some("a b.txt"),
+            "a quoted span is the one way a space survives"
+        );
+        assert_eq!(
+            path_token_at_column("see ~/notes/plan.md,", 8).as_deref(),
+            Some("~/notes/plan.md")
+        );
+        assert_eq!(
+            path_token_at_column("go https://ex.com/a.rs now", 12),
+            None,
+            "URLs belong to the URL pass"
+        );
+        assert_eq!(
+            path_token_at_column("just a version here", 8),
+            None,
+            "a bare word is not a path"
+        );
+        assert_eq!(
+            path_token_at_column("v1.2 bump", 1),
+            None,
+            "an all-digit extension is a number, not a file"
+        );
+        assert_eq!(
+            path_token_at_column("abc", 40),
+            None,
+            "past the line is nothing"
         );
     }
 }

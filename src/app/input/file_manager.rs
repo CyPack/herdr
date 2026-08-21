@@ -350,6 +350,32 @@ pub(crate) fn open_preview_viewer(state: &mut AppState) -> bool {
 /// order the context menu lists them in, so the click opens what the menu
 /// shows first. Plugins choose their preview-click answer by naming an action
 /// that sorts first.
+/// Queue the first installed File-context plugin action matching `path` —
+/// the ONE seam every "open this file" click travels (the FM preview click,
+/// the context menu, and the pane's path click), so they cannot drift
+/// (TP-CLICKOPEN-01). False when nothing installed can open it.
+pub(crate) fn queue_file_open_intent(state: &mut AppState, path: std::path::PathBuf) -> bool {
+    let actions = crate::app::api::plugins::file_manifest_actions(&state.installed_plugins);
+    let paths = [path.clone()];
+    let Some(action) = actions.iter().find(|action| {
+        action
+            .contexts
+            .contains(&crate::api::schema::PluginActionContext::File)
+            && action.matches_paths(&paths)
+    }) else {
+        return false;
+    };
+    state.request_file_manager_context_action =
+        Some(crate::app::state::FileManagerContextActionIntent {
+            action: crate::app::state::FileManagerContextMenuAction::Plugin {
+                plugin_id: action.plugin_id.clone(),
+                action_id: action.action_id.clone(),
+            },
+            paths: vec![path],
+        });
+    true
+}
+
 pub(crate) fn queue_text_preview_editor(state: &mut AppState) -> bool {
     let Some(file_manager) = state.file_manager.as_ref() else {
         return false;
@@ -370,30 +396,9 @@ pub(crate) fn queue_text_preview_editor(state: &mut AppState) -> bool {
         _ => return false,
     };
 
-    let actions = crate::app::api::plugins::file_manifest_actions(&state.installed_plugins);
-    let paths = [path.clone()];
-    // `file_manifest_actions` answers sorted by qualified id, so the first
-    // match here is the first entry the context menu would show.
-    let Some(action) = actions.iter().find(|action| {
-        action
-            .contexts
-            .contains(&crate::api::schema::PluginActionContext::File)
-            && action.matches_paths(&paths)
-    }) else {
-        // No editor for this type: swallow the click. Nothing happening is
-        // honest; queuing an intent nothing can run fails out of sight.
-        return false;
-    };
-
-    state.request_file_manager_context_action =
-        Some(crate::app::state::FileManagerContextActionIntent {
-            action: crate::app::state::FileManagerContextMenuAction::Plugin {
-                plugin_id: action.plugin_id.clone(),
-                action_id: action.action_id.clone(),
-            },
-            paths: vec![path],
-        });
-    true
+    // No editor for this type: swallowing the click is honest; queuing an
+    // intent nothing can run fails out of sight.
+    queue_file_open_intent(state, path)
 }
 
 /// Open the Taildrop destination picker on `paths`.

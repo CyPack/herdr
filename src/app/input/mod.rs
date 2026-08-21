@@ -26,6 +26,22 @@ enum WheelRouting {
 const WORKSPACE_DRAG_THRESHOLD: u16 = 1;
 const TAB_DRAG_THRESHOLD: u16 = 1;
 
+/// `~` to home, relative against the pane's foreground cwd, absolute as
+/// written (TP-CLICKOPEN-01).
+fn resolve_clicked_path(token: &str, cwd: Option<&std::path::Path>) -> std::path::PathBuf {
+    if token == "~" || token.starts_with("~/") {
+        return crate::worktree::expand_tilde_absolute_path(token);
+    }
+    let path = std::path::Path::new(token);
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+    match cwd {
+        Some(cwd) => cwd.join(path),
+        None => path.to_path_buf(),
+    }
+}
+
 fn modified_url_click_modifier() -> KeyModifiers {
     KeyModifiers::CONTROL
 }
@@ -1208,7 +1224,21 @@ impl App {
             self.state
                 .url_at_pane_cell(&self.terminal_runtimes, info.id, viewport_row, col)
         else {
-            return false;
+            // TP-CLICKOPEN-01: the same gesture's second token type — a
+            // filesystem path under the press opens on the right, through
+            // the seams the Files surface already trusts. A miss stays a
+            // plain pane press.
+            let Some(token) = self.state.path_token_at_pane_cell(
+                &self.terminal_runtimes,
+                info.id,
+                viewport_row,
+                col,
+            ) else {
+                return false;
+            };
+            self.last_pane_click = None;
+            self.pending_url_click_sources.insert(source_id);
+            return self.open_path_token_from_pane(&token, info.id);
         };
 
         self.last_pane_click = None;
@@ -1224,6 +1254,68 @@ impl App {
             tracing::warn!(err = %err, url = %url, "failed to open pane URL");
         }
         true
+    }
+
+    /// TP-CLICKOPEN-01: resolve a clicked path token and open it — a
+    /// directory in Files, a file through the one plugin-intent seam every
+    /// open-click travels, an image/PDF in the preview viewer when no plugin
+    /// answers, and a path that is not there as a toast rather than silence.
+    fn open_path_token_from_pane(&mut self, token: &str, pane_id: crate::layout::PaneId) -> bool {
+        let cwd = self
+            .state
+            .active
+            .and_then(|ws_idx| {
+                self.state
+                    .runtime_for_pane_in_workspace(&self.terminal_runtimes, ws_idx, pane_id)
+            })
+            .and_then(|rt| rt.foreground_cwd());
+        let resolved = resolve_clicked_path(token, cwd.as_deref());
+        match std::fs::metadata(&resolved) {
+            Err(_) => {
+                // The same toast road every consumed-but-failed bar press
+                // takes — one owner of the toast + its deadline.
+                self.warn_about_bar_section_action("no such path", resolved.display().to_string());
+                true
+            }
+            Ok(meta) if meta.is_dir() => {
+                let dir = resolved.clone();
+                let opened = self
+                    .state
+                    .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&dir)))
+                    .is_ok();
+                if !opened {
+                    self.warn_about_bar_section_action(
+                        "could not open Files",
+                        resolved.display().to_string(),
+                    );
+                }
+                true
+            }
+            Ok(_) => {
+                if file_manager::queue_file_open_intent(&mut self.state, resolved.clone()) {
+                    return true;
+                }
+                let ext = resolved
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .map(str::to_ascii_lowercase);
+                match ext.as_deref() {
+                    Some("png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "pdf") => {
+                        self.state.preview_viewer = Some(crate::app::state::PreviewViewerState {
+                            source_path: resolved,
+                        });
+                        self.state.enter_overlay_mode(Mode::PreviewViewer);
+                    }
+                    _ => {
+                        self.warn_about_bar_section_action(
+                            "nothing installed opens this file",
+                            resolved.display().to_string(),
+                        );
+                    }
+                }
+                true
+            }
+        }
     }
 
     fn handle_pane_double_click(&mut self, mouse: MouseEvent) -> bool {
