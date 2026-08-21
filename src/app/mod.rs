@@ -951,7 +951,6 @@ impl App {
             request_file_manager_agent_handoff: None,
             agent_reference_picker: None,
             agent_colleague_picker: None,
-            request_agent_colleague_picker: None,
             file_manager_locations_model,
             file_manager_locations: Default::default(),
             request_file_manager_location_navigation: None,

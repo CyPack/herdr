@@ -990,9 +990,6 @@ impl App {
             self.save_agent_panel_sort(self.state.agent_panel_sort);
         }
 
-        if let Some((ws_idx, tab_idx)) = self.state.request_agent_colleague_picker.take() {
-            self.open_agent_colleague_picker(ws_idx, tab_idx);
-        }
         if let Some(content) = self.state.request_clipboard_write.take() {
             if self
                 .event_tx

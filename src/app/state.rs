@@ -3743,9 +3743,6 @@ pub struct AppState {
     /// Set when UI interaction requested a clipboard write that must be
     /// handled by the outer App/event loop instead of directly from AppState.
     pub request_clipboard_write: Option<Vec<u8>>,
-    /// Raised by the state-only menu body; the input loop opens the picker
-    /// (TP-AGPANEL-48) — the App layer owns the agents projection.
-    pub(crate) request_agent_colleague_picker: Option<(usize, usize)>,
     /// Set when a Projects-tab chat row (resume) or "(no chats)" row (new
     /// chat) was clicked; consumed by the event loop to spawn the tab.
     pub request_project_chat_tab: Option<ProjectChatTabRequest>,
@@ -5048,7 +5045,6 @@ impl AppState {
             request_reload_config: false,
             request_client_config_reload: false,
             request_clipboard_write: None,
-            request_agent_colleague_picker: None,
             request_project_chat_tab: None,
             request_preview_show: false,
             creating_new_tab: false,

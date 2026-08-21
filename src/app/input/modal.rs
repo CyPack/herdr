@@ -1444,17 +1444,6 @@ pub(super) fn apply_context_menu_action(
             state.switch_tab(tab_idx);
             open_rename_active_tab(state, false);
         }
-        // TP-AGPANEL-48: the picker is opened by the App layer (it reads the
-        // live agents projection), so this state-only body raises a request
-        // the input loop drains — the same shape every deferred verb takes.
-        (
-            ContextMenuKind::AgentEntry {
-                ws_idx, tab_idx, ..
-            },
-            Some("Work with other agent..."),
-        ) => {
-            state.request_agent_colleague_picker = Some((ws_idx, tab_idx));
-        }
         (ContextMenuKind::Tab { ws_idx, tab_idx }, Some("Close")) => {
             state.selected = ws_idx;
             state.active = Some(ws_idx);
@@ -3402,18 +3391,15 @@ mod tests {
         assert_eq!(state.workspaces.len(), 2);
     }
 
-    // TP-AGPANEL-48: the keyboard body raises the request — the App layer
-    // owns the agents projection, so this body cannot open the picker
-    // itself; the input loop drains the request and opens it.
+    // TP-AGPANEL-48: the colleague verb opens the picker on the App
+    // dispatcher body — the one road every production selection (keyboard
+    // Enter and mouse click alike) takes.
     #[test]
-    fn the_colleague_verb_raises_the_request_on_the_state_body() {
-        let mut state = AppState::test_new();
-        let mut terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
-        let workspace = Workspace::test_new("one");
-        let pane_id = workspace.tabs[0].root_pane;
-        state.workspaces = vec![workspace];
-        state.active = Some(0);
-        state.mode = Mode::ContextMenu;
+    fn the_colleague_verb_opens_the_picker_on_the_dispatch_road() {
+        let mut app = app_with_test_workspaces(&["main", "issue"]);
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        app.state.active = Some(0);
+        app.state.mode = Mode::ContextMenu;
         let menu = ContextMenuState {
             kind: ContextMenuKind::AgentEntry {
                 ws_idx: 0,
@@ -3431,9 +3417,13 @@ mod tests {
             .position(|item| *item == "Work with other agent...")
             .expect("the verb is offered");
 
-        apply_context_menu_action(&mut state, &mut terminal_runtimes, menu, idx);
+        app.apply_context_menu_action_via_api(menu, idx);
 
-        assert_eq!(state.request_agent_colleague_picker, Some((0, 0)));
+        assert!(
+            app.state.agent_colleague_picker.is_some(),
+            "the picker opened"
+        );
+        assert_eq!(app.state.mode, Mode::AgentColleaguePicker);
     }
 
     // TP-AGPANEL-47: and on the road the mouse actually takes — #91's class:
