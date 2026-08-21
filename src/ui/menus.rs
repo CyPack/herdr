@@ -386,6 +386,48 @@ pub(super) fn render_agent_colleague_picker(app: &AppState, frame: &mut Frame) {
     }
 }
 
+/// TP-CHROME-150: the bar config panel — the pickers' popup shell, rows of
+/// knob-and-value with the selected one highlighted, the current draft's
+/// words coming from the same `row_value_label` the tests read.
+pub(super) fn render_bar_config_panel(app: &AppState, frame: &mut Frame) {
+    let Some(panel) = app.bar_config_panel.as_ref() else {
+        return;
+    };
+    let Some(popup) = app.bar_config_panel_popup_rect() else {
+        return;
+    };
+    let p = &app.palette;
+    if render_panel_shell(frame, popup, p.accent, p.panel_bg).is_none() {
+        return;
+    }
+    let header = Rect::new(popup.x + 1, popup.y + 1, popup.width.saturating_sub(2), 1);
+    frame.render_widget(
+        Paragraph::new(format!(
+            "Configure {} bar",
+            crate::app::bar_config_panel::bar_edge_name(panel.edge)
+        ))
+        .style(Style::default().fg(p.text).add_modifier(Modifier::BOLD)),
+        header,
+    );
+    for (idx, (row, rect)) in panel
+        .rows()
+        .iter()
+        .zip(app.bar_config_panel_row_hit_areas())
+        .enumerate()
+    {
+        let marker = if idx == panel.selected { ">" } else { " " };
+        let value = crate::app::bar_config_panel::row_value_label(panel, *row);
+        let label =
+            crate::ui::text::truncate_end(&format!("{marker} {value}"), rect.width as usize);
+        let style = if idx == panel.selected {
+            Style::default().bg(p.surface1).fg(p.text)
+        } else {
+            Style::default().fg(p.subtext0)
+        };
+        frame.render_widget(Paragraph::new(label).style(style), rect);
+    }
+}
+
 pub(super) fn render_agent_reference_picker(app: &AppState, frame: &mut Frame) {
     let Some(picker) = app.agent_reference_picker.as_ref() else {
         return;

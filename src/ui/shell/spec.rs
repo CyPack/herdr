@@ -485,11 +485,13 @@ mod tests {
             "the secondary presentations emptied out"
         );
         // TP-SPEC-15: the menu the spec publishes is the menu the product
-        // draws. Three, not "some": the rows are a closed set and a spec that
-        // published two of them would teach that a section reaches two places.
+        // draws. Four, not "some": the rows are a closed set — three
+        // presentations and, since TP-CHROME-150, the bar's configure door —
+        // and a spec that published fewer would teach that a section reaches
+        // fewer places.
         assert_eq!(
             spec.bar_section_menu.len(),
-            3,
+            4,
             "the published menu no longer has a row per presentation"
         );
         assert!(spec.colors.len() >= 8, "the colour names thinned out");

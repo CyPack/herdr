@@ -304,6 +304,100 @@ fn apply_managed_bar_override(
     }
 }
 
+/// The banner every written `bars.managed.toml` carries — the file explains
+/// itself to the person who finds it.
+const MANAGED_BARS_HEADER: &str = "\
+# Written by herdr's bar config panel. Fields here override the same fields\n\
+# in config.toml, edge by edge; delete a line to hand that field back to\n\
+# your own config.\n";
+
+/// Produce the next `bars.managed.toml` document: the existing content with
+/// `overrides` laid over its `[shell.bars.<edge>]` tables, field by field.
+/// Read-modify-write at the document level, so one Apply never erases the
+/// entry an earlier Apply wrote for another edge; an unreadable existing
+/// document is refused rather than silently emptied (TP-CHROME-151).
+pub(crate) fn upsert_managed_bars_doc(
+    existing: &str,
+    overrides: &[(&str, ManagedBarOverride)],
+) -> Result<String, String> {
+    let mut root: toml::Value = if existing.trim().is_empty() {
+        toml::Value::Table(toml::map::Map::new())
+    } else {
+        toml::from_str(existing).map_err(|err| format!("bars.managed.toml parse error: {err}"))?
+    };
+    let table = root
+        .as_table_mut()
+        .ok_or_else(|| "bars.managed.toml root is not a table".to_string())?;
+    let shell = table
+        .entry("shell")
+        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
+        .as_table_mut()
+        .ok_or_else(|| "bars.managed.toml [shell] is not a table".to_string())?;
+    let bars = shell
+        .entry("bars")
+        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
+        .as_table_mut()
+        .ok_or_else(|| "bars.managed.toml [shell.bars] is not a table".to_string())?;
+    for (edge, over) in overrides {
+        let entry = bars
+            .entry((*edge).to_string())
+            .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
+            .as_table_mut()
+            .ok_or_else(|| format!("bars.managed.toml [shell.bars.{edge}] is not a table"))?;
+        let ManagedBarOverride {
+            enabled,
+            size,
+            style,
+            border,
+            color,
+            background,
+        } = over;
+        if let Some(value) = enabled {
+            entry.insert("enabled".into(), toml::Value::Boolean(*value));
+        }
+        if let Some(value) = size {
+            entry.insert("size".into(), toml::Value::Integer(i64::from(*value)));
+        }
+        if let Some(value) = style {
+            entry.insert("style".into(), toml::Value::String(value.clone()));
+        }
+        if let Some(value) = border {
+            entry.insert("border".into(), toml::Value::String(value.clone()));
+        }
+        if let Some(value) = color {
+            entry.insert("color".into(), toml::Value::String(value.clone()));
+        }
+        if let Some(value) = background {
+            entry.insert("background".into(), toml::Value::String(value.clone()));
+        }
+    }
+    let body = toml::to_string_pretty(&root)
+        .map_err(|err| format!("bars.managed.toml serialize error: {err}"))?;
+    Ok(format!("{MANAGED_BARS_HEADER}\n{body}"))
+}
+
+/// Write `overrides` into the managed bars file on disk — read, upsert,
+/// replace atomically (write-then-rename), so a crash mid-write leaves the
+/// old document rather than half of a new one.
+pub(crate) fn persist_managed_bar_overrides(
+    overrides: &[(&str, ManagedBarOverride)],
+) -> Result<(), String> {
+    let path = managed_bars_path();
+    let existing = match read_optional_config(&path) {
+        Ok(Some(content)) => content,
+        Ok(None) => String::new(),
+        Err(err) => return Err(format!("bars.managed.toml read error: {err}")),
+    };
+    let next = upsert_managed_bars_doc(&existing, overrides)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| format!("bars.managed.toml mkdir error: {err}"))?;
+    }
+    let tmp = path.with_extension("toml.tmp");
+    std::fs::write(&tmp, next).map_err(|err| format!("bars.managed.toml write error: {err}"))?;
+    std::fs::rename(&tmp, &path).map_err(|err| format!("bars.managed.toml rename error: {err}"))
+}
+
 /// Apply the managed overlay, if one exists, to a loaded config.
 fn finish_with_managed_overlay(mut loaded: LoadedConfig) -> LoadedConfig {
     match read_optional_config(&managed_spaces_path()) {
@@ -1713,6 +1807,85 @@ style = "plain"
             loaded.config.shell.bars.top.size, 4,
             "the user's size survives a refused override"
         );
+    }
+
+    // TP-CHROME-151: the writer is read-modify-write — a second Apply on
+    // another edge keeps what the first one wrote.
+    #[test]
+    fn upserting_bar_overrides_builds_and_updates_the_document() {
+        let first = upsert_managed_bars_doc(
+            "",
+            &[(
+                "top",
+                ManagedBarOverride {
+                    style: Some("pills".to_string()),
+                    ..Default::default()
+                },
+            )],
+        )
+        .unwrap();
+        assert!(first.contains("[shell.bars.top]"), "{first}");
+        assert!(first.contains("style = \"pills\""), "{first}");
+
+        let second = upsert_managed_bars_doc(
+            &first,
+            &[(
+                "bottom",
+                ManagedBarOverride {
+                    enabled: Some(true),
+                    ..Default::default()
+                },
+            )],
+        )
+        .unwrap();
+        assert!(
+            second.contains("style = \"pills\""),
+            "the first edge survives"
+        );
+        assert!(second.contains("[shell.bars.bottom]"), "{second}");
+        assert!(second.contains("enabled = true"), "{second}");
+    }
+
+    // TP-CHROME-151: a document the writer cannot read is refused, never
+    // silently replaced — refusing loses one Apply, replacing loses every
+    // earlier one.
+    #[test]
+    fn upserting_refuses_a_broken_existing_document() {
+        let result =
+            upsert_managed_bars_doc("not toml [", &[("top", ManagedBarOverride::default())]);
+        assert!(result.is_err());
+    }
+
+    // TP-CHROME-149/151: what the writer writes, the merge reads back — the
+    // two halves of the overlay meet in the middle.
+    #[test]
+    fn the_written_document_reads_back_through_the_merge() {
+        let doc = upsert_managed_bars_doc(
+            "",
+            &[(
+                "left",
+                ManagedBarOverride {
+                    enabled: Some(true),
+                    size: Some(2),
+                    style: Some("plain".to_string()),
+                    border: Some("auto".to_string()),
+                    color: Some("teal".to_string()),
+                    background: Some("bg".to_string()),
+                },
+            )],
+        )
+        .unwrap();
+        let mut loaded = load_live_config_from_str("").unwrap();
+        loaded.config.shell.bars.left.border = Some(true);
+        let diagnostics = merge_managed_bars_str(&mut loaded.config, &doc);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let left = &loaded.config.shell.bars.left;
+        assert!(left.enabled);
+        assert_eq!(left.size, 2);
+        assert_eq!(left.style, "plain");
+        assert_eq!(left.border, None, "auto travelled through the file");
+        assert_eq!(left.color, "teal");
+        assert_eq!(left.background, "bg");
     }
 
     #[test]

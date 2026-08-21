@@ -112,6 +112,11 @@ pub(crate) enum BarSectionClick {
     /// (`bar_edge_for`). A second derivation is how a click on one bar comes
     /// to hide another.
     HideBar { edge: crate::ui::shell::BarEdge },
+    /// Open the bar's own configuration panel for the edge the press landed
+    /// on (TP-CHROME-150). Carries the edge for the same reason `HideBar`
+    /// does: the resolution that drawing, hitting and acting agree on is the
+    /// one this arm was made at.
+    ConfigureBar { edge: crate::ui::shell::BarEdge },
     /// Go to the workspace with this name.
     ///
     /// Resolved where the workspaces are, not here: pure state can answer which
@@ -140,6 +145,9 @@ pub(crate) enum BarSectionClick {
         width: Option<crate::popup_size::PopupSize>,
         height: Option<crate::popup_size::PopupSize>,
         popup_open: bool,
+        /// The edge the menu opens on — what its "Configure bar..." row
+        /// configures (TP-CHROME-150).
+        edge: crate::ui::shell::BarEdge,
     },
     /// Over a popup action while a popup is already open. Named rather than
     /// folded into `Inert` because the two deserve different answers: this one
@@ -200,7 +208,17 @@ impl AppState {
             return BarSectionClick::Elsewhere;
         };
         match self.shell_bar_chrome.action_for(region, index) {
-            None | Some(crate::ui::shell::SectionAction::None) => BarSectionClick::Inert,
+            // An actionless stretch of the bar is still chrome — and on the
+            // second gesture it is the bar's own door: the config panel opens
+            // for the edge the press landed on (TP-CHROME-150). Sections with
+            // their own actions keep their recorded answers.
+            None | Some(crate::ui::shell::SectionAction::None) => match gesture {
+                SectionGesture::Primary => BarSectionClick::Inert,
+                SectionGesture::Secondary => match crate::ui::shell::bar_edge_for(region) {
+                    Some(edge) => BarSectionClick::ConfigureBar { edge },
+                    None => BarSectionClick::Inert,
+                },
+            },
             // Neither of these opens anything, so neither has a second
             // presentation to offer — the same reason the plugin arm below is
             // deliberately inert on a right press. A menu here would list three
@@ -235,12 +253,21 @@ impl AppState {
                 // that reached the surface behind would act on something the
                 // person was not pointing at (CL12).
                 SectionGesture::Secondary => match secondary {
-                    crate::ui::shell::SecondaryPresentation::Menu => BarSectionClick::OpenMenu {
-                        argv: argv.clone(),
-                        width: *width,
-                        height: *height,
-                        popup_open: self.popup_pane.is_some(),
-                    },
+                    // Fail closed on the edge, like every other arm that
+                    // carries one: a menu that could not name its bar would
+                    // offer a Configure row pointing at nothing.
+                    crate::ui::shell::SecondaryPresentation::Menu => {
+                        match crate::ui::shell::bar_edge_for(region) {
+                            Some(edge) => BarSectionClick::OpenMenu {
+                                argv: argv.clone(),
+                                width: *width,
+                                height: *height,
+                                popup_open: self.popup_pane.is_some(),
+                                edge,
+                            },
+                            None => BarSectionClick::Inert,
+                        }
+                    }
                     crate::ui::shell::SecondaryPresentation::Tab => {
                         BarSectionClick::OpenTab { argv: argv.clone() }
                     }
@@ -357,7 +384,8 @@ impl AppState {
             | Mode::PreviewViewer
             | Mode::TailscaleSend
             | Mode::AgentReferencePicker
-            | Mode::AgentColleaguePicker => true,
+            | Mode::AgentColleaguePicker
+            | Mode::BarConfigPanel => true,
         }
     }
 
@@ -417,7 +445,8 @@ impl AppState {
             | Mode::KeybindHelp
             | Mode::Navigator
             | Mode::AgentReferencePicker
-            | Mode::AgentColleaguePicker => true,
+            | Mode::AgentColleaguePicker
+            | Mode::BarConfigPanel => true,
         }
     }
 
@@ -1552,6 +1581,7 @@ mod tests {
                     width: None,
                     height: None,
                     popup_open: false,
+                    edge: crate::ui::shell::BarEdge::Top,
                 },
             ),
         ];
@@ -1633,6 +1663,7 @@ mod tests {
                 width: None,
                 height: None,
                 popup_open: false,
+                edge: crate::ui::shell::BarEdge::Top,
             },
             "control: with the slot free, nothing in the menu is closed off"
         );
@@ -1651,8 +1682,33 @@ mod tests {
                 width: None,
                 height: None,
                 popup_open: true,
+                edge: crate::ui::shell::BarEdge::Top,
             },
             "the menu must learn the slot is taken, or it offers a popup it cannot open"
+        );
+    }
+
+    // TP-CHROME-150: an actionless stretch of the bar answers the second
+    // gesture with the config door — and names the edge it was pressed on,
+    // through the same `bar_edge_for` resolution every acting arm uses. The
+    // first gesture stays inert: the strip is chrome, not a button.
+    #[test]
+    fn a_secondary_press_on_an_actionless_section_asks_for_the_panel() {
+        let (state, _) = state_with_divided_top_bar(vec![crate::config::ShellBarSectionConfig {
+            kind: "fill".to_string(),
+            weight: 1,
+            ..Default::default()
+        }]);
+        assert_eq!(
+            state.bar_section_click_at(Position::new(4, 0), SectionGesture::Secondary),
+            BarSectionClick::ConfigureBar {
+                edge: crate::ui::shell::BarEdge::Top
+            },
+        );
+        assert_eq!(
+            state.bar_section_click_at(Position::new(4, 0), SectionGesture::Primary),
+            BarSectionClick::Inert,
+            "the first gesture is not a door"
         );
     }
 

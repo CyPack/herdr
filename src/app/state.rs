@@ -1936,6 +1936,7 @@ pub enum Mode {
     Navigator,
     AgentReferencePicker,
     AgentColleaguePicker,
+    BarConfigPanel,
     PreviewViewer,
     TailscaleSend,
 }
@@ -2586,6 +2587,9 @@ pub enum ContextMenuKind {
         /// Whether the single popup slot was taken when the menu opened, which
         /// decides whether "Open in popup" can be picked (TP-CHROME-109).
         popup_open: bool,
+        /// The edge the menu was opened on — what "Configure bar..."
+        /// configures (TP-CHROME-150).
+        edge: crate::ui::shell::BarEdge,
     },
 }
 
@@ -2606,17 +2610,22 @@ pub enum BarSectionMenuItem {
     Popup,
     Tab,
     Split,
+    /// Open the bar's own configuration panel (TP-CHROME-150) — the setting
+    /// lives where the thing is, even on a section whose right press already
+    /// has a menu to offer.
+    Configure,
 }
 
 impl BarSectionMenuItem {
     /// Every row, in the order the menu draws them, primary first.
-    pub const ALL: &'static [Self] = &[Self::Popup, Self::Tab, Self::Split];
+    pub const ALL: &'static [Self] = &[Self::Popup, Self::Tab, Self::Split, Self::Configure];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::Popup => "Open in popup",
             Self::Tab => "Open in new tab",
             Self::Split => "Open in split",
+            Self::Configure => "Configure bar...",
         }
     }
 
@@ -3629,6 +3638,13 @@ pub struct AppState {
     /// The "Work with other agent..." popup (TP-AGPANEL-48), when open.
     pub(crate) agent_colleague_picker:
         Option<crate::app::agent_colleague_picker::AgentColleaguePickerState>,
+    /// The bar configuration panel (TP-CHROME-150), when open.
+    pub(crate) bar_config_panel: Option<crate::app::bar_config_panel::BarConfigPanelState>,
+    /// The bars exactly as the last config load left them — the panel's
+    /// opening snapshot and the preview's restore point.
+    pub(crate) shell_bars_config: crate::config::ShellBarsConfig,
+    /// `shell.glyph_icons` from the same load, carried for chrome rebuilds.
+    pub(crate) shell_glyph_icons: bool,
     /// Prepared, bounded Files-locations data. Filesystem/environment discovery
     /// happens only when this projection is refreshed, never during render.
     pub file_manager_locations_model: FileManagerLocationsModel,
@@ -5013,6 +5029,9 @@ impl AppState {
             request_file_manager_agent_handoff: None,
             agent_reference_picker: None,
             agent_colleague_picker: None,
+            bar_config_panel: None,
+            shell_bars_config: Default::default(),
+            shell_glyph_icons: true,
             file_manager_locations_model: FileManagerLocationsModel::default(),
             file_manager_locations: Default::default(),
             request_file_manager_location_navigation: None,
@@ -7175,6 +7194,7 @@ mod tests {
                 width: None,
                 height: None,
                 popup_open,
+                edge: crate::ui::shell::BarEdge::Top,
             },
             x: 0,
             y: 0,
@@ -7188,13 +7208,19 @@ mod tests {
     /// `BarSectionMenuItem`, which would compare the table to itself and pass
     /// however it was rewritten. This is the one place the words are written
     /// down twice on purpose.
-    // TP-CHROME-108: a bar section's menu offers the same three rows whether or
-    // not the popup slot is free.
+    // TP-CHROME-108: a bar section's menu offers the same rows whether or
+    // not the popup slot is free — three presentations and, since
+    // TP-CHROME-150, the bar's own configure door.
     #[test]
     fn bar_section_context_menu_offers_every_presentation() {
         assert_eq!(
             bar_section_menu(false).items(),
-            &["Open in popup", "Open in new tab", "Open in split"]
+            &[
+                "Open in popup",
+                "Open in new tab",
+                "Open in split",
+                "Configure bar..."
+            ]
         );
         assert_eq!(
             bar_section_menu(true).items(),

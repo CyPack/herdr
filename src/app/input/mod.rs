@@ -304,6 +304,9 @@ impl App {
                 Mode::AgentColleaguePicker => {
                     self.handle_agent_colleague_picker_key(key_event);
                 }
+                Mode::BarConfigPanel => {
+                    self.handle_bar_config_panel_key(key_event);
+                }
                 Mode::PreviewViewer => {
                     handle_preview_viewer_key(&mut self.state, key_event);
                 }
@@ -690,6 +693,9 @@ impl App {
             BarSectionClick::HideBar { edge } => {
                 self.state.hide_bar_edge(edge);
             }
+            BarSectionClick::ConfigureBar { edge } => {
+                self.open_bar_config_panel(edge);
+            }
             BarSectionClick::FocusWorkspace { name } => {
                 // Resolved now rather than when the config was read: a bar can
                 // name a checkout nobody has opened yet, and the list this
@@ -711,6 +717,7 @@ impl App {
                 width,
                 height,
                 popup_open,
+                edge,
             } => {
                 self.state.context_menu = Some(crate::app::state::ContextMenuState {
                     kind: crate::app::state::ContextMenuKind::BarSection {
@@ -718,6 +725,7 @@ impl App {
                         width,
                         height,
                         popup_open,
+                        edge,
                     },
                     x: mouse.column,
                     y: mouse.row,
@@ -795,7 +803,11 @@ impl App {
             .map(|_child| ())
     }
 
-    fn warn_about_bar_section_action(&mut self, title: &str, context: impl Into<String>) {
+    pub(crate) fn warn_about_bar_section_action(
+        &mut self,
+        title: &str,
+        context: impl Into<String>,
+    ) {
         let previous_toast = self.state.toast.clone();
         self.state.toast = Some(crate::app::state::ToastNotification {
             kind: crate::app::state::ToastKind::NeedsAttention,
@@ -952,6 +964,12 @@ impl App {
                     }
                     MouseAction::AgentColleaguePickerActivate => {
                         let _ = self.activate_agent_colleague_picker_selection();
+                    }
+                    MouseAction::BarConfigPanelPress => {
+                        self.press_bar_config_panel_row();
+                    }
+                    MouseAction::BarConfigPanelCancel => {
+                        self.cancel_bar_config_panel();
                     }
                     MouseAction::TailscaleSendActivate => {
                         let _ = file_manager::send_to_selected_device(&mut self.state);
@@ -2272,6 +2290,17 @@ mod tests {
                     panes_before + 1,
                     "{label}: the split row must divide the focused pane"
                 ),
+                Some(crate::app::state::BarSectionMenuItem::Configure) => {
+                    assert!(
+                        app.state.bar_config_panel.is_some(),
+                        "{label}: the configure row must open the bar panel"
+                    );
+                    assert_eq!(
+                        app.state.mode,
+                        crate::app::state::Mode::BarConfigPanel,
+                        "{label}: the panel owns the keyboard once opened"
+                    );
+                }
                 None => unreachable!("the loop walks the menu's own rows"),
             }
             assert!(

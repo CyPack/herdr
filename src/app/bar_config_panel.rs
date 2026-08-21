@@ -271,9 +271,7 @@ pub(crate) fn background_choices(original: &str) -> Vec<String> {
 
 fn push_custom_and_tokens(choices: &mut Vec<String>, original: &str) {
     if !original.is_empty() && !choices.iter().any(|c| c == original) {
-        let known = crate::ui::shell::bar_color_tokens()
-            .iter()
-            .any(|token| *token == original);
+        let known = crate::ui::shell::bar_color_tokens().contains(&original);
         if !known {
             choices.push(original.to_string());
         }
@@ -336,9 +334,253 @@ fn merge_fanout(explicit: ManagedBarOverride, focused: &ManagedBarOverride) -> M
     }
 }
 
+/// What a row shows for its current draft value — one string, so the render
+/// pass and its tests read the same words (TP-CHROME-150).
+pub(crate) fn row_value_label(state: &BarConfigPanelState, row: BarPanelRow) -> String {
+    let bar = edge_config(&state.draft, state.edge);
+    match row {
+        BarPanelRow::Enabled => format!("Enabled: {}", if bar.enabled { "on" } else { "off" }),
+        BarPanelRow::Style => format!(
+            "Style: {}",
+            if bar.style.is_empty() {
+                "framed"
+            } else {
+                &bar.style
+            }
+        ),
+        BarPanelRow::Border => format!("Border: {}", border_word(bar.border)),
+        BarPanelRow::Size => format!("Size: {}", bar.size),
+        BarPanelRow::Color => format!(
+            "Colour: {}",
+            if bar.color.is_empty() {
+                "(default)"
+            } else {
+                &bar.color
+            }
+        ),
+        BarPanelRow::Background => format!(
+            "Backdrop: {}",
+            if bar.background.is_empty() {
+                "(theme)"
+            } else {
+                &bar.background
+            }
+        ),
+        BarPanelRow::Scope => format!(
+            "Apply to: {}",
+            if state.scope_all {
+                "all bars"
+            } else {
+                "this bar"
+            }
+        ),
+        BarPanelRow::OtherBar(edge) => format!(
+            "{} bar: {}",
+            bar_edge_name(edge),
+            if edge_config(&state.draft, edge).enabled {
+                "on"
+            } else {
+                "off"
+            }
+        ),
+        BarPanelRow::Apply => "[ Apply ]".to_string(),
+        BarPanelRow::Cancel => "[ Cancel ]".to_string(),
+    }
+}
+
+impl crate::app::state::AppState {
+    /// Centered popup rect over the terminal area — the colleague picker's
+    /// geometry, because the two are one kind of surface.
+    pub(crate) fn bar_config_panel_popup_rect(&self) -> Option<ratatui::layout::Rect> {
+        let panel = self.bar_config_panel.as_ref()?;
+        let area = self.view.terminal_area;
+        let width = 44u16.min(area.width.saturating_sub(2)).max(4);
+        let height = (panel.rows().len() as u16)
+            .saturating_add(4)
+            .min(area.height.saturating_sub(2))
+            .max(4);
+        if area.width < 8 || area.height < 6 {
+            return None;
+        }
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        Some(ratatui::layout::Rect::new(x, y, width, height))
+    }
+
+    pub(crate) fn bar_config_panel_row_hit_areas(&self) -> Vec<ratatui::layout::Rect> {
+        let Some(panel) = self.bar_config_panel.as_ref() else {
+            return Vec::new();
+        };
+        let Some(popup) = self.bar_config_panel_popup_rect() else {
+            return Vec::new();
+        };
+        let inner = ratatui::layout::Rect::new(
+            popup.x + 1,
+            popup.y + 3,
+            popup.width.saturating_sub(2),
+            popup.height.saturating_sub(4),
+        );
+        panel
+            .rows()
+            .iter()
+            .enumerate()
+            .take(inner.height as usize)
+            .map(|(idx, _)| {
+                ratatui::layout::Rect::new(inner.x, inner.y + idx as u16, inner.width, 1)
+            })
+            .collect()
+    }
+
+    pub(crate) fn bar_config_panel_row_at(&self, column: u16, row: u16) -> Option<usize> {
+        self.bar_config_panel_row_hit_areas()
+            .iter()
+            .position(|rect| {
+                column >= rect.x && column < rect.right() && row >= rect.y && row < rect.bottom()
+            })
+    }
+
+    /// Drop the panel and restore the pre-overlay focus owner. State-level
+    /// only — the preview restore lives on the App road, which is the only
+    /// road that can repaint.
+    pub(crate) fn close_bar_config_panel(&mut self) {
+        if self.bar_config_panel.take().is_some() {
+            crate::app::input::leave_modal(self);
+        }
+    }
+}
+
+impl crate::app::App {
+    /// Rebuild everything the bars show from one set of bar configs — the
+    /// same three-piece refresh a config reload performs, extracted so the
+    /// panel's live preview and the reload can never drift apart
+    /// (TP-CHROME-151).
+    pub(crate) fn refresh_bar_presentation(&mut self, bars: &ShellBarsConfig) {
+        self.state
+            .shell_presentation
+            .set_bars(crate::ui::shell::ShellBars::from_config(bars));
+        self.state
+            .shell_presentation
+            .set_bar_colors(crate::ui::shell::BarColors::from_config(
+                bars,
+                &self.state.palette,
+            ));
+        self.state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(
+            bars,
+            self.state.shell_glyph_icons,
+            &self.state.palette,
+        );
+    }
+
+    /// Open the panel for `edge`, seeded from the bars the last config load
+    /// left behind.
+    pub(crate) fn open_bar_config_panel(&mut self, edge: BarEdge) {
+        self.state.bar_config_panel = Some(BarConfigPanelState::open(
+            edge,
+            &self.state.shell_bars_config.clone(),
+        ));
+        self.state
+            .enter_overlay_mode(crate::app::state::Mode::BarConfigPanel);
+    }
+
+    /// Throw the draft away: repaint from the untouched snapshot and close.
+    pub(crate) fn cancel_bar_config_panel(&mut self) {
+        let bars = self.state.shell_bars_config.clone();
+        self.refresh_bar_presentation(&bars);
+        self.state.close_bar_config_panel();
+    }
+
+    /// Adjust the selected row and repaint the preview when it changed.
+    pub(crate) fn adjust_bar_config_panel(&mut self, forward: bool) {
+        let Some(panel) = self.state.bar_config_panel.as_mut() else {
+            return;
+        };
+        if panel.adjust_selected(forward) {
+            let draft = panel.draft.clone();
+            self.refresh_bar_presentation(&draft);
+        }
+    }
+
+    /// Enter / click on the selected row: the verbs act, everything else
+    /// adjusts forward.
+    pub(crate) fn press_bar_config_panel_row(&mut self) {
+        let Some(panel) = self.state.bar_config_panel.as_ref() else {
+            return;
+        };
+        match panel.rows().get(panel.selected) {
+            Some(BarPanelRow::Apply) => self.apply_bar_config_panel(),
+            Some(BarPanelRow::Cancel) => self.cancel_bar_config_panel(),
+            Some(_) => self.adjust_bar_config_panel(true),
+            None => {}
+        }
+    }
+
+    /// Persist the diff and converge: write `bars.managed.toml`, then take
+    /// the same reload road `herdr server reload-config` takes, so the disk
+    /// — not the preview — is what every surface ends up showing
+    /// (TP-CHROME-151/152).
+    pub(crate) fn apply_bar_config_panel(&mut self) {
+        let Some(panel) = self.state.bar_config_panel.as_ref() else {
+            return;
+        };
+        let overrides = panel.managed_overrides();
+        if overrides.is_empty() {
+            self.cancel_bar_config_panel();
+            return;
+        }
+        let named: Vec<(&str, crate::config::ManagedBarOverride)> = overrides
+            .into_iter()
+            .map(|(edge, over)| (bar_edge_name(edge), over))
+            .collect();
+        match crate::config::persist_managed_bar_overrides(&named) {
+            Ok(()) => {
+                self.state.close_bar_config_panel();
+                self.dispatch_api_request(
+                    "tui.bars.configure",
+                    crate::api::schema::Method::ServerReloadConfig(
+                        crate::api::schema::EmptyParams::default(),
+                    ),
+                );
+            }
+            Err(err) => {
+                // The draft survives a failed write — closing here would
+                // throw away edits the person can still retry or cancel.
+                self.warn_about_bar_section_action("could not save bar config", err);
+            }
+        }
+    }
+
+    pub(crate) fn handle_bar_config_panel_key(&mut self, key: crossterm::event::KeyEvent) {
+        match key.code {
+            crossterm::event::KeyCode::Esc => self.cancel_bar_config_panel(),
+            crossterm::event::KeyCode::Enter => self.press_bar_config_panel_row(),
+            crossterm::event::KeyCode::Left | crossterm::event::KeyCode::Char('h') => {
+                self.adjust_bar_config_panel(false);
+            }
+            crossterm::event::KeyCode::Right | crossterm::event::KeyCode::Char('l') => {
+                self.adjust_bar_config_panel(true);
+            }
+            crossterm::event::KeyCode::Up | crossterm::event::KeyCode::Char('k') => {
+                if let Some(panel) = self.state.bar_config_panel.as_mut() {
+                    panel.selected = panel.selected.saturating_sub(1);
+                }
+            }
+            crossterm::event::KeyCode::Down | crossterm::event::KeyCode::Char('j') => {
+                if let Some(panel) = self.state.bar_config_panel.as_mut() {
+                    if panel.selected.saturating_add(1) < panel.rows().len() {
+                        panel.selected += 1;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::state::Mode;
+    use crate::workspace::Workspace;
 
     fn bars() -> ShellBarsConfig {
         ShellBarsConfig::default()
@@ -524,5 +766,128 @@ mod tests {
             "verbs adjust nothing"
         );
         assert!(!state.adjust_row(BarPanelRow::Cancel, true));
+    }
+    fn test_app() -> crate::app::App {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = crate::app::App::new(
+            &crate::config::Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.state.workspaces = vec![Workspace::test_new("main")];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app
+    }
+
+    // TP-CHROME-150: opening seeds the draft from the loaded bars and hands
+    // the panel the keyboard; TP-CHROME-151: an adjustment repaints the live
+    // presentation from the draft, and Esc restores the untouched snapshot.
+    #[test]
+    fn the_panel_previews_the_draft_and_esc_restores_the_snapshot() {
+        let mut app = test_app();
+        let before = app.state.shell_presentation.bars();
+
+        app.open_bar_config_panel(BarEdge::Top);
+        assert_eq!(app.state.mode, Mode::BarConfigPanel);
+
+        // enable the top bar through the panel: the preview must repaint
+        app.adjust_bar_config_panel(true); // selected=0 is Enabled
+        let previewed = app.state.shell_presentation.bars();
+        assert_ne!(previewed, before, "the preview reached the presentation");
+        let expected = {
+            let mut bars = crate::config::ShellBarsConfig::default();
+            bars.top.enabled = true;
+            crate::ui::shell::ShellBars::from_config(&bars)
+        };
+        assert_eq!(previewed, expected, "the preview is the draft, derived");
+
+        app.handle_bar_config_panel_key(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Esc,
+        ));
+        assert!(app.state.bar_config_panel.is_none());
+        assert_eq!(
+            app.state.shell_presentation.bars(),
+            before,
+            "cancel restores the pre-panel presentation"
+        );
+    }
+
+    // TP-CHROME-151: Apply writes exactly the diff to bars.managed.toml and
+    // takes the reload road, so the disk — not the preview — is what the
+    // surfaces end up showing. Isolated under a throwaway XDG_CONFIG_HOME;
+    // nextest runs each test in its own process, so the env var leaks nowhere.
+    #[test]
+    fn apply_writes_the_diff_to_the_managed_file_and_reloads() {
+        let dir =
+            std::env::temp_dir().join(format!("herdr-bar-panel-apply-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("XDG_CONFIG_HOME", &dir);
+
+        let mut app = test_app();
+        app.open_bar_config_panel(BarEdge::Top);
+        app.adjust_bar_config_panel(true); // Enabled: off -> on
+                                           // move to Apply and press it on the real key road
+        let rows = panel_rows(BarEdge::Top);
+        let apply_idx = rows
+            .iter()
+            .position(|row| *row == BarPanelRow::Apply)
+            .unwrap();
+        if let Some(panel) = app.state.bar_config_panel.as_mut() {
+            panel.selected = apply_idx;
+        }
+        app.handle_bar_config_panel_key(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Enter,
+        ));
+
+        assert!(
+            app.state.bar_config_panel.is_none(),
+            "apply closes the panel"
+        );
+        let written = std::fs::read_to_string(
+            crate::config::managed_spaces_path().with_file_name("bars.managed.toml"),
+        )
+        .expect("the managed bars file was written");
+        assert!(written.contains("[shell.bars.top]"), "{written}");
+        assert!(written.contains("enabled = true"), "{written}");
+        assert!(
+            !written.contains("style"),
+            "an untouched field is not written: {written}"
+        );
+        // the reload road re-derived the presentation from disk: the managed
+        // file enables the top bar, so the presentation shows one.
+        let expected = {
+            let mut bars = crate::config::ShellBarsConfig::default();
+            bars.top.enabled = true;
+            crate::ui::shell::ShellBars::from_config(&bars)
+        };
+        assert_eq!(app.state.shell_presentation.bars(), expected);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // TP-CHROME-151: Apply with nothing changed is a cancel — no file, no
+    // reload, no trace.
+    #[test]
+    fn apply_with_no_changes_writes_nothing() {
+        let dir = std::env::temp_dir().join(format!("herdr-bar-panel-noop-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("XDG_CONFIG_HOME", &dir);
+
+        let mut app = test_app();
+        app.open_bar_config_panel(BarEdge::Left);
+        app.apply_bar_config_panel();
+        assert!(app.state.bar_config_panel.is_none());
+        assert!(
+            !crate::config::managed_spaces_path()
+                .with_file_name("bars.managed.toml")
+                .exists(),
+            "an untouched panel leaves no file behind"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

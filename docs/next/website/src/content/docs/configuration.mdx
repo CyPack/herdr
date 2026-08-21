@@ -1030,8 +1030,25 @@ The menu offers the same command in all three places, so one section reaches eve
 | `Open in popup` | The popup, exactly as a left press would. Greyed out while a popup is already open: there is one popup at a time, and closing yours to make room for another is not something a stray click should do. |
 | `Open in new tab` | A new tab of the current workspace. |
 | `Open in split` | Beside the focused pane. |
+| `Configure bar...` | The bar's own configuration panel — every knob of the strip the section sits on, applied live. The same panel a right press on an actionless stretch of the bar opens directly. |
 
 Anything else in `action.secondary` is refused rather than quietly treated as the default, because a misspelling that silently opened a menu is indistinguishable from not having written the key at all. Spelling is exact: `TAB` is a typo, not another way of writing `tab`.
+
+#### The bar's own panel
+
+Right-press any stretch of a bar that has no action of its own — or pick
+`Configure bar...` from a section's menu — and the bar's configuration panel
+opens: the switch, `style`, `border`, `size`, `color` and `background`, plus
+the other edges' switches, all in one place. Every change previews live on
+the real bar; `Apply` keeps it, `Esc` or a click outside puts everything back.
+
+`Apply to: all bars` fans your changes out to every edge in one press — and a
+switch you pressed yourself on another edge wins over the fan-out.
+
+What you apply is written to `bars.managed.toml` next to your `config.toml`,
+never into your own file. Only the fields you actually changed are written,
+and a field written there overrides the same field in your config; delete a
+line from it to hand that field back to your own file.
 
 #### Running a plugin action
 

@@ -28,6 +28,11 @@ use super::{
 pub(super) enum MouseAction {
     AgentReferencePickerActivate,
     AgentColleaguePickerActivate,
+    /// A bar config panel row was clicked: it is selected, and the press is
+    /// resolved on the App road (verbs act, knobs adjust + preview).
+    BarConfigPanelPress,
+    /// A click outside the panel: cancel — restore the preview and close.
+    BarConfigPanelCancel,
     /// A device row in the Taildrop picker was clicked: highlight it and send.
     TailscaleSendActivate,
     NewWorkspace,
@@ -211,6 +216,30 @@ impl AppState {
         // TP-AGPANEL-48: the colleague picker is the same kind of topmost
         // blocking overlay the reference picker is: a live row click selects
         // and activates, an outside click closes, everything else is consumed.
+        // TP-CHROME-150: the bar config panel is the same kind of topmost
+        // blocking overlay the pickers are — a row click selects and presses,
+        // an outside click cancels (restoring the preview), everything else
+        // over the surface is consumed.
+        if self.mode == Mode::BarConfigPanel {
+            if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+                if let Some(idx) = self.bar_config_panel_row_at(mouse.column, mouse.row) {
+                    if let Some(panel) = self.bar_config_panel.as_mut() {
+                        panel.selected = idx;
+                    }
+                    return Some(MouseAction::BarConfigPanelPress);
+                }
+                let inside_popup = self.bar_config_panel_popup_rect().is_some_and(|popup| {
+                    mouse.column >= popup.x
+                        && mouse.column < popup.right()
+                        && mouse.row >= popup.y
+                        && mouse.row < popup.bottom()
+                });
+                if !inside_popup {
+                    return Some(MouseAction::BarConfigPanelCancel);
+                }
+            }
+            return None;
+        }
         if self.mode == Mode::AgentColleaguePicker {
             if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
                 if let Some(idx) = self.agent_colleague_picker_row_at(mouse.column, mouse.row) {
