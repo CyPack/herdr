@@ -5,6 +5,7 @@
 //! - `input.rs` — key/mouse → action translation
 
 pub(crate) mod actions;
+pub(crate) mod agent_colleague_picker;
 pub(crate) mod agent_reference_picker;
 mod agent_resume;
 pub(crate) mod agent_view;
@@ -949,6 +950,8 @@ impl App {
             request_file_manager_context_action: None,
             request_file_manager_agent_handoff: None,
             agent_reference_picker: None,
+            agent_colleague_picker: None,
+            request_agent_colleague_picker: None,
             file_manager_locations_model,
             file_manager_locations: Default::default(),
             request_file_manager_location_navigation: None,
@@ -2595,6 +2598,9 @@ impl App {
             }
             Mode::AgentReferencePicker => {
                 self.handle_agent_reference_picker_key(key_event);
+            }
+            Mode::AgentColleaguePicker => {
+                self.handle_agent_colleague_picker_key(key_event);
             }
             Mode::PreviewViewer => {
                 input::handle_preview_viewer_key(&mut self.state, key_event);

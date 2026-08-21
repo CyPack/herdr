@@ -69,9 +69,9 @@ use self::file_manager::{
 };
 use self::keybind_help::render_keybind_help_overlay;
 use self::menus::{
-    render_agent_reference_picker, render_context_menu, render_copy_mode_overlay,
-    render_global_launcher_menu, render_navigate_overlay, render_prefix_overlay,
-    render_resize_overlay,
+    render_agent_colleague_picker, render_agent_reference_picker, render_context_menu,
+    render_copy_mode_overlay, render_global_launcher_menu, render_navigate_overlay,
+    render_prefix_overlay, render_resize_overlay,
 };
 use self::mobile::{
     compute_mobile_header_hit_areas, mobile_drawer_max_scroll_for_height, mobile_toast_banner_rect,
@@ -1281,6 +1281,7 @@ impl compose::Component for OverlayLayer {
             }
             Mode::Settings => render_settings_overlay(app, frame, frame.area()),
             Mode::AgentReferencePicker => render_agent_reference_picker(app, frame),
+            Mode::AgentColleaguePicker => render_agent_colleague_picker(app, frame),
             Mode::PreviewViewer => render_preview_viewer(app, frame, frame.area()),
             Mode::TailscaleSend => render_tailscale_send(app, frame, terminal_area),
             Mode::RenameWorkspace | Mode::RenameTab | Mode::RenamePane | Mode::RenameFile => {

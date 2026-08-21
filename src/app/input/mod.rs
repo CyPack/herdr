@@ -301,6 +301,9 @@ impl App {
                 Mode::AgentReferencePicker => {
                     self.handle_agent_reference_picker_key(key_event);
                 }
+                Mode::AgentColleaguePicker => {
+                    self.handle_agent_colleague_picker_key(key_event);
+                }
                 Mode::PreviewViewer => {
                     handle_preview_viewer_key(&mut self.state, key_event);
                 }
@@ -947,6 +950,9 @@ impl App {
                     MouseAction::AgentReferencePickerActivate => {
                         let _ = self.activate_agent_reference_picker_selection();
                     }
+                    MouseAction::AgentColleaguePickerActivate => {
+                        let _ = self.activate_agent_colleague_picker_selection();
+                    }
                     MouseAction::TailscaleSendActivate => {
                         let _ = file_manager::send_to_selected_device(&mut self.state);
                     }
@@ -984,6 +990,9 @@ impl App {
             self.save_agent_panel_sort(self.state.agent_panel_sort);
         }
 
+        if let Some((ws_idx, tab_idx)) = self.state.request_agent_colleague_picker.take() {
+            self.open_agent_colleague_picker(ws_idx, tab_idx);
+        }
         if let Some(content) = self.state.request_clipboard_write.take() {
             if self
                 .event_tx

@@ -1444,6 +1444,17 @@ pub(super) fn apply_context_menu_action(
             state.switch_tab(tab_idx);
             open_rename_active_tab(state, false);
         }
+        // TP-AGPANEL-48: the picker is opened by the App layer (it reads the
+        // live agents projection), so this state-only body raises a request
+        // the input loop drains — the same shape every deferred verb takes.
+        (
+            ContextMenuKind::AgentEntry {
+                ws_idx, tab_idx, ..
+            },
+            Some("Work with other agent..."),
+        ) => {
+            state.request_agent_colleague_picker = Some((ws_idx, tab_idx));
+        }
         (ContextMenuKind::Tab { ws_idx, tab_idx }, Some("Close")) => {
             state.selected = ws_idx;
             state.active = Some(ws_idx);
@@ -2319,6 +2330,15 @@ impl App {
                 self.focus_workspace_idx_via_api(ws_idx);
                 self.focus_tab_idx_via_api(tab_idx);
                 open_rename_active_tab(&mut self.state, false);
+            }
+            // TP-AGPANEL-48: the mouse body has the App, so it opens directly.
+            (
+                ContextMenuKind::AgentEntry {
+                    ws_idx, tab_idx, ..
+                },
+                Some("Work with other agent..."),
+            ) => {
+                self.open_agent_colleague_picker(ws_idx, tab_idx);
             }
             (ContextMenuKind::Tab { ws_idx, tab_idx }, Some("Close")) => {
                 self.focus_workspace_idx_via_api(ws_idx);
@@ -3380,6 +3400,40 @@ mod tests {
         assert_eq!(state.selected, 0);
         assert_eq!(state.mode, Mode::ConfirmClose);
         assert_eq!(state.workspaces.len(), 2);
+    }
+
+    // TP-AGPANEL-48: the keyboard body raises the request — the App layer
+    // owns the agents projection, so this body cannot open the picker
+    // itself; the input loop drains the request and opens it.
+    #[test]
+    fn the_colleague_verb_raises_the_request_on_the_state_body() {
+        let mut state = AppState::test_new();
+        let mut terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
+        let workspace = Workspace::test_new("one");
+        let pane_id = workspace.tabs[0].root_pane;
+        state.workspaces = vec![workspace];
+        state.active = Some(0);
+        state.mode = Mode::ContextMenu;
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::AgentEntry {
+                ws_idx: 0,
+                tab_idx: 0,
+                pane_id,
+                session_id: None,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        let idx = menu
+            .items()
+            .iter()
+            .position(|item| *item == "Work with other agent...")
+            .expect("the verb is offered");
+
+        apply_context_menu_action(&mut state, &mut terminal_runtimes, menu, idx);
+
+        assert_eq!(state.request_agent_colleague_picker, Some((0, 0)));
     }
 
     // TP-AGPANEL-47: and on the road the mouse actually takes — #91's class:
@@ -5415,7 +5469,10 @@ mod tests {
             list: MenuListState::new(0),
         };
 
-        assert_eq!(menu.items(), vec!["Rename tab...", "Close agent"]);
+        assert_eq!(
+            menu.items(),
+            vec!["Rename tab...", "Work with other agent...", "Close agent"]
+        );
     }
 
     // TP-AGPANEL-47: naming comes first here too — the agent row is where a
@@ -5538,7 +5595,12 @@ mod tests {
 
         assert_eq!(
             menu.items(),
-            vec!["Rename tab...", "Move to...", "Close agent"]
+            vec![
+                "Rename tab...",
+                "Move to...",
+                "Work with other agent...",
+                "Close agent"
+            ]
         );
     }
 

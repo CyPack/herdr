@@ -356,7 +356,8 @@ impl AppState {
             | Mode::Navigator
             | Mode::PreviewViewer
             | Mode::TailscaleSend
-            | Mode::AgentReferencePicker => true,
+            | Mode::AgentReferencePicker
+            | Mode::AgentColleaguePicker => true,
         }
     }
 
@@ -415,7 +416,8 @@ impl AppState {
             | Mode::GlobalMenu
             | Mode::KeybindHelp
             | Mode::Navigator
-            | Mode::AgentReferencePicker => true,
+            | Mode::AgentReferencePicker
+            | Mode::AgentColleaguePicker => true,
         }
     }
 

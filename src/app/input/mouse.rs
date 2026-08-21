@@ -27,6 +27,7 @@ use super::{
 
 pub(super) enum MouseAction {
     AgentReferencePickerActivate,
+    AgentColleaguePickerActivate,
     /// A device row in the Taildrop picker was clicked: highlight it and send.
     TailscaleSendActivate,
     NewWorkspace,
@@ -207,6 +208,38 @@ impl AppState {
         // click selects and activates that exact row, an outside click
         // closes with zero bytes, and every other gesture is consumed
         // fail-closed (TP-FIP-REF-15).
+        // TP-AGPANEL-48: the colleague picker is the same kind of topmost
+        // blocking overlay the reference picker is: a live row click selects
+        // and activates, an outside click closes, everything else is consumed.
+        if self.mode == Mode::AgentColleaguePicker {
+            if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+                if let Some(idx) = self.agent_colleague_picker_row_at(mouse.column, mouse.row) {
+                    let enabled = self
+                        .agent_colleague_picker
+                        .as_ref()
+                        .is_some_and(|picker| picker.rows.get(idx).is_some_and(|row| row.live));
+                    if enabled {
+                        if let Some(picker) = self.agent_colleague_picker.as_mut() {
+                            picker.selected = idx;
+                        }
+                        return Some(MouseAction::AgentColleaguePickerActivate);
+                    }
+                    return None;
+                }
+                let inside_popup = self
+                    .agent_colleague_picker_popup_rect()
+                    .is_some_and(|popup| {
+                        mouse.column >= popup.x
+                            && mouse.column < popup.right()
+                            && mouse.row >= popup.y
+                            && mouse.row < popup.bottom()
+                    });
+                if !inside_popup {
+                    self.close_agent_colleague_picker();
+                }
+            }
+            return None;
+        }
         if self.mode == Mode::AgentReferencePicker {
             if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
                 if let Some(idx) = self.agent_reference_picker_row_at(mouse.column, mouse.row) {

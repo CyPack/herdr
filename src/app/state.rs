@@ -1935,6 +1935,7 @@ pub enum Mode {
     KeybindHelp,
     Navigator,
     AgentReferencePicker,
+    AgentColleaguePicker,
     PreviewViewer,
     TailscaleSend,
 }
@@ -2753,10 +2754,19 @@ impl ContextMenuState {
             // irreversible close last. The rename needs no chat identity —
             // the name being renamed is the tab's own.
             ContextMenuKind::AgentEntry { session_id, .. } => {
+                // TP-AGPANEL-48: the colleague verb sits between naming and
+                // the irreversible close. Always offered — a lonely agent
+                // gets the honest placeholder inside the popup rather than a
+                // verb that appears and disappears with the neighbours.
                 if session_id.is_some() {
-                    vec!["Rename tab...", "Move to...", "Close agent"]
+                    vec![
+                        "Rename tab...",
+                        "Move to...",
+                        "Work with other agent...",
+                        "Close agent",
+                    ]
                 } else {
-                    vec!["Rename tab...", "Close agent"]
+                    vec!["Rename tab...", "Work with other agent...", "Close agent"]
                 }
             }
             ContextMenuKind::ChatMoveTarget { targets, .. } => {
@@ -3616,6 +3626,9 @@ pub struct AppState {
     /// It owns no watcher, worker, process, pane, or server state.
     pub agent_reference_picker:
         Option<crate::app::agent_reference_picker::AgentReferencePickerState>,
+    /// The "Work with other agent..." popup (TP-AGPANEL-48), when open.
+    pub(crate) agent_colleague_picker:
+        Option<crate::app::agent_colleague_picker::AgentColleaguePickerState>,
     /// Prepared, bounded Files-locations data. Filesystem/environment discovery
     /// happens only when this projection is refreshed, never during render.
     pub file_manager_locations_model: FileManagerLocationsModel,
@@ -3730,6 +3743,9 @@ pub struct AppState {
     /// Set when UI interaction requested a clipboard write that must be
     /// handled by the outer App/event loop instead of directly from AppState.
     pub request_clipboard_write: Option<Vec<u8>>,
+    /// Raised by the state-only menu body; the input loop opens the picker
+    /// (TP-AGPANEL-48) — the App layer owns the agents projection.
+    pub(crate) request_agent_colleague_picker: Option<(usize, usize)>,
     /// Set when a Projects-tab chat row (resume) or "(no chats)" row (new
     /// chat) was clicked; consumed by the event loop to spawn the tab.
     pub request_project_chat_tab: Option<ProjectChatTabRequest>,
@@ -4999,6 +5015,7 @@ impl AppState {
             request_file_manager_context_action: None,
             request_file_manager_agent_handoff: None,
             agent_reference_picker: None,
+            agent_colleague_picker: None,
             file_manager_locations_model: FileManagerLocationsModel::default(),
             file_manager_locations: Default::default(),
             request_file_manager_location_navigation: None,
@@ -5031,6 +5048,7 @@ impl AppState {
             request_reload_config: false,
             request_client_config_reload: false,
             request_clipboard_write: None,
+            request_agent_colleague_picker: None,
             request_project_chat_tab: None,
             request_preview_show: false,
             creating_new_tab: false,
