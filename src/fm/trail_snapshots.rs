@@ -1817,6 +1817,10 @@ mod tests {
                 .is_none(),
             "the filter does not reach a column it was not typed in"
         );
+        assert!(
+            snaps.filter().is_none(),
+            "entering a directory cleared the filter whole"
+        );
     }
 
     // TP-FM-FILTER-02: matching folds case — a filter that missed "Apple"
