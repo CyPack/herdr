@@ -33,3 +33,4 @@ to separate timestamps that used to land in the same filesystem tick.
   contract it has to satisfy.
 - TP-MTIME-04 is a testing rule rather than a product behavior, but it belongs
   here: it is the guard that keeps the other three honest.
+| TP-FM-COPYPATH-01 | The native FM header offers `[copy path]`: it puts the open directory's absolute path on the clipboard through `request_clipboard_write` — the road every other copy in the app rides — needs no selection, raises no operation, and is always enabled while the Trail owns focus. | The header names the directory but offered no way to take that name with you — the reported gap ("dizinler yazıyor ama üst tarafta dizin kopyalama yok"). A second clipboard road would drift from OSC52/feedback semantics the existing road already carries. | `copy_path_puts_the_open_directory_on_the_clipboard_road`, `copy_path_with_no_file_manager_does_nothing` |

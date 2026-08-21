@@ -509,6 +509,18 @@ impl crate::app::App {
                 true
             }
             FileManagerHeaderAction::NewFolder => false,
+            // TP-FM-COPYPATH-01: the open directory's absolute path, straight
+            // onto the clipboard through the same request every other copy
+            // rides. No selection needed — the path being copied is the
+            // header's own.
+            FileManagerHeaderAction::CopyPath => {
+                let Some(file_manager) = self.state.file_manager.as_ref() else {
+                    return false;
+                };
+                let path = file_manager.cwd.to_string_lossy().into_owned();
+                self.state.request_clipboard_write = Some(path.into_bytes());
+                true
+            }
         }
     }
 
@@ -2015,6 +2027,40 @@ mod tests {
         let completion = wait_for_completion(&mut worker);
         assert_eq!(completion.generation, second_generation);
         assert_eq!(completion.result, Err(FileOperationWorkerError::Panicked));
+    }
+
+    // TP-FM-COPYPATH-01: the verb puts the open directory's absolute path on
+    // the clipboard road every other copy rides — no selection needed, no
+    // filesystem work, no operation generation.
+    #[test]
+    fn copy_path_puts_the_open_directory_on_the_clipboard_road() {
+        let td = TempDir::new("app-copy-path-action");
+        let mut app = test_app();
+        let file_manager = crate::fm::FmState::new(&td.root);
+        app.state
+            .try_open_file_manager_with(|_| Some(file_manager))
+            .expect("Files activation");
+
+        assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::CopyPath));
+
+        assert_eq!(
+            app.state.request_clipboard_write.as_deref(),
+            Some(td.root.to_string_lossy().as_bytes()),
+            "the clipboard request carries the open directory's own path"
+        );
+        assert!(
+            app.state.request_file_manager_context_action.is_none(),
+            "no operation is raised — the verb only reads a name"
+        );
+    }
+
+    // TP-FM-COPYPATH-01: with no file manager open there is nothing to name.
+    #[test]
+    fn copy_path_with_no_file_manager_does_nothing() {
+        let mut app = test_app();
+
+        assert!(!app.dispatch_file_manager_header_action(FileManagerHeaderAction::CopyPath));
+        assert!(app.state.request_clipboard_write.is_none());
     }
 
     // TP-C4.1-LIFECYCLE: Copy consumes the current live selection identity

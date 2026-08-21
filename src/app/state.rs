@@ -860,6 +860,13 @@ pub enum FileManagerHeaderAction {
     Paste,
     NewFolder,
     Delete,
+    /// Put the open directory's absolute path on the clipboard.
+    ///
+    /// The header names the directory but offered no way to take that name
+    /// with you — the reported gap. A presentation/input tag like its
+    /// siblings; the clipboard write rides `request_clipboard_write`, the
+    /// road every other copy in the app takes.
+    CopyPath,
 }
 
 /// Client-local native-FM operation kind. Runtime execution stays in the
@@ -1038,7 +1045,13 @@ impl FileManagerOperationState {
 }
 
 impl FileManagerHeaderAction {
-    pub const ALL: [Self; 4] = [Self::Copy, Self::Paste, Self::NewFolder, Self::Delete];
+    pub const ALL: [Self; 5] = [
+        Self::Copy,
+        Self::Paste,
+        Self::NewFolder,
+        Self::Delete,
+        Self::CopyPath,
+    ];
 
     pub const fn label(self) -> &'static str {
         match self {
@@ -1046,6 +1059,7 @@ impl FileManagerHeaderAction {
             Self::Paste => "[paste]",
             Self::NewFolder => "[new folder]",
             Self::Delete => "[delete]",
+            Self::CopyPath => "[copy path]",
         }
     }
 }
@@ -1099,7 +1113,7 @@ pub struct FileManagerActionState {
 pub struct FileManagerActionBarModel {
     pub selection: Option<FileManagerActionBarSelection>,
     pub clipboard_count: usize,
-    pub actions: [FileManagerActionState; 4],
+    pub actions: [FileManagerActionState; 5],
 }
 
 impl FileManagerActionBarModel {
@@ -7304,7 +7318,9 @@ mod tests {
             let disabled_reason = match action {
                 FileManagerHeaderAction::Copy => copy_reason,
                 FileManagerHeaderAction::Delete => delete_reason,
-                FileManagerHeaderAction::Paste | FileManagerHeaderAction::NewFolder => None,
+                FileManagerHeaderAction::Paste
+                | FileManagerHeaderAction::NewFolder
+                | FileManagerHeaderAction::CopyPath => None,
             };
             FileManagerActionState {
                 action,

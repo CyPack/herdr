@@ -338,6 +338,9 @@ pub(crate) fn compute_file_manager_action_bar_model(
                             .then_some(FileManagerActionDisabledReason::ReadOnlyTarget)
                     })
                 }
+                // TP-FM-COPYPATH-01: reads the header's own directory, so it
+                // needs no selection and writes nothing — always offered.
+                FileManagerHeaderAction::CopyPath => None,
             }
         };
         FileManagerActionState {
@@ -2539,10 +2542,11 @@ mod tests {
                 FileManagerHeaderAction::Paste,
                 FileManagerHeaderAction::NewFolder,
                 FileManagerHeaderAction::Delete,
+                FileManagerHeaderAction::CopyPath,
             ]
         );
         assert_eq!(
-            actions.last().expect("delete action").rect.right(),
+            actions.last().expect("copy-path action").rect.right(),
             area.right()
         );
         assert!(actions.iter().all(|action| {
@@ -2566,8 +2570,22 @@ mod tests {
         use crate::app::state::FileManagerHeaderAction;
 
         let cases = [
+            // 60 leaves exactly the 48 cells all five labels and their gaps
+            // cost — the boundary sits AT the full set.
             (
                 60,
+                vec![
+                    FileManagerHeaderAction::Copy,
+                    FileManagerHeaderAction::Paste,
+                    FileManagerHeaderAction::NewFolder,
+                    FileManagerHeaderAction::Delete,
+                    FileManagerHeaderAction::CopyPath,
+                ],
+            ),
+            // One cell short of the full set: the lowest-priority verb —
+            // `[copy path]` — is the one that steps off.
+            (
+                59,
                 vec![
                     FileManagerHeaderAction::Copy,
                     FileManagerHeaderAction::Paste,
@@ -2704,7 +2722,13 @@ mod tests {
 
         assert_eq!(
             FileManagerHeaderAction::ALL.map(FileManagerHeaderAction::label),
-            ["[copy]", "[paste]", "[new folder]", "[delete]"]
+            [
+                "[copy]",
+                "[paste]",
+                "[new folder]",
+                "[delete]",
+                "[copy path]"
+            ]
         );
         assert_eq!(
             FileManagerRowAction::ALL.map(FileManagerRowAction::label),
