@@ -3382,6 +3382,42 @@ mod tests {
         assert_eq!(state.workspaces.len(), 2);
     }
 
+    // TP-AGPANEL-47: and on the road the mouse actually takes — #91's class:
+    // an arm present on the keyboard body and absent here is a dead
+    // affordance that looks shipped.
+    #[test]
+    fn the_agent_row_rename_verb_works_on_the_mouse_road_too() {
+        let mut app = app_with_test_workspaces(&["main", "issue"]);
+        app.state.workspaces[1].test_add_tab(Some("mouse-name"));
+        let pane_id = app.state.workspaces[1].tabs[1].root_pane;
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::ContextMenu;
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::AgentEntry {
+                ws_idx: 1,
+                tab_idx: 1,
+                pane_id,
+                session_id: None,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        let idx = menu
+            .items()
+            .iter()
+            .position(|item| *item == "Rename tab...")
+            .expect("the verb is offered");
+
+        app.apply_context_menu_action_via_api(menu, idx);
+
+        assert_eq!(app.state.active, Some(1));
+        assert_eq!(app.state.workspaces[1].active_tab_index(), 1);
+        assert_eq!(app.state.mode, Mode::RenameTab);
+        assert_eq!(app.state.name_input, "mouse-name");
+    }
+
     #[test]
     fn api_context_menu_close_tab_last_parent_group_workspace_keeps_confirmation_mode() {
         let mut app = app_with_test_workspaces(&["main", "issue"]);
