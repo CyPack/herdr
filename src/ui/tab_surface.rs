@@ -1,6 +1,6 @@
 use ratatui::{layout::Rect, Frame};
 
-use super::panes::{compute_pane_infos, render_panes, resize_tab_panes};
+use super::panes::{render_panes, resize_tab_panes};
 use crate::app::state::ViewState;
 use crate::app::{AppState, Mode};
 use crate::layout::{PaneInfo, SplitBorder};
@@ -34,9 +34,34 @@ pub(crate) fn compute_tab_surface(
     resize_panes: bool,
     cell_size: crate::kitty_graphics::HostCellSize,
 ) -> TabSurfaceLayout {
+    match app.active {
+        Some(ws_idx) => compute_tab_surface_for(
+            app,
+            terminal_runtimes,
+            ws_idx,
+            area,
+            resize_panes,
+            cell_size,
+        ),
+        None => TabSurfaceLayout {
+            pane_infos: Vec::new(),
+            split_borders: Vec::new(),
+        },
+    }
+}
+
+/// The same layout for ONE NAMED workspace (TP-STAGE-SBS-01).
+pub(crate) fn compute_tab_surface_for(
+    app: &AppState,
+    terminal_runtimes: &TerminalRuntimeRegistry,
+    ws_idx: usize,
+    area: Rect,
+    resize_panes: bool,
+    cell_size: crate::kitty_graphics::HostCellSize,
+) -> TabSurfaceLayout {
     let split_borders = app
-        .active
-        .and_then(|i| app.workspaces.get(i))
+        .workspaces
+        .get(ws_idx)
         .map(|ws| {
             if ws.zoomed {
                 Vec::new()
@@ -45,7 +70,14 @@ pub(crate) fn compute_tab_surface(
             }
         })
         .unwrap_or_default();
-    let pane_infos = compute_pane_infos(app, terminal_runtimes, area, resize_panes, cell_size);
+    let pane_infos = super::panes::compute_pane_infos_for(
+        app,
+        terminal_runtimes,
+        ws_idx,
+        area,
+        resize_panes,
+        cell_size,
+    );
 
     TabSurfaceLayout {
         pane_infos,

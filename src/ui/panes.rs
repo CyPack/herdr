@@ -319,7 +319,10 @@ pub(super) fn resize_tab_panes(
     }
 }
 
-/// Compute pane layout info and optionally resize pane runtimes to match.
+/// Test-only active-workspace shim: production callers go through
+/// `compute_tab_surface`, but the geometry tests below drive this seam
+/// directly and read the active workspace like the surface does.
+#[cfg(test)]
 pub(super) fn compute_pane_infos(
     app: &AppState,
     terminal_runtimes: &TerminalRuntimeRegistry,
@@ -330,6 +333,27 @@ pub(super) fn compute_pane_infos(
     let Some(ws_idx) = app.active else {
         return Vec::new();
     };
+    compute_pane_infos_for(
+        app,
+        terminal_runtimes,
+        ws_idx,
+        area,
+        resize_panes,
+        cell_size,
+    )
+}
+
+/// The same geometry for ONE NAMED workspace — the seam the side-by-side
+/// stage stands on (TP-STAGE-SBS-01). The active-workspace wrapper above
+/// keeps every existing caller's meaning byte for byte.
+pub(super) fn compute_pane_infos_for(
+    app: &AppState,
+    terminal_runtimes: &TerminalRuntimeRegistry,
+    ws_idx: usize,
+    area: Rect,
+    resize_panes: bool,
+    cell_size: crate::kitty_graphics::HostCellSize,
+) -> Vec<PaneInfo> {
     let Some(ws) = app.workspaces.get(ws_idx) else {
         return Vec::new();
     };
@@ -411,6 +435,26 @@ pub(super) fn render_panes(
     let Some(ws_idx) = app.active else {
         return;
     };
+    render_panes_for(
+        app,
+        terminal_runtimes,
+        frame,
+        ws_idx,
+        pane_infos,
+        split_borders,
+    )
+}
+
+/// Paint ONE NAMED workspace's panes — the active wrapper above keeps every
+/// existing caller unchanged (TP-STAGE-SBS-01).
+pub(super) fn render_panes_for(
+    app: &AppState,
+    terminal_runtimes: &TerminalRuntimeRegistry,
+    frame: &mut Frame,
+    ws_idx: usize,
+    pane_infos: &[PaneInfo],
+    split_borders: &[crate::layout::SplitBorder],
+) {
     let Some(ws) = app.workspaces.get(ws_idx) else {
         return;
     };

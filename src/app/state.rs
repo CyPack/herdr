@@ -1735,6 +1735,27 @@ pub enum AgentAttachmentOpenError {
     Unavailable,
 }
 
+/// One side-by-side pairing: which workspace rides shotgun and how the
+/// stage is split.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SideBySideView {
+    pub right: usize,
+    pub ratio_percent: u8,
+}
+
+/// The computed right half of a side-by-side stage. No derives: `PaneInfo`
+/// is deliberately neither `Debug` nor `PartialEq`, and this view is a
+/// per-frame product, never compared or printed.
+pub struct RightSurfaceView {
+    pub ws_idx: usize,
+    /// The pane area (below the strip).
+    pub area: Rect,
+    /// The one-row strip above it.
+    pub strip_rect: Rect,
+    pub pane_infos: Vec<PaneInfo>,
+    pub split_borders: Vec<crate::layout::SplitBorder>,
+}
+
 pub struct ViewState {
     pub layout: ViewLayout,
     /// One cached named-region projection with generation-safe flattened hits.
@@ -1843,6 +1864,9 @@ pub struct ViewState {
     pub mobile_header_hits: crate::ui::MobileHeaderHitAreas,
     pub toast_hit_area: Rect,
     pub pane_infos: Vec<PaneInfo>,
+    /// The other half of a side-by-side stage, when one is on
+    /// (TP-STAGE-SBS-01). `pane_infos` above stays the LEFT (active) half.
+    pub right_surface: Option<RightSurfaceView>,
     pub split_borders: Vec<SplitBorder>,
 }
 
@@ -3643,6 +3667,11 @@ pub struct AppState {
     /// The "Work with other agent..." popup (TP-AGPANEL-48), when open.
     pub(crate) agent_colleague_picker:
         Option<crate::app::agent_colleague_picker::AgentColleaguePickerState>,
+    /// Client-local side-by-side stage (TP-STAGE-SBS-01): the ACTIVE
+    /// workspace fills the left half and `right` fills the other, each under
+    /// its own strip. Presentation only — focus, input and the runtime stay
+    /// exactly where they were; the POC routes no input to the right half.
+    pub(crate) side_by_side: Option<SideBySideView>,
     /// The bar configuration panel (TP-CHROME-150), when open.
     pub(crate) bar_config_panel: Option<crate::app::bar_config_panel::BarConfigPanelState>,
     /// The bars exactly as the last config load left them — the panel's
@@ -4180,6 +4209,28 @@ impl AppState {
     /// what the sidebar shows them; folding case here would make the two
     /// disagree in a way only this function knows about.
     // TP-CHROME-120: a workspace action resolves by the name the sidebar shows.
+    /// TP-STAGE-SBS-01: put `right` beside the active workspace. Refused —
+    /// not silently clamped — when it IS the active one or does not exist:
+    /// a split showing the same world twice answers no question.
+    // The user-facing entry road lands with the input slice; the compute and
+    // render tests drive this today.
+    #[allow(dead_code)]
+    pub(crate) fn enter_side_by_side(&mut self, right: usize) -> bool {
+        if Some(right) == self.active || self.workspaces.get(right).is_none() {
+            return false;
+        }
+        self.side_by_side = Some(SideBySideView {
+            right,
+            ratio_percent: 50,
+        });
+        true
+    }
+
+    #[allow(dead_code)] // the exit road lands with the input slice
+    pub(crate) fn exit_side_by_side(&mut self) {
+        self.side_by_side = None;
+    }
+
     pub(crate) fn workspace_index_named(&self, name: &str) -> Option<usize> {
         self.workspaces
             .iter()
@@ -5034,6 +5085,7 @@ impl AppState {
             request_file_manager_agent_handoff: None,
             agent_reference_picker: None,
             agent_colleague_picker: None,
+            side_by_side: None,
             bar_config_panel: None,
             shell_bars_config: Default::default(),
             shell_glyph_icons: true,
@@ -5178,6 +5230,7 @@ impl AppState {
                 mobile_header_hits: crate::ui::MobileHeaderHitAreas::default(),
                 toast_hit_area: Rect::default(),
                 pane_infos: Vec::new(),
+                right_surface: None,
                 split_borders: Vec::new(),
             },
             shell_interaction: Default::default(),
