@@ -2709,11 +2709,14 @@ impl ContextMenuState {
             // filing its conversation somewhere is the chat row's job, which
             // already has a verb for it.
             ContextMenuKind::ClosedAgent { .. } => vec!["Revive", "Forget"],
+            // TP-AGPANEL-47: naming first (TP-CHAT-NAME-01's ordering), the
+            // irreversible close last. The rename needs no chat identity —
+            // the name being renamed is the tab's own.
             ContextMenuKind::AgentEntry { session_id, .. } => {
                 if session_id.is_some() {
-                    vec!["Move to...", "Close agent"]
+                    vec!["Rename tab...", "Move to...", "Close agent"]
                 } else {
-                    vec!["Close agent"]
+                    vec!["Rename tab...", "Close agent"]
                 }
             }
             ContextMenuKind::ChatMoveTarget { targets, .. } => {
