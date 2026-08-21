@@ -1,0 +1,893 @@
+//! Client-local bar configuration panel model: right-press a strip and every
+//! knob it answers to is one popup away — the switch, style, border, size,
+//! colour, backdrop — plus the scope choice ("this bar" / "all bars") and the
+//! other edges' switches, so nothing about bars has to be hunted through a
+//! settings file (TP-CHROME-150). The model is pure data: opening snapshots
+//! the loaded bars, every adjustment edits a draft, and the diff between the
+//! two is exactly what Apply persists (TP-CHROME-151/152).
+
+use crate::config::{ManagedBarOverride, ShellBarConfig, ShellBarsConfig};
+use crate::ui::shell::BarEdge;
+
+/// Every edge, in the order the panel lists them.
+pub(crate) const BAR_PANEL_EDGES: [BarEdge; 4] =
+    [BarEdge::Top, BarEdge::Bottom, BarEdge::Left, BarEdge::Right];
+
+/// The looks the style row cycles through — the same closed set the spec
+/// promises, in the order the docs teach them.
+pub(crate) const BAR_STYLE_CHOICES: [&str; 4] = ["framed", "islands", "plain", "pills"];
+
+pub(crate) const fn bar_edge_name(edge: BarEdge) -> &'static str {
+    match edge {
+        BarEdge::Top => "top",
+        BarEdge::Bottom => "bottom",
+        BarEdge::Left => "left",
+        BarEdge::Right => "right",
+    }
+}
+
+/// One selectable row of the panel, top to bottom.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BarPanelRow {
+    Enabled,
+    Style,
+    Border,
+    Size,
+    Color,
+    Background,
+    Scope,
+    OtherBar(BarEdge),
+    Apply,
+    Cancel,
+}
+
+/// The rows the panel shows for a bar on `edge` — six knobs for that edge,
+/// the scope choice, the OTHER three edges' switches, then the two verbs.
+pub(crate) fn panel_rows(edge: BarEdge) -> Vec<BarPanelRow> {
+    let mut rows = vec![
+        BarPanelRow::Enabled,
+        BarPanelRow::Style,
+        BarPanelRow::Border,
+        BarPanelRow::Size,
+        BarPanelRow::Color,
+        BarPanelRow::Background,
+        BarPanelRow::Scope,
+    ];
+    for other in BAR_PANEL_EDGES {
+        if other != edge {
+            rows.push(BarPanelRow::OtherBar(other));
+        }
+    }
+    rows.push(BarPanelRow::Apply);
+    rows.push(BarPanelRow::Cancel);
+    rows
+}
+
+/// Blocking client-local panel state. Owns no watcher, worker, process, pane,
+/// or server state; closing it discards only presentation data — the draft.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct BarConfigPanelState {
+    /// The edge whose six knobs the field rows edit.
+    pub edge: BarEdge,
+    /// The working copy every adjustment edits and the preview draws from.
+    pub draft: ShellBarsConfig,
+    /// The bars as they were when the panel opened — the Cancel target and
+    /// the base every Apply diff is taken against.
+    pub original: ShellBarsConfig,
+    /// false = Apply writes the focused edge; true = its changes fan out to
+    /// every edge.
+    pub scope_all: bool,
+    pub selected: usize,
+}
+
+impl BarConfigPanelState {
+    pub(crate) fn open(edge: BarEdge, bars: &ShellBarsConfig) -> Self {
+        Self {
+            edge,
+            draft: bars.clone(),
+            original: bars.clone(),
+            scope_all: false,
+            selected: 0,
+        }
+    }
+
+    pub(crate) fn rows(&self) -> Vec<BarPanelRow> {
+        panel_rows(self.edge)
+    }
+
+    /// Adjust the selected row one step. Returns true when the draft (or the
+    /// scope) actually changed, which is when the preview needs a refresh.
+    pub(crate) fn adjust_selected(&mut self, forward: bool) -> bool {
+        let rows = self.rows();
+        let Some(&row) = rows.get(self.selected) else {
+            return false;
+        };
+        self.adjust_row(row, forward)
+    }
+
+    /// Adjust one named row. Every row edits exactly what it names: the six
+    /// field rows touch only the focused edge's field, an OtherBar row
+    /// touches only that edge's switch, Scope flips the fan-out flag, and
+    /// the two verbs adjust nothing.
+    pub(crate) fn adjust_row(&mut self, row: BarPanelRow, forward: bool) -> bool {
+        match row {
+            BarPanelRow::Enabled => {
+                let bar = edge_config_mut(&mut self.draft, self.edge);
+                bar.enabled = !bar.enabled;
+                true
+            }
+            BarPanelRow::Style => {
+                let bar = edge_config_mut(&mut self.draft, self.edge);
+                bar.style = cycle_style(&bar.style, forward);
+                true
+            }
+            BarPanelRow::Border => {
+                let bar = edge_config_mut(&mut self.draft, self.edge);
+                bar.border = cycle_border(bar.border, forward);
+                true
+            }
+            BarPanelRow::Size => {
+                let bar = edge_config_mut(&mut self.draft, self.edge);
+                let stepped = step_size(bar.size, forward);
+                let changed = stepped != bar.size;
+                bar.size = stepped;
+                changed
+            }
+            BarPanelRow::Color => {
+                let original = edge_config(&self.original, self.edge).color.clone();
+                let bar = edge_config_mut(&mut self.draft, self.edge);
+                let choices = color_choices(&original);
+                bar.color = cycle_choice(&bar.color, &choices, forward);
+                true
+            }
+            BarPanelRow::Background => {
+                let original = edge_config(&self.original, self.edge).background.clone();
+                let bar = edge_config_mut(&mut self.draft, self.edge);
+                let choices = background_choices(&original);
+                bar.background = cycle_choice(&bar.background, &choices, forward);
+                true
+            }
+            BarPanelRow::Scope => {
+                self.scope_all = !self.scope_all;
+                true
+            }
+            BarPanelRow::OtherBar(other) => {
+                let bar = edge_config_mut(&mut self.draft, other);
+                bar.enabled = !bar.enabled;
+                true
+            }
+            BarPanelRow::Apply | BarPanelRow::Cancel => false,
+        }
+    }
+
+    /// What Apply persists: per edge, the managed fields whose draft differs
+    /// from the opening snapshot. With `scope_all`, the focused edge's
+    /// changes fan out to every edge — but an explicit per-edge change (an
+    /// OtherBar switch) wins over the fan-out for the one field both can
+    /// speak, because a switch somebody pressed is a decision and a fan-out
+    /// is a convenience (TP-CHROME-152).
+    pub(crate) fn managed_overrides(&self) -> Vec<(BarEdge, ManagedBarOverride)> {
+        let focused = diff_edge(
+            edge_config(&self.original, self.edge),
+            edge_config(&self.draft, self.edge),
+        );
+        let mut out = Vec::new();
+        for edge in BAR_PANEL_EDGES {
+            let mut over = diff_edge(
+                edge_config(&self.original, edge),
+                edge_config(&self.draft, edge),
+            );
+            if self.scope_all && edge != self.edge {
+                over = merge_fanout(over, &focused);
+            }
+            if !over.is_empty() {
+                out.push((edge, over));
+            }
+        }
+        out
+    }
+}
+
+pub(crate) fn edge_config(bars: &ShellBarsConfig, edge: BarEdge) -> &ShellBarConfig {
+    match edge {
+        BarEdge::Top => &bars.top,
+        BarEdge::Bottom => &bars.bottom,
+        BarEdge::Left => &bars.left,
+        BarEdge::Right => &bars.right,
+    }
+}
+
+pub(crate) fn edge_config_mut(bars: &mut ShellBarsConfig, edge: BarEdge) -> &mut ShellBarConfig {
+    match edge {
+        BarEdge::Top => &mut bars.top,
+        BarEdge::Bottom => &mut bars.bottom,
+        BarEdge::Left => &mut bars.left,
+        BarEdge::Right => &mut bars.right,
+    }
+}
+
+/// The style cycle is total over the spec's closed set; an unwritten style
+/// means `framed`, so that is where the cycle stands when it starts.
+pub(crate) fn cycle_style(current: &str, forward: bool) -> String {
+    let normalized = if current.is_empty() {
+        "framed"
+    } else {
+        current
+    };
+    let idx = BAR_STYLE_CHOICES
+        .iter()
+        .position(|choice| *choice == normalized)
+        .unwrap_or(0);
+    let len = BAR_STYLE_CHOICES.len();
+    let next = if forward {
+        (idx + 1) % len
+    } else {
+        (idx + len - 1) % len
+    };
+    BAR_STYLE_CHOICES[next].to_string()
+}
+
+/// auto → on → off → auto, in both directions — the three states the config
+/// key can hold.
+pub(crate) fn cycle_border(current: Option<bool>, forward: bool) -> Option<bool> {
+    match (current, forward) {
+        (None, true) => Some(true),
+        (Some(true), true) => Some(false),
+        (Some(false), true) => None,
+        (None, false) => Some(false),
+        (Some(false), false) => Some(true),
+        (Some(true), false) => None,
+    }
+}
+
+/// One step along the spec's 1-32 range, held at the ends rather than
+/// wrapped — a size that jumped from 32 to 1 would collapse the bar the
+/// person was growing.
+pub(crate) fn step_size(current: u16, forward: bool) -> u16 {
+    if forward {
+        current.saturating_add(1).min(32)
+    } else {
+        current.saturating_sub(1).max(1)
+    }
+}
+
+/// The colour row's choices: the default tone first, then — when the file
+/// holds a literal the token table does not know — that literal, so the
+/// person's own colour stays reachable after cycling away, then every token
+/// this build resolves.
+pub(crate) fn color_choices(original: &str) -> Vec<String> {
+    let mut choices = vec![String::new()];
+    push_custom_and_tokens(&mut choices, original);
+    choices
+}
+
+/// The backdrop row adds `reset` — the one word with no token: the
+/// terminal's own background showing through.
+pub(crate) fn background_choices(original: &str) -> Vec<String> {
+    let mut choices = vec![String::new(), "reset".to_string()];
+    push_custom_and_tokens(&mut choices, original);
+    choices
+}
+
+fn push_custom_and_tokens(choices: &mut Vec<String>, original: &str) {
+    if !original.is_empty() && !choices.iter().any(|c| c == original) {
+        let known = crate::ui::shell::bar_color_tokens().contains(&original);
+        if !known {
+            choices.push(original.to_string());
+        }
+    }
+    choices.extend(
+        crate::ui::shell::bar_color_tokens()
+            .iter()
+            .map(|token| (*token).to_string()),
+    );
+}
+
+pub(crate) fn cycle_choice(current: &str, choices: &[String], forward: bool) -> String {
+    if choices.is_empty() {
+        return current.to_string();
+    }
+    let idx = choices.iter().position(|choice| choice == current);
+    let len = choices.len();
+    let next = match (idx, forward) {
+        (Some(i), true) => (i + 1) % len,
+        (Some(i), false) => (i + len - 1) % len,
+        // A value the list does not carry starts the cycle at its head.
+        (None, _) => 0,
+    };
+    choices[next].clone()
+}
+
+/// The word the managed file writes for a border state — TOML cannot write
+/// "explicitly none", so `auto` carries it (TP-CHROME-149).
+pub(crate) const fn border_word(border: Option<bool>) -> &'static str {
+    match border {
+        None => "auto",
+        Some(true) => "on",
+        Some(false) => "off",
+    }
+}
+
+/// The managed fields whose draft differs from the snapshot — exactly what
+/// the overlay may carry, nothing else.
+fn diff_edge(original: &ShellBarConfig, draft: &ShellBarConfig) -> ManagedBarOverride {
+    ManagedBarOverride {
+        enabled: (original.enabled != draft.enabled).then_some(draft.enabled),
+        size: (original.size != draft.size).then_some(draft.size),
+        style: (original.style != draft.style).then(|| draft.style.clone()),
+        border: (original.border != draft.border).then(|| border_word(draft.border).to_string()),
+        color: (original.color != draft.color).then(|| draft.color.clone()),
+        background: (original.background != draft.background).then(|| draft.background.clone()),
+    }
+}
+
+/// Fan the focused edge's changes onto another edge's own diff — the
+/// explicit diff wins field by field.
+fn merge_fanout(explicit: ManagedBarOverride, focused: &ManagedBarOverride) -> ManagedBarOverride {
+    ManagedBarOverride {
+        enabled: explicit.enabled.or(focused.enabled),
+        size: explicit.size.or(focused.size),
+        style: explicit.style.or_else(|| focused.style.clone()),
+        border: explicit.border.or_else(|| focused.border.clone()),
+        color: explicit.color.or_else(|| focused.color.clone()),
+        background: explicit.background.or_else(|| focused.background.clone()),
+    }
+}
+
+/// What a row shows for its current draft value — one string, so the render
+/// pass and its tests read the same words (TP-CHROME-150).
+pub(crate) fn row_value_label(state: &BarConfigPanelState, row: BarPanelRow) -> String {
+    let bar = edge_config(&state.draft, state.edge);
+    match row {
+        BarPanelRow::Enabled => format!("Enabled: {}", if bar.enabled { "on" } else { "off" }),
+        BarPanelRow::Style => format!(
+            "Style: {}",
+            if bar.style.is_empty() {
+                "framed"
+            } else {
+                &bar.style
+            }
+        ),
+        BarPanelRow::Border => format!("Border: {}", border_word(bar.border)),
+        BarPanelRow::Size => format!("Size: {}", bar.size),
+        BarPanelRow::Color => format!(
+            "Colour: {}",
+            if bar.color.is_empty() {
+                "(default)"
+            } else {
+                &bar.color
+            }
+        ),
+        BarPanelRow::Background => format!(
+            "Backdrop: {}",
+            if bar.background.is_empty() {
+                "(theme)"
+            } else {
+                &bar.background
+            }
+        ),
+        BarPanelRow::Scope => format!(
+            "Apply to: {}",
+            if state.scope_all {
+                "all bars"
+            } else {
+                "this bar"
+            }
+        ),
+        BarPanelRow::OtherBar(edge) => format!(
+            "{} bar: {}",
+            bar_edge_name(edge),
+            if edge_config(&state.draft, edge).enabled {
+                "on"
+            } else {
+                "off"
+            }
+        ),
+        BarPanelRow::Apply => "[ Apply ]".to_string(),
+        BarPanelRow::Cancel => "[ Cancel ]".to_string(),
+    }
+}
+
+impl crate::app::state::AppState {
+    /// Centered popup rect over the terminal area — the colleague picker's
+    /// geometry, because the two are one kind of surface.
+    pub(crate) fn bar_config_panel_popup_rect(&self) -> Option<ratatui::layout::Rect> {
+        let panel = self.bar_config_panel.as_ref()?;
+        let area = self.view.terminal_area;
+        let width = 44u16.min(area.width.saturating_sub(2)).max(4);
+        let height = (panel.rows().len() as u16)
+            .saturating_add(4)
+            .min(area.height.saturating_sub(2))
+            .max(4);
+        if area.width < 8 || area.height < 6 {
+            return None;
+        }
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        Some(ratatui::layout::Rect::new(x, y, width, height))
+    }
+
+    pub(crate) fn bar_config_panel_row_hit_areas(&self) -> Vec<ratatui::layout::Rect> {
+        let Some(panel) = self.bar_config_panel.as_ref() else {
+            return Vec::new();
+        };
+        let Some(popup) = self.bar_config_panel_popup_rect() else {
+            return Vec::new();
+        };
+        let inner = ratatui::layout::Rect::new(
+            popup.x + 1,
+            popup.y + 3,
+            popup.width.saturating_sub(2),
+            popup.height.saturating_sub(4),
+        );
+        panel
+            .rows()
+            .iter()
+            .enumerate()
+            .take(inner.height as usize)
+            .map(|(idx, _)| {
+                ratatui::layout::Rect::new(inner.x, inner.y + idx as u16, inner.width, 1)
+            })
+            .collect()
+    }
+
+    pub(crate) fn bar_config_panel_row_at(&self, column: u16, row: u16) -> Option<usize> {
+        self.bar_config_panel_row_hit_areas()
+            .iter()
+            .position(|rect| {
+                column >= rect.x && column < rect.right() && row >= rect.y && row < rect.bottom()
+            })
+    }
+
+    /// Drop the panel and restore the pre-overlay focus owner. State-level
+    /// only — the preview restore lives on the App road, which is the only
+    /// road that can repaint.
+    pub(crate) fn close_bar_config_panel(&mut self) {
+        if self.bar_config_panel.take().is_some() {
+            crate::app::input::leave_modal(self);
+        }
+    }
+}
+
+impl crate::app::App {
+    /// Rebuild everything the bars show from one set of bar configs — the
+    /// same three-piece refresh a config reload performs, extracted so the
+    /// panel's live preview and the reload can never drift apart
+    /// (TP-CHROME-151).
+    pub(crate) fn refresh_bar_presentation(&mut self, bars: &ShellBarsConfig) {
+        self.state
+            .shell_presentation
+            .set_bars(crate::ui::shell::ShellBars::from_config(bars));
+        self.state
+            .shell_presentation
+            .set_bar_colors(crate::ui::shell::BarColors::from_config(
+                bars,
+                &self.state.palette,
+            ));
+        self.state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(
+            bars,
+            self.state.shell_glyph_icons,
+            &self.state.palette,
+        );
+    }
+
+    /// Open the panel for `edge`, seeded from the bars the last config load
+    /// left behind.
+    pub(crate) fn open_bar_config_panel(&mut self, edge: BarEdge) {
+        self.state.bar_config_panel = Some(BarConfigPanelState::open(
+            edge,
+            &self.state.shell_bars_config.clone(),
+        ));
+        self.state
+            .enter_overlay_mode(crate::app::state::Mode::BarConfigPanel);
+    }
+
+    /// Throw the draft away: repaint from the untouched snapshot and close.
+    pub(crate) fn cancel_bar_config_panel(&mut self) {
+        let bars = self.state.shell_bars_config.clone();
+        self.refresh_bar_presentation(&bars);
+        self.state.close_bar_config_panel();
+    }
+
+    /// Adjust the selected row and repaint the preview when it changed.
+    pub(crate) fn adjust_bar_config_panel(&mut self, forward: bool) {
+        let Some(panel) = self.state.bar_config_panel.as_mut() else {
+            return;
+        };
+        if panel.adjust_selected(forward) {
+            let draft = panel.draft.clone();
+            self.refresh_bar_presentation(&draft);
+        }
+    }
+
+    /// Enter / click on the selected row: the verbs act, everything else
+    /// adjusts forward.
+    pub(crate) fn press_bar_config_panel_row(&mut self) {
+        let Some(panel) = self.state.bar_config_panel.as_ref() else {
+            return;
+        };
+        match panel.rows().get(panel.selected) {
+            Some(BarPanelRow::Apply) => self.apply_bar_config_panel(),
+            Some(BarPanelRow::Cancel) => self.cancel_bar_config_panel(),
+            Some(_) => self.adjust_bar_config_panel(true),
+            None => {}
+        }
+    }
+
+    /// Persist the diff and converge: write `bars.managed.toml`, then take
+    /// the same reload road `herdr server reload-config` takes, so the disk
+    /// — not the preview — is what every surface ends up showing
+    /// (TP-CHROME-151/152).
+    pub(crate) fn apply_bar_config_panel(&mut self) {
+        let Some(panel) = self.state.bar_config_panel.as_ref() else {
+            return;
+        };
+        let overrides = panel.managed_overrides();
+        if overrides.is_empty() {
+            self.cancel_bar_config_panel();
+            return;
+        }
+        let named: Vec<(&str, crate::config::ManagedBarOverride)> = overrides
+            .into_iter()
+            .map(|(edge, over)| (bar_edge_name(edge), over))
+            .collect();
+        match crate::config::persist_managed_bar_overrides(&named) {
+            Ok(()) => {
+                self.state.close_bar_config_panel();
+                self.dispatch_api_request(
+                    "tui.bars.configure",
+                    crate::api::schema::Method::ServerReloadConfig(
+                        crate::api::schema::EmptyParams::default(),
+                    ),
+                );
+            }
+            Err(err) => {
+                // The draft survives a failed write — closing here would
+                // throw away edits the person can still retry or cancel.
+                self.warn_about_bar_section_action("could not save bar config", err);
+            }
+        }
+    }
+
+    pub(crate) fn handle_bar_config_panel_key(&mut self, key: crossterm::event::KeyEvent) {
+        match key.code {
+            crossterm::event::KeyCode::Esc => self.cancel_bar_config_panel(),
+            crossterm::event::KeyCode::Enter => self.press_bar_config_panel_row(),
+            crossterm::event::KeyCode::Left | crossterm::event::KeyCode::Char('h') => {
+                self.adjust_bar_config_panel(false);
+            }
+            crossterm::event::KeyCode::Right | crossterm::event::KeyCode::Char('l') => {
+                self.adjust_bar_config_panel(true);
+            }
+            crossterm::event::KeyCode::Up | crossterm::event::KeyCode::Char('k') => {
+                if let Some(panel) = self.state.bar_config_panel.as_mut() {
+                    panel.selected = panel.selected.saturating_sub(1);
+                }
+            }
+            crossterm::event::KeyCode::Down | crossterm::event::KeyCode::Char('j') => {
+                if let Some(panel) = self.state.bar_config_panel.as_mut() {
+                    if panel.selected.saturating_add(1) < panel.rows().len() {
+                        panel.selected += 1;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::state::Mode;
+    use crate::workspace::Workspace;
+
+    fn bars() -> ShellBarsConfig {
+        ShellBarsConfig::default()
+    }
+
+    // TP-CHROME-150: the panel lists every knob the strip answers to, the
+    // scope choice, the OTHER edges' switches, and the two verbs — in that
+    // order, so muscle memory survives which bar was pressed.
+    #[test]
+    fn the_panel_rows_list_every_knob_and_exclude_the_focused_edge() {
+        let rows = panel_rows(BarEdge::Bottom);
+        assert_eq!(
+            rows,
+            vec![
+                BarPanelRow::Enabled,
+                BarPanelRow::Style,
+                BarPanelRow::Border,
+                BarPanelRow::Size,
+                BarPanelRow::Color,
+                BarPanelRow::Background,
+                BarPanelRow::Scope,
+                BarPanelRow::OtherBar(BarEdge::Top),
+                BarPanelRow::OtherBar(BarEdge::Left),
+                BarPanelRow::OtherBar(BarEdge::Right),
+                BarPanelRow::Apply,
+                BarPanelRow::Cancel,
+            ]
+        );
+    }
+
+    // TP-CHROME-150: every cycle is total — nothing the person can reach
+    // steps outside the closed set the spec promises.
+    #[test]
+    fn style_border_and_size_cycles_are_total_and_bounded() {
+        let mut style = String::new();
+        for _ in 0..4 {
+            style = cycle_style(&style, true);
+            assert!(BAR_STYLE_CHOICES.contains(&style.as_str()));
+        }
+        assert_eq!(style, "framed", "four forward steps close the loop");
+        assert_eq!(cycle_style("framed", false), "pills", "backwards wraps");
+
+        assert_eq!(cycle_border(None, true), Some(true));
+        assert_eq!(cycle_border(Some(true), true), Some(false));
+        assert_eq!(cycle_border(Some(false), true), None);
+        assert_eq!(cycle_border(None, false), Some(false));
+
+        assert_eq!(step_size(32, true), 32, "held at the top of the range");
+        assert_eq!(step_size(1, false), 1, "held at the bottom");
+        assert_eq!(step_size(3, true), 4);
+    }
+
+    // TP-CHROME-150: a literal the token table does not know stays reachable
+    // — cycling away from the person's own colour must not eat it.
+    #[test]
+    fn colour_choices_keep_a_custom_literal_reachable() {
+        let choices = color_choices("#cba6f7");
+        assert_eq!(choices[0], "", "the default tone leads");
+        assert!(choices.iter().any(|c| c == "#cba6f7"));
+        assert!(choices.iter().any(|c| c == "mauve"));
+
+        let token_only = color_choices("mauve");
+        assert_eq!(
+            token_only.iter().filter(|c| *c == "mauve").count(),
+            1,
+            "a known token is not doubled"
+        );
+
+        let backdrop = background_choices("");
+        assert_eq!(backdrop[0], "");
+        assert_eq!(backdrop[1], "reset", "the backdrop speaks reset too");
+    }
+
+    // TP-CHROME-151: an untouched panel writes nothing — opening and closing
+    // must leave no trace on disk.
+    #[test]
+    fn an_untouched_panel_writes_nothing() {
+        let state = BarConfigPanelState::open(BarEdge::Top, &bars());
+        assert!(state.managed_overrides().is_empty());
+    }
+
+    // TP-CHROME-151: a change writes only itself, on its own edge — the diff
+    // is the persistence contract, so an unchanged field keeps following the
+    // user's own file.
+    #[test]
+    fn a_changed_field_writes_only_itself_on_its_edge() {
+        let mut state = BarConfigPanelState::open(BarEdge::Top, &bars());
+        state.adjust_row(BarPanelRow::Style, true);
+        let overrides = state.managed_overrides();
+        assert_eq!(overrides.len(), 1);
+        let (edge, over) = &overrides[0];
+        assert_eq!(*edge, BarEdge::Top);
+        assert_eq!(over.style.as_deref(), Some("islands"));
+        assert_eq!(over.color, None, "an untouched field is not written");
+        assert_eq!(over.enabled, None);
+    }
+
+    // TP-CHROME-152: "all bars" fans the focused edge's changes to every
+    // edge in one Apply.
+    #[test]
+    fn scope_all_fans_the_focused_changes_to_every_edge() {
+        let mut state = BarConfigPanelState::open(BarEdge::Top, &bars());
+        state.adjust_row(BarPanelRow::Style, true);
+        state.adjust_row(BarPanelRow::Scope, true);
+        let overrides = state.managed_overrides();
+        assert_eq!(overrides.len(), 4);
+        for (_, over) in &overrides {
+            assert_eq!(over.style.as_deref(), Some("islands"));
+        }
+    }
+
+    // TP-CHROME-152: a switch somebody pressed is a decision; the fan-out is
+    // a convenience — the explicit change wins the one field both can speak.
+    #[test]
+    fn an_explicit_other_bar_switch_wins_over_the_fanout() {
+        let mut state = BarConfigPanelState::open(BarEdge::Top, &bars());
+        state.adjust_row(BarPanelRow::Enabled, true); // top: off -> on
+        state.adjust_row(BarPanelRow::Scope, true);
+        state.adjust_row(BarPanelRow::OtherBar(BarEdge::Bottom), true); // on
+        state.adjust_row(BarPanelRow::OtherBar(BarEdge::Bottom), true); // off again
+                                                                        // bottom's explicit round-trip left it unchanged, so the fan-out's
+                                                                        // enabled=true is what it receives — but flip it once more and the
+                                                                        // explicit OFF must survive the fan-out saying ON.
+        state.adjust_row(BarPanelRow::OtherBar(BarEdge::Bottom), true); // on
+        let overrides = state.managed_overrides();
+        let bottom = overrides
+            .iter()
+            .find(|(edge, _)| *edge == BarEdge::Bottom)
+            .map(|(_, over)| over)
+            .expect("bottom carries its explicit switch");
+        assert_eq!(bottom.enabled, Some(true));
+
+        // and the true conflict: focused ON fanned out, bottom explicitly
+        // ends OFF after starting ON in the snapshot.
+        let mut enabled_bars = bars();
+        enabled_bars.bottom.enabled = true;
+        let mut state = BarConfigPanelState::open(BarEdge::Top, &enabled_bars);
+        state.adjust_row(BarPanelRow::Enabled, true); // top on
+        state.adjust_row(BarPanelRow::Scope, true);
+        state.adjust_row(BarPanelRow::OtherBar(BarEdge::Bottom), true); // bottom off
+        let overrides = state.managed_overrides();
+        let bottom = overrides
+            .iter()
+            .find(|(edge, _)| *edge == BarEdge::Bottom)
+            .map(|(_, over)| over)
+            .expect("bottom carries its explicit switch");
+        assert_eq!(
+            bottom.enabled,
+            Some(false),
+            "the pressed switch beats the fan-out"
+        );
+    }
+
+    // TP-CHROME-149/151: the border diff travels as the overlay's word.
+    #[test]
+    fn a_border_change_travels_as_a_word() {
+        let mut explicit = bars();
+        explicit.top.border = Some(true);
+        let mut state = BarConfigPanelState::open(BarEdge::Top, &explicit);
+        state.adjust_row(BarPanelRow::Border, true); // Some(true) -> Some(false)
+        let overrides = state.managed_overrides();
+        assert_eq!(overrides[0].1.border.as_deref(), Some("off"));
+        state.adjust_row(BarPanelRow::Border, true); // -> None
+        let overrides = state.managed_overrides();
+        assert_eq!(overrides[0].1.border.as_deref(), Some("auto"));
+    }
+
+    // TP-CHROME-150: every row edits exactly what it names — a field row the
+    // focused edge, an OtherBar row that edge's switch, the verbs nothing.
+    #[test]
+    fn adjusting_rows_touches_only_what_the_row_names() {
+        let mut state = BarConfigPanelState::open(BarEdge::Top, &bars());
+        assert!(state.adjust_row(BarPanelRow::Color, true));
+        assert_eq!(state.draft.top.color, "accent", "first token after default");
+        assert_eq!(state.draft.bottom, bars().bottom, "other edges untouched");
+
+        assert!(state.adjust_row(BarPanelRow::OtherBar(BarEdge::Left), true));
+        assert!(state.draft.left.enabled);
+        assert_eq!(state.draft.top.enabled, bars().top.enabled);
+
+        assert!(
+            !state.adjust_row(BarPanelRow::Apply, true),
+            "verbs adjust nothing"
+        );
+        assert!(!state.adjust_row(BarPanelRow::Cancel, true));
+    }
+    fn test_app() -> crate::app::App {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = crate::app::App::new(
+            &crate::config::Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.state.workspaces = vec![Workspace::test_new("main")];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app
+    }
+
+    // TP-CHROME-150: opening seeds the draft from the loaded bars and hands
+    // the panel the keyboard; TP-CHROME-151: an adjustment repaints the live
+    // presentation from the draft, and Esc restores the untouched snapshot.
+    #[test]
+    fn the_panel_previews_the_draft_and_esc_restores_the_snapshot() {
+        let mut app = test_app();
+        let before = app.state.shell_presentation.bars();
+
+        app.open_bar_config_panel(BarEdge::Top);
+        assert_eq!(app.state.mode, Mode::BarConfigPanel);
+
+        // enable the top bar through the panel: the preview must repaint
+        app.adjust_bar_config_panel(true); // selected=0 is Enabled
+        let previewed = app.state.shell_presentation.bars();
+        assert_ne!(previewed, before, "the preview reached the presentation");
+        let expected = {
+            let mut bars = crate::config::ShellBarsConfig::default();
+            bars.top.enabled = true;
+            crate::ui::shell::ShellBars::from_config(&bars)
+        };
+        assert_eq!(previewed, expected, "the preview is the draft, derived");
+
+        app.handle_bar_config_panel_key(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Esc,
+        ));
+        assert!(app.state.bar_config_panel.is_none());
+        assert_eq!(
+            app.state.shell_presentation.bars(),
+            before,
+            "cancel restores the pre-panel presentation"
+        );
+    }
+
+    // TP-CHROME-151: Apply writes exactly the diff to bars.managed.toml and
+    // takes the reload road, so the disk — not the preview — is what the
+    // surfaces end up showing. Isolated under a throwaway XDG_CONFIG_HOME;
+    // nextest runs each test in its own process, so the env var leaks nowhere.
+    #[test]
+    fn apply_writes_the_diff_to_the_managed_file_and_reloads() {
+        let dir =
+            std::env::temp_dir().join(format!("herdr-bar-panel-apply-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("XDG_CONFIG_HOME", &dir);
+
+        let mut app = test_app();
+        app.open_bar_config_panel(BarEdge::Top);
+        app.adjust_bar_config_panel(true); // Enabled: off -> on
+                                           // move to Apply and press it on the real key road
+        let rows = panel_rows(BarEdge::Top);
+        let apply_idx = rows
+            .iter()
+            .position(|row| *row == BarPanelRow::Apply)
+            .unwrap();
+        if let Some(panel) = app.state.bar_config_panel.as_mut() {
+            panel.selected = apply_idx;
+        }
+        app.handle_bar_config_panel_key(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Enter,
+        ));
+
+        assert!(
+            app.state.bar_config_panel.is_none(),
+            "apply closes the panel"
+        );
+        let written = std::fs::read_to_string(
+            crate::config::managed_spaces_path().with_file_name("bars.managed.toml"),
+        )
+        .expect("the managed bars file was written");
+        assert!(written.contains("[shell.bars.top]"), "{written}");
+        assert!(written.contains("enabled = true"), "{written}");
+        assert!(
+            !written.contains("style"),
+            "an untouched field is not written: {written}"
+        );
+        // the reload road re-derived the presentation from disk: the managed
+        // file enables the top bar, so the presentation shows one.
+        let expected = {
+            let mut bars = crate::config::ShellBarsConfig::default();
+            bars.top.enabled = true;
+            crate::ui::shell::ShellBars::from_config(&bars)
+        };
+        assert_eq!(app.state.shell_presentation.bars(), expected);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // TP-CHROME-151: Apply with nothing changed is a cancel — no file, no
+    // reload, no trace.
+    #[test]
+    fn apply_with_no_changes_writes_nothing() {
+        let dir = std::env::temp_dir().join(format!("herdr-bar-panel-noop-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("XDG_CONFIG_HOME", &dir);
+
+        let mut app = test_app();
+        app.open_bar_config_panel(BarEdge::Left);
+        app.apply_bar_config_panel();
+        assert!(app.state.bar_config_panel.is_none());
+        assert!(
+            !crate::config::managed_spaces_path()
+                .with_file_name("bars.managed.toml")
+                .exists(),
+            "an untouched panel leaves no file behind"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

@@ -34,7 +34,9 @@ pub use self::{
     theme::{parse_color, CustomThemeColors, ThemeConfig},
 };
 
-pub(crate) use self::io::upsert_top_level_bool;
+pub(crate) use self::io::{
+    persist_managed_bar_overrides, upsert_top_level_bool, ManagedBarOverride,
+};
 pub(crate) use self::keybinds::parse_key_combo;
 
 pub const CONFIG_PATH_ENV_VAR: &str = "HERDR_CONFIG_PATH";

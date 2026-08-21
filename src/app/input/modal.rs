@@ -1925,6 +1925,7 @@ impl App {
                     argv,
                     width,
                     height,
+                    edge,
                     ..
                 },
                 _,
@@ -1942,6 +1943,14 @@ impl App {
                     }
                     Some(crate::app::state::BarSectionMenuItem::Split) => {
                         self.open_argv_in_split(&argv)
+                    }
+                    Some(crate::app::state::BarSectionMenuItem::Configure) => {
+                        // No `leave_modal` on this arm: the panel replaces the
+                        // menu as the overlay, and tearing the modal down after
+                        // opening would strip the mode the panel just entered
+                        // (the colleague verb's arm stands on the same rule).
+                        self.open_bar_config_panel(edge);
+                        return;
                     }
                     // A press past the end of the menu. `item_enabled` already
                     // refuses it, so reaching here means the menu was applied

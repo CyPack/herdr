@@ -12,6 +12,7 @@ pub(crate) mod agent_view;
 mod agents;
 mod api;
 mod api_helpers;
+pub(crate) mod bar_config_panel;
 pub(crate) mod closed_agents;
 mod config_io;
 mod creation;
@@ -951,6 +952,9 @@ impl App {
             request_file_manager_agent_handoff: None,
             agent_reference_picker: None,
             agent_colleague_picker: None,
+            bar_config_panel: None,
+            shell_bars_config: config.shell.bars.clone(),
+            shell_glyph_icons: config.shell.glyph_icons,
             file_manager_locations_model,
             file_manager_locations: Default::default(),
             request_file_manager_location_navigation: None,
@@ -2311,20 +2315,14 @@ impl App {
         // whose presses answer to one config and whose geometry answers to
         // another — a worse state than either of them being stale.
         if !invalid_section("shell") {
-            self.state
-                .shell_presentation
-                .set_bars(crate::ui::shell::ShellBars::from_config(&config.shell.bars));
-            self.state
-                .shell_presentation
-                .set_bar_colors(crate::ui::shell::BarColors::from_config(
-                    &config.shell.bars,
-                    &self.state.palette,
-                ));
-            self.state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(
-                &config.shell.bars,
-                config.shell.glyph_icons,
-                &self.state.palette,
-            );
+            self.state.shell_bars_config = config.shell.bars.clone();
+            self.state.shell_glyph_icons = config.shell.glyph_icons;
+            // A reload while the panel is open would leave its snapshot and
+            // draft describing bars that no longer exist — close it rather
+            // than let it preview against a world that moved (TP-CHROME-151).
+            self.state.close_bar_config_panel();
+            let bars = self.state.shell_bars_config.clone();
+            self.refresh_bar_presentation(&bars);
         }
 
         crate::config::ConfigReloadReport {
@@ -2600,6 +2598,9 @@ impl App {
             }
             Mode::AgentColleaguePicker => {
                 self.handle_agent_colleague_picker_key(key_event);
+            }
+            Mode::BarConfigPanel => {
+                self.handle_bar_config_panel_key(key_event);
             }
             Mode::PreviewViewer => {
                 input::handle_preview_viewer_key(&mut self.state, key_event);
