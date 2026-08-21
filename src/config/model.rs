@@ -932,7 +932,7 @@ impl Default for ShellConfig {
 /// The four edges are named rather than listed so that a typo cannot silently
 /// become a fifth bar, and so each edge keeps its own default size: a row is a
 /// sensible top bar, a row is a useless side bar.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct ShellBarsConfig {
     pub top: ShellBarConfig,
@@ -962,7 +962,7 @@ impl Default for ShellBarsConfig {
 ///
 /// `size` counts terminal cells along the edge's own axis: rows for the top and
 /// bottom bars, columns for the left and right ones.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct ShellBarConfig {
     pub enabled: bool,
@@ -1083,7 +1083,7 @@ impl ShellBarConfig {
 /// - `fixed` — exactly `cells` cells, whatever else happens.
 /// - `fill` — share whatever is left, in proportion to `weight`.
 /// - `content` — at least `min`, at most `max`, as much as there is room for.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 #[serde(default)]
 pub struct ShellBarSectionConfig {
     pub kind: String,
@@ -1146,7 +1146,7 @@ pub struct ShellBarSectionConfig {
 /// A widget never changes how wide its part is. Letting text size a part would
 /// put that text into the geometry cache key and make editing a label re-lay
 /// out the whole bar for a change that moves nothing.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 #[serde(default)]
 pub struct ShellBarSectionWidgetConfig {
     pub kind: String,
@@ -1185,7 +1185,7 @@ pub struct ShellBarSectionWidgetConfig {
 ///
 /// - absent / empty `kind` — the part is an indicator and consumes clicks inertly.
 /// - `popup` — run `argv` in a herdr popup pane.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 #[serde(default)]
 pub struct ShellBarSectionActionConfig {
     pub kind: String,

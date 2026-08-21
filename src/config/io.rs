@@ -154,6 +154,136 @@ pub(crate) fn merge_managed_spaces_str(config: &mut Config, content: &str) -> Ve
     }
 }
 
+/// The overlay file the bar config panel owns. Loaded after the user's own
+/// config: a field the panel wrote wins over the hand-written value for that
+/// edge, and a field it left unwritten keeps following the user's file
+/// (TP-CHROME-149). The asymmetry with `spaces.managed.toml` is deliberate —
+/// spaces entries are additive rules, so appending after the user keeps the
+/// user first; bar fields are scalar overrides, and an override that lost to
+/// the file it exists to change would make the panel a silent no-op.
+pub fn managed_bars_path() -> PathBuf {
+    config_dir().join("bars.managed.toml")
+}
+
+/// One edge's overrides as the panel wrote them.
+///
+/// Only the fields the panel manages are carried; `gradient`, `sections`,
+/// `max_sections` and `hide_when_focused` stay hand-written territory on
+/// purpose — the panel has no surface for lists or budgets, and a field the
+/// overlay cannot carry is a field it can never silently pin. `border` is a
+/// word rather than a bool because the panel has three states to persist —
+/// auto / on / off — and TOML cannot write "explicitly none".
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default)]
+pub(crate) struct ManagedBarOverride {
+    pub(crate) enabled: Option<bool>,
+    pub(crate) size: Option<u16>,
+    pub(crate) style: Option<String>,
+    pub(crate) border: Option<String>,
+    pub(crate) color: Option<String>,
+    pub(crate) background: Option<String>,
+}
+
+/// Merge a `bars.managed.toml` document into an already-loaded config.
+/// Field-level last-wins per edge; a broken overlay is reported and skipped,
+/// never fatal (TP-CHROME-149).
+pub(crate) fn merge_managed_bars_str(config: &mut Config, content: &str) -> Vec<String> {
+    #[derive(Debug, Default, serde::Deserialize)]
+    #[serde(default)]
+    struct ManagedBarsFile {
+        shell: ManagedShell,
+    }
+    #[derive(Debug, Default, serde::Deserialize)]
+    #[serde(default)]
+    struct ManagedShell {
+        bars: ManagedBars,
+    }
+    #[derive(Debug, Default, serde::Deserialize)]
+    #[serde(default)]
+    struct ManagedBars {
+        top: Option<ManagedBarOverride>,
+        bottom: Option<ManagedBarOverride>,
+        left: Option<ManagedBarOverride>,
+        right: Option<ManagedBarOverride>,
+    }
+    match toml::from_str::<ManagedBarsFile>(content) {
+        Ok(managed) => {
+            let mut diagnostics = Vec::new();
+            let bars = managed.shell.bars;
+            let pairs = [
+                (bars.top, &mut config.shell.bars.top, "top"),
+                (bars.bottom, &mut config.shell.bars.bottom, "bottom"),
+                (bars.left, &mut config.shell.bars.left, "left"),
+                (bars.right, &mut config.shell.bars.right, "right"),
+            ];
+            for (over, target, edge) in pairs {
+                if let Some(over) = over {
+                    apply_managed_bar_override(target, over, edge, &mut diagnostics);
+                }
+            }
+            diagnostics
+        }
+        Err(err) => vec![format!(
+            "bars.managed.toml parse error: {err}; ignoring the managed overlay"
+        )],
+    }
+}
+
+/// Lay one edge's overrides over the loaded bar.
+///
+/// The override is destructured without `..` on purpose: a field added to
+/// `ManagedBarOverride` must be routed here or this stops compiling — the
+/// structural gate `managed_overlay_check.py` provides for the spaces merge,
+/// the compiler provides for this one.
+fn apply_managed_bar_override(
+    target: &mut super::model::ShellBarConfig,
+    over: ManagedBarOverride,
+    edge: &str,
+    diagnostics: &mut Vec<String>,
+) {
+    let ManagedBarOverride {
+        enabled,
+        size,
+        style,
+        border,
+        color,
+        background,
+    } = over;
+    if let Some(value) = enabled {
+        target.enabled = value;
+    }
+    if let Some(value) = size {
+        // Refused rather than clamped — the same doctrine `max_sections`
+        // follows — so a hand-edited overlay cannot smuggle past the 1-32
+        // range the spec promises.
+        if (1..=32).contains(&value) {
+            target.size = value;
+        } else {
+            diagnostics.push(format!(
+                "bars.managed.toml: {edge}.size {value} is outside 1-32; ignoring that key"
+            ));
+        }
+    }
+    if let Some(value) = style {
+        target.style = value;
+    }
+    match border.as_deref() {
+        None => {}
+        Some("auto") => target.border = None,
+        Some("on") => target.border = Some(true),
+        Some("off") => target.border = Some(false),
+        Some(other) => diagnostics.push(format!(
+            "bars.managed.toml: {edge}.border {other:?} is not auto/on/off; ignoring that key"
+        )),
+    }
+    if let Some(value) = color {
+        target.color = value;
+    }
+    if let Some(value) = background {
+        target.background = value;
+    }
+}
+
 /// Apply the managed overlay, if one exists, to a loaded config.
 fn finish_with_managed_overlay(mut loaded: LoadedConfig) -> LoadedConfig {
     match read_optional_config(&managed_spaces_path()) {
@@ -165,6 +295,16 @@ fn finish_with_managed_overlay(mut loaded: LoadedConfig) -> LoadedConfig {
         Err(err) => loaded
             .diagnostics
             .push(format!("spaces.managed.toml read error: {err}; ignoring")),
+    }
+    match read_optional_config(&managed_bars_path()) {
+        Ok(Some(content)) => {
+            let diagnostics = merge_managed_bars_str(&mut loaded.config, &content);
+            loaded.diagnostics.extend(diagnostics);
+        }
+        Ok(None) => {}
+        Err(err) => loaded
+            .diagnostics
+            .push(format!("bars.managed.toml read error: {err}; ignoring")),
     }
     loaded
 }
@@ -1421,6 +1561,138 @@ parent = "project:x"
         // grew a new collection must not start half-applying a broken file.
         assert!(loaded.config.spaces.node.is_empty());
         assert!(loaded.invalid_sections.is_empty());
+    }
+
+    // TP-CHROME-149: the bars overlay is field-level last-wins — a field the
+    // panel wrote wins over the hand-written value for that edge, and every
+    // field it left unwritten keeps following the user's own file.
+    #[test]
+    fn bars_managed_overlay_overrides_written_fields_and_leaves_the_rest() {
+        let mut loaded = load_live_config_from_str(
+            r#"
+[shell.bars.top]
+enabled = true
+style = "islands"
+color = "mauve"
+"#,
+        )
+        .unwrap();
+
+        let diagnostics = merge_managed_bars_str(
+            &mut loaded.config,
+            r#"
+[shell.bars.top]
+style = "pills"
+size = 1
+border = "off"
+"#,
+        );
+
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let top = &loaded.config.shell.bars.top;
+        assert_eq!(top.style, "pills", "a written field wins over the user's");
+        assert_eq!(top.size, 1);
+        assert_eq!(top.border, Some(false));
+        assert_eq!(
+            top.color, "mauve",
+            "an unwritten field keeps the user's value"
+        );
+        assert!(top.enabled, "an unwritten field keeps the user's value");
+    }
+
+    // TP-CHROME-149: the overlay is per-edge — an edge it never mentions is
+    // an edge it never touches.
+    #[test]
+    fn bars_managed_overlay_leaves_unmentioned_edges_alone() {
+        let mut loaded = load_live_config_from_str(
+            r#"
+[shell.bars.bottom]
+enabled = true
+style = "plain"
+"#,
+        )
+        .unwrap();
+
+        let diagnostics =
+            merge_managed_bars_str(&mut loaded.config, "[shell.bars.top]\nstyle = \"pills\"\n");
+
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(loaded.config.shell.bars.bottom.style, "plain");
+        assert!(loaded.config.shell.bars.bottom.enabled);
+        assert_eq!(loaded.config.shell.bars.top.style, "pills");
+    }
+
+    // TP-CHROME-149: an empty overlay is a no-op, not a complaint — parity
+    // with the spaces overlay.
+    #[test]
+    fn bars_managed_overlay_accepts_an_empty_document() {
+        let mut loaded = load_live_config_from_str("").unwrap();
+        let before = loaded.config.shell.bars.clone();
+        let diagnostics = merge_managed_bars_str(&mut loaded.config, "");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(loaded.config.shell.bars, before);
+    }
+
+    // TP-CHROME-149: a machine file must never kill the user's config — a
+    // broken overlay is reported and skipped, and the bars stay what the
+    // user wrote.
+    #[test]
+    fn bars_managed_overlay_tolerates_a_broken_file() {
+        let mut loaded = load_live_config_from_str("[shell.bars.top]\nenabled = true\n").unwrap();
+        let diagnostics = merge_managed_bars_str(&mut loaded.config, "not toml [");
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert!(
+            diagnostics[0].contains("bars.managed.toml"),
+            "{diagnostics:?}"
+        );
+        assert!(
+            loaded.config.shell.bars.top.enabled,
+            "config stays untouched"
+        );
+    }
+
+    // TP-CHROME-149: `border` in the overlay is a word, not a bool, because
+    // the panel has three states to persist — auto (the style decides), on,
+    // off — and TOML has no way to write "explicitly none". Anything else is
+    // refused by name and the user's own border survives.
+    #[test]
+    fn bars_managed_border_speaks_auto_on_off_and_refuses_the_rest() {
+        let mut loaded = load_live_config_from_str("[shell.bars.top]\nborder = true\n").unwrap();
+
+        let diagnostics =
+            merge_managed_bars_str(&mut loaded.config, "[shell.bars.top]\nborder = \"auto\"\n");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(
+            loaded.config.shell.bars.top.border, None,
+            "auto clears an explicit border back to the style's choice"
+        );
+
+        let mut loaded = load_live_config_from_str("[shell.bars.top]\nborder = true\n").unwrap();
+        let diagnostics =
+            merge_managed_bars_str(&mut loaded.config, "[shell.bars.top]\nborder = \"weird\"\n");
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert!(diagnostics[0].contains("weird"), "{diagnostics:?}");
+        assert_eq!(
+            loaded.config.shell.bars.top.border,
+            Some(true),
+            "a refused word leaves the user's border standing"
+        );
+    }
+
+    // TP-CHROME-149: an out-of-range size is refused rather than clamped —
+    // the same doctrine `max_sections` follows — so a hand-edited overlay
+    // cannot smuggle past the range the spec promises.
+    #[test]
+    fn bars_managed_size_out_of_range_is_refused_by_name() {
+        let mut loaded = load_live_config_from_str("[shell.bars.top]\nsize = 4\n").unwrap();
+        let diagnostics =
+            merge_managed_bars_str(&mut loaded.config, "[shell.bars.top]\nsize = 99\n");
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert!(diagnostics[0].contains("99"), "{diagnostics:?}");
+        assert_eq!(
+            loaded.config.shell.bars.top.size, 4,
+            "the user's size survives a refused override"
+        );
     }
 
     #[test]
