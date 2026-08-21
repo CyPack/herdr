@@ -343,9 +343,13 @@ mod tests {
         // right of "+" (TP-TAB-SPLIT-01) — two more painted glyphs on the
         // strip, rects and structure untouched. Exactly the change this
         // digest exists to surface.
+        //
+        // Re-baselined 2026-08-21: the split pair moved from the "+"'s side
+        // to a pin at the strip's far right (TP-TAB-SPLIT-01 revised) — the
+        // same two glyphs, new cells. Structure untouched.
         assert_eq!(
             frame_digest(&frame),
-            "dcd45118d8664adb601ffcbe1ac216d2be1766e21704b6bd9dfaa0f52070bfe1"
+            "cc1a134554f919959ccda8f64ca99291e1eb3c540a2e08dd479594ab15e2bade"
         );
     }
 
