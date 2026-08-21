@@ -1417,6 +1417,7 @@ mod tests {
                 max_sections: COUNT as u16,
                 hide_when_focused: false,
                 style: String::new(),
+                background: String::new(),
             },
             ..Default::default()
         };

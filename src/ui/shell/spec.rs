@@ -164,7 +164,7 @@ const BAR_KEYS: &[KeySpec] = &[
     KeySpec {
         key: "style",
         value_type: "string",
-        range: "framed, islands, plain",
+        range: "framed, islands, plain, pills",
         default: "framed",
     },
     KeySpec {
@@ -178,6 +178,12 @@ const BAR_KEYS: &[KeySpec] = &[
         value_type: "string",
         range: "",
         default: "",
+    },
+    KeySpec {
+        key: "background",
+        value_type: "string",
+        range: "",
+        default: "the theme's general background",
     },
     KeySpec {
         key: "gradient",
@@ -216,6 +222,12 @@ const SECTION_KEYS: &[KeySpec] = &[
         value_type: "boolean",
         range: "",
         default: "false",
+    },
+    KeySpec {
+        key: "background",
+        value_type: "string",
+        range: "",
+        default: "the style's — pills: a dusty tone of the run's colour",
     },
     KeySpec {
         key: "color",
@@ -853,6 +865,7 @@ mod tests {
                 "style" => "\"islands\"".to_string(),
                 "border" => "true".to_string(),
                 "color" => "\"mauve\"".to_string(),
+                "background" => "\"bg\"".to_string(),
                 "gradient" => "[\"mauve\", \"teal\"]".to_string(),
                 "max_sections" => "8".to_string(),
                 "hide_when_focused" => "false".to_string(),
@@ -910,6 +923,7 @@ mod tests {
                 "group" => "\"sys\"".to_string(),
                 "border" => "true".to_string(),
                 "color" => "\"teal\"".to_string(),
+                "background" => "\"teal\"".to_string(),
                 other => panic!("no sample value for the section key {other:?}"),
             };
             if key != "group" {

@@ -1430,6 +1430,20 @@ pub(super) fn apply_context_menu_action(
             state.switch_tab(tab_idx);
             open_rename_active_tab(state, false);
         }
+        // TP-AGPANEL-47: the agent row's rename rides the exact road the tab
+        // strip's rename takes — focus the row's tab, open the same input —
+        // so there is one rename semantics, not two.
+        (
+            ContextMenuKind::AgentEntry {
+                ws_idx, tab_idx, ..
+            },
+            Some("Rename tab..."),
+        ) => {
+            state.selected = ws_idx;
+            state.active = Some(ws_idx);
+            state.switch_tab(tab_idx);
+            open_rename_active_tab(state, false);
+        }
         (ContextMenuKind::Tab { ws_idx, tab_idx }, Some("Close")) => {
             state.selected = ws_idx;
             state.active = Some(ws_idx);
@@ -2290,6 +2304,18 @@ impl App {
                 open_new_tab_dialog(&mut self.state);
             }
             (ContextMenuKind::Tab { ws_idx, tab_idx }, Some("Rename")) => {
+                self.focus_workspace_idx_via_api(ws_idx);
+                self.focus_tab_idx_via_api(tab_idx);
+                open_rename_active_tab(&mut self.state, false);
+            }
+            // TP-AGPANEL-47: and on the road the mouse actually takes — #91's
+            // lesson: a menu item absent from this body is a dead affordance.
+            (
+                ContextMenuKind::AgentEntry {
+                    ws_idx, tab_idx, ..
+                },
+                Some("Rename tab..."),
+            ) => {
                 self.focus_workspace_idx_via_api(ws_idx);
                 self.focus_tab_idx_via_api(tab_idx);
                 open_rename_active_tab(&mut self.state, false);
@@ -3354,6 +3380,42 @@ mod tests {
         assert_eq!(state.selected, 0);
         assert_eq!(state.mode, Mode::ConfirmClose);
         assert_eq!(state.workspaces.len(), 2);
+    }
+
+    // TP-AGPANEL-47: and on the road the mouse actually takes — #91's class:
+    // an arm present on the keyboard body and absent here is a dead
+    // affordance that looks shipped.
+    #[test]
+    fn the_agent_row_rename_verb_works_on_the_mouse_road_too() {
+        let mut app = app_with_test_workspaces(&["main", "issue"]);
+        app.state.workspaces[1].test_add_tab(Some("mouse-name"));
+        let pane_id = app.state.workspaces[1].tabs[1].root_pane;
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::ContextMenu;
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::AgentEntry {
+                ws_idx: 1,
+                tab_idx: 1,
+                pane_id,
+                session_id: None,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        let idx = menu
+            .items()
+            .iter()
+            .position(|item| *item == "Rename tab...")
+            .expect("the verb is offered");
+
+        app.apply_context_menu_action_via_api(menu, idx);
+
+        assert_eq!(app.state.active, Some(1));
+        assert_eq!(app.state.workspaces[1].active_tab_index(), 1);
+        assert_eq!(app.state.mode, Mode::RenameTab);
+        assert_eq!(app.state.name_input, "mouse-name");
     }
 
     #[test]
@@ -5353,7 +5415,55 @@ mod tests {
             list: MenuListState::new(0),
         };
 
-        assert_eq!(menu.items(), vec!["Close agent"]);
+        assert_eq!(menu.items(), vec!["Rename tab...", "Close agent"]);
+    }
+
+    // TP-AGPANEL-47: naming comes first here too — the agent row is where a
+    // running tab is addressed, and until now the only road to its name went
+    // through the tab strip. The verb needs no chat behind the tab: the name
+    // being renamed is the tab's own.
+    #[test]
+    fn the_agent_row_rename_verb_opens_the_tab_name_input() {
+        let mut state = AppState::test_new();
+        let mut terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
+        let mut one = Workspace::test_new("one");
+        one.test_add_tab(Some("old-name"));
+        let pane_id = one.tabs[1].root_pane;
+        let two = Workspace::test_new("two");
+        state.workspaces = vec![two, one];
+        state.active = Some(0);
+        state.selected = 0;
+        state.mode = Mode::ContextMenu;
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::AgentEntry {
+                ws_idx: 1,
+                tab_idx: 1,
+                pane_id,
+                session_id: None,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        let idx = menu
+            .items()
+            .iter()
+            .position(|item| *item == "Rename tab...")
+            .expect("the verb is offered");
+
+        apply_context_menu_action(&mut state, &mut terminal_runtimes, menu, idx);
+
+        assert_eq!(state.active, Some(1), "the row's workspace takes focus");
+        assert_eq!(
+            state.workspaces[1].active_tab_index(),
+            1,
+            "the row's tab is the one being renamed"
+        );
+        assert_eq!(state.mode, Mode::RenameTab, "the tab name input is open");
+        assert_eq!(
+            state.name_input, "old-name",
+            "the input starts from the name the tab wears"
+        );
     }
 
     // TP-CHAT-MOVE-08 (P4): filing a daily chat offers EVERY workspace. The
@@ -5426,7 +5536,10 @@ mod tests {
             list: MenuListState::new(0),
         };
 
-        assert_eq!(menu.items(), vec!["Move to...", "Close agent"]);
+        assert_eq!(
+            menu.items(),
+            vec!["Rename tab...", "Move to...", "Close agent"]
+        );
     }
 
     // TP-AGPANEL-28 (N3 + N4): the verb opens the target picker carrying THIS

@@ -496,6 +496,19 @@ pub(crate) enum BarConfigProblem {
         first: String,
         second: String,
     },
+    /// Two members of one group naming two different backdrops.
+    GroupBackgroundsDisagree {
+        edge: &'static str,
+        name: String,
+        first: String,
+        second: String,
+    },
+    /// A `background` on an ungrouped fill — a spacer carries no chrome to
+    /// backdrop, so the line would never be read.
+    FillSectionWithBackground {
+        edge: &'static str,
+        index: usize,
+    },
     /// A `hide` action carrying a command line.
     ///
     /// It runs nothing and opens nothing — the one thing it acts on is the bar
@@ -790,6 +803,21 @@ impl std::fmt::Display for BarConfigProblem {
                 "shell.bars.{edge}'s group {name:?} is asked to be {first:?} and {second:?} \
                  at once; the frame is one frame, so its members must agree"
             ),
+            Self::GroupBackgroundsDisagree {
+                edge,
+                name,
+                first,
+                second,
+            } => write!(
+                formatter,
+                "shell.bars.{edge}'s group {name:?} is asked to sit on {first:?} and \
+                 {second:?} at once; the backdrop is one band, so its members must agree"
+            ),
+            Self::FillSectionWithBackground { edge, index } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}] sets background, but it is a fill — \
+                 a spacer carries no chrome, so the key is never read"
+            ),
             Self::HideActionWithCommand { edge, index, field } => write!(
                 formatter,
                 "shell.bars.{edge}.sections[{index}].action sets {field}, but \"hide\" runs \
@@ -963,10 +991,11 @@ enum BarStyle {
     Framed,
     Islands,
     Plain,
+    Pills,
 }
 
 /// The accepted style names, for the refusal that offers them.
-const BAR_STYLE_NAMES: &[&str] = &["framed", "islands", "plain"];
+const BAR_STYLE_NAMES: &[&str] = &["framed", "islands", "plain", "pills"];
 
 /// Read one bar's style, refusing a name this build does not know.
 ///
@@ -977,6 +1006,7 @@ fn bar_style(config: &ShellBarConfig) -> Result<BarStyle, &str> {
         "" | "framed" => Ok(BarStyle::Framed),
         "islands" => Ok(BarStyle::Islands),
         "plain" => Ok(BarStyle::Plain),
+        "pills" => Ok(BarStyle::Pills),
         other => Err(other),
     }
 }
@@ -992,8 +1022,52 @@ fn resolved_bar_border(config: &ShellBarConfig) -> bool {
         .border
         .unwrap_or(match bar_style(config).unwrap_or(BarStyle::Framed) {
             BarStyle::Framed => true,
-            BarStyle::Islands | BarStyle::Plain => false,
+            BarStyle::Islands | BarStyle::Plain | BarStyle::Pills => false,
         })
+}
+
+/// What this bar's strip is painted on, once the theme has had its say.
+///
+/// TP-CHROME-147: unwritten means the theme's general background — the surface
+/// the bar sits in — rather than the floating-panel tone it used to borrow. An
+/// explicit key wins, and reads through the same token table every other bar
+/// colour does, so `background = "reset"` still means "show the terminal".
+pub(crate) fn resolved_bar_background(config: &ShellBarConfig, palette: &Palette) -> Color {
+    if config.background.trim().is_empty() {
+        return palette.bg;
+    }
+    bar_color(&config.background, palette)
+}
+
+/// Whether this section is a spacer — the one kind that never carries chrome.
+fn section_is_fill(section: &ShellBarSectionConfig) -> bool {
+    section.kind.trim().eq_ignore_ascii_case("fill")
+}
+
+/// The two tones a pill wears, derived from one colour family.
+///
+/// TP-CHROME-148: `pastel` is the colour mixed into the backdrop at 28% — a
+/// dusty band of the same family — and `vivid` is the colour itself, which is
+/// what the theme palettes already are. Total over every `Color`: a `reset`
+/// backdrop has no channels to mix into, so the pastel falls back to the
+/// colour scaled toward black (dark terminals are what `reset` is for in
+/// practice), and an indexed colour has no channels to derive from at all, so
+/// the honest answer is the colour unchanged rather than an invented tone.
+pub(crate) fn pill_tones(color: Color, backdrop: Color) -> (Color, Color) {
+    let mix =
+        |own: u8, back: u8| -> u8 { ((u16::from(own) * 28 + u16::from(back) * 72) / 100) as u8 };
+    let pastel = match (color, backdrop) {
+        (Color::Rgb(r, g, b), Color::Rgb(br, bg, bb)) => {
+            Color::Rgb(mix(r, br), mix(g, bg), mix(b, bb))
+        }
+        (Color::Rgb(r, g, b), _) => Color::Rgb(
+            (u16::from(r) * 30 / 100) as u8,
+            (u16::from(g) * 30 / 100) as u8,
+            (u16::from(b) * 30 / 100) as u8,
+        ),
+        _ => color,
+    };
+    (pastel, color)
 }
 
 /// Whether one ungrouped section wears its own frame, once the style has had
@@ -1007,8 +1081,10 @@ fn resolved_section_border(bar: &ShellBarConfig, section: &ShellBarSectionConfig
             // bar, which is exactly what the style exists to avoid asking
             // for. Writing `border = true` on a fill still frames it — the
             // explicit key wins, as it does everywhere else.
-            BarStyle::Islands => !section.kind.trim().eq_ignore_ascii_case("fill"),
-            BarStyle::Framed | BarStyle::Plain => false,
+            BarStyle::Islands => !section_is_fill(section),
+            // Pills are filled bands, not frames: the style's chrome comes
+            // from `island_runs` as `RunChrome::Pill`, never from a border.
+            BarStyle::Framed | BarStyle::Plain | BarStyle::Pills => false,
         })
 }
 
@@ -1162,7 +1238,13 @@ pub(crate) fn shell_bar_config_problems(
         }
         match island_runs(bar, edge) {
             Ok(runs) => {
-                for run in runs {
+                // TP-CHROME-148: only a stroked frame needs rows for its
+                // stroke; a pill is a filled band and fits wherever its
+                // sections do.
+                for run in runs
+                    .iter()
+                    .filter(|run| matches!(run.chrome, RunChrome::Frame))
+                {
                     if let Err(problem) =
                         section_border_problem(true, edge, run.start, bar_across(bar))
                     {
@@ -1249,10 +1331,13 @@ fn section_policies(
     // layout costs the division, because dropping one section would renumber
     // every one after it, and the number is the only name a section has.
     let runs = island_runs(bar, edge)?;
-    if let Some(run) = runs.first() {
-        // Every run needs the same rows, so asking the first is asking all —
+    if let Some(run) = runs
+        .iter()
+        .find(|run| matches!(run.chrome, RunChrome::Frame))
+    {
+        // Every frame needs the same rows, so asking the first is asking all —
         // and the refusal names the first framed section, which is the line
-        // the person will go and look at.
+        // the person will go and look at. Pills ask for no rows (TP-CHROME-148).
         section_border_problem(true, edge, run.start, across)?;
     }
     let mut policies = configs
@@ -1268,7 +1353,10 @@ fn section_policies(
     // solo island is a run of one, paying both, which is exactly the two
     // cells it always paid.
     // TP-CHROME-133: an island's declared size is what goes inside its frame.
-    for run in &runs {
+    for run in runs
+        .iter()
+        .filter(|run| matches!(run.chrome, RunChrome::Frame))
+    {
         for index in [run.start, run.end] {
             let policy = &mut policies[index];
             *policy = match *policy {
@@ -1496,10 +1584,22 @@ fn section_border_problem(
 /// what lets one rule size every frame: a run's first section pays one cell
 /// for the left edge, its last pays one for the right, and a run of one pays
 /// both — the two cells a solo always paid.
+///
+/// TP-CHROME-148: `chrome` says what the run paints as. A `Frame` is the
+/// stroked island this type was born for, and pays the frame's cells; a
+/// `Pill` is a filled band — same run arithmetic, no stroke, no cell charged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct IslandRun {
     start: usize,
     end: usize,
+    chrome: RunChrome,
+}
+
+/// What a chromed run paints as: a stroked frame or a filled pill.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RunChrome {
+    Frame,
+    Pill,
 }
 
 /// Every island on one bar, in order — or the first reason the layout of
@@ -1514,14 +1614,32 @@ fn island_runs(
     let mut runs: Vec<IslandRun> = Vec::new();
     let mut closed: Vec<&str> = Vec::new();
     let mut index = 0usize;
+    let pills = matches!(bar_style(bar), Ok(BarStyle::Pills));
     while index < bar.sections.len() {
         let section = &bar.sections[index];
         let name = section.group.trim();
         if name.is_empty() {
+            let fill = section_is_fill(section);
+            // TP-CHROME-148: a spacer carries no chrome to backdrop, so a
+            // written background on one is a line nothing reads — refused,
+            // like every other dead line on this surface.
+            if fill && !section.background.trim().is_empty() {
+                return Err(BarConfigProblem::FillSectionWithBackground { edge, index });
+            }
             if resolved_section_border(bar, section) {
                 runs.push(IslandRun {
                     start: index,
                     end: index,
+                    chrome: RunChrome::Frame,
+                });
+            } else if !fill && (pills || !section.background.trim().is_empty()) {
+                // The pills style chromes every section it reaches; a written
+                // `background` is the same request made one section at a
+                // time, whatever the style — the per-object road.
+                runs.push(IslandRun {
+                    start: index,
+                    end: index,
+                    chrome: RunChrome::Pill,
                 });
             }
             index += 1;
@@ -1542,9 +1660,11 @@ fn island_runs(
             });
         }
 
-        // Walk the run, holding the one tone its writers are allowed.
+        // Walk the run, holding the one tone — and the one backdrop — its
+        // writers are allowed.
         let start = index;
         let mut tone: Option<&str> = None;
+        let mut backdrop: Option<&str> = None;
         while index < bar.sections.len() {
             let member = &bar.sections[index];
             if member.group.trim() != name {
@@ -1568,11 +1688,33 @@ fn island_runs(
                     Some(_) => {}
                 }
             }
+            // TP-CHROME-148: one band, one backdrop — the same agreement the
+            // tone keeps, because both are one fact about one rectangle.
+            let written_backdrop = member.background.trim();
+            if !written_backdrop.is_empty() {
+                match backdrop {
+                    None => backdrop = Some(written_backdrop),
+                    Some(first) if first != written_backdrop => {
+                        return Err(BarConfigProblem::GroupBackgroundsDisagree {
+                            edge,
+                            name: name.to_string(),
+                            first: first.to_string(),
+                            second: written_backdrop.to_string(),
+                        });
+                    }
+                    Some(_) => {}
+                }
+            }
             index += 1;
         }
         runs.push(IslandRun {
             start,
             end: index - 1,
+            chrome: if pills {
+                RunChrome::Pill
+            } else {
+                RunChrome::Frame
+            },
         });
         closed.push(name);
     }
@@ -2012,6 +2154,19 @@ pub(crate) struct IslandSlot {
     pub(crate) tint: BarTint,
     pub(crate) first: bool,
     pub(crate) last: bool,
+    /// What this run paints as (TP-CHROME-148): the stroked frame islands
+    /// have always been, or a filled pill — the band and the text that sits
+    /// on it, resolved here so the paint pass computes no colour of its own.
+    pub(crate) chrome: SlotChrome,
+}
+
+/// A run's painted form, colours resolved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SlotChrome {
+    /// The stroked island; `backdrop` is a written inner fill, if any.
+    Frame { backdrop: Option<Color> },
+    /// The filled band: its backdrop and the vivid text it carries.
+    Pill { bg: Color, fg: Color },
 }
 
 /// One edge's sections' chrome, in the same order and addressed by the same
@@ -2232,13 +2387,35 @@ fn bar_section_chrome(
             .iter()
             .map(|member| member.color.trim())
             .find(|written| !written.is_empty());
-        Some(IslandSlot {
-            tint: match tone {
-                Some(written) => tint_from_parts(written, &[], palette, edge),
-                None => inherited,
+        let tint = match tone {
+            Some(written) => tint_from_parts(written, &[], palette, edge),
+            None => inherited,
+        };
+        // TP-CHROME-148: and one backdrop, resolved the same way — the run's
+        // single written `background`, or the style's answer.
+        let written_backdrop = config.sections[run.start..=run.end]
+            .iter()
+            .map(|member| member.background.trim())
+            .find(|written| !written.is_empty())
+            .map(|written| bar_color(written, palette));
+        let chrome = match run.chrome {
+            RunChrome::Frame => SlotChrome::Frame {
+                backdrop: written_backdrop,
             },
+            RunChrome::Pill => {
+                let vivid = tint.start_color();
+                let (derived, _) = pill_tones(vivid, resolved_bar_background(config, palette));
+                SlotChrome::Pill {
+                    bg: written_backdrop.unwrap_or(derived),
+                    fg: vivid,
+                }
+            }
+        };
+        Some(IslandSlot {
+            tint,
             first: index == run.start,
             last: index == run.end,
+            chrome,
         })
     };
     let entries = config
@@ -3071,6 +3248,13 @@ impl BarTint {
         }
     }
 
+    /// The tint's leading colour — what a pill's text is drawn in. A gradient
+    /// tint answers with its first stop; a pill is a handful of cells, the
+    /// same reason islands carry no per-section gradient.
+    pub(crate) const fn start_color(&self) -> Color {
+        self.start
+    }
+
     /// The tone at `position` of `span` cells along the bar's long axis.
     ///
     /// A solid tint ignores both, which is what makes this the only colour
@@ -3108,6 +3292,13 @@ pub(crate) struct BarColors {
     pub bottom: BarTint,
     pub left: BarTint,
     pub right: BarTint,
+    /// What each strip is painted on (TP-CHROME-147). Beside the tint for the
+    /// same reason the tint is beside the geometry: a colour never moves a
+    /// rectangle, so neither belongs in the cache key.
+    pub bg_top: Color,
+    pub bg_bottom: Color,
+    pub bg_left: Color,
+    pub bg_right: Color,
 }
 
 impl BarColors {
@@ -3115,11 +3306,16 @@ impl BarColors {
     /// in a const context before any palette exists.
     pub(crate) const DEFAULT_CONST: Self = {
         let peach = BarTint::solid(Color::Rgb(250, 179, 135));
+        let base = Color::Rgb(30, 30, 46);
         Self {
             top: peach,
             bottom: peach,
             left: peach,
             right: peach,
+            bg_top: base,
+            bg_bottom: base,
+            bg_left: base,
+            bg_right: base,
         }
     };
 
@@ -3129,6 +3325,10 @@ impl BarColors {
             bottom: bar_tint(&config.bottom, palette, "bottom"),
             left: bar_tint(&config.left, palette, "left"),
             right: bar_tint(&config.right, palette, "right"),
+            bg_top: resolved_bar_background(&config.top, palette),
+            bg_bottom: resolved_bar_background(&config.bottom, palette),
+            bg_left: resolved_bar_background(&config.left, palette),
+            bg_right: resolved_bar_background(&config.right, palette),
         }
     }
 
@@ -3138,6 +3338,16 @@ impl BarColors {
             RegionId::BottomBar => self.bottom,
             RegionId::AppDock => self.left,
             _ => self.right,
+        }
+    }
+
+    /// What this region's strip is painted on (TP-CHROME-147).
+    pub(crate) const fn background_for(self, region: RegionId) -> Color {
+        match region {
+            RegionId::TopBar => self.bg_top,
+            RegionId::BottomBar => self.bg_bottom,
+            RegionId::AppDock => self.bg_left,
+            _ => self.bg_right,
         }
     }
 }
@@ -3228,6 +3438,14 @@ pub(crate) const BAR_COLOR_TOKENS: &[BarColorToken] = &[
     BarColorToken {
         name: "accent",
         read: |palette| palette.accent,
+    },
+    BarColorToken {
+        name: "bg",
+        read: |palette| palette.bg,
+    },
+    BarColorToken {
+        name: "panel",
+        read: |palette| palette.panel_bg,
     },
     BarColorToken {
         name: "text",
@@ -7429,6 +7647,358 @@ mod tests {
         let mut insists = bar;
         insists.border = Some(true);
         assert!(resolved_bar_border(&insists));
+    }
+
+    // TP-CHROME-147: an unwritten background is the theme's own general
+    // background — the surface the bar sits in — not the floating-panel tone
+    // it used to borrow. Reported live: "the bar's background is the same
+    // colour as the empty part of the tab strip; it should follow whatever
+    // the theme's general background is."
+    #[test]
+    fn an_unwritten_bar_background_is_the_themes_own_background() {
+        let palette = Palette::catppuccin();
+        let config = ShellBarConfig::default();
+
+        assert_eq!(resolved_bar_background(&config, &palette), palette.bg);
+        assert_ne!(
+            palette.bg, palette.panel_bg,
+            "precondition: this theme distinguishes the two"
+        );
+    }
+
+    // TP-CHROME-147: an explicit key wins, and reads through the same token
+    // table every other bar colour does.
+    #[test]
+    fn a_written_bar_background_wins_as_token_and_as_literal() {
+        let palette = Palette::catppuccin();
+
+        let token = ShellBarConfig {
+            background: "mauve".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(resolved_bar_background(&token, &palette), palette.mauve);
+
+        let literal = ShellBarConfig {
+            background: "#102030".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolved_bar_background(&literal, &palette),
+            Color::Rgb(16, 32, 48)
+        );
+
+        let reset = ShellBarConfig {
+            background: "reset".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(resolved_bar_background(&reset, &palette), Color::Reset);
+    }
+
+    // TP-CHROME-147: every edge carries its own answer, so one bar's
+    // background cannot be read for another's.
+    #[test]
+    fn each_edge_carries_its_own_background() {
+        let palette = Palette::catppuccin();
+        let mut config = ShellBarsConfig::default();
+        config.top.background = "red".to_string();
+        config.bottom.background = "green".to_string();
+
+        let colors = BarColors::from_config(&config, &palette);
+        assert_eq!(colors.background_for(RegionId::TopBar), palette.red);
+        assert_eq!(colors.background_for(RegionId::BottomBar), palette.green);
+        assert_eq!(
+            colors.background_for(RegionId::AppDock),
+            palette.bg,
+            "an edge nobody wrote still follows the theme"
+        );
+    }
+
+    // TP-CHROME-148: the derived tones stay in one family — the pastel is
+    // the colour mixed into the backdrop, the vivid is the colour itself —
+    // and the two never collapse into each other on an RGB pair.
+    #[test]
+    fn pill_tones_derive_a_distinct_pastel_and_vivid_in_every_family() {
+        let palette = Palette::catppuccin();
+        let backdrop = palette.bg;
+        for family in [
+            palette.yellow,
+            palette.red,
+            palette.blue,
+            palette.green,
+            palette.mauve,
+        ] {
+            let (pastel, vivid) = pill_tones(family, backdrop);
+            assert_eq!(vivid, family, "vivid is the family colour itself");
+            assert_ne!(pastel, vivid, "the band must not swallow the text");
+            assert_ne!(pastel, backdrop, "the band must stand off the bar");
+        }
+    }
+
+    // TP-CHROME-148 boundary: a `reset` backdrop has no channels to mix
+    // into, so the pastel falls back to the colour scaled toward black; an
+    // indexed colour has no channels at all and comes back unchanged.
+    #[test]
+    fn pill_tones_survive_a_reset_backdrop_and_an_indexed_colour() {
+        let (pastel, vivid) = pill_tones(Color::Rgb(200, 100, 50), Color::Reset);
+        assert_eq!(vivid, Color::Rgb(200, 100, 50));
+        assert_eq!(pastel, Color::Rgb(60, 30, 15));
+
+        let (pastel, vivid) = pill_tones(Color::Yellow, Color::Reset);
+        assert_eq!((pastel, vivid), (Color::Yellow, Color::Yellow));
+    }
+
+    // TP-CHROME-148: under the pills style every non-fill section is a pill
+    // — pastel band, vivid text, each in its own family — and the spacer
+    // between them carries no chrome at all.
+    #[test]
+    fn the_pills_style_makes_a_pill_of_every_section_but_the_fill() {
+        let palette = Palette::catppuccin();
+        let mut first = fixed_section(6);
+        first.color = "yellow".to_string();
+        let spacer = ShellBarSectionConfig {
+            kind: "fill".to_string(),
+            ..Default::default()
+        };
+        let mut last = fixed_section(5);
+        last.color = "red".to_string();
+        let config = ShellBarsConfig {
+            top: ShellBarConfig {
+                enabled: true,
+                size: 1,
+                style: "pills".to_string(),
+                sections: vec![first, spacer, last],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let chrome = ShellBarChrome::from_config(&config, true, &palette);
+        let slot = chrome
+            .island_for(RegionId::TopBar, 0)
+            .expect("the first section is a pill");
+        match slot.chrome {
+            SlotChrome::Pill { bg, fg } => {
+                assert_eq!(fg, palette.yellow);
+                assert_eq!(bg, pill_tones(palette.yellow, palette.bg).0);
+            }
+            other => panic!("expected a pill, got {other:?}"),
+        }
+        assert!(
+            chrome.island_for(RegionId::TopBar, 1).is_none(),
+            "the fill is not a pill"
+        );
+        match chrome
+            .island_for(RegionId::TopBar, 2)
+            .expect("the last section is a pill")
+            .chrome
+        {
+            SlotChrome::Pill { fg, .. } => assert_eq!(fg, palette.red),
+            other => panic!("expected a pill, got {other:?}"),
+        }
+    }
+
+    // TP-CHROME-148: a group under pills is ONE pill — the run closes over
+    // its members and every member wears the same band.
+    #[test]
+    fn a_group_under_pills_is_one_pill() {
+        let palette = Palette::catppuccin();
+        let mut cpu = fixed_section(4);
+        cpu.group = "sys".to_string();
+        cpu.color = "teal".to_string();
+        let mut mem = fixed_section(4);
+        mem.group = "sys".to_string();
+        let mut swap = fixed_section(4);
+        swap.group = "sys".to_string();
+        let config = ShellBarsConfig {
+            top: ShellBarConfig {
+                enabled: true,
+                size: 1,
+                style: "pills".to_string(),
+                sections: vec![cpu, mem, swap],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let chrome = ShellBarChrome::from_config(&config, true, &palette);
+        let first = chrome.island_for(RegionId::TopBar, 0).expect("in the run");
+        let middle = chrome.island_for(RegionId::TopBar, 1).expect("in the run");
+        let last = chrome.island_for(RegionId::TopBar, 2).expect("in the run");
+        assert!(first.first && !first.last);
+        assert!(!middle.first && !middle.last);
+        assert!(!last.first && last.last);
+        assert_eq!(first.chrome, middle.chrome, "one band for the whole run");
+        assert_eq!(middle.chrome, last.chrome);
+        match first.chrome {
+            SlotChrome::Pill { fg, .. } => assert_eq!(fg, palette.teal),
+            other => panic!("expected a pill, got {other:?}"),
+        }
+    }
+
+    // TP-CHROME-148: explicit wins upward too — `border = true` under pills
+    // is a stroked frame, exactly what the key says.
+    #[test]
+    fn an_explicit_border_under_pills_stays_a_frame() {
+        let palette = Palette::catppuccin();
+        let mut framed = fixed_section(6);
+        framed.border = Some(true);
+        let config = ShellBarsConfig {
+            top: ShellBarConfig {
+                enabled: true,
+                size: 3,
+                style: "pills".to_string(),
+                sections: vec![framed],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let chrome = ShellBarChrome::from_config(&config, true, &palette);
+        let slot = chrome
+            .island_for(RegionId::TopBar, 0)
+            .expect("a frame slot");
+        assert!(
+            matches!(slot.chrome, SlotChrome::Frame { backdrop: None }),
+            "an explicit border strokes a frame: {:?}",
+            slot.chrome
+        );
+    }
+
+    // TP-CHROME-148: a written `background` is the per-object road — one
+    // pill on a plain bar, no style asked for.
+    #[test]
+    fn a_written_background_on_a_plain_bar_makes_that_section_a_pill() {
+        let palette = Palette::catppuccin();
+        let mut banded = fixed_section(6);
+        banded.background = "#102030".to_string();
+        let config = ShellBarsConfig {
+            top: ShellBarConfig {
+                enabled: true,
+                size: 1,
+                style: "plain".to_string(),
+                sections: vec![banded, fixed_section(4)],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let chrome = ShellBarChrome::from_config(&config, true, &palette);
+        match chrome
+            .island_for(RegionId::TopBar, 0)
+            .expect("the banded section carries chrome")
+            .chrome
+        {
+            SlotChrome::Pill { bg, .. } => assert_eq!(bg, Color::Rgb(16, 32, 48)),
+            other => panic!("expected a pill, got {other:?}"),
+        }
+        assert!(
+            chrome.island_for(RegionId::TopBar, 1).is_none(),
+            "the unwritten neighbour stays bare on a plain bar"
+        );
+    }
+
+    // TP-CHROME-148: on an island the same key fills the frame's inside.
+    #[test]
+    fn a_written_background_on_an_island_fills_its_inside() {
+        let palette = Palette::catppuccin();
+        let mut island = fixed_section(6);
+        island.background = "red".to_string();
+        let config = ShellBarsConfig {
+            top: ShellBarConfig {
+                enabled: true,
+                size: 3,
+                style: "islands".to_string(),
+                sections: vec![island],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let chrome = ShellBarChrome::from_config(&config, true, &palette);
+        let slot = chrome.island_for(RegionId::TopBar, 0).expect("an island");
+        assert_eq!(
+            slot.chrome,
+            SlotChrome::Frame {
+                backdrop: Some(palette.red)
+            }
+        );
+    }
+
+    // TP-CHROME-148: a one-row pills bar stands — a pill asks for no rows —
+    // where the same sections framed are refused for thinness.
+    #[test]
+    fn a_one_row_pills_bar_is_accepted_where_frames_are_refused() {
+        let pills = ShellBarConfig {
+            enabled: true,
+            size: 1,
+            style: "pills".to_string(),
+            sections: vec![fixed_section(6)],
+            ..Default::default()
+        };
+        assert!(section_policies(&pills, "top", 8, bar_across(&pills)).is_ok());
+        // And the pill charges no frame cells: six stays six.
+        let policies = section_policies(&pills, "top", 8, bar_across(&pills)).expect("stands");
+        assert_eq!(policies[0], TrackPolicy::Fixed { cells: 6 });
+
+        let framed = ShellBarConfig {
+            enabled: true,
+            size: 1,
+            style: "islands".to_string(),
+            sections: vec![fixed_section(6)],
+            ..Default::default()
+        };
+        assert!(
+            section_policies(&framed, "top", 8, bar_across(&framed)).is_err(),
+            "the same strip framed has no rows for a stroke"
+        );
+    }
+
+    // TP-CHROME-148: dead lines are refused — a background on an ungrouped
+    // fill, and two members of one group asking for two bands.
+    #[test]
+    fn a_background_on_a_fill_and_a_disagreeing_group_are_refused() {
+        let mut dead = ShellBarSectionConfig {
+            kind: "fill".to_string(),
+            ..Default::default()
+        };
+        dead.background = "red".to_string();
+        let bar = ShellBarConfig {
+            enabled: true,
+            size: 1,
+            style: "pills".to_string(),
+            sections: vec![dead],
+            ..Default::default()
+        };
+        let problem = section_policies(&bar, "top", 8, bar_across(&bar))
+            .expect_err("a spacer has no chrome to backdrop");
+        assert!(
+            matches!(problem, BarConfigProblem::FillSectionWithBackground { .. }),
+            "the refusal names the dead line: {problem}"
+        );
+
+        let mut red = fixed_section(4);
+        red.group = "sys".to_string();
+        red.background = "red".to_string();
+        let mut green = fixed_section(4);
+        green.group = "sys".to_string();
+        green.background = "green".to_string();
+        let disagreeing = ShellBarConfig {
+            enabled: true,
+            size: 1,
+            style: "pills".to_string(),
+            sections: vec![red, green],
+            ..Default::default()
+        };
+        let problem = section_policies(&disagreeing, "top", 8, bar_across(&disagreeing))
+            .expect_err("one band cannot sit on two backdrops");
+        assert!(
+            matches!(
+                &problem,
+                BarConfigProblem::GroupBackgroundsDisagree { first, second, .. }
+                    if first == "red" && second == "green"
+            ),
+            "the refusal quotes both words: {problem}"
+        );
     }
 
     /// S3 · `plain` is the third leg: no panel, no frames, just the strip.

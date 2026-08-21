@@ -39,10 +39,14 @@ pub(crate) use model::{
     ComponentPlacement, RegionId, RegionRects, RegionSize, ShellChild, ShellDirection, ShellLayout,
     ShellNode, TrackPolicy,
 };
+/// Test-only: the ui render tests assert the derived pill tones against the
+/// painted buffer; production reads them through the chrome, never directly.
+#[cfg(test)]
+pub(crate) use source::pill_tones;
 pub(crate) use source::{
     bar_color, bar_edge_for, derive_desktop_shell_layout, shell_config_problems, BarColors,
-    BarEdge, BarEdges, BarTint, SecondaryPresentation, SectionAction, SectionWidget,
-    ShellBarChrome, ShellBars, SidebarChrome,
+    BarEdge, BarEdges, BarTint, IslandSlot, SecondaryPresentation, SectionAction, SectionWidget,
+    ShellBarChrome, ShellBars, SidebarChrome, SlotChrome,
 };
 pub(crate) use spec::{render_text as render_shell_spec_text, shell_spec};
 pub(crate) use template::ShellTemplateId;

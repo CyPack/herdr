@@ -106,6 +106,11 @@ use crate::workspace::Workspace;
 pub struct Palette {
     /// Primary accent (highlight, active borders).
     pub accent: Color,
+    /// The theme's general background — what the editing surface itself is
+    /// painted on (Catppuccin's `base`). TP-CHROME-147: bars follow THIS by
+    /// default, not `panel_bg`; a strip that matched the floating-panel tone
+    /// read as a different surface from the one it belongs to.
+    pub bg: Color,
     /// Background for floating panels, overlays, and modals.
     pub panel_bg: Color,
     /// Subtle surface background for selected/focused items.
@@ -143,6 +148,7 @@ impl Palette {
     pub fn catppuccin() -> Self {
         Self {
             accent: Color::Rgb(137, 180, 250), // blue
+            bg: Color::Rgb(30, 30, 46),        // base
             panel_bg: Color::Rgb(24, 24, 37),
             surface0: Color::Rgb(49, 50, 68),
             surface1: Color::Rgb(69, 71, 90),
@@ -165,6 +171,7 @@ impl Palette {
     pub fn catppuccin_latte() -> Self {
         Self {
             accent: Color::Rgb(30, 102, 245),
+            bg: Color::Rgb(239, 241, 245), // base
             panel_bg: Color::Rgb(239, 241, 245),
             surface0: Color::Rgb(204, 208, 218),
             surface1: Color::Rgb(188, 192, 204),
@@ -187,6 +194,7 @@ impl Palette {
     pub fn terminal() -> Self {
         Self {
             accent: Color::Blue,
+            bg: Color::Reset,
             panel_bg: Color::Reset,
             surface0: Color::Reset,
             surface1: Color::DarkGray,
@@ -209,6 +217,7 @@ impl Palette {
     pub fn tokyo_night() -> Self {
         Self {
             accent: Color::Rgb(122, 162, 247), // blue
+            bg: Color::Rgb(26, 27, 38),
             panel_bg: Color::Rgb(26, 27, 38),
             surface0: Color::Rgb(36, 40, 59),
             surface1: Color::Rgb(65, 72, 104),
@@ -231,6 +240,7 @@ impl Palette {
     pub fn tokyo_night_day() -> Self {
         Self {
             accent: Color::Rgb(46, 125, 233),
+            bg: Color::Rgb(225, 226, 231),
             panel_bg: Color::Rgb(225, 226, 231),
             surface0: Color::Rgb(196, 200, 218),
             surface1: Color::Rgb(168, 174, 203),
@@ -253,6 +263,7 @@ impl Palette {
     pub fn dracula() -> Self {
         Self {
             accent: Color::Rgb(189, 147, 249), // purple
+            bg: Color::Rgb(40, 42, 54),
             panel_bg: Color::Rgb(40, 42, 54),
             surface0: Color::Rgb(68, 71, 90),
             surface1: Color::Rgb(98, 114, 164),
@@ -275,6 +286,7 @@ impl Palette {
     pub fn nord() -> Self {
         Self {
             accent: Color::Rgb(136, 192, 208), // frost
+            bg: Color::Rgb(46, 52, 64),
             panel_bg: Color::Rgb(46, 52, 64),
             surface0: Color::Rgb(59, 66, 82),
             surface1: Color::Rgb(67, 76, 94),
@@ -297,6 +309,7 @@ impl Palette {
     pub fn gruvbox() -> Self {
         Self {
             accent: Color::Rgb(215, 153, 33), // yellow
+            bg: Color::Rgb(40, 40, 40),
             panel_bg: Color::Rgb(40, 40, 40),
             surface0: Color::Rgb(60, 56, 54),
             surface1: Color::Rgb(80, 73, 69),
@@ -319,6 +332,7 @@ impl Palette {
     pub fn gruvbox_light() -> Self {
         Self {
             accent: Color::Rgb(7, 102, 120),
+            bg: Color::Rgb(251, 241, 199),
             panel_bg: Color::Rgb(251, 241, 199),
             surface0: Color::Rgb(235, 219, 178),
             surface1: Color::Rgb(213, 196, 161),
@@ -341,6 +355,7 @@ impl Palette {
     pub fn one_dark() -> Self {
         Self {
             accent: Color::Rgb(97, 175, 239), // blue
+            bg: Color::Rgb(40, 44, 52),
             panel_bg: Color::Rgb(40, 44, 52),
             surface0: Color::Rgb(44, 49, 58),
             surface1: Color::Rgb(62, 68, 81),
@@ -363,6 +378,7 @@ impl Palette {
     pub fn one_light() -> Self {
         Self {
             accent: Color::Rgb(64, 120, 242),
+            bg: Color::Rgb(250, 250, 250),
             panel_bg: Color::Rgb(250, 250, 250),
             surface0: Color::Rgb(240, 240, 241),
             surface1: Color::Rgb(229, 229, 230),
@@ -385,6 +401,7 @@ impl Palette {
     pub fn solarized() -> Self {
         Self {
             accent: Color::Rgb(38, 139, 210), // blue
+            bg: Color::Rgb(0, 43, 54),
             panel_bg: Color::Rgb(0, 43, 54),
             surface0: Color::Rgb(7, 54, 66),
             surface1: Color::Rgb(88, 110, 117),
@@ -407,6 +424,7 @@ impl Palette {
     pub fn solarized_light() -> Self {
         Self {
             accent: Color::Rgb(38, 139, 210),
+            bg: Color::Rgb(253, 246, 227),
             panel_bg: Color::Rgb(253, 246, 227),
             surface0: Color::Rgb(238, 232, 213),
             surface1: Color::Rgb(147, 161, 161),
@@ -429,6 +447,7 @@ impl Palette {
     pub fn kanagawa() -> Self {
         Self {
             accent: Color::Rgb(126, 156, 216), // blue
+            bg: Color::Rgb(31, 31, 40),
             panel_bg: Color::Rgb(31, 31, 40),
             surface0: Color::Rgb(42, 42, 55),
             surface1: Color::Rgb(54, 54, 70),
@@ -451,6 +470,7 @@ impl Palette {
     pub fn kanagawa_lotus() -> Self {
         Self {
             accent: Color::Rgb(77, 105, 155),
+            bg: Color::Rgb(242, 236, 188),
             panel_bg: Color::Rgb(242, 236, 188),
             surface0: Color::Rgb(220, 213, 172),
             surface1: Color::Rgb(201, 203, 209),
@@ -473,6 +493,7 @@ impl Palette {
     pub fn rose_pine() -> Self {
         Self {
             accent: Color::Rgb(196, 167, 231), // iris
+            bg: Color::Rgb(25, 23, 36),
             panel_bg: Color::Rgb(25, 23, 36),
             surface0: Color::Rgb(31, 29, 46),
             surface1: Color::Rgb(38, 35, 58),
@@ -495,6 +516,7 @@ impl Palette {
     pub fn rose_pine_dawn() -> Self {
         Self {
             accent: Color::Rgb(144, 122, 169),
+            bg: Color::Rgb(250, 244, 237),
             panel_bg: Color::Rgb(250, 244, 237),
             surface0: Color::Rgb(242, 233, 225),
             surface1: Color::Rgb(255, 250, 243),
@@ -517,6 +539,7 @@ impl Palette {
     pub fn vesper() -> Self {
         Self {
             accent: Color::Rgb(255, 199, 153),
+            bg: Color::Rgb(26, 26, 26),
             panel_bg: Color::Rgb(26, 26, 26),
             surface0: Color::Rgb(35, 35, 35),
             surface1: Color::Rgb(40, 40, 40),
@@ -565,6 +588,9 @@ impl Palette {
         use crate::config::parse_color;
         if let Some(c) = &custom.accent {
             self.accent = parse_color(c);
+        }
+        if let Some(c) = &custom.bg {
+            self.bg = parse_color(c);
         }
         if let Some(c) = &custom.panel_bg {
             self.panel_bg = parse_color(c);
@@ -2723,11 +2749,14 @@ impl ContextMenuState {
             // filing its conversation somewhere is the chat row's job, which
             // already has a verb for it.
             ContextMenuKind::ClosedAgent { .. } => vec!["Revive", "Forget"],
+            // TP-AGPANEL-47: naming first (TP-CHAT-NAME-01's ordering), the
+            // irreversible close last. The rename needs no chat identity —
+            // the name being renamed is the tab's own.
             ContextMenuKind::AgentEntry { session_id, .. } => {
                 if session_id.is_some() {
-                    vec!["Move to...", "Close agent"]
+                    vec!["Rename tab...", "Move to...", "Close agent"]
                 } else {
-                    vec!["Close agent"]
+                    vec!["Rename tab...", "Close agent"]
                 }
             }
             ContextMenuKind::ChatMoveTarget { targets, .. } => {
