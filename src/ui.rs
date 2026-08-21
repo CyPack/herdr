@@ -274,6 +274,14 @@ fn resize_background_tab_panes_to_area(
             if app.active == Some(ws_idx) && tab_idx == ws.active_tab_index() {
                 continue;
             }
+            // TP-STAGE-SBS-01: the side-by-side right half's active tab is
+            // on screen at the split rect — the full-size sweep would fight
+            // the split resize every frame.
+            if app.side_by_side.map(|sbs| sbs.right) == Some(ws_idx)
+                && tab_idx == ws.active_tab_index()
+            {
+                continue;
+            }
             // Another display is watching this tab, so its own render pass
             // owns the size. Sweeping it here would make the last render in
             // the frame resize every tab to its own display. TP-MCF-SIZE-01
@@ -457,6 +465,46 @@ fn compute_view_internal(
         .and_then(|i| app.workspaces.get(i))
         .map(|ws| desktop_tab_bar_and_terminal_area(app, ws, main_area))
         .unwrap_or((Rect::default(), main_area));
+    // TP-STAGE-SBS-01: with a side-by-side pairing on, the stage splits in
+    // two — the ACTIVE workspace keeps the left of both the strip and the
+    // content, the named right half gets its own strip row and content rect.
+    // The pairing self-heals here rather than at every consumer: a right
+    // index that vanished, equals the active, or a stage too narrow to
+    // split, and the mode is dropped whole.
+    let side_by_side = match app.side_by_side {
+        Some(sbs)
+            if terminal_surface_active
+                && Some(sbs.right) != app.active
+                && app.workspaces.get(sbs.right).is_some()
+                && terminal_area.width >= 40 =>
+        {
+            Some(sbs)
+        }
+        Some(_) => {
+            app.side_by_side = None;
+            None
+        }
+        None => None,
+    };
+    let (tab_bar_rect, terminal_area, right_halves) = match side_by_side {
+        Some(sbs) => {
+            let ratio = u16::from(sbs.ratio_percent.clamp(20, 80));
+            let left_w = (terminal_area.width.saturating_sub(1)) * ratio / 100;
+            let right_x = terminal_area.x + left_w + 1;
+            let right_w = terminal_area.width.saturating_sub(left_w).saturating_sub(1);
+            let left_strip = Rect::new(tab_bar_rect.x, tab_bar_rect.y, left_w, tab_bar_rect.height);
+            let right_strip = Rect::new(right_x, tab_bar_rect.y, right_w, tab_bar_rect.height);
+            let left_area = Rect::new(
+                terminal_area.x,
+                terminal_area.y,
+                left_w,
+                terminal_area.height,
+            );
+            let right_area = Rect::new(right_x, terminal_area.y, right_w, terminal_area.height);
+            (left_strip, left_area, Some((sbs, right_strip, right_area)))
+        }
+        None => (tab_bar_rect, terminal_area, None),
+    };
     let file_manager_locations = sync_file_manager_locations_view(app, terminal_area);
     let file_manager_miller = sync_miller_view(app, file_manager_locations.layout.trail);
     let file_manager_trail = sync_trail_view(app, file_manager_locations.layout.trail);
@@ -591,6 +639,23 @@ fn compute_view_internal(
             split_borders: Vec::new(),
         }
     };
+    let right_surface = right_halves.map(|(sbs, strip_rect, area)| {
+        let layout = tab_surface::compute_tab_surface_for(
+            app,
+            terminal_runtimes,
+            sbs.right,
+            area,
+            resize_panes,
+            cell_size,
+        );
+        crate::app::state::RightSurfaceView {
+            ws_idx: sbs.right,
+            area,
+            strip_rect,
+            pane_infos: layout.pane_infos,
+            split_borders: layout.split_borders,
+        }
+    });
     let agent_attachment_action_area =
         panes::compute_agent_attachment_action_area(app, &pane_infos);
     let agent_worktree_action_area = panes::compute_agent_worktree_action_area(app, &pane_infos);
@@ -668,6 +733,7 @@ fn compute_view_internal(
         mobile_header_hits: crate::ui::MobileHeaderHitAreas::default(),
         toast_hit_area,
         pane_infos,
+        right_surface,
         split_borders,
     };
     app.sync_copy_mode_search_geometry();
@@ -846,6 +912,7 @@ fn compute_mobile_view(
         mobile_header_hits: header_hits,
         toast_hit_area,
         pane_infos,
+        right_surface: None,
         split_borders,
     };
     app.sync_copy_mode_search_geometry();
@@ -1233,7 +1300,12 @@ impl compose::Component for BaseLayer {
                     .and_then(|ws_idx| app.workspaces.get(ws_idx))
                     .is_some()
                 {
-                    render_tab_surface(app, terminal_runtimes, app.view.tab_surface(), frame)
+                    render_tab_surface(app, terminal_runtimes, app.view.tab_surface(), frame);
+                    // TP-STAGE-SBS-01: the other half — its own strip, its
+                    // own panes, a one-column divider between the worlds.
+                    if let Some(right) = app.view.right_surface.as_ref() {
+                        render_side_by_side_right(app, terminal_runtimes, frame, right);
+                    }
                 } else {
                     render_empty(app, frame, terminal_area)
                 }
@@ -1245,6 +1317,58 @@ impl compose::Component for BaseLayer {
         render_notifications(app, frame, terminal_area);
         render_popup_pane(app, terminal_runtimes, frame, terminal_area);
     }
+}
+
+/// TP-STAGE-SBS-01: paint the side-by-side right half — divider column, a
+/// minimal strip naming the workspace and its tabs (presentation only in the
+/// POC: the strip takes no clicks yet), then the panes through the same
+/// named-workspace road the left half uses.
+fn render_side_by_side_right(
+    app: &AppState,
+    terminal_runtimes: &TerminalRuntimeRegistry,
+    frame: &mut Frame,
+    right: &crate::app::state::RightSurfaceView,
+) {
+    let p = &app.palette;
+    let divider_x = right.area.x.saturating_sub(1);
+    let full_height = right.strip_rect.height.saturating_add(right.area.height);
+    for row in 0..full_height {
+        let y = right.strip_rect.y.saturating_add(row);
+        let buf = frame.buffer_mut();
+        if divider_x < buf.area.right() && y < buf.area.bottom() {
+            let cell = &mut buf[(divider_x, y)];
+            cell.set_symbol("\u{2502}");
+            cell.set_style(ratatui::style::Style::default().fg(p.surface1));
+        }
+    }
+    if let Some(ws) = app.workspaces.get(right.ws_idx) {
+        let mut strip = format!(" {} ", ws.display_name());
+        for (idx, _tab) in ws.tabs.iter().enumerate() {
+            let marker = if idx == ws.active_tab_index() {
+                "*"
+            } else {
+                " "
+            };
+            strip.push_str(&format!("[{}{marker}]", idx + 1));
+        }
+        let text = self::text::truncate_end(&strip, right.strip_rect.width as usize);
+        frame.render_widget(
+            ratatui::widgets::Paragraph::new(text).style(
+                ratatui::style::Style::default()
+                    .bg(p.panel_bg)
+                    .fg(p.subtext0),
+            ),
+            right.strip_rect,
+        );
+    }
+    panes::render_panes_for(
+        app,
+        terminal_runtimes,
+        frame,
+        right.ws_idx,
+        &right.pane_infos,
+        &right.split_borders,
+    );
 }
 
 /// Layer 1: the single active interactive overlay selected by `app.mode`,
@@ -2984,6 +3108,118 @@ mod tests {
     // TP-C2.1-VIEWSTATE: desktop compute_view snapshots CURRENT name and action
     // rects from one geometry source, then clears both when FM closes so stale
     // terminal coordinates can never remain clickable.
+
+    // TP-STAGE-SBS-01: with a pairing on, compute carves the stage in two —
+    // the active workspace's panes stay strictly left of the divider, the
+    // right half's panes strictly right of it, and the divider column
+    // belongs to neither.
+    #[test]
+    fn the_side_by_side_split_computes_two_disjoint_surfaces() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("solak"), Workspace::test_new("sagdic")];
+        app.active = Some(0);
+        app.mode = Mode::Terminal;
+        app.ensure_test_terminals();
+        assert!(app.enter_side_by_side(1));
+
+        compute_view(&mut app, Rect::new(0, 0, 120, 30));
+
+        let right = app
+            .view
+            .right_surface
+            .as_ref()
+            .expect("the right surface was computed");
+        assert_eq!(right.ws_idx, 1);
+        let divider_x = right.area.x - 1;
+        assert!(
+            !app.view.pane_infos.is_empty() && !right.pane_infos.is_empty(),
+            "both halves carry panes"
+        );
+        for info in &app.view.pane_infos {
+            assert!(
+                info.rect.right() <= divider_x,
+                "a left pane crossed the divider: {:?} vs x={divider_x}",
+                info.rect
+            );
+        }
+        for info in &right.pane_infos {
+            assert!(
+                info.rect.x >= right.area.x,
+                "a right pane crossed back: {:?}",
+                info.rect
+            );
+        }
+        assert_eq!(
+            right.strip_rect.y,
+            app.view.terminal_area.y - 1,
+            "the right strip rides directly above its content"
+        );
+    }
+
+    // TP-STAGE-SBS-01: the paint is real — the divider column and the right
+    // half's own strip land in the buffer, so the split is a thing the eye
+    // gets, not only a geometry the tests read.
+    #[test]
+    fn the_stage_paints_the_divider_and_the_right_strip() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("solak"), Workspace::test_new("sagdic")];
+        app.active = Some(0);
+        app.mode = Mode::Terminal;
+        app.ensure_test_terminals();
+        assert!(app.enter_side_by_side(1));
+        compute_view(&mut app, Rect::new(0, 0, 120, 30));
+        let (divider_x, strip) = {
+            let right = app.view.right_surface.as_ref().expect("right computed");
+            (right.area.x - 1, right.strip_rect)
+        };
+
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).expect("test backend");
+        terminal
+            .draw(|frame| render(&app, frame))
+            .expect("the split stage draws");
+        let buffer = terminal.backend().buffer();
+        assert_eq!(
+            buffer[(divider_x, strip.y + 2)].symbol(),
+            "\u{2502}",
+            "the divider column is painted"
+        );
+        let strip_text: String = (strip.x..strip.right())
+            .map(|x| buffer[(x, strip.y)].symbol().to_string())
+            .collect();
+        assert!(
+            strip_text.contains("sagdic"),
+            "the right strip names its workspace: {strip_text:?}"
+        );
+    }
+
+    // TP-STAGE-SBS-01: a pairing that stopped making sense heals on compute
+    // — right vanished, right == active, or a stage too narrow — rather
+    // than every consumer re-checking it.
+    #[test]
+    fn an_invalid_pairing_heals_on_compute() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("solo")];
+        app.active = Some(0);
+        app.mode = Mode::Terminal;
+        app.ensure_test_terminals();
+        assert!(
+            !app.enter_side_by_side(0),
+            "the same world twice is refused at the door"
+        );
+        app.side_by_side = Some(crate::app::state::SideBySideView {
+            right: 7,
+            ratio_percent: 50,
+        });
+        compute_view(&mut app, Rect::new(0, 0, 120, 30));
+        assert!(
+            app.side_by_side.is_none(),
+            "a vanished right half healed away"
+        );
+        assert!(app.view.right_surface.is_none());
+    }
+
     #[test]
     fn compute_view_snapshots_and_clears_file_manager_row_areas() {
         use std::sync::atomic::{AtomicU64, Ordering};

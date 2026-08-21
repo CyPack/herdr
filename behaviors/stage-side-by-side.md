@@ -1,0 +1,10 @@
+# Stage · Side-by-side halves (fork behaviors)
+
+The macro feature's first slice: two workspaces on one stage, each half under
+its own strip — "iki ayrı terminal açmışız gibi". The POC is presentation
+only: the LEFT half is the active workspace and keeps every input; the right
+half paints and resizes but takes no clicks yet.
+
+| id | behavior | why it matters | tests |
+|---|---|---|---|
+| TP-STAGE-SBS-01 | `enter_side_by_side(right)` pairs the ACTIVE workspace with `right` at a 50% split: compute carves strip and content into two rects with a one-column divider owned by neither; the left half keeps `view.pane_infos` (every existing consumer unchanged), the right half is computed through NEW named-workspace seams (`compute_pane_infos_for` / `compute_tab_surface_for` / `render_panes_for`) whose active-workspace wrappers keep old callers byte for byte; the right half's active tab is excluded from the full-size background sweep; pairing the active with itself is refused at the door, and a pairing that stopped making sense — right vanished, right == active, stage under 40 columns — heals whole on compute; the paint is real (divider column + the right half's own strip land in the buffer) | The user's ask is two worlds side by side with their own strips; a divider column owned by a pane would clip one world into the other; consumers re-checking validity each would drift — one heal site cannot; and the background sweep resizing the right half to full width every frame would make the split flicker between two sizes | `the_side_by_side_split_computes_two_disjoint_surfaces`, `an_invalid_pairing_heals_on_compute`, `the_stage_paints_the_divider_and_the_right_strip` |
