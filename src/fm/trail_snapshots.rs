@@ -156,12 +156,27 @@ impl TrailCursorMoveOutcome {
     }
 }
 
+/// One typed name filter over one directory's column.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TrailFilter {
+    pub(crate) directory: PathBuf,
+    pub(crate) pattern: String,
+    /// The pattern lowered once — matching folds case on every row, and
+    /// lowering per row per frame is work the type can do at write time.
+    lowered: String,
+}
+
 /// Loaded snapshots kept index-aligned with a `TrailState`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TrailSnapshots {
     cols: Vec<TrailColSnapshot>,
     show_hidden: bool,
     detail: Option<TrailDetail>,
+    /// The active-column name filter, keyed to the DIRECTORY it was typed
+    /// in rather than a column index: trail columns shift as branches open
+    /// and close, and a filter that followed an index would silently start
+    /// filtering somebody else's directory (TP-FM-FILTER-02).
+    filter: Option<TrailFilter>,
 }
 
 impl TrailSnapshots {
@@ -206,7 +221,49 @@ impl TrailSnapshots {
             cols: Vec::new(),
             show_hidden,
             detail: None,
+            filter: None,
         }
+    }
+
+    /// Install (or retype) the filter for one directory's column. An empty
+    /// pattern is a live editing state that hides nothing, not a cleared
+    /// filter — clearing is its own verb.
+    pub(crate) fn set_filter(&mut self, directory: PathBuf, pattern: String) {
+        let lowered = pattern.to_lowercase();
+        self.filter = Some(TrailFilter {
+            directory,
+            pattern,
+            lowered,
+        });
+    }
+
+    pub(crate) fn clear_filter(&mut self) {
+        self.filter = None;
+    }
+
+    pub(crate) fn filter(&self) -> Option<&TrailFilter> {
+        self.filter.as_ref()
+    }
+
+    /// The projection the filter makes over `col`: `Some(true indices)` when
+    /// the filter names this column's directory, `None` when the column is
+    /// not the filtered one. Indices are into `col.entries()` unchanged, so
+    /// a row keeps being the entry it says it is (TP-FM-FILTER-01).
+    pub(crate) fn filtered_indices(&self, col: &TrailColSnapshot) -> Option<Vec<usize>> {
+        let filter = self.filter.as_ref()?;
+        if filter.directory != col.directory() {
+            return None;
+        }
+        Some(
+            col.entries()
+                .iter()
+                .enumerate()
+                .filter(|(_, entry)| {
+                    filter.lowered.is_empty() || entry.name.to_lowercase().contains(&filter.lowered)
+                })
+                .map(|(idx, _)| idx)
+                .collect(),
+        )
     }
 
     pub(crate) fn cols(&self) -> &[TrailColSnapshot] {
@@ -418,6 +475,22 @@ impl TrailSnapshots {
                 self.cols.push(loaded);
             }
         }
+        self.heal_orphan_filter();
+    }
+
+    /// TP-FM-FILTER-02: a filter whose directory is no longer any visible
+    /// column is state about a world that left the screen — drop it here
+    /// rather than let it ambush the next visit to that directory.
+    fn heal_orphan_filter(&mut self) {
+        if let Some(filter) = &self.filter {
+            let still_visible = self
+                .cols
+                .iter()
+                .any(|col| col.directory == filter.directory);
+            if !still_visible {
+                self.filter = None;
+            }
+        }
     }
 
     /// Fail-closed folder selection: read the target first; branch the trail
@@ -429,6 +502,10 @@ impl TrailSnapshots {
         col_idx: usize,
         child: &Path,
     ) -> FmDirectoryStatus {
+        // TP-FM-FILTER-02: entering a directory leaves the filtered context —
+        // a pattern typed over one listing silently narrowing the next one
+        // is how "where did my files go" tickets are made.
+        self.clear_filter();
         if col_idx >= trail.cols().len() {
             return FmDirectoryStatus::Unavailable;
         }
@@ -578,6 +655,7 @@ impl TrailSnapshots {
         let Some(col) = self.cols.get(col_idx) else {
             return TrailCursorMoveOutcome::Rejected;
         };
+        let allowed = self.filtered_indices(col);
         let entries = &col.snapshot.entries;
         if entries.is_empty() {
             return TrailCursorMoveOutcome::Rejected;
@@ -585,13 +663,32 @@ impl TrailSnapshots {
         let current = trail
             .cursor_path_in_col(col_idx)
             .and_then(|selected| entries.iter().position(|entry| entry.path == selected));
-        let landed = match current {
-            Some(index) => index
-                .saturating_add_signed(delta)
-                .min(entries.len().saturating_sub(1)),
-            // No selection yet: the first step lands on the edge row.
-            None if delta >= 0 => 0,
-            None => entries.len() - 1,
+        // With a filter on this column, movement walks the MATCHES: positions
+        // clamp inside the allowed list and the landed value stays a TRUE
+        // entry index, so operations keep targeting what the person sees
+        // (TP-FM-FILTER-01).
+        let landed = if let Some(allowed) = &allowed {
+            if allowed.is_empty() {
+                return TrailCursorMoveOutcome::Rejected;
+            }
+            let current_pos = current.and_then(|idx| allowed.iter().position(|&a| a == idx));
+            let landed_pos = match current_pos {
+                Some(pos) => pos
+                    .saturating_add_signed(delta)
+                    .min(allowed.len().saturating_sub(1)),
+                None if delta >= 0 => 0,
+                None => allowed.len() - 1,
+            };
+            allowed[landed_pos]
+        } else {
+            match current {
+                Some(index) => index
+                    .saturating_add_signed(delta)
+                    .min(entries.len().saturating_sub(1)),
+                // No selection yet: the first step lands on the edge row.
+                None if delta >= 0 => 0,
+                None => entries.len() - 1,
+            }
         };
         let entry = &entries[landed];
         let directory = entry.kind.is_directory_target();
@@ -1604,5 +1701,170 @@ mod tests {
         );
         assert_eq!(trail, before, "trail unchanged");
         assert_eq!(snaps.cols().len(), 1, "snapshots unchanged");
+    }
+    // TP-FM-FILTER-01: the filter is a projection over the column it was
+    // typed in — only matching names are offered, movement walks the matches
+    // and reports TRUE entry indices, so every operation still targets the
+    // entry it says it does.
+    #[test]
+    fn a_filter_projects_only_matching_names_and_moves_within_them() {
+        let td = TempDir::new("filter");
+        for name in ["apple", "banana", "cherry", "apricot"] {
+            fs::create_dir_all(td.root.join(name)).expect("mk");
+        }
+        let mut trail = TrailState::new(&td.root);
+        let mut snaps = TrailSnapshots::new(false);
+        snaps.sync(&trail);
+
+        snaps.set_filter(td.root.clone(), "ap".to_string());
+        let names: Vec<String> = {
+            let col = &snaps.cols()[0];
+            snaps
+                .filtered_indices(col)
+                .expect("the filter names this column")
+                .into_iter()
+                .map(|idx| col.entries()[idx].name.clone())
+                .collect()
+        };
+        assert_eq!(names, vec!["apple", "apricot"]);
+
+        let apple_idx = snaps.cols()[0]
+            .entries()
+            .iter()
+            .position(|e| e.name == "apple")
+            .unwrap();
+        let apricot_idx = snaps.cols()[0]
+            .entries()
+            .iter()
+            .position(|e| e.name == "apricot")
+            .unwrap();
+        assert_eq!(
+            snaps.move_cursor(&mut trail, 1),
+            TrailCursorMoveOutcome::Moved {
+                entry_index: apple_idx,
+                directory: true
+            },
+            "the first step lands on the first MATCH"
+        );
+        assert_eq!(
+            snaps.move_cursor(&mut trail, 1),
+            TrailCursorMoveOutcome::Moved {
+                entry_index: apricot_idx,
+                directory: true
+            },
+            "the next step skips the non-matches between"
+        );
+        assert_eq!(
+            snaps.move_cursor(&mut trail, 1),
+            TrailCursorMoveOutcome::Unchanged {
+                entry_index: apricot_idx,
+                directory: true
+            },
+            "movement clamps at the last match"
+        );
+    }
+
+    // TP-FM-FILTER-01: no matches, no moves — a cursor that walked rows the
+    // person cannot see would hand operations a ghost target.
+    #[test]
+    fn a_filter_with_no_matches_rejects_movement() {
+        let td = TempDir::new("nomatch");
+        fs::create_dir_all(td.root.join("alpha")).expect("mk");
+        let mut trail = TrailState::new(&td.root);
+        let mut snaps = TrailSnapshots::new(false);
+        snaps.sync(&trail);
+        snaps.set_filter(td.root.clone(), "zzz".to_string());
+        assert_eq!(
+            snaps
+                .filtered_indices(&snaps.cols()[0])
+                .expect("the filter names this column")
+                .len(),
+            0
+        );
+        assert_eq!(
+            snaps.move_cursor(&mut trail, 1),
+            TrailCursorMoveOutcome::Rejected
+        );
+    }
+
+    // TP-FM-FILTER-02: the filter keys to its DIRECTORY, not to a column
+    // index — a column showing another directory is untouched, and an empty
+    // pattern matches everything (the editing state before the first key).
+    #[test]
+    fn the_filter_keys_to_its_directory_and_an_empty_pattern_is_everything() {
+        let td = TempDir::new("keyed");
+        let alpha = td.root.join("alpha");
+        fs::create_dir_all(alpha.join("inner")).expect("mk");
+        let mut trail = TrailState::new(&td.root);
+        let mut snaps = TrailSnapshots::new(false);
+        snaps.sync(&trail);
+        snaps.set_filter(td.root.clone(), String::new());
+        assert_eq!(
+            snaps
+                .filtered_indices(&snaps.cols()[0])
+                .expect("named")
+                .len(),
+            snaps.cols()[0].entries().len(),
+            "an empty pattern hides nothing"
+        );
+        snaps.set_filter(td.root.clone(), "alp".to_string());
+        // the live proof of the directory key: with the filter ACTIVE on the
+        // root, a sibling column showing another directory is untouched —
+        // this is what keeps a pattern from leaking into parent/preview
+        // columns, independent of the clear-on-enter below.
+        snaps.select_dir(&mut trail, 0, &alpha);
+        // select_dir cleared it; retype over ALPHA and look back at ROOT:
+        snaps.set_filter(alpha.clone(), "inn".to_string());
+        assert!(
+            snaps.filtered_indices(&snaps.cols()[0]).is_none(),
+            "a filter typed over one directory must not narrow another column"
+        );
+        snaps.select_dir(&mut trail, 0, &alpha);
+        let alpha_col_idx = trail.active_col();
+        assert!(alpha_col_idx > 0, "entering branched a new column");
+        assert!(
+            snaps
+                .filtered_indices(&snaps.cols()[alpha_col_idx])
+                .is_none(),
+            "the filter does not reach a column it was not typed in"
+        );
+        assert!(
+            snaps.filter().is_none(),
+            "entering a directory cleared the filter whole"
+        );
+    }
+
+    // TP-FM-FILTER-02: matching folds case — a filter that missed "Apple"
+    // for "ap" would teach that filtering is about capitalisation.
+    #[test]
+    fn the_filter_matches_case_insensitively() {
+        let td = TempDir::new("case");
+        fs::create_dir_all(td.root.join("Apple")).expect("mk");
+        let trail = TrailState::new(&td.root);
+        let mut snaps = TrailSnapshots::new(false);
+        snaps.sync(&trail);
+        snaps.set_filter(td.root.clone(), "aP".to_string());
+        assert_eq!(
+            snaps
+                .filtered_indices(&snaps.cols()[0])
+                .expect("named")
+                .len(),
+            1
+        );
+    }
+
+    // TP-FM-FILTER-02: a filter whose directory is no longer any visible
+    // column is dropped by `sync` — state for a world that left the screen
+    // self-heals instead of ambushing the next visit.
+    #[test]
+    fn a_filter_for_a_vanished_column_is_dropped_on_sync() {
+        let td = TempDir::new("vanish");
+        fs::create_dir_all(td.root.join("alpha")).expect("mk");
+        let trail = TrailState::new(&td.root);
+        let mut snaps = TrailSnapshots::new(false);
+        snaps.sync(&trail);
+        snaps.set_filter(td.root.join("elsewhere"), "x".to_string());
+        snaps.sync(&trail);
+        assert!(snaps.filter().is_none(), "the orphan filter healed away");
     }
 }

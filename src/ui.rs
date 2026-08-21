@@ -3057,6 +3057,7 @@ mod tests {
                 crate::app::state::FileManagerHeaderAction::Paste,
                 crate::app::state::FileManagerHeaderAction::NewFolder,
                 crate::app::state::FileManagerHeaderAction::Delete,
+                crate::app::state::FileManagerHeaderAction::Search,
                 crate::app::state::FileManagerHeaderAction::CopyPath,
             ]
         );

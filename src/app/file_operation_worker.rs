@@ -513,6 +513,15 @@ impl crate::app::App {
             // onto the clipboard through the same request every other copy
             // rides. No selection needed — the path being copied is the
             // header's own.
+            // TP-FM-FILTER-03: the header's search is the `/` key by mouse —
+            // it opens the same editor on the same state road.
+            FileManagerHeaderAction::Search => {
+                let Some(file_manager) = self.state.file_manager.as_mut() else {
+                    return false;
+                };
+                file_manager.begin_trail_filter();
+                true
+            }
             FileManagerHeaderAction::CopyPath => {
                 let Some(file_manager) = self.state.file_manager.as_ref() else {
                     return false;

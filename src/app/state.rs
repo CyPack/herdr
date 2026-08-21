@@ -893,6 +893,9 @@ pub enum FileManagerHeaderAction {
     /// siblings; the clipboard write rides `request_clipboard_write`, the
     /// road every other copy in the app takes.
     CopyPath,
+    /// Open the trail filter editor — the `/` key's road, reachable by
+    /// mouse (TP-FM-FILTER-03).
+    Search,
 }
 
 /// Client-local native-FM operation kind. Runtime execution stays in the
@@ -1071,11 +1074,12 @@ impl FileManagerOperationState {
 }
 
 impl FileManagerHeaderAction {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Copy,
         Self::Paste,
         Self::NewFolder,
         Self::Delete,
+        Self::Search,
         Self::CopyPath,
     ];
 
@@ -1085,6 +1089,7 @@ impl FileManagerHeaderAction {
             Self::Paste => "[paste]",
             Self::NewFolder => "[new folder]",
             Self::Delete => "[delete]",
+            Self::Search => "[search]",
             Self::CopyPath => "[copy path]",
         }
     }
@@ -1139,7 +1144,7 @@ pub struct FileManagerActionState {
 pub struct FileManagerActionBarModel {
     pub selection: Option<FileManagerActionBarSelection>,
     pub clipboard_count: usize,
-    pub actions: [FileManagerActionState; 5],
+    pub actions: [FileManagerActionState; 6],
 }
 
 impl FileManagerActionBarModel {
@@ -7389,6 +7394,7 @@ mod tests {
                 FileManagerHeaderAction::Delete => delete_reason,
                 FileManagerHeaderAction::Paste
                 | FileManagerHeaderAction::NewFolder
+                | FileManagerHeaderAction::Search
                 | FileManagerHeaderAction::CopyPath => None,
             };
             FileManagerActionState {
