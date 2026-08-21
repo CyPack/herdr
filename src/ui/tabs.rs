@@ -168,24 +168,30 @@ fn trailing_tab_controls_x(tab_hit_areas: &[Rect], fallback_x: u16) -> u16 {
         .unwrap_or(fallback_x)
 }
 
-/// The two split buttons, laid left-to-right from `start_x`. Whole width or
-/// nothing (TP-MOD-35's rule): a sliver would paint as blank cells that still
-/// answer a press — an invisible button is worse than a missing one.
-fn split_button_hit_areas(start_x: u16, area_right: u16, y: u16) -> (Rect, Rect) {
-    let fit = |x: u16| -> Rect {
-        if area_right.saturating_sub(x) >= SPLIT_BUTTON_WIDTH {
-            Rect::new(x, y, SPLIT_BUTTON_WIDTH, 1)
-        } else {
-            Rect::default()
-        }
+/// The two split buttons, pinned flush to the strip's right edge — the down
+/// split ends at the edge, the right split sits just before it. `seats_width`
+/// is the free width at the edge; whole seats only (TP-MOD-35's rule: a
+/// sliver would paint as blank cells that still answer a press), and a lone
+/// seat goes to the right split, the first of the pair.
+fn pinned_split_button_hit_areas(seats_width: u16, area_right: u16, y: u16) -> (Rect, Rect) {
+    let slot = |end: u16| {
+        Rect::new(
+            end.saturating_sub(SPLIT_BUTTON_WIDTH),
+            y,
+            SPLIT_BUTTON_WIDTH,
+            1,
+        )
     };
-    let right_button = fit(start_x);
-    let down_button = if right_button.width > 0 {
-        fit(right_button.x + right_button.width)
+    if seats_width >= SPLIT_BUTTON_WIDTH.saturating_mul(2) {
+        (
+            slot(area_right.saturating_sub(SPLIT_BUTTON_WIDTH)),
+            slot(area_right),
+        )
+    } else if seats_width >= SPLIT_BUTTON_WIDTH {
+        (slot(area_right), Rect::default())
     } else {
-        Rect::default()
-    };
-    (right_button, down_button)
+        (Rect::default(), Rect::default())
+    }
 }
 
 fn max_tab_scroll(ws: &crate::workspace::Workspace, area: Rect) -> usize {
@@ -251,18 +257,41 @@ pub(crate) fn compute_tab_bar_view(
     let all_tabs = layout_tab_hit_areas(ws, all_tabs_area, 0);
     let overflow = all_tabs.iter().any(|rect| rect.width == 0);
     if !overflow {
+        // TP-TAB-SPLIT-01: the split buttons are pinned to the strip's far
+        // right the way the stage tabs are pinned to its far left
+        // (TP-FTAB-ENTRY-05). A seat is carved out only when the carving
+        // leaves the tab layout untouched — the layout is recomputed inside
+        // the narrower area and must come back identical, because
+        // `layout_tab_hit_areas` squeezes a tab before it drops one, and a
+        // squeezed tab is the reservation making the strip worse. Tier by
+        // tier: both buttons, the right one alone, none.
+        let mut reserved_split_width = 0;
+        for candidate in [SPLIT_BUTTON_WIDTH.saturating_mul(2), SPLIT_BUTTON_WIDTH] {
+            let candidate_area = Rect::new(
+                tabs_x,
+                area.y,
+                tabs_width
+                    .saturating_sub(NEW_TAB_WIDTH)
+                    .saturating_sub(candidate),
+                area.height,
+            );
+            if layout_tab_hit_areas(ws, candidate_area, 0) == all_tabs {
+                reserved_split_width = candidate;
+                break;
+            }
+        }
         let new_tab_x = trailing_tab_controls_x(&all_tabs, tabs_x);
         let new_tab_hit_area = Rect::new(
             new_tab_x,
             area.y,
-            area_right.saturating_sub(new_tab_x).min(NEW_TAB_WIDTH),
+            area_right
+                .saturating_sub(reserved_split_width)
+                .saturating_sub(new_tab_x)
+                .min(NEW_TAB_WIDTH),
             1,
         );
-        let (split_right_hit_area, split_down_hit_area) = split_button_hit_areas(
-            new_tab_hit_area.x + new_tab_hit_area.width,
-            area_right,
-            area.y,
-        );
+        let (split_right_hit_area, split_down_hit_area) =
+            pinned_split_button_hit_areas(reserved_split_width, area_right, area.y);
         return TabBarView {
             scroll: 0,
             tab_hit_areas: all_tabs,
@@ -314,11 +343,11 @@ pub(crate) fn compute_tab_bar_view(
         area_right.saturating_sub(new_tab_x).min(NEW_TAB_WIDTH),
         1,
     );
-    let (split_right_hit_area, split_down_hit_area) = split_button_hit_areas(
-        new_tab_hit_area.x + new_tab_hit_area.width,
-        area_right,
-        area.y,
-    );
+    // TP-TAB-SPLIT-01: pinned to the edge here too — the reserved trailing
+    // chrome guarantees the seats on all but the narrowest strips.
+    let split_seats = area_right.saturating_sub(new_tab_hit_area.x + new_tab_hit_area.width);
+    let (split_right_hit_area, split_down_hit_area) =
+        pinned_split_button_hit_areas(split_seats, area_right, area.y);
 
     TabBarView {
         scroll,
@@ -938,24 +967,75 @@ mod tests {
         );
     }
 
-    // TP-TAB-SPLIT-01: two split buttons stand right of the new-tab button,
-    // three cells each — right split first, down split second.
+    // TP-TAB-SPLIT-01: the split pair is pinned flush to the strip's far
+    // right — right split, then down split ending at the edge — while the
+    // `+` keeps trailing the tabs.
     #[test]
-    fn the_split_buttons_stand_right_of_the_new_tab_button() {
+    fn the_split_buttons_stand_pinned_at_the_strip_far_right() {
         let ws = Workspace::test_new("test");
         let view = compute_tab_bar_view(&ws, &[], Rect::new(0, 0, 80, 1), 0, true, true);
 
         assert!(view.new_tab_hit_area.width > 0, "precondition: + is drawn");
+        assert_eq!(view.split_right_hit_area, Rect::new(74, 0, 3, 1));
+        assert_eq!(view.split_down_hit_area, Rect::new(77, 0, 3, 1));
         assert_eq!(
-            view.split_right_hit_area.x,
-            view.new_tab_hit_area.x + view.new_tab_hit_area.width
+            view.new_tab_hit_area.x,
+            view.tab_hit_areas[0].x + view.tab_hit_areas[0].width,
+            "only the split pair is pinned — the + still trails the tabs"
         );
-        assert_eq!(view.split_right_hit_area.width, 3);
+    }
+
+    // TP-TAB-SPLIT-01: the pin is static — adding a tab moves the `+`, not
+    // the split pair. This is the asked-for behaviour: the pair used to
+    // trail the `+` and drift with every new tab.
+    #[test]
+    fn adding_a_tab_moves_the_plus_but_not_the_split_buttons() {
+        let mut ws = Workspace::test_new("test");
+        let one = compute_tab_bar_view(&ws, &[], Rect::new(0, 0, 80, 1), 0, true, true);
+        ws.test_add_tab(None);
+        let two = compute_tab_bar_view(&ws, &[], Rect::new(0, 0, 80, 1), 0, true, true);
+
+        assert!(
+            two.new_tab_hit_area.x > one.new_tab_hit_area.x,
+            "precondition: the + drifted with the new tab"
+        );
+        assert_eq!(two.split_right_hit_area, one.split_right_hit_area);
+        assert_eq!(two.split_down_hit_area, one.split_down_hit_area);
+    }
+
+    // TP-TAB-SPLIT-01 boundary: exactly enough spare width for both seats —
+    // everything sits flat, nothing overflows.
+    #[test]
+    fn a_strip_with_exactly_six_spare_cells_seats_both_buttons() {
+        let ws = Workspace::test_new("test");
+        let width = tab_width(&ws, 0) + NEW_TAB_WIDTH + SPLIT_BUTTON_WIDTH * 2;
+        let view = compute_tab_bar_view(&ws, &[], Rect::new(0, 0, width, 1), 0, true, true);
+
+        assert_eq!(view.split_right_hit_area, Rect::new(width - 6, 0, 3, 1));
+        assert_eq!(view.split_down_hit_area, Rect::new(width - 3, 0, 3, 1));
         assert_eq!(
-            view.split_down_hit_area.x,
-            view.split_right_hit_area.x + view.split_right_hit_area.width
+            view.scroll_left_hit_area,
+            Rect::default(),
+            "the reservation did not push the strip into overflow"
         );
-        assert_eq!(view.split_down_hit_area.width, 3);
+    }
+
+    // TP-TAB-SPLIT-01: in overflow the pair still hugs the right edge — the
+    // tabs scroll behind the reserved chrome, the pin does not move.
+    #[test]
+    fn in_overflow_the_split_buttons_hug_the_right_edge() {
+        let mut ws = Workspace::test_new("test");
+        for _ in 0..8 {
+            ws.test_add_tab(None);
+        }
+        let view = compute_tab_bar_view(&ws, &[], Rect::new(0, 0, 40, 1), 0, true, true);
+
+        assert!(
+            view.scroll_left_hit_area.width > 0,
+            "precondition: the strip is in overflow"
+        );
+        assert_eq!(view.split_right_hit_area, Rect::new(34, 0, 3, 1));
+        assert_eq!(view.split_down_hit_area, Rect::new(37, 0, 3, 1));
     }
 
     // TP-TAB-SPLIT-01: keyboard-driven strips carry no button chrome at all.
@@ -968,18 +1048,18 @@ mod tests {
         assert_eq!(view.split_down_hit_area, Rect::default());
     }
 
-    // TP-TAB-SPLIT-01: the boundary sits AT three cells — exactly enough for
-    // the right button seats it whole, and the down button, with nothing
-    // left, claims nothing.
+    // TP-TAB-SPLIT-01: the boundary sits AT three cells — a single seat goes
+    // whole to the right split, pinned at the edge, and the down button
+    // claims nothing.
     #[test]
     fn a_strip_with_exactly_three_spare_cells_seats_the_right_button_alone() {
         let ws = Workspace::test_new("test");
-        // The + button starts flush at the last tab's end (no gap), so the
-        // spare cells after it are exactly SPLIT_BUTTON_WIDTH here.
+        // The + button sits flush at the tab's end, so the spare cells at
+        // the edge are exactly SPLIT_BUTTON_WIDTH here.
         let width = tab_width(&ws, 0) + NEW_TAB_WIDTH + SPLIT_BUTTON_WIDTH;
         let view = compute_tab_bar_view(&ws, &[], Rect::new(0, 0, width, 1), 0, true, true);
 
-        assert_eq!(view.split_right_hit_area.width, SPLIT_BUTTON_WIDTH);
+        assert_eq!(view.split_right_hit_area, Rect::new(width - 3, 0, 3, 1));
         assert_eq!(view.split_down_hit_area.width, 0);
     }
 
@@ -994,6 +1074,11 @@ mod tests {
 
         assert_eq!(view.split_right_hit_area.width, 0);
         assert_eq!(view.split_down_hit_area.width, 0);
+        assert_eq!(
+            view.scroll_left_hit_area,
+            Rect::default(),
+            "giving the buttons up must not push the strip into overflow"
+        );
     }
 
     // TP-TAB-NAME-01: the strip shows at most twenty cells of a name, so a
