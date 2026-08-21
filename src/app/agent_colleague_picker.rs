@@ -222,7 +222,7 @@ impl crate::app::App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::state::{AppState, ContextMenuKind, ContextMenuState, MenuListState, Mode};
+    use crate::app::state::{AppState, Mode};
     use crate::workspace::Workspace;
 
     fn entry(ws_idx: usize, tab_idx: usize, label: &str) -> crate::ui::AgentPanelEntry {
