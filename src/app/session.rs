@@ -173,40 +173,12 @@ impl App {
             crate::persist::workspace_chats::project_rows(&self.workspace_chat_ledger);
         // The ledger is only half the answer: the agent's own store holds every
         // chat ever started in a workspace's directory, and the ledger holds
-        // the ones that started elsewhere. Merge both, newest first.
-        if let Some(dir) = crate::claude_sessions::default_claude_projects_dir() {
-            self.state.merge_workspace_chat_rows_in(&dir);
-        }
-        // TP-CHAT-MOVE-01: the user's re-homes are applied LAST — after the
-        // agent-store merge — or a moved chat would leak back into its source
-        // drawer on the very next refresh.
-        crate::persist::workspace_chats::apply_chat_moves(
-            &mut self.state.workspace_chat_rows,
-            &self.workspace_chat_ledger.moves,
-        );
-        // TP-CHAT-NAME-01: and the names after them, for the same reason. The
-        // agent store answers every refresh with the title it derived from the
-        // transcript, so a name applied any earlier is overwritten within one
-        // sync and the chat appears to rename itself back.
-        crate::persist::workspace_chats::apply_chat_names(
-            &mut self.state.workspace_chat_rows,
-            &self.workspace_chat_ledger.names,
-        );
-        // TP-DAILY-24: and the labels last of all. The merge above ends by
-        // reclassifying every chat from its opening, so a label projected any
-        // earlier would be a person's decision sitting in a map that is about
-        // to be cleared — the same shape of mistake `moves` and `names` are
-        // applied late to avoid.
-        self.state.manual_chat_labels = self
-            .workspace_chat_ledger
-            .labels
-            .iter()
-            .filter_map(|(session_id, name)| {
-                crate::chat_labels::ChatLabel::from_config_name(name)
-                    .map(|label| (session_id.clone(), label))
-            })
-            .collect();
-        self.state.chat_move_overrides = self.workspace_chat_ledger.moves.clone();
+        // the ones that started elsewhere. The shared step merges both and then
+        // overlays the ledger's decisions — moves, names, labels — in the order
+        // TP-CHAT-MOVE-01 / TP-CHAT-NAME-01 / TP-DAILY-24 fixed. One seam
+        // (TP-CHAT-MOVE-12): the constructors call the very same step, so no
+        // road can merge without overlaying.
+        Self::load_chat_history(&mut self.state, &self.workspace_chat_ledger);
     }
 
     /// Write a chat's chosen name into the ledger and refresh the rows — the
@@ -217,6 +189,25 @@ impl App {
     pub(crate) fn apply_chat_rename(&mut self, session_id: &str, name: &str) {
         if !self.workspace_chat_ledger.set_name(session_id, name) {
             return;
+        }
+        // TP-CHAT-NAME-02: the open tab wearing this conversation follows
+        // the rename — the row and the tab are two views of one name, and
+        // half of the reported defect was exactly the tab's reference label
+        // staying stale. A withdrawn (blank) name leaves the tab alone: the
+        // ledger falls back to the derived title, and the tab keeps whatever
+        // it was wearing rather than being blanked.
+        let renamed = name.trim();
+        if !renamed.is_empty() {
+            if let Some((ws_idx, tab_idx)) = self.state.find_resumed_chat_tab(session_id) {
+                if let Some(tab) = self
+                    .state
+                    .workspaces
+                    .get_mut(ws_idx)
+                    .and_then(|ws| ws.tabs.get_mut(tab_idx))
+                {
+                    tab.set_custom_name(renamed.to_string());
+                }
+            }
         }
         self.sync_workspace_chat_rows();
         if self.no_session {

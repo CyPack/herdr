@@ -571,10 +571,42 @@ impl App {
     ///
     /// TP-DRAW-14: so it is a named step both roads call, rather than a line
     /// inside a condition that answers two different questions with one word.
-    fn load_chat_history(state: &mut AppState) {
+    ///
+    /// TP-CHAT-MOVE-12: and the step ends by overlaying the ledger's own
+    /// decisions — moves, names, labels — exactly as the sync does. Without
+    /// the overlay a chat the user re-homed leaks back into its source drawer
+    /// on every start AND every handoff (a handoff happens on every delivery),
+    /// and stays there until a session save happens to fold a new observation
+    /// in and run a sync. Measured live 2026-08-21: one chat standing in the
+    /// Daily section and in a module at once.
+    fn load_chat_history(
+        state: &mut AppState,
+        ledger: &crate::persist::workspace_chats::WorkspaceChatLedger,
+    ) {
         if let Some(dir) = crate::claude_sessions::default_claude_projects_dir() {
             state.merge_workspace_chat_rows_in(dir.as_path());
         }
+        // TP-CHAT-MOVE-01: the re-homes are applied LAST — after the
+        // agent-store merge — or the merge re-leaks the moved chats.
+        crate::persist::workspace_chats::apply_chat_moves(
+            &mut state.workspace_chat_rows,
+            &ledger.moves,
+        );
+        // TP-CHAT-NAME-01: and the names after them, for the same reason.
+        crate::persist::workspace_chats::apply_chat_names(
+            &mut state.workspace_chat_rows,
+            &ledger.names,
+        );
+        // TP-DAILY-24: and the labels last of all.
+        state.manual_chat_labels = ledger
+            .labels
+            .iter()
+            .filter_map(|(session_id, name)| {
+                crate::chat_labels::ChatLabel::from_config_name(name)
+                    .map(|label| (session_id.clone(), label))
+            })
+            .collect();
+        state.chat_move_overrides = ledger.moves.clone();
     }
 
     /// Load the graveyard from disk and seed it from the transcript rows.
@@ -1255,7 +1287,7 @@ impl App {
         };
         state.workspace_chat_rows = crate::persist::workspace_chats::project_rows(&ledger);
         if !no_session {
-            Self::load_chat_history(&mut state);
+            Self::load_chat_history(&mut state, &ledger);
             Self::seed_closed_agents(&mut state);
         }
 
@@ -1442,7 +1474,7 @@ impl App {
             &crate::persist::workspace_chats::default_ledger_path(),
         );
         app.state.workspace_chat_rows = crate::persist::workspace_chats::project_rows(&ledger);
-        Self::load_chat_history(&mut app.state);
+        Self::load_chat_history(&mut app.state, &ledger);
         Self::seed_closed_agents(&mut app.state);
         Ok(app)
     }
@@ -3404,7 +3436,10 @@ mod tests {
         std::env::set_var("HOME", &home);
         let mut state = AppState::test_new();
         state.daily_chat_cwd = Some(home.clone());
-        App::load_chat_history(&mut state);
+        App::load_chat_history(
+            &mut state,
+            &crate::persist::workspace_chats::WorkspaceChatLedger::default(),
+        );
         let loaded = !state.workspace_chat_rows.is_empty();
         match previous_home {
             Some(value) => std::env::set_var("HOME", value),
@@ -3413,6 +3448,54 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
 
         assert!(loaded, "the handoff road reads the transcript store");
+    }
+
+    // TP-CHAT-MOVE-12: the shared history-load step applies the ledger's
+    // re-homes, so neither constructor road can resurrect a moved chat in
+    // its source drawer. The leak this pins: `new` and `new_from_handoff`
+    // merged the agent store and stopped, so every start and every handoff
+    // put a moved chat back where it came from until the next sync.
+    #[test]
+    fn loading_history_applies_the_ledgers_moves() {
+        let mut state = AppState::test_new();
+        let source_key = crate::persist::workspace_chats::ledger_key(std::path::Path::new(
+            "/tmp/herdr-move-leak-source",
+        ));
+        let target_key = crate::persist::workspace_chats::module_ledger_key("leak-module");
+        state.workspace_chat_rows.insert(
+            source_key.clone(),
+            vec![crate::app::state::WorkspaceChatRow {
+                session_id: "moved-chat".to_string(),
+                agent: "claude".to_string(),
+                title: Some("a re-homed chat".to_string()),
+                last_seen_ms: 7,
+                last_modified: None,
+            }],
+        );
+        let mut ledger = crate::persist::workspace_chats::WorkspaceChatLedger::default();
+        ledger
+            .moves
+            .insert("moved-chat".to_string(), target_key.clone());
+
+        App::load_chat_history(&mut state, &ledger);
+
+        assert!(
+            state.workspace_chat_rows[&source_key]
+                .iter()
+                .all(|row| row.session_id != "moved-chat"),
+            "the source drawer let the moved chat go"
+        );
+        assert!(
+            state.workspace_chat_rows[&target_key]
+                .iter()
+                .any(|row| row.session_id == "moved-chat"),
+            "the module holds it"
+        );
+        assert_eq!(
+            state.chat_move_overrides.get("moved-chat"),
+            Some(&target_key),
+            "the overrides are populated too — the module UI reads them"
+        );
     }
 
     // TP-AGPANEL-40: a handed-off server loads the graveyard too. It calls
