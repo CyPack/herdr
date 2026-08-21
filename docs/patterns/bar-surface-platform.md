@@ -446,3 +446,38 @@ env -u HERDR_SOCKET_PATH -u HERDR_CLIENT_SOCKET_PATH herdr config check ; echo "
 | Read a counter inside `render` | The loop samples; the widget formats. SP1.a.i |
 | Draw an empty bar for a pool you cannot read | Draw nothing — an empty bar is a claim |
 | Demonstrate a meter by filling **swap** | Swap thrashing can lock a desktop for minutes with no user-side undo. Move **CPU** instead: it responds in seconds and `kill` reverses it instantly |
+
+## SP5 · The config panel & the overlay pair (2026-08-21, session 31)
+
+The bar's settings live where the bar is: a right press on any actionless
+stretch (or the section menu's `Configure bar...`) opens a two-faced popup —
+**Apps** (inventory) and **Configure** (knobs). The pattern to reuse:
+
+- **Persistence is a diff over an overlay, not a form over the config.**
+  `bars.managed.toml` merges after the user's file with field-level
+  last-wins (`merge_managed_bars_str`, TP-CHROME-149); the panel writes only
+  the fields the person changed (TP-CHROME-151), read-modify-written so one
+  Apply never erases another edge's earlier entry. The asymmetry with
+  `spaces.managed.toml` (which appends) is deliberate: spaces entries are
+  additive rules, bar fields are scalar overrides.
+- **Preview is the reload's own refresh, extracted.**
+  `refresh_bar_presentation` is the one three-piece rebuild both the panel's
+  live preview and `apply_live_config` call — extract the seam, never copy
+  it, or the two drift. Cancel repaints from the snapshot; Apply writes the
+  file and takes `ServerReloadConfig`, so the DISK is what every surface
+  converges on.
+- **A follow-up overlay opened from a menu arm must skip that arm's
+  `leave_modal`** — the teardown after the open strips the mode the new
+  overlay just entered (the colleague picker's arm carries the same rule).
+- **Two faces, one machine.** The Apps face runs a section through the SAME
+  App roads the bar's click takes (popup/run/workspace); kinds needing
+  chrome-side resolution (plugin) stay honest dead-ends rather than growing
+  a second resolver. Inventory reads the SNAPSHOT, never the draft
+  (TP-CHROME-153).
+- **Structural gates you will meet:** the spec's menu-count (TP-SPEC-15),
+  the guide↔menu two-way table (TP-CHROME-116), and every catalog test that
+  pins `ALL` arrays — adding a row/verb means walking all of them; the
+  compiler-forced destructuring in `apply_managed_bar_override` is the same
+  gate for overlay fields.
+
+Landings: `3f222721` · `a410aea2` · `7c11cf03` · session-31 tabs branch.

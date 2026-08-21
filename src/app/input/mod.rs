@@ -778,7 +778,7 @@ impl App {
     /// guide says so in the same words.
     // TP-CHROME-119: a `run` action starts its command detached and reports
     // only what it can know, which is whether it started.
-    fn run_bar_section_command(&mut self, argv: &[String]) -> std::io::Result<()> {
+    pub(crate) fn run_bar_section_command(&mut self, argv: &[String]) -> std::io::Result<()> {
         let Some((program, args)) = argv.split_first() else {
             return Err(std::io::Error::other("no command to run"));
         };

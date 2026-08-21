@@ -409,22 +409,69 @@ pub(super) fn render_bar_config_panel(app: &AppState, frame: &mut Frame) {
         .style(Style::default().fg(p.text).add_modifier(Modifier::BOLD)),
         header,
     );
-    for (idx, (row, rect)) in panel
-        .rows()
+    // TP-CHROME-153: the two faces' labels ride the strip line; the forward
+    // one wears the selection tone so the eye knows which face answers.
+    for (tab, rect) in crate::app::bar_config_panel::BarPanelTab::ALL
         .iter()
-        .zip(app.bar_config_panel_row_hit_areas())
-        .enumerate()
+        .zip(app.bar_config_panel_tab_hit_areas())
     {
-        let marker = if idx == panel.selected { ">" } else { " " };
-        let value = crate::app::bar_config_panel::row_value_label(panel, *row);
-        let label =
-            crate::ui::text::truncate_end(&format!("{marker} {value}"), rect.width as usize);
-        let style = if idx == panel.selected {
-            Style::default().bg(p.surface1).fg(p.text)
+        let style = if *tab == panel.tab {
+            Style::default()
+                .bg(p.surface1)
+                .fg(p.text)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(p.subtext0)
         };
-        frame.render_widget(Paragraph::new(label).style(style), rect);
+        frame.render_widget(
+            Paragraph::new(format!(" {} ", tab.label())).style(style),
+            rect,
+        );
+    }
+    match panel.tab {
+        crate::app::bar_config_panel::BarPanelTab::Configure => {
+            for (idx, (row, rect)) in panel
+                .rows()
+                .iter()
+                .zip(app.bar_config_panel_row_hit_areas())
+                .enumerate()
+            {
+                let marker = if idx == panel.selected { ">" } else { " " };
+                let value = crate::app::bar_config_panel::row_value_label(panel, *row);
+                let label = crate::ui::text::truncate_end(
+                    &format!("{marker} {value}"),
+                    rect.width as usize,
+                );
+                let style = if idx == panel.selected {
+                    Style::default().bg(p.surface1).fg(p.text)
+                } else {
+                    Style::default().fg(p.subtext0)
+                };
+                frame.render_widget(Paragraph::new(label).style(style), rect);
+            }
+        }
+        crate::app::bar_config_panel::BarPanelTab::Apps => {
+            for (idx, (row, rect)) in panel
+                .app_rows()
+                .iter()
+                .zip(app.bar_config_panel_row_hit_areas())
+                .enumerate()
+            {
+                let marker = if idx == panel.selected { ">" } else { " " };
+                let label = crate::ui::text::truncate_end(
+                    &format!("{marker} {}  {}", row.shows, row.does),
+                    rect.width as usize,
+                );
+                let style = if !row.live {
+                    Style::default().fg(p.overlay0)
+                } else if idx == panel.selected {
+                    Style::default().bg(p.surface1).fg(p.text)
+                } else {
+                    Style::default().fg(p.subtext0)
+                };
+                frame.render_widget(Paragraph::new(label).style(style), rect);
+            }
+        }
     }
 }
 

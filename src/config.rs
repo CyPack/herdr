@@ -21,10 +21,11 @@ pub use self::{
     model::{
         validated_sidebar_bounds, AgentPanelSortConfig, ChatDrawerModeConfig, Config,
         ConfigReloadReport, ConfigReloadStatus, HostCursorModeConfig, MouseWheelHostScrollConfig,
-        NewTerminalCwdConfig, PreviewPlacement, ShellBarConfig, ShellBarSectionConfig,
-        ShellBarsConfig, ShellConfig, ShellModeConfig, SidebarCollapsedModeConfig,
-        SpaceIconsConfig, ToastClipboardPosition, ToastConfig, ToastDelivery, ToastHerdrPosition,
-        UpdateChannelConfig, MAX_TOAST_DELAY_SECONDS, ROUTINE_CHAT_LABEL,
+        NewTerminalCwdConfig, PreviewPlacement, ShellBarConfig, ShellBarSectionActionConfig,
+        ShellBarSectionConfig, ShellBarsConfig, ShellConfig, ShellModeConfig,
+        SidebarCollapsedModeConfig, SpaceIconsConfig, ToastClipboardPosition, ToastConfig,
+        ToastDelivery, ToastHerdrPosition, UpdateChannelConfig, MAX_TOAST_DELAY_SECONDS,
+        ROUTINE_CHAT_LABEL,
     },
     sidebar::{
         AgentSidebarToken, AgentsSidebarConfig, SectionBorderConfig, SidebarConfig,

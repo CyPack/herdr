@@ -67,6 +67,8 @@ pub(crate) fn panel_rows(edge: BarEdge) -> Vec<BarPanelRow> {
 /// or server state; closing it discards only presentation data — the draft.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct BarConfigPanelState {
+    /// Which face is forward (TP-CHROME-153).
+    pub tab: BarPanelTab,
     /// The edge whose six knobs the field rows edit.
     pub edge: BarEdge,
     /// The working copy every adjustment edits and the preview draws from.
@@ -83,6 +85,7 @@ pub(crate) struct BarConfigPanelState {
 impl BarConfigPanelState {
     pub(crate) fn open(edge: BarEdge, bars: &ShellBarsConfig) -> Self {
         Self {
+            tab: BarPanelTab::Configure,
             edge,
             draft: bars.clone(),
             original: bars.clone(),
@@ -93,6 +96,32 @@ impl BarConfigPanelState {
 
     pub(crate) fn rows(&self) -> Vec<BarPanelRow> {
         panel_rows(self.edge)
+    }
+
+    /// The Apps inventory reads the ORIGINAL snapshot, never the draft: it
+    /// is what the disk's bar does today, and a knob turned on the other
+    /// tab must not rewrite history until Apply lands it (TP-CHROME-153).
+    pub(crate) fn app_rows(&self) -> Vec<BarAppRow> {
+        section_app_rows(edge_config(&self.original, self.edge))
+    }
+
+    /// Bring the other face forward. Selection resets: an index carried
+    /// across tabs would land on whatever row happens to share the number.
+    pub(crate) fn switch_tab(&mut self, tab: BarPanelTab) -> bool {
+        if self.tab == tab {
+            return false;
+        }
+        self.tab = tab;
+        self.selected = 0;
+        true
+    }
+
+    /// How many selectable rows the FORWARD tab offers.
+    pub(crate) fn forward_row_count(&self) -> usize {
+        match self.tab {
+            BarPanelTab::Apps => self.app_rows().len(),
+            BarPanelTab::Configure => self.rows().len(),
+        }
     }
 
     /// Adjust the selected row one step. Returns true when the draft (or the
@@ -334,6 +363,173 @@ fn merge_fanout(explicit: ManagedBarOverride, focused: &ManagedBarOverride) -> M
     }
 }
 
+/// Which face of the panel is forward (TP-CHROME-153): `Apps` is the
+/// inventory — what each configured section SHOWS and which app a press
+/// reaches — `Configure` is the knobs. Configure opens first: it is the
+/// panel S30-2 shipped and the muscle memory the tabs must not steal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BarPanelTab {
+    Apps,
+    Configure,
+}
+
+impl BarPanelTab {
+    pub(crate) const ALL: [Self; 2] = [Self::Apps, Self::Configure];
+
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::Apps => "Apps",
+            Self::Configure => "Configure",
+        }
+    }
+}
+
+/// One inventory row of the Apps tab. `section_indices` are TRUE indices
+/// into the bar's `sections` — a grouped run folds into one row and keeps
+/// every member's address, so a press can still name a real section.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BarAppRow {
+    pub section_indices: Vec<usize>,
+    pub shows: String,
+    pub does: String,
+    /// Whether Enter/click has a primary action to run — a dead-end row is
+    /// offered greyed, never silent.
+    pub live: bool,
+}
+
+/// What one section's widget puts on the strip, in the config's own words.
+pub(crate) fn widget_summary(section: &crate::config::ShellBarSectionConfig) -> String {
+    let widget = &section.widget;
+    match widget.kind.as_str() {
+        "" => match section.kind.as_str() {
+            "" => "bare".to_string(),
+            kind => kind.to_string(),
+        },
+        "label" => {
+            if widget.text.is_empty() {
+                "label".to_string()
+            } else {
+                format!("label \"{}\"", widget.text)
+            }
+        }
+        "resource" | "meter" | "sparkline" => {
+            if widget.metric.is_empty() {
+                widget.kind.clone()
+            } else {
+                format!("{} {}", widget.kind, widget.metric)
+            }
+        }
+        "icon" => {
+            if !widget.glyph.is_empty() {
+                format!("icon {}", widget.glyph)
+            } else if !widget.art.is_empty() {
+                format!("icon {}", widget.art)
+            } else if !widget.pixels.is_empty() {
+                "icon custom".to_string()
+            } else {
+                "icon".to_string()
+            }
+        }
+        "clock" => {
+            let format = if widget.format.is_empty() {
+                "%H:%M"
+            } else {
+                &widget.format
+            };
+            format!("clock {format}")
+        }
+        other => other.to_string(),
+    }
+}
+
+/// Which app (or road) a primary press on the section reaches — `None` for
+/// an indicator that consumes clicks inertly.
+pub(crate) fn action_summary(
+    action: &crate::config::ShellBarSectionActionConfig,
+) -> Option<String> {
+    let program = || {
+        action
+            .argv
+            .first()
+            .map(|argv0| argv0.rsplit('/').next().unwrap_or(argv0).to_string())
+            .unwrap_or_default()
+    };
+    match action.kind.as_str() {
+        "" | "none" => None,
+        "popup" => Some(format!("{} [popup]", program()).trim_start().to_string()),
+        "run" => Some(format!("{} [run]", program()).trim_start().to_string()),
+        "workspace" => Some(format!("workspace {}", action.name)),
+        "plugin" => Some(format!("plugin {}", action.command)),
+        "hide" => Some("hide bar".to_string()),
+        other => Some(other.to_string()),
+    }
+}
+
+/// The Apps tab's rows for one bar: one row per section, except that a
+/// grouped run — adjacent sections naming one `group` — folds into ONE row,
+/// the same folding the frame machinery draws (one rectangle, one row;
+/// TP-CHROME-144's vocabulary, reused rather than re-invented). An
+/// undivided strip is one honest row, never an empty list.
+pub(crate) fn section_app_rows(bar: &ShellBarConfig) -> Vec<BarAppRow> {
+    if bar.sections.is_empty() {
+        return vec![BarAppRow {
+            section_indices: Vec::new(),
+            shows: "undivided strip".to_string(),
+            does: "\u{2014}".to_string(),
+            live: false,
+        }];
+    }
+    let mut rows: Vec<BarAppRow> = Vec::new();
+    let mut run: Vec<usize> = Vec::new();
+    let mut run_group = String::new();
+    let sections = &bar.sections;
+    let flush = |run: &mut Vec<usize>, rows: &mut Vec<BarAppRow>| {
+        if run.is_empty() {
+            return;
+        }
+        let shows = run
+            .iter()
+            .map(|&idx| widget_summary(&sections[idx]))
+            .collect::<Vec<_>>()
+            .join(" \u{b7} ");
+        let mut does_parts: Vec<String> = Vec::new();
+        for &idx in run.iter() {
+            if let Some(does) = action_summary(&sections[idx].action) {
+                if !does_parts.contains(&does) {
+                    does_parts.push(does);
+                }
+            }
+        }
+        let live = !does_parts.is_empty();
+        let does = if live {
+            format!("\u{2192} {}", does_parts.join(" \u{b7} "))
+        } else {
+            "\u{2014}".to_string()
+        };
+        rows.push(BarAppRow {
+            section_indices: std::mem::take(run),
+            shows,
+            does,
+            live,
+        });
+    };
+    for (idx, section) in sections.iter().enumerate() {
+        let grouped_with_previous =
+            !section.group.is_empty() && section.group == run_group && !run.is_empty();
+        if !grouped_with_previous {
+            flush(&mut run, &mut rows);
+            run_group = section.group.clone();
+        }
+        run.push(idx);
+        if section.group.is_empty() {
+            flush(&mut run, &mut rows);
+            run_group.clear();
+        }
+    }
+    flush(&mut run, &mut rows);
+    rows
+}
+
 /// What a row shows for its current draft value — one string, so the render
 /// pass and its tests read the same words (TP-CHROME-150).
 pub(crate) fn row_value_label(state: &BarConfigPanelState, row: BarPanelRow) -> String {
@@ -394,8 +590,13 @@ impl crate::app::state::AppState {
     pub(crate) fn bar_config_panel_popup_rect(&self) -> Option<ratatui::layout::Rect> {
         let panel = self.bar_config_panel.as_ref()?;
         let area = self.view.terminal_area;
-        let width = 44u16.min(area.width.saturating_sub(2)).max(4);
-        let height = (panel.rows().len() as u16)
+        let width = match panel.tab {
+            BarPanelTab::Apps => 56u16,
+            BarPanelTab::Configure => 44u16,
+        }
+        .min(area.width.saturating_sub(2))
+        .max(4);
+        let height = (panel.forward_row_count() as u16)
             .saturating_add(4)
             .min(area.height.saturating_sub(2))
             .max(4);
@@ -420,15 +621,38 @@ impl crate::app::state::AppState {
             popup.width.saturating_sub(2),
             popup.height.saturating_sub(4),
         );
-        panel
-            .rows()
-            .iter()
-            .enumerate()
+        (0..panel.forward_row_count())
             .take(inner.height as usize)
-            .map(|(idx, _)| {
-                ratatui::layout::Rect::new(inner.x, inner.y + idx as u16, inner.width, 1)
+            .map(|idx| ratatui::layout::Rect::new(inner.x, inner.y + idx as u16, inner.width, 1))
+            .collect()
+    }
+
+    /// The two tab labels' rects on the strip line (popup.y + 2), in
+    /// `BarPanelTab::ALL` order.
+    pub(crate) fn bar_config_panel_tab_hit_areas(&self) -> Vec<ratatui::layout::Rect> {
+        let Some(popup) = self.bar_config_panel_popup_rect() else {
+            return Vec::new();
+        };
+        let mut x = popup.x + 1;
+        let y = popup.y + 2;
+        BarPanelTab::ALL
+            .iter()
+            .map(|tab| {
+                let width = tab.label().len() as u16 + 2;
+                let rect = ratatui::layout::Rect::new(x, y, width, 1);
+                x = x.saturating_add(width.saturating_add(1));
+                rect
             })
             .collect()
+    }
+
+    pub(crate) fn bar_config_panel_tab_at(&self, column: u16, row: u16) -> Option<BarPanelTab> {
+        self.bar_config_panel_tab_hit_areas()
+            .iter()
+            .position(|rect| {
+                column >= rect.x && column < rect.right() && row >= rect.y && row < rect.bottom()
+            })
+            .map(|idx| BarPanelTab::ALL[idx])
     }
 
     pub(crate) fn bar_config_panel_row_at(&self, column: u16, row: u16) -> Option<usize> {
@@ -500,17 +724,89 @@ impl crate::app::App {
         }
     }
 
-    /// Enter / click on the selected row: the verbs act, everything else
-    /// adjusts forward.
+    /// Enter / click on the selected row. On the Configure face the verbs
+    /// act and everything else adjusts forward; on the Apps face the row's
+    /// own app is reached (TP-CHROME-153).
     pub(crate) fn press_bar_config_panel_row(&mut self) {
         let Some(panel) = self.state.bar_config_panel.as_ref() else {
             return;
         };
-        match panel.rows().get(panel.selected) {
-            Some(BarPanelRow::Apply) => self.apply_bar_config_panel(),
-            Some(BarPanelRow::Cancel) => self.cancel_bar_config_panel(),
-            Some(_) => self.adjust_bar_config_panel(true),
-            None => {}
+        match panel.tab {
+            BarPanelTab::Apps => self.run_bar_app_row(panel.selected),
+            BarPanelTab::Configure => match panel.rows().get(panel.selected) {
+                Some(BarPanelRow::Apply) => self.apply_bar_config_panel(),
+                Some(BarPanelRow::Cancel) => self.cancel_bar_config_panel(),
+                Some(_) => self.adjust_bar_config_panel(true),
+                None => {}
+            },
+        }
+    }
+
+    /// Reach the app an Apps row points at — the popup/run/workspace kinds,
+    /// through the SAME App roads the bar's own click takes, so there is one
+    /// owner of "what running a section means". A plugin or hide row is
+    /// honest about its limit rather than growing a second resolution
+    /// machine: the bar itself is where those fire (TP-CHROME-153).
+    pub(crate) fn run_bar_app_row(&mut self, row_idx: usize) {
+        let Some(panel) = self.state.bar_config_panel.as_ref() else {
+            return;
+        };
+        let rows = panel.app_rows();
+        let Some(row) = rows.get(row_idx) else {
+            return;
+        };
+        // No separate liveness guard: the action lookup below IS the guard —
+        // a dead-end row has no summarizable action to find, and the mutant
+        // that removed an explicit check here changed nothing (T5, quadruple:
+        // redundant). `live` stays a render fact: the grey the eye reads.
+        let bar = edge_config(&panel.original, panel.edge).clone();
+        let action = row
+            .section_indices
+            .iter()
+            .filter_map(|&idx| bar.sections.get(idx))
+            .map(|section| section.action.clone())
+            .find(|action| action_summary(action).is_some());
+        let Some(action) = action else {
+            return;
+        };
+        match action.kind.as_str() {
+            "popup" => {
+                if let Err(err) = self.spawn_popup_argv_command(
+                    &action.argv,
+                    None,
+                    Vec::new(),
+                    crate::app::popup::PopupGeometry {
+                        width: action.width,
+                        height: action.height,
+                    },
+                ) {
+                    self.warn_about_bar_section_action(
+                        "bar section action failed",
+                        err.to_string(),
+                    );
+                }
+            }
+            "run" => {
+                if let Err(err) = self.run_bar_section_command(&action.argv) {
+                    self.warn_about_bar_section_action(
+                        "bar section action failed",
+                        err.to_string(),
+                    );
+                }
+            }
+            "workspace" => match self.state.workspace_index_named(&action.name) {
+                Some(ws_idx) => self.focus_workspace_idx_via_api(ws_idx),
+                None => self.warn_about_bar_section_action(
+                    "no workspace by that name",
+                    format!("nothing open is called {:?}", action.name),
+                ),
+            },
+            other => {
+                self.warn_about_bar_section_action(
+                    "open it from the bar",
+                    format!("a {other:?} action fires from its own section"),
+                );
+            }
         }
     }
 
@@ -553,11 +849,34 @@ impl crate::app::App {
         match key.code {
             crossterm::event::KeyCode::Esc => self.cancel_bar_config_panel(),
             crossterm::event::KeyCode::Enter => self.press_bar_config_panel_row(),
+            crossterm::event::KeyCode::Tab => {
+                if let Some(panel) = self.state.bar_config_panel.as_mut() {
+                    let next = match panel.tab {
+                        BarPanelTab::Apps => BarPanelTab::Configure,
+                        BarPanelTab::Configure => BarPanelTab::Apps,
+                    };
+                    panel.switch_tab(next);
+                }
+            }
             crossterm::event::KeyCode::Left | crossterm::event::KeyCode::Char('h') => {
-                self.adjust_bar_config_panel(false);
+                if self
+                    .state
+                    .bar_config_panel
+                    .as_ref()
+                    .is_some_and(|panel| panel.tab == BarPanelTab::Configure)
+                {
+                    self.adjust_bar_config_panel(false);
+                }
             }
             crossterm::event::KeyCode::Right | crossterm::event::KeyCode::Char('l') => {
-                self.adjust_bar_config_panel(true);
+                if self
+                    .state
+                    .bar_config_panel
+                    .as_ref()
+                    .is_some_and(|panel| panel.tab == BarPanelTab::Configure)
+                {
+                    self.adjust_bar_config_panel(true);
+                }
             }
             crossterm::event::KeyCode::Up | crossterm::event::KeyCode::Char('k') => {
                 if let Some(panel) = self.state.bar_config_panel.as_mut() {
@@ -566,7 +885,7 @@ impl crate::app::App {
             }
             crossterm::event::KeyCode::Down | crossterm::event::KeyCode::Char('j') => {
                 if let Some(panel) = self.state.bar_config_panel.as_mut() {
-                    if panel.selected.saturating_add(1) < panel.rows().len() {
+                    if panel.selected.saturating_add(1) < panel.forward_row_count() {
                         panel.selected += 1;
                     }
                 }
@@ -767,6 +1086,190 @@ mod tests {
         );
         assert!(!state.adjust_row(BarPanelRow::Cancel, true));
     }
+    fn section(kind: &str) -> crate::config::ShellBarSectionConfig {
+        crate::config::ShellBarSectionConfig {
+            kind: kind.to_string(),
+            ..Default::default()
+        }
+    }
+
+    // TP-CHROME-153: the inventory speaks the config's own words — what a
+    // section shows and which app a press reaches, per kind, with honest
+    // fallbacks for the bare and the undivided.
+    #[test]
+    fn the_apps_inventory_names_what_shows_and_what_a_press_reaches() {
+        let mut bar = crate::config::ShellBarConfig::default();
+        assert_eq!(
+            section_app_rows(&bar),
+            vec![BarAppRow {
+                section_indices: Vec::new(),
+                shows: "undivided strip".to_string(),
+                does: "\u{2014}".to_string(),
+                live: false,
+            }],
+            "an undivided strip is one honest row, never an empty list"
+        );
+
+        let mut cpu = section("content");
+        cpu.widget.kind = "resource".to_string();
+        cpu.widget.metric = "cpu".to_string();
+        cpu.action.kind = "popup".to_string();
+        cpu.action.argv = vec!["/usr/bin/btop".to_string()];
+        let mut clock = section("fixed");
+        clock.widget.kind = "clock".to_string();
+        let fill = section("fill");
+        bar.sections = vec![cpu, clock, fill];
+
+        let rows = section_app_rows(&bar);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].shows, "resource cpu");
+        assert_eq!(
+            rows[0].does, "\u{2192} btop [popup]",
+            "argv is shown by basename"
+        );
+        assert!(rows[0].live);
+        assert_eq!(
+            rows[1].shows, "clock %H:%M",
+            "an unwritten format is the default"
+        );
+        assert_eq!(rows[1].does, "\u{2014}");
+        assert!(
+            !rows[1].live,
+            "an indicator is offered greyed, never silent"
+        );
+        assert_eq!(rows[2].shows, "fill");
+        assert_eq!(rows[0].section_indices, vec![0]);
+    }
+
+    // TP-CHROME-153: a grouped run folds into ONE row — the same folding the
+    // frame machinery draws — and keeps every member's true address.
+    #[test]
+    fn a_grouped_run_folds_into_one_inventory_row() {
+        let mut bar = crate::config::ShellBarConfig::default();
+        let mut cpu = section("content");
+        cpu.widget.kind = "resource".to_string();
+        cpu.widget.metric = "cpu".to_string();
+        cpu.group = "sys".to_string();
+        let mut mem = cpu.clone();
+        mem.widget.metric = "mem".to_string();
+        let mut swap = cpu.clone();
+        swap.widget.metric = "swap".to_string();
+        swap.action.kind = "popup".to_string();
+        swap.action.argv = vec!["btop".to_string()];
+        let mut lone = section("fixed");
+        lone.widget.kind = "icon".to_string();
+        lone.widget.glyph = "\u{2699}".to_string();
+        bar.sections = vec![cpu, mem, swap, lone];
+
+        let rows = section_app_rows(&bar);
+        assert_eq!(rows.len(), 2, "three grouped + one lone = two rows");
+        assert_eq!(
+            rows[0].shows,
+            "resource cpu \u{b7} resource mem \u{b7} resource swap"
+        );
+        assert_eq!(rows[0].does, "\u{2192} btop [popup]");
+        assert_eq!(rows[0].section_indices, vec![0, 1, 2]);
+        assert!(rows[0].live);
+        assert_eq!(rows[1].shows, "icon \u{2699}");
+    }
+
+    // TP-CHROME-153: the tabs — Configure opens first, switching brings the
+    // other face forward and resets the selection, and the inventory reads
+    // the SNAPSHOT, so a knob turned on the Configure tab cannot rewrite it.
+    #[test]
+    fn switching_tabs_resets_selection_and_the_inventory_reads_the_snapshot() {
+        let mut bars = ShellBarsConfig::default();
+        bars.top.enabled = true;
+        let mut state = BarConfigPanelState::open(BarEdge::Top, &bars);
+        assert_eq!(state.tab, BarPanelTab::Configure, "muscle memory survives");
+
+        state.selected = 3;
+        assert!(state.switch_tab(BarPanelTab::Apps));
+        assert_eq!(state.selected, 0, "an index carried across tabs is a ghost");
+        assert!(!state.switch_tab(BarPanelTab::Apps), "same tab is a no-op");
+        assert_eq!(
+            state.forward_row_count(),
+            1,
+            "the undivided strip's one row"
+        );
+
+        state.adjust_row(BarPanelRow::Enabled, true); // draft flips on the other face
+        assert_eq!(
+            state.app_rows(),
+            section_app_rows(&bars.top),
+            "the inventory is the snapshot, not the draft"
+        );
+    }
+
+    // TP-CHROME-153: Tab turns the face, arrows stay Configure's knobs, and
+    // Enter on a live Apps row reaches its app through the same popup road
+    // the bar's own click takes.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_apps_face_runs_its_row_on_the_panels_own_key_road() {
+        let mut app = test_app();
+        // a bar with one btop popup section, loaded as the snapshot
+        let mut bars = crate::config::ShellBarsConfig::default();
+        bars.top.enabled = true;
+        let mut sec = crate::config::ShellBarSectionConfig {
+            kind: "content".to_string(),
+            ..Default::default()
+        };
+        sec.widget.kind = "resource".to_string();
+        sec.widget.metric = "cpu".to_string();
+        sec.action.kind = "popup".to_string();
+        sec.action.argv = vec!["sh".to_string(), "-c".to_string(), "sleep 5".to_string()];
+        bars.top.sections = vec![sec];
+        app.state.shell_bars_config = bars;
+
+        app.open_bar_config_panel(BarEdge::Top);
+        app.handle_bar_config_panel_key(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Tab,
+        ));
+        assert_eq!(
+            app.state.bar_config_panel.as_ref().unwrap().tab,
+            BarPanelTab::Apps
+        );
+        // arrows are Configure's knobs — on Apps they must not edit the draft
+        let draft_before = app.state.bar_config_panel.as_ref().unwrap().draft.clone();
+        app.handle_bar_config_panel_key(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Right,
+        ));
+        assert_eq!(
+            app.state.bar_config_panel.as_ref().unwrap().draft,
+            draft_before,
+            "an arrow on the Apps face turned a knob"
+        );
+        app.handle_bar_config_panel_key(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Enter,
+        ));
+        assert!(
+            app.state.popup_pane.is_some(),
+            "Enter on the btop row opened the popup"
+        );
+    }
+
+    // TP-CHROME-153: a dead-end Apps row is honest — Enter runs nothing.
+    #[test]
+    fn a_dead_end_apps_row_is_inert_on_enter() {
+        let mut app = test_app();
+        let mut bars = crate::config::ShellBarsConfig::default();
+        bars.top.enabled = true;
+        app.state.shell_bars_config = bars;
+        app.open_bar_config_panel(BarEdge::Top);
+        if let Some(panel) = app.state.bar_config_panel.as_mut() {
+            panel.switch_tab(BarPanelTab::Apps);
+        }
+        app.handle_bar_config_panel_key(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Enter,
+        ));
+        assert!(app.state.popup_pane.is_none());
+        assert!(
+            app.state.bar_config_panel.is_some(),
+            "an inert press neither runs nor closes"
+        );
+    }
+
     fn test_app() -> crate::app::App {
         let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
         let mut app = crate::app::App::new(
