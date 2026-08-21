@@ -627,6 +627,36 @@ pub(super) fn handle_file_manager_key(
     {
         return FileManagerKeyDispatch::CancelOperation;
     }
+    // TP-FM-FILTER-03: while the filter is being typed, keys are text first —
+    // characters grow the pattern live, Backspace shrinks it (and walks out
+    // from empty), Esc drops the filter whole, Enter keeps it and hands the
+    // keys back. Arrows still move — WITHIN the matches.
+    if state
+        .file_manager
+        .as_ref()
+        .is_some_and(|fm| fm.trail_filter_editing)
+    {
+        if let Some(fm) = state.file_manager.as_mut() {
+            match (key.code, key.modifiers) {
+                (KeyCode::Esc, _) => fm.clear_trail_filter(),
+                (KeyCode::Enter, _) => fm.accept_trail_filter(),
+                (KeyCode::Backspace, _) => fm.pop_trail_filter_char(),
+                (KeyCode::Up, _) => {
+                    let _ = fm.move_trail_cursor(-1);
+                }
+                (KeyCode::Down, _) => {
+                    let _ = fm.move_trail_cursor(1);
+                }
+                (KeyCode::Char(c), modifiers)
+                    if modifiers.is_empty() || modifiers == KeyModifiers::SHIFT =>
+                {
+                    fm.push_trail_filter_char(c);
+                }
+                _ => {}
+            }
+        }
+        return FileManagerKeyDispatch::Consumed;
+    }
     match (key.code, key.modifiers) {
         // Esc and q no longer close the file manager (the older close-on-esc
         // contract was retired on explicit request: pressing Esc to close an
@@ -635,6 +665,24 @@ pub(super) fn handle_file_manager_key(
         // keeps a local job — dropping the explicit multi-selection — and q
         // is swallowed so it cannot fall through to anything destructive.
         // The surface closes from the tab/sidebar, never from a stray key.
+        // TP-FM-FILTER-03: an accepted filter is the nearest thing to
+        // dismiss — Esc clears it first; the selection goes on the next
+        // press. `q` stays a swallowed key, never a filter verb.
+        (KeyCode::Esc, _)
+            if state
+                .file_manager
+                .as_ref()
+                .is_some_and(|fm| fm.trail_filter().is_some()) =>
+        {
+            if let Some(fm) = state.file_manager.as_mut() {
+                fm.clear_trail_filter();
+            }
+        }
+        (KeyCode::Char('/'), KeyModifiers::NONE) => {
+            if let Some(fm) = state.file_manager.as_mut() {
+                fm.begin_trail_filter();
+            }
+        }
         (KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q'), _) => {
             if let Some(fm) = state.file_manager.as_mut() {
                 fm.clear_multi_selection();
@@ -12136,5 +12184,127 @@ command = ["inspect"]
             app.file_manager_key_render_override, None,
             "a visible one-row cursor move requests the normal single render"
         );
+    }
+    fn state_with_fm_over(root: &std::path::Path) -> AppState {
+        let mut state = AppState::test_new();
+        state.workspaces = vec![crate::workspace::Workspace::test_new("fm")];
+        state.active = Some(0);
+        state.ensure_test_terminals();
+        state.file_manager = Some(crate::fm::FmState::new(root));
+        state
+    }
+
+    fn filter_tempdir(tag: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "herdr-fm-filter-road-{}-{}",
+            std::process::id(),
+            tag
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        for name in ["apple", "banana", "apricot"] {
+            std::fs::create_dir_all(root.join(name)).expect("mk");
+        }
+        root
+    }
+
+    // TP-FM-FILTER-03: `/` opens the editor, typed characters narrow the
+    // live projection, Enter keeps the filter with the keys handed back,
+    // and Esc-then-Esc first drops the filter and only then the selection.
+    #[test]
+    fn the_slash_road_types_a_filter_and_esc_walks_back_out() {
+        let root = filter_tempdir("slash");
+        let mut state = state_with_fm_over(&root);
+
+        assert!(matches!(
+            handle_file_manager_key(&mut state, key(KeyCode::Char('/'))),
+            FileManagerKeyDispatch::Consumed
+        ));
+        assert!(state.file_manager.as_ref().unwrap().trail_filter_editing);
+
+        for c in ['a', 'p'] {
+            handle_file_manager_key(&mut state, key(KeyCode::Char(c)));
+        }
+        {
+            let fm = state.file_manager.as_ref().unwrap();
+            let filter = fm.trail_filter().expect("the pattern is live");
+            assert_eq!(filter.pattern, "ap");
+            let col = &fm.trail_snapshots.cols()[0];
+            let allowed = fm
+                .trail_snapshots
+                .filtered_indices(col)
+                .expect("the active column is the filtered one");
+            let names: Vec<&str> = allowed
+                .iter()
+                .map(|&idx| col.entries()[idx].name.as_str())
+                .collect();
+            assert_eq!(names, ["apple", "apricot"], "typing narrows live");
+        }
+
+        handle_file_manager_key(&mut state, key(KeyCode::Enter));
+        {
+            let fm = state.file_manager.as_ref().unwrap();
+            assert!(!fm.trail_filter_editing, "Enter hands the keys back");
+            assert!(fm.trail_filter().is_some(), "and keeps the filter");
+        }
+
+        handle_file_manager_key(&mut state, key(KeyCode::Esc));
+        assert!(
+            state
+                .file_manager
+                .as_ref()
+                .unwrap()
+                .trail_filter()
+                .is_none(),
+            "the first Esc clears the filter"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // TP-FM-FILTER-01: after typing, the cursor stands on a MATCH — the
+    // zero-delta normalize walked it there — and arrows move within matches
+    // even while the editor is open.
+    #[test]
+    fn typing_normalizes_the_cursor_onto_a_match() {
+        let root = filter_tempdir("normalize");
+        let mut state = state_with_fm_over(&root);
+        // stand the cursor on "banana" first
+        handle_file_manager_key(&mut state, key(KeyCode::Down));
+        handle_file_manager_key(&mut state, key(KeyCode::Down));
+        {
+            let fm = state.file_manager.as_ref().unwrap();
+            assert_eq!(
+                fm.trail_snapshots
+                    .selected_entry(&fm.trail)
+                    .map(|e| e.name.as_str()),
+                Some("banana")
+            );
+        }
+        handle_file_manager_key(&mut state, key(KeyCode::Char('/')));
+        for c in ['a', 'p'] {
+            handle_file_manager_key(&mut state, key(KeyCode::Char(c)));
+        }
+        {
+            let fm = state.file_manager.as_ref().unwrap();
+            assert_eq!(
+                fm.trail_snapshots
+                    .selected_entry(&fm.trail)
+                    .map(|e| e.name.as_str()),
+                Some("apple"),
+                "the filtered-out cursor stepped to the first match"
+            );
+        }
+        handle_file_manager_key(&mut state, key(KeyCode::Down));
+        {
+            let fm = state.file_manager.as_ref().unwrap();
+            assert_eq!(
+                fm.trail_snapshots
+                    .selected_entry(&fm.trail)
+                    .map(|e| e.name.as_str()),
+                Some("apricot"),
+                "Down skips the non-match between"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

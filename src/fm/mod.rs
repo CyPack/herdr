@@ -833,6 +833,10 @@ pub struct FmState {
     /// Bounded Miller chain and resident non-current projections (FM1). The
     /// current directory's `entries` above stay the operational authority.
     pub(crate) miller: miller::MillerState,
+    /// Whether the trail filter is being typed right now — presentation
+    /// state for the input layer; the filter itself lives on the snapshots
+    /// (TP-FM-FILTER-03).
+    pub(crate) trail_filter_editing: bool,
 }
 
 impl FmState {
@@ -1081,6 +1085,7 @@ impl FmState {
             trail,
             trail_snapshots: trail_snapshots::TrailSnapshots::new(show_hidden),
             miller,
+            trail_filter_editing: false,
         };
         state.refresh_context();
         state
@@ -1094,6 +1099,7 @@ impl FmState {
             miller: miller::MillerState::seed(cwd.clone()),
             trail: trail::TrailState::new(&cwd),
             trail_snapshots: trail_snapshots::TrailSnapshots::new(false),
+            trail_filter_editing: false,
             cwd,
             entries: Vec::new(),
             cursor: 0,
@@ -1215,6 +1221,86 @@ impl FmState {
 
     /// Move the cursor inside the one active Trail column. This never enters a
     /// directory or transfers focus; explicit activation remains separate.
+    pub(crate) fn trail_filter(&self) -> Option<&trail_snapshots::TrailFilter> {
+        self.trail_snapshots.filter()
+    }
+
+    /// Open (or reopen) the filter editor for the ACTIVE column. Reopening
+    /// over the same directory keeps the pattern already typed there.
+    pub(crate) fn begin_trail_filter(&mut self) {
+        let active = self.trail.active_col();
+        let Some(directory) = self
+            .trail
+            .cols()
+            .get(active)
+            .map(|col| col.directory.clone())
+        else {
+            return;
+        };
+        let pattern = match self.trail_snapshots.filter() {
+            Some(filter) if filter.directory == directory => filter.pattern.clone(),
+            _ => String::new(),
+        };
+        self.trail_snapshots.set_filter(directory, pattern);
+        self.trail_filter_editing = true;
+        self.normalize_trail_filter_cursor();
+    }
+
+    pub(crate) fn push_trail_filter_char(&mut self, c: char) {
+        let Some(filter) = self.trail_snapshots.filter() else {
+            return;
+        };
+        let directory = filter.directory.clone();
+        let mut pattern = filter.pattern.clone();
+        pattern.push(c);
+        self.trail_snapshots.set_filter(directory, pattern);
+        self.normalize_trail_filter_cursor();
+    }
+
+    /// Backspace: shorten the pattern; on an already-empty pattern the editor
+    /// closes and the filter is gone — one key walks all the way out.
+    pub(crate) fn pop_trail_filter_char(&mut self) {
+        let Some(filter) = self.trail_snapshots.filter() else {
+            return;
+        };
+        if filter.pattern.is_empty() {
+            self.clear_trail_filter();
+            return;
+        }
+        let directory = filter.directory.clone();
+        let mut pattern = filter.pattern.clone();
+        pattern.pop();
+        self.trail_snapshots.set_filter(directory, pattern);
+        self.normalize_trail_filter_cursor();
+    }
+
+    /// Enter: keep the filter, hand the keys back to navigation. An empty
+    /// pattern accepted is no filter at all.
+    pub(crate) fn accept_trail_filter(&mut self) {
+        self.trail_filter_editing = false;
+        if self
+            .trail_snapshots
+            .filter()
+            .is_some_and(|filter| filter.pattern.is_empty())
+        {
+            self.trail_snapshots.clear_filter();
+        }
+    }
+
+    pub(crate) fn clear_trail_filter(&mut self) {
+        self.trail_filter_editing = false;
+        self.trail_snapshots.clear_filter();
+    }
+
+    /// TP-FM-FILTER-01: the cursor is always a MEMBER of the projection —
+    /// after every pattern change, a cursor standing on a filtered-out entry
+    /// steps to the first match (a zero-delta move through the same road
+    /// every arrow takes, so the operation projection comes along).
+    fn normalize_trail_filter_cursor(&mut self) {
+        let active = self.trail.active_col();
+        let _ = self.move_trail_cursor_in_column(active, 0);
+    }
+
     pub(crate) fn move_trail_cursor(
         &mut self,
         delta: isize,

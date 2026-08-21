@@ -271,13 +271,23 @@ enum TrailLogicalLine {
     },
 }
 
-fn trail_logical_lines(
+/// TP-FM-FILTER-01: with `allowed`, only those entries become lines — but
+/// every line keeps its TRUE entry index, so hit-testing and rendering keep
+/// addressing the entry the person sees. Section headers survive only where
+/// a surviving entry still needs one.
+fn trail_logical_lines_filtered(
     entries: &[crate::fm::FileEntry],
     anchor: LocalCalendarAnchor,
+    allowed: Option<&[usize]>,
 ) -> Vec<TrailLogicalLine> {
     let mut lines = Vec::with_capacity(entries.len().saturating_mul(2));
     let mut previous_section = None;
     for (entry_index, entry) in entries.iter().enumerate() {
+        if let Some(allowed) = allowed {
+            if !allowed.contains(&entry_index) {
+                continue;
+            }
+        }
         let presentation = present_file_time(entry.modified, anchor);
         if previous_section != Some(presentation.section) {
             lines.push(TrailLogicalLine::Header {
@@ -432,7 +442,9 @@ fn project_trail_view_inner(
                 .and_then(|selected| entries.iter().position(|entry| entry.path == selected));
             let has_status = snap_cols[trail_index].omission_message().is_some();
             let height = usize::from(column.rect.height.saturating_sub(u16::from(has_status)));
-            let logical_lines = trail_logical_lines(entries, anchor);
+            let filter_allowed = snaps.filtered_indices(&snap_cols[trail_index]);
+            let logical_lines =
+                trail_logical_lines_filtered(entries, anchor, filter_allowed.as_deref());
             let (line_start, line_end) = visible_logical_range(
                 &logical_lines,
                 selected_entry,
@@ -1941,5 +1953,40 @@ mod tests {
             assert!(divider.rect.x >= stage.x);
             assert!(divider.rect.right() <= stage.right());
         }
+    }
+    // TP-FM-FILTER-01: the projection reaches the drawn rows — a filtered
+    // column offers exactly the matching rows, each still carrying its TRUE
+    // entry index, and the section header survives only for survivors.
+    #[test]
+    fn a_filtered_column_projects_matching_rows_with_true_indices() {
+        let td = TempDir::new("view-filter");
+        for name in ["apple", "banana", "apricot"] {
+            std::fs::create_dir_all(td.root.join(name)).expect("mk");
+        }
+        let trail = crate::fm::trail::TrailState::new(&td.root);
+        let mut snaps = crate::fm::trail_snapshots::TrailSnapshots::new(false);
+        snaps.sync(&trail);
+        let all = project_trail_view(Rect::new(0, 0, 120, 20), &trail, &snaps, &[]);
+        let all_rows: Vec<usize> = all
+            .columns
+            .iter()
+            .flat_map(|col| col.rows.iter().map(|row| row.entry_index))
+            .collect();
+        assert_eq!(all_rows.len(), 3, "control: unfiltered offers everything");
+
+        snaps.set_filter(td.root.clone(), "ap".to_string());
+        let view = project_trail_view(Rect::new(0, 0, 120, 20), &trail, &snaps, &[]);
+        let names: Vec<&str> = view
+            .columns
+            .iter()
+            .flat_map(|col| {
+                let entries = snaps.cols()[col.trail_index].entries();
+                col.rows
+                    .iter()
+                    .map(move |row| entries[row.entry_index].name.as_str())
+            })
+            .collect();
+        assert_eq!(names, ["apple", "apricot"]);
+        let _ = trail; // the trail is state, not a copy — keep the borrow honest
     }
 }

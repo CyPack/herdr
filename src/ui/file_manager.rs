@@ -338,6 +338,9 @@ pub(crate) fn compute_file_manager_action_bar_model(
                             .then_some(FileManagerActionDisabledReason::ReadOnlyTarget)
                     })
                 }
+                // TP-FM-FILTER-03: opening the filter editor needs nothing
+                // but the surface itself — always offered.
+                FileManagerHeaderAction::Search => None,
                 // TP-FM-COPYPATH-01: reads the header's own directory, so it
                 // needs no selection and writes nothing — always offered.
                 FileManagerHeaderAction::CopyPath => None,
@@ -658,6 +661,23 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
     // A one-row identity header stays stable while responsive Miller columns
     // progressively disclose parent and preview context below it.
     let cwd_text = fm.cwd.to_string_lossy();
+    // TP-FM-FILTER-03: an active filter rides the identity line — the place
+    // the eye already checks "where am I" also answers "what am I seeing a
+    // subset of". A caret marks the editing state. The suffix is composed
+    // AFTER truncation, because a filter clipped away with the path's tail
+    // would narrow the listing invisibly — the exact failure the echo
+    // exists to prevent.
+    let filter_suffix = fm.trail_filter().map(|filter| {
+        format!(
+            "  /{}{}",
+            filter.pattern,
+            if fm.trail_filter_editing {
+                "\u{258c}"
+            } else {
+                ""
+            }
+        )
+    });
     let action_bar_identity = action_bar
         .map(|model| file_manager_action_bar_identity(&cwd_text, model))
         .unwrap_or_else(|| cwd_text.into_owned());
@@ -666,7 +686,18 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
         .map(|action| action.rect.x.saturating_sub(header_area.x))
         .unwrap_or(header_area.width);
     let identity_area = Rect::new(header_area.x, header_area.y, identity_width, 1);
-    let header = truncate_end(&action_bar_identity, identity_area.width as usize);
+    let header = match &filter_suffix {
+        Some(suffix) => {
+            let suffix_width = suffix.chars().count();
+            let path_budget = (identity_area.width as usize).saturating_sub(suffix_width);
+            format!(
+                "{}{}",
+                truncate_end(&action_bar_identity, path_budget),
+                suffix
+            )
+        }
+        None => truncate_end(&action_bar_identity, identity_area.width as usize),
+    };
     frame.render_widget(Paragraph::new(header).style(styles.identity), identity_area);
     for action in header_actions {
         let enabled = action_bar
@@ -2533,7 +2564,7 @@ mod tests {
     fn header_action_areas_are_tagged_disjoint_and_right_aligned() {
         use crate::app::state::FileManagerHeaderAction;
 
-        let area = Rect::new(10, 4, 60, 1);
+        let area = Rect::new(10, 4, 69, 1);
         let actions = compute_file_manager_header_action_areas(area);
         assert_eq!(
             actions.iter().map(|area| area.action).collect::<Vec<_>>(),
@@ -2542,6 +2573,7 @@ mod tests {
                 FileManagerHeaderAction::Paste,
                 FileManagerHeaderAction::NewFolder,
                 FileManagerHeaderAction::Delete,
+                FileManagerHeaderAction::Search,
                 FileManagerHeaderAction::CopyPath,
             ]
         );
@@ -2570,22 +2602,45 @@ mod tests {
         use crate::app::state::FileManagerHeaderAction;
 
         let cases = [
-            // 60 leaves exactly the 48 cells all five labels and their gaps
+            // 69 leaves exactly the 57 cells all six labels and their gaps
             // cost — the boundary sits AT the full set.
             (
-                60,
+                69,
                 vec![
                     FileManagerHeaderAction::Copy,
                     FileManagerHeaderAction::Paste,
                     FileManagerHeaderAction::NewFolder,
                     FileManagerHeaderAction::Delete,
+                    FileManagerHeaderAction::Search,
                     FileManagerHeaderAction::CopyPath,
                 ],
             ),
             // One cell short of the full set: the lowest-priority verb —
             // `[copy path]` — is the one that steps off.
             (
-                59,
+                68,
+                vec![
+                    FileManagerHeaderAction::Copy,
+                    FileManagerHeaderAction::Paste,
+                    FileManagerHeaderAction::NewFolder,
+                    FileManagerHeaderAction::Delete,
+                    FileManagerHeaderAction::Search,
+                ],
+            ),
+            // 57 fits the five-with-search set exactly; one below drops
+            // `[search]` next — the drop order is the reverse of ALL.
+            (
+                57,
+                vec![
+                    FileManagerHeaderAction::Copy,
+                    FileManagerHeaderAction::Paste,
+                    FileManagerHeaderAction::NewFolder,
+                    FileManagerHeaderAction::Delete,
+                    FileManagerHeaderAction::Search,
+                ],
+            ),
+            (
+                56,
                 vec![
                     FileManagerHeaderAction::Copy,
                     FileManagerHeaderAction::Paste,
@@ -2639,6 +2694,25 @@ mod tests {
             "narrow header: {narrow:?}"
         );
         assert!(!narrow.contains("[delete]"), "narrow header: {narrow:?}");
+    }
+
+    // TP-FM-FILTER-03: an active filter rides the identity line, caret and
+    // all while typing — the header answers "what am I seeing a subset of".
+    #[test]
+    fn the_identity_line_carries_the_live_filter() {
+        let td = TempDir::new("filter-identity");
+        td.file("apple.txt");
+        let mut fm = FmState::new(&td.root);
+        fm.begin_trail_filter();
+        fm.push_trail_filter_char('a');
+        fm.push_trail_filter_char('p');
+        let app = app_with_fm(fm);
+        let header = render_rows(&app, 69, 5)[0].clone();
+        assert!(header.contains("/ap"), "identity line: {header:?}");
+        assert!(
+            header.contains('\u{258c}'),
+            "the caret marks editing: {header:?}"
+        );
     }
 
     // TP-N4.2-BULK-AUTHORITY: cursor focus alone is not bulk authority; the
@@ -2727,6 +2801,7 @@ mod tests {
                 "[paste]",
                 "[new folder]",
                 "[delete]",
+                "[search]",
                 "[copy path]"
             ]
         );
