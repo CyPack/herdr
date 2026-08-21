@@ -31,6 +31,9 @@ pub struct ThemeConfig {
 #[serde(default)]
 pub struct CustomThemeColors {
     pub accent: Option<String>,
+    /// The theme's general background — what bars follow unless a bar says
+    /// otherwise (TP-CHROME-147).
+    pub bg: Option<String>,
     pub panel_bg: Option<String>,
     pub surface0: Option<String>,
     pub surface1: Option<String>,

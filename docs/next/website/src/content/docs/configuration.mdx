@@ -492,6 +492,8 @@ Everywhere a bar takes a colour — `color`, a `gradient` stop, or a value in a 
 | Name | What it is in the theme |
 |---|---|
 | `accent` | Highlights and active borders |
+| `bg` | The theme's general background — the surface the screen and the bars sit on |
+| `panel` | The floating-panel tone |
 | `text` | Main text |
 | `mauve` | Branch names and special labels |
 | `green` | Done and idle states |
@@ -507,6 +509,26 @@ Everywhere a bar takes a colour — `color`, a `gradient` stop, or a value in a 
 A name follows the theme, so switching theme recolours the bar along with everything else. A literal — `#cba6f7`, `#fa8`, or `rgb(203, 166, 247)` — means that exact colour and keeps it through a theme change. Leaving a colour unset is the warm default rather than no colour, which is what makes an unconfigured bar look deliberate instead of unfinished.
 
 Anything else is neither refused nor guessed at: it is written to the log and drawn in cyan. A bar that stopped loading over a misspelled colour would be a config that worked yesterday and not today, so the misspelling is reported where it can be read rather than where it stops the bar. `herdr shell spec` prints this list, so it is something to look up rather than to remember.
+
+### The strip's own backdrop
+
+A bar's strip is painted on the theme's **general background** — the surface the rest of the
+screen sits on — so switching theme recolours the backdrop along with everything else. The
+`background` key overrides it, and takes exactly what `color` takes: a theme name from the
+table above (plus `bg`, the general background itself, and `panel`, the floating-panel tone),
+a literal, or `reset` to show the terminal through:
+
+```toml
+[shell.bars.top]
+enabled    = true
+size       = 1
+border     = false
+background = "reset"   # unset: the theme's general background
+```
+
+The backdrop is painted whether or not the bar wears a frame — a `plain` or `islands` strip
+sits on it too — and each edge answers for itself, so a written `background` on the top bar
+says nothing about the bottom one.
 
 ### Dividing a bar into sections
 
@@ -620,9 +642,10 @@ style   = "islands"
 
 `framed` — the default, and what an unwritten style means — draws the bar's own panel and
 leaves sections bare. `islands` drops the panel and frames each section instead. `plain`
-draws neither. The style only fills in *unwritten* `border` keys: anything written
-explicitly, on the bar or on a section, wins over it in both directions, so switching looks
-is one line and disagreeing with the look is one more.
+draws neither. `pills` paints each section as a filled band instead of a frame — see below.
+The style only fills in *unwritten* keys: anything written explicitly, on the bar or on a
+section, wins over it in both directions, so switching looks is one line and disagreeing
+with the look is one more.
 
 Sections that belong together can share one frame. Adjacent sections naming the same
 `group` become a single island:
@@ -655,6 +678,64 @@ frame, and none at all inherits the bar's tone. A press inside the group still l
 the section it is over. Ungrouping is deleting the `group` lines; regrouping is writing
 them back — the sizing rule is the same either way, so the numbers you wrote keep meaning
 what they meant.
+
+### Pills — filled bands instead of frames
+
+`style = "pills"` paints every section (the `fill` spacers excepted) as a **pill**: a dusty
+band of the section's own colour with the vivid tone of the same family as its text. Each
+section names its family with the `color` it already has; the band and the text are derived
+from it, so one line per section is enough:
+
+```toml
+[shell.bars.top]
+enabled = true
+size    = 1
+style   = "pills"
+
+[[shell.bars.top.sections]]
+kind   = "fixed"
+cells  = 7
+color  = "yellow"
+widget = { kind = "resource", metric = "cpu" }
+
+[[shell.bars.top.sections]]
+kind = "fill"
+
+[[shell.bars.top.sections]]
+kind   = "fixed"
+cells  = 12
+color  = "blue"
+widget = { kind = "clock", format = "%a %d %b" }
+```
+
+A pill spends no cells on chrome — no frame, no stroke — so a one-row bar carries pills
+comfortably where the same sections framed would need `size = 3`. Adjacent sections naming
+the same `group` share **one** band, exactly as they share one frame under `islands`; a
+group's members must agree on their colour and on their backdrop, first writer speaking for
+the run.
+
+Both halves are separately configurable, and the style only fills what was left unwritten:
+
+- **The text** is the section's `color` — the vivid half. Written or inherited from the bar.
+- **The band** is the new section-level `background` key — written, it wins over the derived
+  dusty tone; unwritten under `pills`, the band is the colour mixed into the bar's own
+  backdrop at 28%.
+
+`background` is not tied to the style. On any bar, a section that writes `background` gets a
+filled band of exactly that colour — the per-object road, one pill without asking for the
+whole look — and on a framed island the same key fills the frame's **inside**. The one place
+it is refused is an ungrouped `fill`: a spacer carries no chrome, so the line would never be
+read.
+
+```toml
+# per-object: one banded section on an otherwise plain bar
+[[shell.bars.top.sections]]
+kind       = "fixed"
+cells      = 9
+color      = "teal"
+background = "#1a2b3b"
+widget     = { kind = "resource", metric = "mem" }
+```
 
 ### Switching the bars off by hand
 

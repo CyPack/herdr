@@ -988,6 +988,14 @@ pub struct ShellBarConfig {
     /// active theme; anything else is read as a literal colour. Empty means the
     /// subdued separator tone.
     pub color: String,
+    /// What the strip itself is painted on.
+    ///
+    /// Empty means the theme's own general background, so a bar belongs to the
+    /// surface it sits in and follows a theme change without being edited. A
+    /// palette token (`bg`, `surface`, `accent`, …) follows the theme; anything
+    /// else is read as a literal colour; `reset` leaves the terminal's own
+    /// background showing through. TP-CHROME-147.
+    pub background: String,
     /// Two or more stops to fade the border between, along the bar's long
     /// axis. Both ends have to resolve to real channel values, so named
     /// terminal colours fall back to `color` rather than being guessed at.
@@ -1042,6 +1050,7 @@ impl ShellBarConfig {
             style: String::new(),
             border: None,
             color: String::new(),
+            background: String::new(),
             gradient: Vec::new(),
             sections: Vec::new(),
             max_sections: default_max_bar_sections(),
@@ -1056,6 +1065,7 @@ impl ShellBarConfig {
             style: String::new(),
             border: None,
             color: String::new(),
+            background: String::new(),
             gradient: Vec::new(),
             sections: Vec::new(),
             max_sections: default_max_bar_sections(),
@@ -1112,6 +1122,13 @@ pub struct ShellBarSectionConfig {
     /// across and an island is a handful of them, so it would finish inside
     /// the first one.
     pub color: String,
+    /// The backdrop this section's chrome sits on — the pill's band when the
+    /// run paints as a pill, the frame's inner fill when it paints as an
+    /// island. Takes what `color` takes: a palette token, a literal, or
+    /// `reset`. Empty means the style's answer: `pills` derives a dusty tone
+    /// from the run's own colour, everything else leaves the bar's backdrop
+    /// showing. Refused on a `fill` — a spacer carries no chrome to backdrop.
+    pub background: String,
     /// What a click on this part does. Absent means the part is an indicator
     /// rather than a button: a surface nobody asked to be clickable should not
     /// answer clicks, because the person cannot know what it would do.

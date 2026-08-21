@@ -2,6 +2,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
     text::Span,
+    widgets::{Block, Clear},
     Frame,
 };
 
@@ -1056,15 +1057,23 @@ impl compose::Component for BaseLayer {
             RegionId::RightPanel,
         ] {
             let outer = app.view.shell.regions.get(region);
-            if outer.is_empty() || !bars.track_for(region).has_border() {
+            if outer.is_empty() {
                 continue;
             }
-            widgets::render_bar_shell(
-                frame,
-                outer,
-                colors.for_region(region),
-                app.palette.panel_bg,
-            );
+            // TP-CHROME-147: the strip is painted on the theme's own general
+            // background unless this bar says otherwise — including when it
+            // wears no frame, which is what gives a plain or islands bar a
+            // surface to sit on instead of whatever the terminal shows.
+            let background = colors.background_for(region);
+            if bars.track_for(region).has_border() {
+                widgets::render_bar_shell(frame, outer, colors.for_region(region), background);
+            } else {
+                frame.render_widget(Clear, outer);
+                frame.render_widget(
+                    Block::default().style(Style::default().bg(background)),
+                    outer,
+                );
+            }
         }
 
         // Then whatever each section shows, into the rectangle that section was
@@ -1095,29 +1104,57 @@ impl compose::Component for BaseLayer {
             // earlier members already drew.
             let rects = bars.track_for(region).section_rects(region, outer);
             let mut inners: Vec<(usize, usize, Rect)> = Vec::new();
-            let mut open: Option<(usize, Rect, crate::ui::shell::BarTint)> = None;
+            let mut open: Option<(usize, Rect, crate::ui::shell::IslandSlot)> = None;
             for (index, rect) in rects.occupied() {
                 let slot_index = u8::try_from(index).unwrap_or(u8::MAX);
                 let Some(slot) = app.shell_bar_chrome.island_for(region, slot_index) else {
                     continue;
                 };
                 if slot.first {
-                    open = Some((index, rect, slot.tint));
+                    open = Some((index, rect, slot));
                 }
-                let Some((start, start_rect, tint)) = open else {
+                let Some((start, start_rect, opening)) = open else {
                     continue;
                 };
                 if slot.last {
                     let island = start_rect.union(rect);
-                    // The inner rectangle is read back from the call that
-                    // painted it rather than recomputed, for the reason
-                    // `BarTrack::inner` exists: two places doing the same
-                    // arithmetic are two places that can drift, and the drift
-                    // shows up as a label one cell away from its box.
-                    if let Some(inner) =
-                        widgets::render_bar_shell(frame, island, tint, app.palette.panel_bg)
-                    {
-                        inners.push((start, index, inner));
+                    match opening.chrome {
+                        // TP-CHROME-148: a pill is a filled band, no stroke —
+                        // the whole run's rectangle is its own inner, so a
+                        // pill spends no cells on chrome.
+                        crate::ui::shell::SlotChrome::Pill { bg, .. } => {
+                            frame.render_widget(Clear, island);
+                            frame.render_widget(
+                                Block::default().style(Style::default().bg(bg)),
+                                island,
+                            );
+                            inners.push((start, index, island));
+                        }
+                        crate::ui::shell::SlotChrome::Frame { backdrop } => {
+                            // The inner rectangle is read back from the call
+                            // that painted it rather than recomputed, for the
+                            // reason `BarTrack::inner` exists: two places
+                            // doing the same arithmetic are two places that
+                            // can drift, and the drift shows up as a label
+                            // one cell away from its box.
+                            if let Some(inner) = widgets::render_bar_shell(
+                                frame,
+                                island,
+                                opening.tint,
+                                colors.background_for(region),
+                            ) {
+                                // TP-CHROME-148: a written backdrop fills the
+                                // frame's inside — the island reading of the
+                                // same `background` key the pill band reads.
+                                if let Some(fill) = backdrop {
+                                    frame.render_widget(
+                                        Block::default().style(Style::default().bg(fill)),
+                                        inner,
+                                    );
+                                }
+                                inners.push((start, index, inner));
+                            }
+                        }
                     }
                     open = None;
                 }
@@ -1143,6 +1180,19 @@ impl compose::Component for BaseLayer {
                     }
                 };
                 if let Some(widget) = app.shell_bar_chrome.widget_for(region, slot_index) {
+                    // TP-CHROME-148: text on a pill is the run's vivid tone —
+                    // the same family as the band it sits on, resolved beside
+                    // the band so the two cannot drift apart.
+                    let widget_style = match app
+                        .shell_bar_chrome
+                        .island_for(region, slot_index)
+                        .map(|slot| slot.chrome)
+                    {
+                        Some(crate::ui::shell::SlotChrome::Pill { fg, .. }) => {
+                            Style::default().fg(fg)
+                        }
+                        _ => section_style,
+                    };
                     widgets::render_section_widget(
                         frame,
                         widget,
@@ -1151,7 +1201,7 @@ impl compose::Component for BaseLayer {
                         app.clock_now,
                         &app.palette,
                         content,
-                        section_style,
+                        widget_style,
                     );
                 }
             }
@@ -1551,6 +1601,298 @@ mod tests {
             1,
             "clipping by display width must not paint six cells into four: {row:?}"
         );
+    }
+
+    // TP-CHROME-147: a borderless bar still paints its band — every cell of
+    // the strip, sections or not, sits on the theme's own general background
+    // instead of whatever the terminal happens to show underneath. This is
+    // the reported complaint: the bar's backdrop matched the tab strip's
+    // empty area rather than following the theme.
+    #[test]
+    fn a_borderless_bar_paints_its_band_on_the_theme_background() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut section = crate::config::ShellBarSectionConfig {
+            kind: "fixed".to_string(),
+            cells: 6,
+            ..Default::default()
+        };
+        section.widget.kind = "label".to_string();
+        section.widget.text = "CPU".to_string();
+
+        let config = crate::config::ShellBarsConfig {
+            top: crate::config::ShellBarConfig {
+                enabled: true,
+                size: 1,
+                border: Some(false),
+                sections: vec![section],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let frame = Rect::new(0, 0, 100, 30);
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.shell_presentation = crate::ui::shell::ShellPresentationState::from_restored(
+            app.sidebar_width,
+            false,
+            None,
+            crate::ui::shell::ShellBars::from_config(&config),
+        )
+        .with_bar_colors(crate::ui::shell::BarColors::from_config(
+            &config,
+            &app.palette,
+        ));
+        app.shell_bar_chrome =
+            crate::ui::shell::ShellBarChrome::from_config(&config, true, &app.palette);
+        compute_view(&mut app, frame);
+
+        let mut terminal =
+            Terminal::new(TestBackend::new(frame.width, frame.height)).expect("test backend");
+        terminal
+            .draw(|f| render(&app, f))
+            .expect("a borderless bar draws");
+        let buffer = terminal.backend().buffer().clone();
+
+        assert_ne!(
+            app.palette.bg, app.palette.panel_bg,
+            "precondition: this theme distinguishes the two"
+        );
+        let far_cell = buffer.cell((60, 0)).expect("cell");
+        assert_eq!(
+            far_cell.bg, app.palette.bg,
+            "the band beyond the sections wears the theme's general background"
+        );
+    }
+
+    // TP-CHROME-147: a written `background` reaches the painted band — the
+    // resolver's explicit-wins rule is worth nothing if the paint keeps
+    // reading the theme.
+    #[test]
+    fn a_written_background_reaches_the_painted_band() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let config = crate::config::ShellBarsConfig {
+            top: crate::config::ShellBarConfig {
+                enabled: true,
+                size: 1,
+                border: Some(false),
+                background: "red".to_string(),
+                sections: Vec::new(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let frame = Rect::new(0, 0, 100, 30);
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.shell_presentation = crate::ui::shell::ShellPresentationState::from_restored(
+            app.sidebar_width,
+            false,
+            None,
+            crate::ui::shell::ShellBars::from_config(&config),
+        )
+        .with_bar_colors(crate::ui::shell::BarColors::from_config(
+            &config,
+            &app.palette,
+        ));
+        app.shell_bar_chrome =
+            crate::ui::shell::ShellBarChrome::from_config(&config, true, &app.palette);
+        compute_view(&mut app, frame);
+
+        let mut terminal =
+            Terminal::new(TestBackend::new(frame.width, frame.height)).expect("test backend");
+        terminal
+            .draw(|f| render(&app, f))
+            .expect("a borderless bar with a written background draws");
+        let buffer = terminal.backend().buffer().clone();
+
+        let far_cell = buffer.cell((60, 0)).expect("cell");
+        assert_eq!(
+            far_cell.bg, app.palette.red,
+            "the written background wins on the painted band too"
+        );
+    }
+
+    // TP-CHROME-147: an island's frame sits on the bar's background — the
+    // island shell is passed the same resolved backdrop the band wears, not
+    // the floating-panel tone it used to borrow.
+    #[test]
+    fn an_island_frame_sits_on_the_bars_background() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut section = crate::config::ShellBarSectionConfig {
+            kind: "fixed".to_string(),
+            cells: 6,
+            border: Some(true),
+            color: "teal".to_string(),
+            ..Default::default()
+        };
+        section.widget.kind = "label".to_string();
+        section.widget.text = "CPU".to_string();
+
+        let config = crate::config::ShellBarsConfig {
+            top: crate::config::ShellBarConfig {
+                enabled: true,
+                size: 3,
+                border: Some(false),
+                sections: vec![section],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let frame = Rect::new(0, 0, 100, 30);
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.shell_presentation = crate::ui::shell::ShellPresentationState::from_restored(
+            app.sidebar_width,
+            false,
+            None,
+            crate::ui::shell::ShellBars::from_config(&config),
+        )
+        .with_bar_colors(crate::ui::shell::BarColors::from_config(
+            &config,
+            &app.palette,
+        ));
+        app.shell_bar_chrome =
+            crate::ui::shell::ShellBarChrome::from_config(&config, true, &app.palette);
+        compute_view(&mut app, frame);
+
+        let mut terminal =
+            Terminal::new(TestBackend::new(frame.width, frame.height)).expect("test backend");
+        terminal
+            .draw(|f| render(&app, f))
+            .expect("an islands bar draws");
+        let buffer = terminal.backend().buffer().clone();
+
+        let corner = (0..6u16)
+            .filter_map(|x| buffer.cell((x, 0)).map(|cell| (x, cell.clone())))
+            .find(|(_, cell)| cell.symbol() == "\u{256d}" || cell.symbol() == "\u{250c}");
+        let (_, frame_cell) = corner.expect("an island frame corner is painted on the top row");
+        assert_eq!(
+            frame_cell.bg, app.palette.bg,
+            "the island frame sits on the bar's resolved background"
+        );
+    }
+
+    // TP-CHROME-148: a pills bar paints each section as a filled band in its
+    // own family — pastel behind, vivid text on it — the spacer between them
+    // stays the bar's backdrop, and a grouped run is ONE continuous band.
+    #[test]
+    fn a_pills_bar_paints_family_bands_with_vivid_text() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut cpu = crate::config::ShellBarSectionConfig {
+            kind: "fixed".to_string(),
+            cells: 6,
+            color: "yellow".to_string(),
+            ..Default::default()
+        };
+        cpu.widget.kind = "label".to_string();
+        cpu.widget.text = "CPU".to_string();
+
+        let spacer = crate::config::ShellBarSectionConfig {
+            kind: "fill".to_string(),
+            ..Default::default()
+        };
+
+        let mut a = crate::config::ShellBarSectionConfig {
+            kind: "fixed".to_string(),
+            cells: 4,
+            group: "sys".to_string(),
+            color: "red".to_string(),
+            ..Default::default()
+        };
+        a.widget.kind = "label".to_string();
+        a.widget.text = "A".to_string();
+        let mut b = crate::config::ShellBarSectionConfig {
+            kind: "fixed".to_string(),
+            cells: 4,
+            group: "sys".to_string(),
+            ..Default::default()
+        };
+        b.widget.kind = "label".to_string();
+        b.widget.text = "B".to_string();
+
+        let config = crate::config::ShellBarsConfig {
+            top: crate::config::ShellBarConfig {
+                enabled: true,
+                size: 1,
+                style: "pills".to_string(),
+                sections: vec![cpu, spacer, a, b],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let frame = Rect::new(0, 0, 100, 30);
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.shell_presentation = crate::ui::shell::ShellPresentationState::from_restored(
+            app.sidebar_width,
+            false,
+            None,
+            crate::ui::shell::ShellBars::from_config(&config),
+        )
+        .with_bar_colors(crate::ui::shell::BarColors::from_config(
+            &config,
+            &app.palette,
+        ));
+        app.shell_bar_chrome =
+            crate::ui::shell::ShellBarChrome::from_config(&config, true, &app.palette);
+        compute_view(&mut app, frame);
+
+        let mut terminal =
+            Terminal::new(TestBackend::new(frame.width, frame.height)).expect("test backend");
+        terminal
+            .draw(|f| render(&app, f))
+            .expect("a pills bar draws");
+        let buffer = terminal.backend().buffer().clone();
+
+        let (yellow_band, yellow_text) =
+            crate::ui::shell::pill_tones(app.palette.yellow, app.palette.bg);
+        let (red_band, _) = crate::ui::shell::pill_tones(app.palette.red, app.palette.bg);
+
+        // The first pill: band behind, vivid text on it.
+        let first_cell = buffer.cell((0, 0)).expect("cell");
+        assert_eq!(first_cell.bg, yellow_band, "the first pill wears its band");
+        let label_cell = (0..6u16)
+            .filter_map(|x| buffer.cell((x, 0)))
+            .find(|cell| cell.symbol() == "C")
+            .expect("the label is painted");
+        assert_eq!(label_cell.fg, yellow_text, "the text is the vivid tone");
+
+        // The spacer between the pills is the bar's own backdrop.
+        let gap_cell = buffer.cell((40, 0)).expect("cell");
+        assert_eq!(gap_cell.bg, app.palette.bg, "the fill is not a pill");
+
+        // The grouped run is one continuous red band, both members' cells.
+        let grouped: Vec<_> = (0..100u16)
+            .filter_map(|x| buffer.cell((x, 0)).map(|cell| (x, cell.clone())))
+            .filter(|(_, cell)| cell.bg == red_band)
+            .map(|(x, _)| x)
+            .collect();
+        assert!(
+            grouped.len() >= 8,
+            "both members sit on one band: {grouped:?}"
+        );
+        let contiguous = grouped.windows(2).all(|pair| pair[1] == pair[0] + 1);
+        assert!(contiguous, "one band, no seam: {grouped:?}");
     }
 
     /// G6 · a group is ONE frame on the screen: three sections, one box, the

@@ -47,6 +47,12 @@
           "description": "Override the accent color token on top of the base theme. Accepts hex, named colors, rgb(r,g,b), or reset aliases."
         },
         {
+          "key": "theme.custom.bg",
+          "type": "color",
+          "default": "unset",
+          "description": "Override the bg color token on top of the base theme. Accepts hex, named colors, rgb(r,g,b), or reset aliases. The bg token is the theme's general background — the surface the screen and the edge bars sit on."
+        },
+        {
           "key": "theme.custom.panel_bg",
           "type": "color",
           "default": "unset",
@@ -1372,6 +1378,12 @@
           "description": "Border tone for the bottom bar. A palette token (accent, mauve, blue, teal, green, yellow, red, peach/orange, text, dim) follows the theme; anything else is read as a literal colour. Empty uses the warm default."
         },
         {
+          "key": "shell.bars.bottom.background",
+          "type": "string",
+          "default": "unset",
+          "description": "What the strip is painted on. Unset follows the theme's general background; takes the same names color takes (plus bg and panel), a literal, or reset to show the terminal through. Painted framed or not."
+        },
+        {
           "key": "shell.bars.bottom.enabled",
           "type": "boolean",
           "default": "false",
@@ -1418,6 +1430,12 @@
           "type": "string",
           "default": "\"\"",
           "description": "Border tone for the left bar. A palette token (accent, mauve, blue, teal, green, yellow, red, peach/orange, text, dim) follows the theme; anything else is read as a literal colour. Empty uses the warm default."
+        },
+        {
+          "key": "shell.bars.left.background",
+          "type": "string",
+          "default": "unset",
+          "description": "What the strip is painted on. Unset follows the theme's general background; takes the same names color takes (plus bg and panel), a literal, or reset to show the terminal through. Painted framed or not."
         },
         {
           "key": "shell.bars.left.enabled",
@@ -1468,6 +1486,12 @@
           "description": "Border tone for the right bar. A palette token (accent, mauve, blue, teal, green, yellow, red, peach/orange, text, dim) follows the theme; anything else is read as a literal colour. Empty uses the warm default."
         },
         {
+          "key": "shell.bars.right.background",
+          "type": "string",
+          "default": "unset",
+          "description": "What the strip is painted on. Unset follows the theme's general background; takes the same names color takes (plus bg and panel), a literal, or reset to show the terminal through. Painted framed or not."
+        },
+        {
           "key": "shell.bars.right.enabled",
           "type": "boolean",
           "default": "false",
@@ -1514,6 +1538,12 @@
           "type": "string",
           "default": "\"\"",
           "description": "Border tone for the top bar. A palette token (accent, mauve, blue, teal, green, yellow, red, peach/orange, text, dim) follows the theme; anything else is read as a literal colour. Empty uses the warm default."
+        },
+        {
+          "key": "shell.bars.top.background",
+          "type": "string",
+          "default": "unset",
+          "description": "What the strip is painted on. Unset follows the theme's general background; takes the same names color takes (plus bg and panel), a literal, or reset to show the terminal through. Painted framed or not."
         },
         {
           "key": "shell.bars.top.enabled",
