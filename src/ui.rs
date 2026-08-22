@@ -1228,7 +1228,7 @@ impl compose::Component for BaseLayer {
                             );
                             inners.push((start, index, island));
                         }
-                        crate::ui::shell::SlotChrome::Frame { backdrop } => {
+                        crate::ui::shell::SlotChrome::Frame { backdrop, .. } => {
                             // The inner rectangle is read back from the call
                             // that painted it rather than recomputed, for the
                             // reason `BarTrack::inner` exists: two places
@@ -1287,6 +1287,11 @@ impl compose::Component for BaseLayer {
                         .map(|slot| slot.chrome)
                     {
                         Some(crate::ui::shell::SlotChrome::Pill { fg, .. }) => {
+                            Style::default().fg(fg)
+                        }
+                        // The island reading of the same `color` key: a
+                        // written family reaches the words inside the frame.
+                        Some(crate::ui::shell::SlotChrome::Frame { fg: Some(fg), .. }) => {
                             Style::default().fg(fg)
                         }
                         _ => section_style,
@@ -1962,6 +1967,136 @@ mod tests {
         assert_eq!(
             frame_cell.bg, app.palette.bg,
             "the island frame sits on the bar's resolved background"
+        );
+    }
+
+    // TP-CHROME-163: a written section `color` reaches the words inside an
+    // island, the way it already reaches the words on a pill — the frame
+    // stroke and the text speak the same family.
+    #[test]
+    fn an_islands_written_color_paints_its_widget_text() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut section = crate::config::ShellBarSectionConfig {
+            kind: "fixed".to_string(),
+            cells: 6,
+            border: Some(true),
+            color: "teal".to_string(),
+            ..Default::default()
+        };
+        section.widget.kind = "label".to_string();
+        section.widget.text = "CPU".to_string();
+
+        let config = crate::config::ShellBarsConfig {
+            top: crate::config::ShellBarConfig {
+                enabled: true,
+                size: 3,
+                border: Some(false),
+                sections: vec![section],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let frame = Rect::new(0, 0, 100, 30);
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.shell_presentation = crate::ui::shell::ShellPresentationState::from_restored(
+            app.sidebar_width,
+            false,
+            None,
+            crate::ui::shell::ShellBars::from_config(&config),
+        )
+        .with_bar_colors(crate::ui::shell::BarColors::from_config(
+            &config,
+            &app.palette,
+        ));
+        app.shell_bar_chrome =
+            crate::ui::shell::ShellBarChrome::from_config(&config, true, &app.palette);
+        compute_view(&mut app, frame);
+
+        let mut terminal =
+            Terminal::new(TestBackend::new(frame.width, frame.height)).expect("test backend");
+        terminal
+            .draw(|f| render(&app, f))
+            .expect("an islands bar draws");
+        let buffer = terminal.backend().buffer().clone();
+
+        let label_cell = (0..3u16)
+            .flat_map(|y| (0..8u16).map(move |x| (x, y)))
+            .filter_map(|pos| buffer.cell(pos))
+            .find(|cell| cell.symbol() == "C")
+            .expect("the island label is painted");
+        assert_eq!(
+            label_cell.fg, app.palette.teal,
+            "the written colour reaches the island's text"
+        );
+    }
+
+    // TP-CHROME-163: a section that writes no colour keeps today's plain
+    // text tone — the family stroke is opt-in for the words, never imposed.
+    #[test]
+    fn an_islands_unwritten_section_keeps_the_plain_text_tone() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut section = crate::config::ShellBarSectionConfig {
+            kind: "fixed".to_string(),
+            cells: 6,
+            border: Some(true),
+            ..Default::default()
+        };
+        section.widget.kind = "label".to_string();
+        section.widget.text = "CPU".to_string();
+
+        let config = crate::config::ShellBarsConfig {
+            top: crate::config::ShellBarConfig {
+                enabled: true,
+                size: 3,
+                border: Some(false),
+                sections: vec![section],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let frame = Rect::new(0, 0, 100, 30);
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.shell_presentation = crate::ui::shell::ShellPresentationState::from_restored(
+            app.sidebar_width,
+            false,
+            None,
+            crate::ui::shell::ShellBars::from_config(&config),
+        )
+        .with_bar_colors(crate::ui::shell::BarColors::from_config(
+            &config,
+            &app.palette,
+        ));
+        app.shell_bar_chrome =
+            crate::ui::shell::ShellBarChrome::from_config(&config, true, &app.palette);
+        compute_view(&mut app, frame);
+
+        let mut terminal =
+            Terminal::new(TestBackend::new(frame.width, frame.height)).expect("test backend");
+        terminal
+            .draw(|f| render(&app, f))
+            .expect("an islands bar draws");
+        let buffer = terminal.backend().buffer().clone();
+
+        let label_cell = (0..3u16)
+            .flat_map(|y| (0..8u16).map(move |x| (x, y)))
+            .filter_map(|pos| buffer.cell(pos))
+            .find(|cell| cell.symbol() == "C")
+            .expect("the island label is painted");
+        assert_eq!(
+            label_cell.fg, app.palette.text,
+            "an unwritten section keeps the plain tone"
         );
     }
 

@@ -2163,8 +2163,13 @@ pub(crate) struct IslandSlot {
 /// A run's painted form, colours resolved.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SlotChrome {
-    /// The stroked island; `backdrop` is a written inner fill, if any.
-    Frame { backdrop: Option<Color> },
+    /// The stroked island; `backdrop` is a written inner fill, if any, and
+    /// `fg` is the run's written family for the words inside — `None` keeps
+    /// the plain text tone, so an unwritten section looks exactly as before.
+    Frame {
+        backdrop: Option<Color>,
+        fg: Option<Color>,
+    },
     /// The filled band: its backdrop and the vivid text it carries.
     Pill { bg: Color, fg: Color },
 }
@@ -2401,6 +2406,9 @@ fn bar_section_chrome(
         let chrome = match run.chrome {
             RunChrome::Frame => SlotChrome::Frame {
                 backdrop: written_backdrop,
+                // A written family colours the words inside the frame the way
+                // it colours a pill's text; unwritten stays the plain tone.
+                fg: tone.is_some().then(|| tint.start_color()),
             },
             RunChrome::Pill => {
                 let vivid = tint.start_color();
@@ -7858,7 +7866,7 @@ mod tests {
             .island_for(RegionId::TopBar, 0)
             .expect("a frame slot");
         assert!(
-            matches!(slot.chrome, SlotChrome::Frame { backdrop: None }),
+            matches!(slot.chrome, SlotChrome::Frame { backdrop: None, .. }),
             "an explicit border strokes a frame: {:?}",
             slot.chrome
         );
@@ -7919,9 +7927,36 @@ mod tests {
         assert_eq!(
             slot.chrome,
             SlotChrome::Frame {
-                backdrop: Some(palette.red)
+                backdrop: Some(palette.red),
+                fg: None,
             }
         );
+    }
+
+    // TP-CHROME-163: a written `color` on an island run carries the family
+    // to the frame's words — the slot's fg is the vivid tone, the pill's road.
+    #[test]
+    fn a_written_color_on_an_island_carries_a_text_family() {
+        let palette = Palette::catppuccin();
+        let mut island = fixed_section(6);
+        island.color = "teal".to_string();
+        let config = ShellBarsConfig {
+            top: ShellBarConfig {
+                enabled: true,
+                size: 3,
+                style: "islands".to_string(),
+                sections: vec![island],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let chrome = ShellBarChrome::from_config(&config, true, &palette);
+        let slot = chrome.island_for(RegionId::TopBar, 0).expect("an island");
+        match slot.chrome {
+            SlotChrome::Frame { fg, .. } => assert_eq!(fg, Some(palette.teal)),
+            other => panic!("expected a frame, got {other:?}"),
+        }
     }
 
     // TP-CHROME-148: a one-row pills bar stands — a pill asks for no rows —
