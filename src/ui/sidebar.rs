@@ -7083,6 +7083,34 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         assert_eq!(normalized_projects_scroll(&app, area, 3), 3);
     }
 
+    // TP-DRAW-15: the Projects tab reads the same restart-proof clock as
+    // every drawer (message > mtime): a resume that touches the file must
+    // not turn a three-day-old chat into "now".
+    #[test]
+    fn a_projects_tab_chat_age_survives_a_restart_too() {
+        use ratatui::{backend::TestBackend, Terminal};
+        let mut app = crate::app::state::AppState::test_new();
+        let now = std::time::SystemTime::now();
+        let mut chat = test_chat("x", "three days quiet", 1);
+        chat.last_modified = now;
+        chat.last_message_at = Some(now - std::time::Duration::from_secs(3 * 86_400));
+        app.projects_sessions = vec![project_sessions("/a", vec![chat])];
+
+        let area = Rect::new(0, 0, 30, 10);
+        app.view.project_row_areas = compute_project_row_areas(&app, area);
+        let mut terminal = Terminal::new(TestBackend::new(30, 10)).unwrap();
+        terminal
+            .draw(|frame| render_projects_list(&app, frame, area))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let all: String = (0..10).map(|y| row_text(buffer, y, 30) + "\n").collect();
+        assert!(
+            all.contains("3d"),
+            "the projects row dates from the message: {all}"
+        );
+        assert!(!all.contains("now"), "a restart must not reset ages: {all}");
+    }
+
     #[test]
     fn compute_project_row_areas_collapsed_emits_only_the_header() {
         let mut app = crate::app::state::AppState::test_new();
