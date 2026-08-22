@@ -12292,8 +12292,19 @@ command = ["inspect"]
             tag
         ));
         let _ = std::fs::remove_dir_all(&root);
-        for name in ["apple", "banana", "apricot"] {
-            std::fs::create_dir_all(root.join(name)).expect("mk");
+        // Explicit, strictly ordered mtimes: dirs born in one syscall burst
+        // tie on the clock, and a tie leaves the order to readdir — which
+        // under a loaded parallel run really did flip apple/apricot. The
+        // iteration order below IS the visible order the tests step through.
+        for (age, name) in ["apple", "apricot", "banana"].iter().enumerate() {
+            let dir = root.join(name);
+            std::fs::create_dir_all(&dir).expect("mk");
+            std::fs::File::open(&dir)
+                .expect("open filter fixture dir")
+                .set_times(std::fs::FileTimes::new().set_modified(
+                    std::time::UNIX_EPOCH + std::time::Duration::from_secs(100 - age as u64),
+                ))
+                .expect("set filter fixture mtime");
         }
         root
     }
