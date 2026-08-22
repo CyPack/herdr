@@ -1009,6 +1009,7 @@ impl App {
             .0,
             managed_node_keys: std::collections::HashSet::new(),
             space_icons: config.spaces.icons.clone(),
+            spaces_show_empty: config.spaces.show_empty,
             projects_pinned,
             projects_sessions: Vec::new(),
             preview_placement: config.preview.placement,

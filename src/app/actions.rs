@@ -2610,6 +2610,7 @@ impl AppState {
         )
         .0;
         self.space_icons = config.spaces.icons.clone();
+        self.spaces_show_empty = config.spaces.show_empty;
         self.managed_node_keys = self
             .space_nodes
             .iter()

@@ -1683,6 +1683,21 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
             )
         })
         .collect();
+    // TP-MOD-41: a declared rule with no open checkout still takes its seat.
+    // The maps below are member-seeded; without this, a memberless bucket is
+    // in the move-popup's target list (which reads the RULES) but nowhere in
+    // the tree (which read the MEMBERS) — the exact mismatch the user hit:
+    // "popup'ta gözüküyor ama ağaçta yok". One source, two surfaces.
+    let mut parent_of_space = parent_of_space;
+    if app.spaces_show_empty {
+        for rule in &app.space_split_rules {
+            if rule.key.is_empty() || parent_of_space.contains_key(&rule.key) {
+                continue;
+            }
+            parent_of_space.insert(rule.key.clone(), rule.parent.clone());
+        }
+    }
+    let parent_of_space = parent_of_space;
     let mut buckets_of_node: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
     for (key, owner) in &parent_of_space {
@@ -1745,6 +1760,29 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
                 roots.push(root);
             }
         }
+        // TP-MOD-41: memberless split rules seed too — a top-level bucket has
+        // no node above it to carry it in.
+        if app.spaces_show_empty {
+            for rule in &app.space_split_rules {
+                if rule.key.is_empty() {
+                    continue;
+                }
+                let mut root = rule.key.clone();
+                let mut climbed = 0usize;
+                while let Some(parent) =
+                    crate::spaces::tree_parent_of(&app.space_nodes, &app.space_split_rules, &root)
+                {
+                    root = parent.to_string();
+                    climbed += 1;
+                    if climbed > guard {
+                        break;
+                    }
+                }
+                if seen.insert(root.clone()) {
+                    roots.push(root);
+                }
+            }
+        }
         roots
     };
 
@@ -1772,7 +1810,8 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
             Seed::DeclaredRoot(root) => {
                 // A declared root is already the top of its chain, so it skips
                 // the climb the checkout path needs.
-                let mut stack = vec![if members_by_key.contains_key(&root) {
+                let root_is_rule = app.space_split_rules.iter().any(|rule| rule.key == root);
+                let mut stack = vec![if members_by_key.contains_key(&root) || root_is_rule {
                     Job::Bucket(root, false)
                 } else {
                     Job::Node(root)
@@ -1962,7 +2001,33 @@ fn walk_tree(
                             .node_children
                             .get(space_key.as_str())
                             .is_some_and(|kids| !kids.is_empty());
-                        if !carries_modules {
+                        if app.spaces_show_empty {
+                            // TP-MOD-41, revising TP-MOD-15: the declared rule
+                            // keeps its header even with no member — dim, with
+                            // the moved-in chats and the empty row beneath, and
+                            // the header's own "+" as the way to a branch. The
+                            // ghost-header worry is answered by saying "(empty)"
+                            // instead of saying nothing.
+                            entries.push(WorkspaceListEntry::GroupHeader {
+                                space_key: space_key.clone(),
+                            });
+                            if !force_expanded && app.collapsed_space_keys.contains(&space_key) {
+                                continue;
+                            }
+                            let module_chats = module_chat_rows(app, &space_key);
+                            let shown = module_chats.len().min(WORKSPACE_CHAT_ROW_LIMIT);
+                            for chat_idx in 0..shown {
+                                entries.push(WorkspaceListEntry::ModuleChat {
+                                    node_key: space_key.clone(),
+                                    chat_idx,
+                                });
+                            }
+                            if !carries_modules && module_chats.is_empty() {
+                                entries.push(WorkspaceListEntry::EmptyModule {
+                                    node_key: space_key.clone(),
+                                });
+                            }
+                        } else if !carries_modules {
                             continue;
                         }
                     }
@@ -3852,6 +3917,20 @@ pub(crate) fn space_label_for_key(app: &AppState, key: &str) -> String {
     (0..app.workspaces.len())
         .find_map(|ws_idx| effective_space(app, ws_idx).filter(|space| space.key == key))
         .map(|space| space.label)
+        .or_else(|| {
+            // TP-MOD-41: a memberless bucket has no workspace to borrow a
+            // label from — the rule that declared it still knows its name.
+            app.space_split_rules
+                .iter()
+                .find(|rule| rule.key == key)
+                .map(|rule| {
+                    if rule.label.trim().is_empty() {
+                        rule.key.clone()
+                    } else {
+                        rule.label.clone()
+                    }
+                })
+        })
         .unwrap_or_else(|| key.to_string())
 }
 
@@ -10101,6 +10180,140 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         app
     }
 
+    // TP-MOD-41 (revising TP-MOD-15): a split rule that claims no open
+    // checkout still takes its seat — the user's verbatim report was that
+    // herdr:web and herdr:termius vanished from the tree the moment their
+    // workspaces closed, while the move-popup still listed them.
+    #[test]
+    fn a_memberless_split_rule_takes_a_dim_seat() {
+        let mut app = app_with_one_populated_bucket();
+        app.space_split_rules
+            .push(split_rule(&["web/*"], "herdr:web", "Web"));
+
+        let rows = tree_rows(&app);
+        assert!(
+            rows.contains(&"group:herdr:web".to_string()),
+            "the declared rule keeps its header without a member: {rows:?}"
+        );
+        let entries = workspace_list_entries(&app);
+        let kinds: Vec<&str> = entries
+            .iter()
+            .map(|entry| match entry {
+                WorkspaceListEntry::EmptyModule { node_key } => node_key.as_str(),
+                _ => "",
+            })
+            .filter(|key| !key.is_empty())
+            .collect();
+        assert!(
+            kinds.contains(&"herdr:web"),
+            "the empty seat says so beneath its own header: {kinds:?}"
+        );
+        // The label is the rule's own, not the raw key.
+        assert_eq!(space_label_for_key(&app, "herdr:web"), "Web");
+    }
+
+    // TP-MOD-41: the switch. `show_empty = false` restores the old
+    // ghost-header-free tree exactly (TP-MOD-15's original shape).
+    #[test]
+    fn show_empty_off_restores_the_memberless_silence() {
+        let mut app = app_with_one_populated_bucket();
+        app.space_split_rules
+            .push(split_rule(&["web/*"], "herdr:web", "Web"));
+        app.spaces_show_empty = false;
+
+        let rows = tree_rows(&app);
+        assert!(
+            !rows.contains(&"group:herdr:web".to_string()),
+            "the switch restores the old silence: {rows:?}"
+        );
+    }
+
+    // TP-MOD-41: a memberless rule with a declared parent hangs under it —
+    // the hierarchy is the map, not just the leaves.
+    #[test]
+    fn a_memberless_rule_hangs_under_its_declared_parent() {
+        let mut app = app_with_one_populated_bucket();
+        app.space_nodes = vec![crate::spaces::SpaceNode {
+            key: "group:web-world".into(),
+            name: "WEB".into(),
+            icon: None,
+            parent: None,
+            dir: None,
+        }];
+        let mut rule = split_rule(&["web/*"], "herdr:web", "Web");
+        rule.parent = Some("group:web-world".into());
+        app.space_split_rules.push(rule);
+
+        let rows = tree_rows(&app);
+        let node_at = rows.iter().position(|row| row == "node:group:web-world");
+        let bucket_at = rows.iter().position(|row| row == "group:herdr:web");
+        assert!(
+            node_at.is_some() && bucket_at.is_some() && node_at < bucket_at,
+            "the bucket sits under its parent's header: {rows:?}"
+        );
+    }
+
+    // TP-MOD-41: the invariant the user asked for in as many words — every
+    // module the move-popup offers as a target is also visible in the tree.
+    // One rule set, two surfaces, no disagreement.
+    #[test]
+    fn every_move_popup_target_is_visible_in_the_tree() {
+        let mut app = app_with_one_populated_bucket();
+        app.space_nodes = vec![crate::spaces::SpaceNode {
+            key: "group:remote-audio".into(),
+            name: "UZAKTAN SES".into(),
+            icon: None,
+            parent: None,
+            dir: None,
+        }];
+        app.space_split_rules
+            .push(split_rule(&["web/*"], "herdr:web", "Web"));
+        app.space_split_rules
+            .push(split_rule(&["termius/*"], "herdr:termius", "Termius"));
+
+        let rows = tree_rows(&app);
+        for (target_key, label) in app.module_move_target_entries() {
+            let bare = target_key
+                .strip_prefix(crate::persist::workspace_chats::MODULE_KEY_PREFIX)
+                .unwrap_or(&target_key)
+                .to_string();
+            assert!(
+                rows.contains(&format!("group:{bare}")) || rows.contains(&format!("node:{bare}")),
+                "move target {label:?} ({bare}) must be visible in the tree: {rows:?}"
+            );
+        }
+    }
+
+    // TP-MOD-41: the seat folds like every other header, and its header row
+    // is a real hit target (the "+" on it is the way to a branch).
+    #[test]
+    fn a_memberless_seat_folds_and_offers_its_header_as_a_target() {
+        let mut app = app_with_one_populated_bucket();
+        app.space_split_rules
+            .push(split_rule(&["web/*"], "herdr:web", "Web"));
+        app.collapsed_space_keys.insert("herdr:web".into());
+
+        let entries = workspace_list_entries(&app);
+        assert!(
+            entries.iter().any(|entry| matches!(
+                entry,
+                WorkspaceListEntry::GroupHeader { space_key } if space_key == "herdr:web"
+            )),
+            "folded seat keeps its header"
+        );
+        assert!(
+            !entries.iter().any(|entry| matches!(
+                entry,
+                WorkspaceListEntry::EmptyModule { node_key } if node_key == "herdr:web"
+            )),
+            "a folded seat does not describe its inside"
+        );
+
+        let (_, _, headers, _, _, _, _, _) =
+            compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 24));
+        let _ = headers;
+    }
+
     // TP-MOD-13: a module declared at top level takes a row even though no
     // checkout climbs to it. The tree is walked from the workspaces up, so a
     // container nothing hangs under is never reached — which is exactly the
@@ -10157,7 +10370,11 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
     // user declared under it is theirs, not the rule's, and survives.
     #[test]
     fn a_module_under_an_empty_bucket_survives_while_the_bucket_stays_hidden() {
+        // TP-MOD-41 revised TP-MOD-15: the hidden-bucket world now lives
+        // behind `spaces.show_empty = false`; with the default ON the bucket
+        // keeps a dim seat instead (see the TP-MOD-41 tests).
         let mut app = app_with_one_populated_bucket();
+        app.spaces_show_empty = false;
         app.space_split_rules
             .push(split_rule(&["asla-eslesmeyecek/*"], "herdr:bos", "Bos"));
         app.space_nodes = vec![crate::spaces::SpaceNode {

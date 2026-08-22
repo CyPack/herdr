@@ -400,7 +400,7 @@ impl ProjectsConfig {
 /// Entries are user-authored, so an unusable one is dropped and reported rather
 /// than failing the whole config load — the same tolerance [`ProjectsConfig`]
 /// applies to `pinned`. An empty list reproduces stock grouping exactly.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(default)]
 pub struct SpacesConfig {
     pub split: Vec<SpaceSplitEntry>,
@@ -415,6 +415,30 @@ pub struct SpacesConfig {
     pub display: Vec<SpaceDisplayEntry>,
     /// `[spaces.icons]` row-kind icon defaults for the Spaces tree.
     pub icons: SpaceIconsConfig,
+    /// TP-MOD-41: whether a declared rule that claims no open checkout still
+    /// draws its header (dim, with the empty row beneath). `true` by default —
+    /// the modules a person named are their map, and a map that forgets a
+    /// room whenever its door closes reads as data loss. `false` restores the
+    /// old ghost-header-free tree (TP-MOD-15's original shape).
+    #[serde(default = "default_spaces_show_empty")]
+    pub show_empty: bool,
+}
+
+fn default_spaces_show_empty() -> bool {
+    true
+}
+
+impl Default for SpacesConfig {
+    fn default() -> Self {
+        Self {
+            split: Vec::new(),
+            project: Vec::new(),
+            node: Vec::new(),
+            display: Vec::new(),
+            icons: SpaceIconsConfig::default(),
+            show_empty: default_spaces_show_empty(),
+        }
+    }
 }
 
 /// One authored `[[spaces.display]]` table: a rename that is only a name.
@@ -2572,6 +2596,24 @@ routine_chat_repeat_threshold = 5
             "a table that names one key must leave the other three at their defaults"
         );
         assert_eq!(config.ui.hidden_chat_labels, vec!["routine".to_string()]);
+    }
+
+    // TP-MOD-41: the switch parses, and its default is ON — both through
+    // serde (a config file without the key) and through Default::default()
+    // (every synthetic construction), because a bool derive-default would
+    // silently flip the second road to OFF.
+    #[test]
+    fn spaces_show_empty_defaults_on_and_parses_off() {
+        let config: Config = toml::from_str("").expect("empty config parses");
+        assert!(config.spaces.show_empty, "absent key means on");
+        assert!(
+            SpacesConfig::default().show_empty,
+            "Default::default() agrees"
+        );
+
+        let config: Config =
+            toml::from_str("[spaces]\nshow_empty = false\n").expect("explicit key parses");
+        assert!(!config.spaces.show_empty);
     }
 
     /// A hand-written tree of the shape measured on the reported machine: two
