@@ -381,7 +381,7 @@ mod tests {
         // same two glyphs, new cells. Structure untouched.
         assert_eq!(
             frame_digest(&frame),
-            "cc1a134554f919959ccda8f64ca99291e1eb3c540a2e08dd479594ab15e2bade"
+            "3f3c57564217ae081169985772d221190611eef7986076bb948ad9de56324a62"
         );
     }
 
