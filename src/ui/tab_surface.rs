@@ -379,6 +379,10 @@ mod tests {
         // Re-baselined 2026-08-21: the split pair moved from the "+"'s side
         // to a pin at the strip's far right (TP-TAB-SPLIT-01 revised) — the
         // same two glyphs, new cells. Structure untouched.
+        //
+        // Re-baselined 2026-08-22: the sidebar/stage seam became a heavy
+        // peach glyph (TP-CHROME-162) — one column of new cells, structure
+        // untouched.
         assert_eq!(
             frame_digest(&frame),
             "3f3c57564217ae081169985772d221190611eef7986076bb948ad9de56324a62"
