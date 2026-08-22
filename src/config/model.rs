@@ -394,6 +394,20 @@ impl ProjectsConfig {
     }
 }
 
+/// `[files]` — the native file manager.
+///
+/// One key so far. The per-row action buttons (`>` send-to-agent, `r` rename,
+/// `x` delete) default to hidden: they read as line noise at the end of every
+/// row — the user mistook them for permission bits — and all three actions
+/// remain reachable from the row's context menu.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct FilesConfig {
+    /// Show the `>`/`r`/`x` action buttons at the right edge of file rows.
+    /// Default: false.
+    pub show_row_actions: bool,
+}
+
 /// Space partitioning configuration: the `[[spaces.split]]` rules that move
 /// some of a repository's checkouts into their own sidebar space.
 ///
@@ -865,6 +879,7 @@ pub struct Config {
     pub remote: RemoteConfig,
     pub projects: ProjectsConfig,
     pub spaces: SpacesConfig,
+    pub files: FilesConfig,
     pub preview: PreviewConfig,
     pub tailscale: TailscaleConfig,
     pub shell: ShellConfig,
@@ -2602,6 +2617,21 @@ routine_chat_repeat_threshold = 5
     // serde (a config file without the key) and through Default::default()
     // (every synthetic construction), because a bool derive-default would
     // silently flip the second road to OFF.
+    // TP-FM-ACTIONS-01: the row buttons ship hidden and are summoned by key.
+    #[test]
+    fn files_show_row_actions_defaults_off_and_parses_on() {
+        let config: Config = toml::from_str("").expect("empty config parses");
+        assert!(!config.files.show_row_actions, "absent key means hidden");
+        assert!(
+            !FilesConfig::default().show_row_actions,
+            "Default::default() agrees"
+        );
+
+        let config: Config =
+            toml::from_str("[files]\nshow_row_actions = true\n").expect("explicit key parses");
+        assert!(config.files.show_row_actions);
+    }
+
     #[test]
     fn spaces_show_empty_defaults_on_and_parses_off() {
         let config: Config = toml::from_str("").expect("empty config parses");

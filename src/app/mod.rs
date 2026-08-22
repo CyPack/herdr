@@ -1010,6 +1010,7 @@ impl App {
             managed_node_keys: std::collections::HashSet::new(),
             space_icons: config.spaces.icons.clone(),
             spaces_show_empty: config.spaces.show_empty,
+            files_show_row_actions: config.files.show_row_actions,
             sidebar_divider_color: config.ui.sidebar.divider_color.clone(),
             projects_pinned,
             projects_sessions: Vec::new(),

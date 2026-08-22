@@ -1007,6 +1007,7 @@ fn sync_trail_view(app: &mut AppState, viewport_area: Rect) -> TrailViewSnapshot
     };
     let files_surface_active =
         app.stage.surface_view() == surface_host::StageSurfaceView::NativeFiles;
+    let show_row_actions = app.files_show_row_actions;
     let Some(file_manager) = app.file_manager.as_mut().filter(|_| files_surface_active) else {
         return TrailViewSnapshot::default();
     };
@@ -1028,6 +1029,7 @@ fn sync_trail_view(app: &mut AppState, viewport_area: Rect) -> TrailViewSnapshot
         detail_preferred_width,
         (!horizontal.follow_active).then_some(horizontal.offset_cells),
         &vertical,
+        show_row_actions,
     );
     if !snapshot.columns.is_empty() {
         file_manager.miller.horizontal.offset_cells = snapshot.offset_cells;
@@ -3243,6 +3245,9 @@ mod tests {
         app.try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&root)))
             .expect("Files activation");
         app.file_manager.as_mut().expect("open fm").cursor = 4;
+        // This test pins row-ACTION hit snapshots, so the opt-in buttons
+        // must be on (TP-FM-ACTIONS-01 ships them hidden).
+        app.files_show_row_actions = true;
 
         // Preserve the characterized Trail viewport after FCL-3 adds the
         // 24-cell content rail and one-cell separator inside CenterContent,
