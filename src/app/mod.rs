@@ -1010,6 +1010,7 @@ impl App {
             managed_node_keys: std::collections::HashSet::new(),
             space_icons: config.spaces.icons.clone(),
             spaces_show_empty: config.spaces.show_empty,
+            module_delete: None,
             sidebar_divider_color: config.ui.sidebar.divider_color.clone(),
             projects_pinned,
             projects_sessions: Vec::new(),
@@ -2565,6 +2566,12 @@ impl App {
             Mode::ConfirmRemoveWorktree => {
                 self.handle_worktree_remove_key(key_event);
             }
+            Mode::ConfirmDeleteModule => {
+                if matches!(key_event.code, crossterm::event::KeyCode::Esc) {
+                    self.state.module_delete = None;
+                    crate::app::input::modal::leave_modal(&mut self.state);
+                }
+            }
             Mode::Resize => {
                 self.handle_resize_key_via_api(key);
             }
@@ -2796,6 +2803,7 @@ mod tests {
             Mode::ConfirmClose,
             Mode::ConfirmFileDelete,
             Mode::ConfirmRemoveWorktree,
+            Mode::ConfirmDeleteModule,
             Mode::ContextMenu,
             Mode::GlobalMenu,
             Mode::KeybindHelp,

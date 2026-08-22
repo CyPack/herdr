@@ -2561,6 +2561,68 @@ impl AppState {
         }
     }
 
+    /// TP-MOD-43: open the module-delete confirmation for one heading.
+    pub(crate) fn open_module_delete(&mut self, target: crate::app::state::ModuleDeleteTarget) {
+        use crate::app::state::ModuleDeleteTarget;
+        let label = match &target {
+            ModuleDeleteTarget::Split { key } => self
+                .space_split_rules
+                .iter()
+                .find(|rule| rule.key == *key)
+                .map(|rule| rule.label.clone())
+                .unwrap_or_else(|| key.clone()),
+            ModuleDeleteTarget::Node { key } => self
+                .space_nodes
+                .iter()
+                .find(|node| node.key == *key)
+                .map(|node| node.name.clone())
+                .unwrap_or_else(|| key.clone()),
+        };
+        self.module_delete = Some(crate::app::state::ModuleDeleteConfirmation { target, label });
+        self.context_menu = None;
+        self.enter_overlay_mode(crate::app::state::Mode::ConfirmDeleteModule);
+    }
+
+    /// TP-MOD-43: the dialog's "delete" — route the confirmed target to the
+    /// overlay edit that removes it.
+    pub(crate) fn delete_confirmed_module(&mut self) {
+        let Some(confirm) = self.module_delete.take() else {
+            return;
+        };
+        match confirm.target {
+            crate::app::state::ModuleDeleteTarget::Node { key } => self.delete_managed_node(&key),
+            crate::app::state::ModuleDeleteTarget::Split { key } => self.delete_module_space(&key),
+        }
+    }
+
+    /// TP-MOD-43: the dialog's "delete" — drop the module's grouping rule
+    /// from the managed overlay. Branches, worktrees and files are never
+    /// touched; a hand-written config.toml rule is out of reach and is left
+    /// alone (the same honesty `demote_workspace_space` keeps).
+    pub(crate) fn delete_module_space(&mut self, space_key: &str) {
+        let path = crate::config::managed_spaces_path();
+        match Self::delete_module_space_at(&path, space_key) {
+            Ok(0) => {
+                tracing::info!("no managed rule matches; a config.toml module needs a hand-edit");
+            }
+            Ok(_) => self.reload_space_rules_from_disk(),
+            Err(err) => tracing::warn!(error = %err, "managed overlay update failed"),
+        }
+    }
+
+    /// The file-level half, injectable for tests (the `_at(path)` seam).
+    pub(crate) fn delete_module_space_at(
+        path: &std::path::Path,
+        space_key: &str,
+    ) -> Result<usize, String> {
+        let current = std::fs::read_to_string(path).unwrap_or_default();
+        let (updated, removed) = crate::cli::space::remove_managed(&current, space_key)?;
+        if removed > 0 {
+            std::fs::write(path, updated).map_err(|err| err.to_string())?;
+        }
+        Ok(removed)
+    }
+
     /// The menu road to `herdr space demote` — managed entries only.
     pub(crate) fn demote_workspace_space(&mut self, ws_idx: usize) {
         let Some(branch) = self
@@ -5113,6 +5175,54 @@ impl AppState {
 
 #[cfg(test)]
 mod tests {
+
+    // TP-MOD-43: deleting a module drops exactly its managed rule — nothing
+    // else in the overlay, and nothing at all on a second ask.
+    #[test]
+    fn delete_module_space_at_drops_only_the_matching_rule() {
+        let dir = std::env::temp_dir().join(format!(
+            "herdr-module-delete-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.subsec_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("spaces.managed.toml");
+        std::fs::write(
+            &path,
+            concat!(
+                "[[spaces.split]]\n",
+                "repo = \"~/projects/x\"\n",
+                "match = [\"doomed/*\"]\n",
+                "key = \"mod:doomed\"\n",
+                "label = \"doomed\"\n\n",
+                "[[spaces.split]]\n",
+                "repo = \"~/projects/x\"\n",
+                "match = [\"kept/*\"]\n",
+                "key = \"mod:kept\"\n",
+                "label = \"kept\"\n",
+            ),
+        )
+        .expect("seed overlay");
+
+        let removed = crate::app::state::AppState::delete_module_space_at(&path, "mod:doomed")
+            .expect("first delete");
+        assert_eq!(removed, 1);
+        let after = std::fs::read_to_string(&path).expect("overlay survives");
+        assert!(!after.contains("mod:doomed"));
+        assert!(
+            after.contains("mod:kept"),
+            "the neighbour rule is untouched"
+        );
+
+        let removed_again =
+            crate::app::state::AppState::delete_module_space_at(&path, "mod:doomed")
+                .expect("second delete");
+        assert_eq!(removed_again, 0, "a second ask finds nothing to do");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
     use super::*;
     use crate::app::test_wait::LoadAwareDeadline;
     use crate::detect::{Agent, AgentState};

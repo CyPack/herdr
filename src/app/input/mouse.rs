@@ -534,6 +534,43 @@ impl AppState {
                     return None;
                 }
 
+                // TP-MOD-43: the dialog's three buttons, resolved against
+                // the SAME pure geometry the renderer draws with.
+                if self.mode == Mode::ConfirmDeleteModule {
+                    if let Some(popup) = crate::ui::delete_module_popup_rect(self.screen_rect()) {
+                        let inner = Rect::new(
+                            popup.x + 1,
+                            popup.y + 1,
+                            popup.width.saturating_sub(2),
+                            popup.height.saturating_sub(2),
+                        );
+                        let (delete, rename, cancel) = crate::ui::delete_module_button_rects(inner);
+                        let hit = |rect: Rect| {
+                            mouse.column >= rect.x
+                                && mouse.column < rect.right()
+                                && mouse.row >= rect.y
+                                && mouse.row < rect.bottom()
+                        };
+                        if let Some(confirm) = self.module_delete.clone() {
+                            if hit(delete) {
+                                self.delete_confirmed_module();
+                                leave_modal(self);
+                            } else if hit(rename) {
+                                self.module_delete = None;
+                                let key = match confirm.target {
+                                    crate::app::state::ModuleDeleteTarget::Node { key }
+                                    | crate::app::state::ModuleDeleteTarget::Split { key } => key,
+                                };
+                                super::modal::open_rename_module_input(self, key, None);
+                            } else if hit(cancel) {
+                                self.module_delete = None;
+                                leave_modal(self);
+                            }
+                        }
+                    }
+                    return None;
+                }
+
                 if self.mode == Mode::ConfirmRemoveWorktree {
                     if let Some(popup) = crate::ui::remove_worktree_popup_rect(self.screen_rect()) {
                         let inner = Rect::new(
@@ -5550,6 +5587,110 @@ mod tests {
 
         app.handle_mouse(mouse(MouseEventKind::ScrollUp, 1, 1));
         assert_eq!(app.state.worktree_open.as_ref().unwrap().selected, 0);
+    }
+
+    // TP-MOD-43: the node heading's delete verb OPENS the confirmation —
+    // the old road deleted on the spot with no question asked.
+    #[test]
+    fn node_delete_verb_opens_the_dialog_instead_of_deleting() {
+        let mut app = app_for_mouse_test();
+        app.state
+            .open_module_delete(crate::app::state::ModuleDeleteTarget::Node {
+                key: "node-x".to_string(),
+            });
+        assert_eq!(app.state.mode, Mode::ConfirmDeleteModule);
+        assert!(app
+            .state
+            .module_delete
+            .as_ref()
+            .is_some_and(|confirm| matches!(
+                &confirm.target,
+                crate::app::state::ModuleDeleteTarget::Node { key } if key == "node-x"
+            )));
+    }
+
+    // TP-MOD-43: every button of the module-delete dialog answers a click —
+    // and only a button does.
+    #[test]
+    fn module_delete_dialog_buttons_delete_rename_and_cancel() {
+        use crate::app::state::ModuleDeleteConfirmation;
+        use crate::app::state::ModuleDeleteTarget;
+        let confirm = || ModuleDeleteConfirmation {
+            // A key nothing on this machine carries: the delete road reads
+            // the managed overlay and, matching nothing, writes nothing.
+            target: ModuleDeleteTarget::Split {
+                key: "herdr-test-nonexistent-module-x7".to_string(),
+            },
+            label: "ghost".to_string(),
+        };
+        let rects = |app: &crate::app::App| {
+            let popup =
+                crate::ui::delete_module_popup_rect(app.state.screen_rect()).expect("popup");
+            let inner = Rect::new(
+                popup.x + 1,
+                popup.y + 1,
+                popup.width.saturating_sub(2),
+                popup.height.saturating_sub(2),
+            );
+            crate::ui::delete_module_button_rects(inner)
+        };
+
+        // Cancel: the dialog closes and nothing else happens.
+        let mut app = app_for_mouse_test();
+        app.state.mode = Mode::ConfirmDeleteModule;
+        app.state.module_delete = Some(confirm());
+        let (_, _, cancel) = rects(&app);
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            cancel.x,
+            cancel.y,
+        ));
+        assert!(app.state.module_delete.is_none());
+        assert_ne!(app.state.mode, Mode::ConfirmDeleteModule);
+
+        // Delete: the confirmation is consumed and the mode is left. (The
+        // rule removal itself is pinned by the `_at` seam test in actions.)
+        let mut app = app_for_mouse_test();
+        app.state.mode = Mode::ConfirmDeleteModule;
+        app.state.module_delete = Some(confirm());
+        let (delete, _, _) = rects(&app);
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            delete.x,
+            delete.y,
+        ));
+        assert!(app.state.module_delete.is_none());
+        assert_ne!(app.state.mode, Mode::ConfirmDeleteModule);
+
+        // Rename: hands over to the module name input instead.
+        let mut app = app_for_mouse_test();
+        app.state.mode = Mode::ConfirmDeleteModule;
+        app.state.module_delete = Some(confirm());
+        let (_, rename, _) = rects(&app);
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            rename.x,
+            rename.y,
+        ));
+        assert!(app.state.module_delete.is_none());
+        assert_eq!(app.state.mode, Mode::RenameWorkspace);
+        assert!(app
+            .state
+            .pending_new_module
+            .as_ref()
+            .is_some_and(
+                |pending| pending.rename_key.as_deref() == Some("herdr-test-nonexistent-module-x7")
+            ));
+
+        // A click outside every button decides nothing.
+        let mut app = app_for_mouse_test();
+        app.state.mode = Mode::ConfirmDeleteModule;
+        app.state.module_delete = Some(confirm());
+        let (delete, rename, cancel) = rects(&app);
+        assert!(delete.right() <= rename.x && rename.right() <= cancel.x);
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 0, 0));
+        assert!(app.state.module_delete.is_some());
+        assert_eq!(app.state.mode, Mode::ConfirmDeleteModule);
     }
 
     #[test]

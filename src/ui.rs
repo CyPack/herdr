@@ -110,11 +110,11 @@ pub(crate) use self::tailscale_send::{
 pub(crate) use self::text::display_width_u16;
 pub(crate) use self::{
     dialogs::{
-        confirm_close_button_rects, confirm_close_popup_rect, new_linked_worktree_button_rects,
-        new_linked_worktree_inner_rect, open_existing_worktree_button_rects,
-        open_existing_worktree_inner_rect, open_existing_worktree_max_visible_rows,
-        open_existing_worktree_visible_start, remove_worktree_button_rects,
-        remove_worktree_popup_rect, rename_button_rects,
+        confirm_close_button_rects, confirm_close_popup_rect, delete_module_button_rects,
+        delete_module_popup_rect, new_linked_worktree_button_rects, new_linked_worktree_inner_rect,
+        open_existing_worktree_button_rects, open_existing_worktree_inner_rect,
+        open_existing_worktree_max_visible_rows, open_existing_worktree_visible_start,
+        remove_worktree_button_rects, remove_worktree_popup_rect, rename_button_rects,
     },
     dialogs::{
         file_delete_choose_button_rects, file_delete_confirmation_inner_rect,
@@ -1417,6 +1417,9 @@ impl compose::Component for OverlayLayer {
                 render_open_existing_worktree_overlay(app, frame, frame.area())
             }
             Mode::ConfirmRemoveWorktree => render_remove_worktree_overlay(app, frame, frame.area()),
+            Mode::ConfirmDeleteModule => {
+                dialogs::render_delete_module_overlay(app, frame, frame.area())
+            }
             Mode::GlobalMenu => render_global_launcher_menu(app, frame),
             Mode::KeybindHelp => render_keybind_help_overlay(app, frame),
             Mode::Navigator => render_navigator_overlay(app, terminal_runtimes, frame),

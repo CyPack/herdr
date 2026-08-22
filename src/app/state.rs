@@ -971,6 +971,28 @@ pub enum FileManagerDeleteConfirmationStage {
     ConfirmPermanent,
 }
 
+/// TP-MOD-43: which heading the module-delete dialog is deciding about.
+/// A split bucket and a node are removed by different overlay edits, but to
+/// the person both ARE modules (TP-DOTS-01/10), so one dialog serves both.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModuleDeleteTarget {
+    /// A `[[spaces.node]]` heading.
+    Node { key: String },
+    /// A `[[spaces.split]]` bucket heading.
+    Split { key: String },
+}
+
+/// TP-MOD-43: what the module-delete dialog is deciding about. Deleting a
+/// module removes only its grouping rule; every branch and directory under it
+/// stays exactly where it is — the seats just return to the top level.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModuleDeleteConfirmation {
+    /// Which heading, and by which overlay edit it goes.
+    pub target: ModuleDeleteTarget,
+    /// The heading as the person sees it, for the dialog's first line.
+    pub label: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileManagerDeleteConfirmation {
     pub paths: Vec<PathBuf>,
@@ -1971,6 +1993,9 @@ pub enum Mode {
     NewLinkedWorktree,
     OpenExistingWorktree,
     ConfirmRemoveWorktree,
+    /// TP-MOD-43: the module-delete confirmation. Only the grouping rule is
+    /// at stake — never a branch, a worktree or a file.
+    ConfirmDeleteModule,
     Resize,
     ConfirmClose,
     ConfirmFileDelete,
@@ -2008,6 +2033,7 @@ impl Mode {
                 | Mode::ConfirmClose
                 | Mode::ConfirmFileDelete
                 | Mode::ConfirmRemoveWorktree
+                | Mode::ConfirmDeleteModule
                 | Mode::ContextMenu
                 | Mode::GlobalMenu
                 | Mode::KeybindHelp
@@ -2885,7 +2911,9 @@ impl ContextMenuState {
                 // something away — and only when there is something the
                 // machine can take back.
                 if *deletable {
-                    items.push("Delete module");
+                    // TP-MOD-43: the verb now opens a confirmation, and a
+                    // verb that asks a question ends in an ellipsis.
+                    items.push("Delete module...");
                 }
                 items
             }
@@ -2907,6 +2935,10 @@ impl ContextMenuState {
                 // buckets on the reported machine was hand-written, so this
                 // absence was the whole of "modüllerde rename göremiyorum".
                 items.push("Rename module...");
+                // TP-MOD-43: the heading can also be dissolved. The verb is
+                // guarded by a confirmation dialog because "delete" next to a
+                // tree of branches reads scarier than what it does.
+                items.push("Delete module...");
                 items
             }
             ContextMenuKind::Tab { .. } => vec!["New tab", "Rename", "Close"],
@@ -3930,6 +3962,8 @@ pub struct AppState {
     pub spaces_focus_only: bool,
     /// TP-MOD-41: declared-but-memberless rules keep their (dim) header.
     pub spaces_show_empty: bool,
+    /// TP-MOD-43: the open module-delete confirmation, if any.
+    pub module_delete: Option<ModuleDeleteConfirmation>,
     /// `ui.sidebar.divider_color` resolved at the edge of use (bar_color).
     pub sidebar_divider_color: String,
     /// Drawers this display has opened all the way, past the five rows the
@@ -5180,6 +5214,7 @@ impl AppState {
             daily_chat_cwd: None,
             spaces_focus_only: false,
             spaces_show_empty: true,
+            module_delete: None,
             sidebar_divider_color: "peach".to_string(),
             fully_open_chat_drawers: std::collections::HashSet::new(),
             expanded_chat_workspaces: std::collections::HashSet::new(),
@@ -7111,6 +7146,23 @@ mod tests {
             KeyCode::Char('b'),
             KeyModifiers::SHIFT,
         ));
+    }
+
+    // TP-MOD-43: the module heading's menu carries the guarded delete verb.
+    #[test]
+    fn space_header_menu_offers_the_delete_verb() {
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::SpaceHeader {
+                space_key: "mod:x".to_string(),
+                collapsed: false,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::default(),
+        };
+        let items = menu.items();
+        assert!(items.contains(&"Delete module..."));
+        assert!(items.contains(&"Rename module..."));
     }
 
     // TP-RANK-06: the branch row's menu offers promotion, and the demote

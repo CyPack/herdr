@@ -407,7 +407,11 @@ fn open_new_module_input(state: &mut AppState, parent: Option<String>) {
 /// creation prompt — one modal, one set of cleared fields — differing only
 /// in the key it carries forward, because a rename that derived a new key
 /// from the new name would re-key the container and orphan its children.
-fn open_rename_module_input(state: &mut AppState, node_key: String, parent: Option<String>) {
+pub(crate) fn open_rename_module_input(
+    state: &mut AppState,
+    node_key: String,
+    parent: Option<String>,
+) {
     open_module_name_input(state, parent, Some(node_key));
 }
 
@@ -1233,9 +1237,10 @@ pub(super) fn apply_context_menu_action(
             open_rename_module_input(state, node_key, parent);
         }
         // TP-MOD-08: the keyboard road to taking a module back.
-        (ContextMenuKind::NodeHeader { node_key, .. }, Some("Delete module")) => {
-            state.delete_managed_node(&node_key);
-            leave_modal(state);
+        // TP-MOD-43: the verb only OPENS the confirmation — the old road
+        // deleted on the spot, which is exactly what the dialog now guards.
+        (ContextMenuKind::NodeHeader { node_key, .. }, Some("Delete module...")) => {
+            state.open_module_delete(crate::app::state::ModuleDeleteTarget::Node { key: node_key });
         }
         // TP-DOTS-10/11/12: the bucket header creates too — sub hangs under
         // the bucket itself (TP-NODE-08), parallel beside it, under the
@@ -1262,6 +1267,13 @@ pub(super) fn apply_context_menu_action(
         // the rule's key, taking no part in resolution.
         (ContextMenuKind::SpaceHeader { space_key, .. }, Some("Rename module...")) => {
             open_rename_module_input(state, space_key, None);
+        }
+        // TP-MOD-43: the delete verb only OPENS the confirmation — nothing
+        // is decided until a button in the dialog is.
+        (ContextMenuKind::SpaceHeader { space_key, .. }, Some("Delete module...")) => {
+            state.open_module_delete(crate::app::state::ModuleDeleteTarget::Split {
+                key: space_key,
+            });
         }
         (
             ContextMenuKind::MoveTarget {
@@ -2123,9 +2135,11 @@ impl App {
                 open_rename_module_input(&mut self.state, node_key, parent);
             }
             // TP-MOD-08: the same verb on the mouse dispatch.
-            (ContextMenuKind::NodeHeader { node_key, .. }, Some("Delete module")) => {
-                self.state.delete_managed_node(&node_key);
-                leave_modal(&mut self.state);
+            (ContextMenuKind::NodeHeader { node_key, .. }, Some("Delete module...")) => {
+                self.state
+                    .open_module_delete(crate::app::state::ModuleDeleteTarget::Node {
+                        key: node_key,
+                    });
             }
             // TP-DOTS-10/11/12: the bucket's creation road on the mouse
             // dispatch — the same arms the keyboard road walks.
@@ -2151,6 +2165,12 @@ impl App {
             // item that works in tests and does nothing on screen.
             (ContextMenuKind::SpaceHeader { space_key, .. }, Some("Rename module...")) => {
                 open_rename_module_input(&mut self.state, space_key, None);
+            }
+            (ContextMenuKind::SpaceHeader { space_key, .. }, Some("Delete module...")) => {
+                self.state
+                    .open_module_delete(crate::app::state::ModuleDeleteTarget::Split {
+                        key: space_key,
+                    });
             }
             (
                 ContextMenuKind::MoveTarget {
@@ -4681,6 +4701,8 @@ mod tests {
                 "New parallel module...",
                 "Collapse",
                 "Rename module...",
+                // TP-MOD-43: the guarded delete verb closes the list.
+                "Delete module...",
             ]
         );
     }
@@ -4719,7 +4741,7 @@ mod tests {
                 // its position is unchanged, and this list is what says so.
                 "Rename module...",
                 "Set directory...",
-                "Delete module",
+                "Delete module...",
             ]
         );
     }
@@ -4732,14 +4754,63 @@ mod tests {
     fn a_hand_written_module_does_not_offer_to_be_deleted() {
         assert!(!a_node_menu("group:docs", false)
             .items()
-            .contains(&"Delete module"));
+            .contains(&"Delete module..."));
     }
 
-    // TP-MOD-28: splitting the shared arm must not change what a bucket
-    // header offers. This is the anchor that says the bucket kept its menu
-    // while the module grew one.
+    // TP-MOD-43: choosing the delete verb from either heading's menu opens
+    // the confirmation and decides nothing — the old node road deleted on
+    // the spot, which is exactly what this pin forbids coming back.
     #[test]
-    fn a_bucket_header_menu_is_unchanged_by_the_module_delete_verb() {
+    fn choosing_delete_module_opens_the_confirmation_for_both_headings() {
+        for (kind, expected) in [
+            (
+                ContextMenuKind::NodeHeader {
+                    node_key: "node-a".to_string(),
+                    collapsed: false,
+                    deletable: true,
+                    needs_git_init: false,
+                },
+                crate::app::state::ModuleDeleteTarget::Node {
+                    key: "node-a".to_string(),
+                },
+            ),
+            (
+                ContextMenuKind::SpaceHeader {
+                    space_key: "mod:b".to_string(),
+                    collapsed: false,
+                },
+                crate::app::state::ModuleDeleteTarget::Split {
+                    key: "mod:b".to_string(),
+                },
+            ),
+        ] {
+            let mut state = AppState::test_new();
+            let menu = ContextMenuState {
+                kind,
+                x: 0,
+                y: 0,
+                list: MenuListState::new(0),
+            };
+            let idx = menu
+                .items()
+                .iter()
+                .position(|item| *item == "Delete module...")
+                .expect("delete item");
+            let mut terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
+            apply_context_menu_action(&mut state, &mut terminal_runtimes, menu, idx);
+            assert_eq!(state.mode, Mode::ConfirmDeleteModule);
+            assert_eq!(
+                state.module_delete.as_ref().map(|confirm| &confirm.target),
+                Some(&expected)
+            );
+        }
+    }
+
+    // TP-MOD-28, revised by TP-MOD-43: the bucket header now carries the
+    // guarded delete verb too — the user asked for it on every module
+    // heading — and this anchor keeps pinning the exact shape of the menu.
+    #[test]
+    fn a_bucket_header_menu_carries_the_guarded_delete_verb() {
         let space_menu = ContextMenuState {
             kind: ContextMenuKind::SpaceHeader {
                 space_key: "repo-key".into(),
@@ -4757,8 +4828,9 @@ mod tests {
                 "New parallel module...",
                 "Expand",
                 "Rename module...",
+                "Delete module...",
             ],
-            "a bucket is taken back by its own verb, not this one"
+            "the guarded delete verb closes the bucket's menu"
         );
     }
 
@@ -4806,6 +4878,8 @@ mod tests {
                 "New parallel module...",
                 "Expand",
                 "Rename module...",
+                // TP-MOD-43: the guarded delete verb closes the list.
+                "Delete module...",
             ]
         );
     }
@@ -5005,7 +5079,7 @@ mod tests {
         let menu = a_node_menu("group:docs", false);
         let items = menu.items();
         assert!(items.contains(&"Rename module..."));
-        assert!(!items.contains(&"Delete module"));
+        assert!(!items.contains(&"Delete module..."));
     }
 
     // TP-DOTS-14: "New branch..." resolves a source workspace under the

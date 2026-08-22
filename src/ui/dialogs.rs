@@ -190,6 +190,113 @@ pub(crate) fn remove_worktree_button_rects(inner: Rect, force_confirmation: bool
     (rects[0], rects[1])
 }
 
+pub(crate) fn delete_module_popup_rect(area: Rect) -> Option<Rect> {
+    centered_popup_rect(area, 72, 9)
+}
+
+/// TP-MOD-43: left to right — delete, rename, cancel. The safe exit sits at
+/// the far right and wears the bright coat; the destructive verb is farthest
+/// from it.
+pub(crate) fn delete_module_button_rects(inner: Rect) -> (Rect, Rect, Rect) {
+    let rects = action_button_row_rects(
+        inner,
+        &[
+            ActionButtonSpec {
+                hint: None,
+                label: "delete module",
+            },
+            ActionButtonSpec {
+                hint: None,
+                label: "rename instead",
+            },
+            ActionButtonSpec {
+                hint: Some("esc"),
+                label: "cancel",
+            },
+        ],
+        2,
+        inner.height.saturating_sub(1),
+    );
+    (rects[0], rects[1], rects[2])
+}
+
+pub(super) fn render_delete_module_overlay(app: &AppState, frame: &mut Frame, area: Rect) {
+    let Some(confirm) = app.module_delete.as_ref() else {
+        return;
+    };
+    super::dim_background(frame, area);
+    let Some(popup) = delete_module_popup_rect(area) else {
+        return;
+    };
+    let Some(inner) = render_panel_shell(frame, popup, app.palette.red, app.palette.panel_bg)
+    else {
+        return;
+    };
+    let rows = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(0),
+    ])
+    .areas::<5>(inner);
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![Span::styled(
+            format!(" delete module \"{}\"?", confirm.label),
+            Style::default()
+                .fg(app.palette.red)
+                .add_modifier(Modifier::BOLD),
+        )])),
+        rows[0],
+    );
+    frame.render_widget(
+        Paragraph::new(" Only the heading goes away and its branches scatter to the top level.")
+            .style(Style::default().fg(app.palette.overlay0)),
+        rows[1],
+    );
+    frame.render_widget(
+        Paragraph::new(" No branch, worktree or file is deleted — everything stays on disk.")
+            .style(Style::default().fg(app.palette.text)),
+        rows[2],
+    );
+    frame.render_widget(
+        Paragraph::new(" If the name is the problem, rename it instead.")
+            .style(Style::default().fg(app.palette.overlay0)),
+        rows[3],
+    );
+    let (delete_rect, rename_rect, cancel_rect) = delete_module_button_rects(inner);
+    render_action_button(
+        frame,
+        delete_rect,
+        None,
+        "delete module",
+        Style::default()
+            .fg(panel_contrast_fg(&app.palette))
+            .bg(app.palette.red),
+    );
+    render_action_button(
+        frame,
+        rename_rect,
+        None,
+        "rename instead",
+        Style::default()
+            .fg(app.palette.text)
+            .bg(app.palette.surface_dim),
+    );
+    // The bright coat: the safe exit is the one that glows (the user asked
+    // for exactly this — "en sağda parlak vazgeç").
+    render_action_button(
+        frame,
+        cancel_rect,
+        Some("esc"),
+        "cancel",
+        Style::default()
+            .fg(panel_contrast_fg(&app.palette))
+            .bg(app.palette.accent)
+            .add_modifier(Modifier::BOLD),
+    );
+}
+
 pub(crate) fn open_existing_worktree_inner_rect(area: Rect, entry_count: usize) -> Option<Rect> {
     let height = (entry_count as u16)
         .saturating_mul(2)
@@ -950,9 +1057,61 @@ mod tests {
     use ratatui::{backend::TestBackend, layout::Rect, Terminal};
 
     use super::{
-        confirm_close_overlay_text, render_file_delete_confirmation_overlay,
+        confirm_close_overlay_text, delete_module_button_rects, delete_module_popup_rect,
+        render_delete_module_overlay, render_file_delete_confirmation_overlay,
         render_new_linked_worktree_overlay, render_rename_overlay,
     };
+
+    // TP-MOD-43: the dialog says what is (and is not) at stake, offers the
+    // three verbs left-to-right, and the safe exit wears the bright coat.
+    #[test]
+    fn module_delete_dialog_renders_warning_and_three_buttons() {
+        let mut app = AppState::test_new();
+        app.mode = crate::app::Mode::ConfirmDeleteModule;
+        app.module_delete = Some(crate::app::state::ModuleDeleteConfirmation {
+            target: crate::app::state::ModuleDeleteTarget::Split {
+                key: "mod:pdf".to_string(),
+            },
+            label: "pdf".to_string(),
+        });
+        let area = Rect::new(0, 0, 100, 30);
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("test terminal");
+        terminal
+            .draw(|frame| render_delete_module_overlay(&app, frame, area))
+            .expect("draw");
+        let buffer = terminal.backend().buffer().clone();
+        let text: String = (0..30u16)
+            .map(|y| {
+                (0..100u16)
+                    .map(|x| buffer[(x, y)].symbol().chars().next().unwrap_or(' '))
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("delete module \"pdf\"?"));
+        assert!(text.contains("No branch, worktree or file is deleted"));
+        assert!(text.contains("delete module"));
+        assert!(text.contains("rename instead"));
+        assert!(text.contains("cancel"));
+
+        // Geometry: left-to-right delete, rename, cancel — disjoint.
+        let popup = delete_module_popup_rect(area).expect("popup");
+        let inner = Rect::new(
+            popup.x + 1,
+            popup.y + 1,
+            popup.width.saturating_sub(2),
+            popup.height.saturating_sub(2),
+        );
+        let (delete, rename, cancel) = delete_module_button_rects(inner);
+        assert!(delete.right() <= rename.x && rename.right() <= cancel.x);
+        // The bright coat: cancel's band is the accent, and it reads.
+        let cancel_cell = &buffer[(cancel.x + 1, cancel.y)];
+        assert_eq!(cancel_cell.style().bg, Some(app.palette.accent));
+        assert_ne!(cancel_cell.style().fg, cancel_cell.style().bg);
+        // The destructive verb wears the red band, far from the exit.
+        let delete_cell = &buffer[(delete.x + 1, delete.y)];
+        assert_eq!(delete_cell.style().bg, Some(app.palette.red));
+    }
 
     #[test]
     fn file_rename_modal_renders_typed_validation_error() {

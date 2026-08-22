@@ -374,6 +374,7 @@ impl AppState {
             | Mode::NewLinkedWorktree
             | Mode::OpenExistingWorktree
             | Mode::ConfirmRemoveWorktree
+            | Mode::ConfirmDeleteModule
             | Mode::ConfirmClose
             | Mode::ConfirmFileDelete
             | Mode::ContextMenu
@@ -440,6 +441,7 @@ impl AppState {
             | Mode::NewLinkedWorktree
             | Mode::OpenExistingWorktree
             | Mode::ConfirmRemoveWorktree
+            | Mode::ConfirmDeleteModule
             | Mode::Settings
             | Mode::GlobalMenu
             | Mode::KeybindHelp
