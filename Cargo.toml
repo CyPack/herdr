@@ -19,6 +19,8 @@ include = [
 ]
 
 [dependencies]
+# the files surface writes archives with it; the sheet preview tests read them.
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 base64 = "0.22.1"
 bincode = { version = "2", features = ["serde"] }
 bytes = "1"
@@ -83,4 +85,3 @@ windows-sys = { version = "0.61.2", features = [
 ] }
 
 [dev-dependencies]
-zip = { version = "8.6.0", default-features = false, features = ["deflate"] }

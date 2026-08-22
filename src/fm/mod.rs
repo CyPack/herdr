@@ -10,6 +10,7 @@
 //!
 //! Design docs: `.local/prd/native-fm/` (A1-fs-reader.md, 00-MODULE-TREE.md).
 
+pub(crate) mod compress;
 pub(crate) mod delete;
 // Removal condition for the allow: FIP-3.3/3.4 wire `classify_dir_entry` into
 // `read_directory_snapshot` and migrate consumers onto `FileEntryKind`.
