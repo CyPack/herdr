@@ -2646,6 +2646,56 @@ mod tests {
         app
     }
 
+    // The reported doubt (S36): "rows only answer on the timestamp side".
+    // Pinned the other way round: on the full stage a click on the NAME half
+    // of a projected trail row moves the cursor there — the row's hit rect is
+    // the whole row, not its right edge.
+    #[test]
+    fn a_full_stage_click_on_the_name_half_moves_the_cursor() {
+        let td = TempDir::new("name-half-click");
+        td.file("00.txt");
+        td.file("01.txt");
+        td.file("02.txt");
+        let mut app = super::super::app_for_mouse_test();
+        app.state.workspaces = vec![crate::workspace::Workspace::test_new("left")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state
+            .try_open_file_manager_with(|_| Some(FmState::new(&td.root)))
+            .expect("Files activation");
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        compute_view(&mut app.state, Rect::new(0, 0, 120, 30));
+
+        let cursor_before = app.state.file_manager.as_ref().expect("open FM").cursor;
+        let target = app
+            .state
+            .view
+            .file_manager_trail
+            .columns
+            .iter()
+            .flat_map(|column| column.rows.iter())
+            .find(|row| row.entry_index != cursor_before && row.name_rect.width > 0)
+            .expect("a projected row away from the cursor")
+            .clone();
+
+        let dispatch = app.handle_file_manager_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            target.name_rect.x,
+            target.name_rect.y,
+        ));
+        assert_eq!(
+            dispatch,
+            FileManagerMouseDispatch::Consumed,
+            "the name half receives the click"
+        );
+        let file_manager = app.state.file_manager.as_ref().expect("Files stays open");
+        assert_eq!(
+            file_manager.entries[file_manager.cursor].path, target.entry_path,
+            "the click on the name moved the cursor to that row"
+        );
+    }
+
     // TP-FM-SEND-01: clicking the header's [send] queues the SAME context
     // intent the right-click menu queues, and the sync road opens the
     // Taildrop picker carrying exactly those paths.
