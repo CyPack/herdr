@@ -25,6 +25,8 @@ pub struct SpacesConfig {{
 {extra}
     /// `[spaces.icons]` row-kind icon defaults.
     pub icons: SpaceIconsConfig,
+    /// TP-MOD-41: memberless rules keep a dim seat by default.
+    pub show_empty: bool,
 }}
 
 pub struct Unrelated {{
@@ -67,7 +69,13 @@ class ManagedOverlayCheckTest(unittest.TestCase):
         fields = model_fields(model.read_text(encoding="utf-8"))
         self.assertEqual(
             [(field.name, field.is_collection) for field in fields],
-            [("split", True), ("project", True), ("node", True), ("icons", False)],
+            [
+                ("split", True),
+                ("project", True),
+                ("node", True),
+                ("icons", False),
+                ("show_empty", False),
+            ],
             "doc comments and attributes are skipped, order is source order",
         )
 
