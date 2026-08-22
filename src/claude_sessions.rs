@@ -898,6 +898,19 @@ mod tests {
     }
 
     #[test]
+    fn the_skew_allowance_admits_minutes_and_rejects_hours() {
+        // Clocks drift: a message stamped seconds ahead of this machine is
+        // real activity, not corruption — only the far future is corrupt.
+        // Pinned as a bound so neither a zeroed nor an enormous allowance
+        // can slip through: minutes pass, hours do not. (The `time` crate is
+        // built with `parsing` only, so the product road is exercised with a
+        // fixed far-future stamp in the test above.)
+        let now = SystemTime::now();
+        assert!(now + Duration::from_secs(60) <= now + FUTURE_TIMESTAMP_SLACK);
+        assert!(now + Duration::from_secs(2 * 60 * 60) > now + FUTURE_TIMESTAMP_SLACK);
+    }
+
+    #[test]
     fn the_clock_matches_the_cc_l_content_sieve_on_a_mixed_transcript() {
         // Fixture parity with `claude-sessions list` (cc-l): on a realistic
         // agent-session tail — real message, then a burst of tool traffic and
