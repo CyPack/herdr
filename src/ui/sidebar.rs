@@ -5141,8 +5141,12 @@ fn render_ghost_card(
     record: Option<&crate::app::closed_agents::ClosedAgentRecord>,
 ) {
     let p = &app.palette;
+    // TP-AGPANEL-47: ghosts wear DIM peach, not DIM grey. The user's report:
+    // at lowered screen brightness the grey rows disappeared entirely —
+    // "neredeyse hic gorunmuyorlar". Peach keeps the "not alive" reading
+    // (still DIM + ITALIC) while staying visible on a dimmed panel.
     let ghost_style = Style::default()
-        .fg(p.overlay0)
+        .fg(p.peach)
         .add_modifier(Modifier::DIM | Modifier::ITALIC);
     // Nothing ticks for a ghost: the icon is asked for a static glyph, never
     // for a spinner frame.
@@ -5790,6 +5794,10 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             .style()
             .add_modifier
             .contains(ratatui::style::Modifier::ITALIC));
+        // TP-AGPANEL-47: the ghost's colour is the palette's peach — visible
+        // on a dimmed screen — never the grey that vanished there.
+        assert_eq!(ghost_cell.style().fg, Some(app.palette.peach));
+        assert_ne!(ghost_cell.style().fg, Some(app.palette.overlay0));
         assert!(ghost_cell
             .style()
             .add_modifier
