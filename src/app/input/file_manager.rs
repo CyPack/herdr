@@ -1452,6 +1452,47 @@ impl App {
         None
     }
 
+    /// TP-FM-MORE-01: open the header's `[more]` menu at the pointer. The
+    /// target is the selection when one exists, else the cursor entry — and
+    /// the plugin rows are resolved at open time from the same manifest road
+    /// the file context menu reads.
+    fn open_fm_more_menu(&mut self, x: u16, y: u16) {
+        let Some(file_manager) = self.state.file_manager.as_ref() else {
+            return;
+        };
+        let selected = file_manager.multi_selection_paths();
+        let paths: Vec<_> = if selected.is_empty() {
+            file_manager
+                .entries
+                .get(file_manager.cursor)
+                .map(|entry| vec![entry.path.clone()])
+                .unwrap_or_default()
+        } else {
+            file_manager
+                .entries
+                .iter()
+                .filter(|entry| selected.contains(&entry.path))
+                .map(|entry| entry.path.clone())
+                .collect()
+        };
+        let actions =
+            crate::app::api::plugins::file_manifest_actions(&self.state.installed_plugins)
+                .into_iter()
+                .map(|action| crate::app::state::FmMoreEntry {
+                    plugin_id: action.plugin_id,
+                    action_id: action.action_id,
+                    title: action.title,
+                })
+                .collect();
+        self.state.context_menu = Some(ContextMenuState {
+            kind: ContextMenuKind::FmMore { actions, paths },
+            x,
+            y,
+            list: MenuListState::new(0),
+        });
+        self.state.enter_overlay_mode(Mode::ContextMenu);
+    }
+
     /// Route native-FM center-content mouse input before the hidden terminal
     /// pane path. Row actions carry stable path identity but remain side-effect
     /// free until their operation modules provide explicit execution authority.
@@ -1850,6 +1891,12 @@ impl App {
             && mouse.modifiers.is_empty()
         {
             if let Some(header_action) = header_action {
+                // TP-FM-MORE-01: [more] opens its menu right here, where the
+                // pointer is — the one header verb that needs an anchor.
+                if header_action == crate::app::state::FileManagerHeaderAction::More {
+                    self.open_fm_more_menu(mouse.column, mouse.row);
+                    return FileManagerMouseDispatch::Consumed;
+                }
                 let prepared_enabled = self
                     .state
                     .view
@@ -2644,6 +2691,166 @@ mod tests {
         app.try_open_file_manager_with(|_| Some(fm))
             .expect("Files activation");
         app
+    }
+
+    // TP-FM-MORE-01: [more] opens the extensible menu at the pointer —
+    // installed plugins' File actions over the current target — and a row's
+    // Enter queues the SAME typed plugin intent the file context menu queues.
+    #[test]
+    fn the_more_menu_lists_plugin_actions_and_queues_their_intent() {
+        let td = TempDir::new("fm-more-menu");
+        td.file("00.txt");
+        let plugin_td = TempDir::new("fm-more-plugin-manifest");
+        let manifest = plugin_td.root.join("herdr-plugin.toml");
+        fs::write(
+            &manifest,
+            r#"
+id = "example.files"
+name = "Example Files"
+version = "0.1.0"
+min_herdr_version = "0.6.10"
+
+[[actions]]
+id = "inspect"
+title = "Inspect file"
+contexts = ["file"]
+command = ["inspect"]
+"#,
+        )
+        .expect("write plugin manifest");
+        let plugin =
+            crate::app::api::plugins::load_plugin_manifest(&manifest.display().to_string(), true)
+                .expect("valid plugin manifest");
+
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        app.state
+            .installed_plugins
+            .insert(plugin.plugin_id.clone(), plugin);
+        let target = td.root.join("00.txt");
+        {
+            let file_manager = app.state.file_manager.as_mut().expect("open FM");
+            let idx = file_manager
+                .entries
+                .iter()
+                .position(|entry| entry.path == target)
+                .expect("fixture entry");
+            file_manager.cursor = idx;
+        }
+
+        // Selection wins over the cursor when one exists…
+        {
+            let file_manager = app.state.file_manager.as_mut().expect("open FM");
+            let idx = file_manager
+                .entries
+                .iter()
+                .position(|entry| entry.path == target)
+                .expect("fixture entry");
+            assert!(file_manager.replace_selection(idx));
+        }
+        app.open_fm_more_menu(5, 5);
+        {
+            let menu = app.state.context_menu.as_ref().expect("the more menu");
+            let ContextMenuKind::FmMore { paths, .. } = &menu.kind else {
+                panic!("expected the more menu")
+            };
+            assert_eq!(paths, &vec![target.clone()], "the selection is the target");
+        }
+        app.state.context_menu = None;
+        app.state.mode = Mode::Terminal;
+        app.state
+            .file_manager
+            .as_mut()
+            .expect("open FM")
+            .clear_multi_selection();
+
+        // …and the cursor entry serves when nothing is selected.
+        app.open_fm_more_menu(5, 5);
+        let menu = app.state.context_menu.as_ref().expect("the more menu");
+        assert_eq!(menu.items(), vec!["Inspect file"]);
+        let ContextMenuKind::FmMore { paths, .. } = &menu.kind else {
+            panic!("expected the more menu")
+        };
+        assert_eq!(paths, &vec![target.clone()]);
+
+        app.route_client_input(b"\r".to_vec());
+        let intent = app
+            .state
+            .request_file_manager_context_action
+            .as_ref()
+            .expect("the plugin intent was queued");
+        assert_eq!(
+            intent.action,
+            FileManagerContextMenuAction::Plugin {
+                plugin_id: "example.files".into(),
+                action_id: "inspect".into(),
+            }
+        );
+        assert_eq!(intent.paths, vec![target]);
+        assert!(app.state.context_menu.is_none(), "the menu closed");
+    }
+
+    // TP-FM-MORE-01: the verb itself is mouse-road — a left press on the
+    // header's [more] rect opens the menu right there.
+    #[test]
+    fn clicking_the_more_verb_opens_the_menu_at_the_pointer() {
+        let td = TempDir::new("fm-more-click");
+        td.file("00.txt");
+        let mut app = super::super::app_for_mouse_test();
+        app.state.workspaces = vec![crate::workspace::Workspace::test_new("left")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state
+            .try_open_file_manager_with(|_| Some(FmState::new(&td.root)))
+            .expect("Files activation");
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        compute_view(&mut app.state, Rect::new(0, 0, 140, 30));
+
+        let more = app
+            .state
+            .view
+            .file_manager_header_action_areas
+            .iter()
+            .find(|area| area.action == crate::app::state::FileManagerHeaderAction::More)
+            .expect("the [more] verb is projected")
+            .rect;
+        let dispatch = app.handle_file_manager_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            more.x,
+            more.y,
+        ));
+        assert_eq!(dispatch, FileManagerMouseDispatch::Consumed);
+        let menu = app
+            .state
+            .context_menu
+            .as_ref()
+            .expect("the more menu opened");
+        assert!(matches!(menu.kind, ContextMenuKind::FmMore { .. }));
+        assert_eq!(
+            (menu.x, menu.y),
+            (more.x, more.y),
+            "anchored at the pointer"
+        );
+    }
+
+    // TP-FM-MORE-01: an empty install answers with one honest inert row —
+    // Enter on it queues nothing and just closes the menu.
+    #[test]
+    fn an_empty_more_menu_is_honest_and_inert() {
+        let td = TempDir::new("fm-more-empty");
+        td.file("00.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+
+        app.open_fm_more_menu(5, 5);
+        let menu = app.state.context_menu.as_ref().expect("the more menu");
+        assert_eq!(menu.items(), vec!["(no actions installed)"]);
+
+        app.route_client_input(b"\r".to_vec());
+        assert!(
+            app.state.request_file_manager_context_action.is_none(),
+            "the inert row queues nothing"
+        );
+        assert!(app.state.context_menu.is_none(), "the menu closed");
     }
 
     // TP-FM-OPENHERE-01: the queued "open agent here" intent lands as a

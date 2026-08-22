@@ -3586,6 +3586,7 @@ mod tests {
                 crate::app::state::FileManagerHeaderAction::SendTailscale,
                 crate::app::state::FileManagerHeaderAction::Search,
                 crate::app::state::FileManagerHeaderAction::CopyPath,
+                crate::app::state::FileManagerHeaderAction::More,
             ]
         );
         assert!(

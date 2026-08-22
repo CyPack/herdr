@@ -1114,6 +1114,21 @@ pub(super) fn apply_context_menu_action(
         }
         // TP-DAILY-11: the same road, rooted at the daily directory instead of
         // at a workspace — the section's answer to "start something new here".
+        (ContextMenuKind::FmMore { actions, paths }, Some(label)) => {
+            // TP-FM-MORE-01: a plugin row queues the SAME typed intent the
+            // file context menu queues; the inert no-actions row just closes.
+            if let Some(entry) = actions.iter().find(|entry| entry.title == label) {
+                state.request_file_manager_context_action =
+                    Some(crate::app::state::FileManagerContextActionIntent {
+                        action: crate::app::state::FileManagerContextMenuAction::Plugin {
+                            plugin_id: entry.plugin_id.clone(),
+                            action_id: entry.action_id.clone(),
+                        },
+                        paths: paths.clone(),
+                    });
+            }
+            leave_modal(state);
+        }
         (ContextMenuKind::DailyNewChat, Some(agent)) => {
             state.default_chat_agent = agent.to_string();
             state.request_daily_chat();
@@ -2545,6 +2560,19 @@ impl App {
             // mouse and the keyboard actually take — the sibling body above
             // is `#[cfg(test)]`, so a menu answered only there is a menu that
             // works in tests and does nothing in the product.
+            (ContextMenuKind::FmMore { actions, paths }, Some(label)) => {
+                if let Some(entry) = actions.iter().find(|entry| entry.title == label) {
+                    self.state.request_file_manager_context_action =
+                        Some(crate::app::state::FileManagerContextActionIntent {
+                            action: crate::app::state::FileManagerContextMenuAction::Plugin {
+                                plugin_id: entry.plugin_id.clone(),
+                                action_id: entry.action_id.clone(),
+                            },
+                            paths: paths.clone(),
+                        });
+                }
+                leave_modal(&mut self.state);
+            }
             (ContextMenuKind::DailyNewChat, Some(agent)) => {
                 self.state.default_chat_agent = agent.to_string();
                 self.state.request_daily_chat();

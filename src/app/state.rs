@@ -915,6 +915,10 @@ pub enum FileManagerHeaderAction {
     /// Open the Taildrop picker for the selected files — the header seat of
     /// the context menu's "Send with Tailscale...", sharing its target rule.
     SendTailscale,
+    /// Open the extensible actions menu: every installed plugin's File
+    /// actions, in one place — the header's own door for "add your own
+    /// file operation".
+    More,
 }
 
 /// Client-local native-FM operation kind. Runtime execution stays in the
@@ -1115,7 +1119,7 @@ impl FileManagerOperationState {
 }
 
 impl FileManagerHeaderAction {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Copy,
         Self::Paste,
         Self::NewFolder,
@@ -1123,6 +1127,7 @@ impl FileManagerHeaderAction {
         Self::SendTailscale,
         Self::Search,
         Self::CopyPath,
+        Self::More,
     ];
 
     pub const fn label(self) -> &'static str {
@@ -1134,6 +1139,7 @@ impl FileManagerHeaderAction {
             Self::Search => "[search]",
             Self::CopyPath => "[copy path]",
             Self::SendTailscale => "[send]",
+            Self::More => "[more]",
         }
     }
 }
@@ -1187,7 +1193,7 @@ pub struct FileManagerActionState {
 pub struct FileManagerActionBarModel {
     pub selection: Option<FileManagerActionBarSelection>,
     pub clipboard_count: usize,
-    pub actions: [FileManagerActionState; 7],
+    pub actions: [FileManagerActionState; 8],
 }
 
 impl FileManagerActionBarModel {
@@ -1202,6 +1208,15 @@ pub enum FileManagerContextMenuTargetKind {
     Directory,
     Multiple,
     Unavailable,
+}
+
+/// One row of the header's `[more]` menu: a plugin File action, resolved at
+/// open time so the menu and the intent cannot disagree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FmMoreEntry {
+    pub plugin_id: String,
+    pub action_id: String,
+    pub title: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2646,6 +2661,13 @@ pub enum ContextMenuKind {
     /// Carries no index of any kind: the daily section belongs to no
     /// workspace, so there is nothing here that a refresh could invalidate —
     /// unlike every sibling below, this menu cannot go stale.
+    /// TP-FM-MORE-01: the header's `[more]` menu — installed plugins'
+    /// File actions over the current Files target, or one honest inert row
+    /// when nothing is installed.
+    FmMore {
+        actions: Vec<FmMoreEntry>,
+        paths: Vec<std::path::PathBuf>,
+    },
     DailyNewChat,
     /// Agent selector for a new chat in a pinned project (Projects tab).
     /// Selecting an agent makes it the persisted default and opens the chat.
@@ -3006,6 +3028,13 @@ impl ContextMenuState {
             }
             // TP-DAILY-11: agents only. The daily directory is not a checkout,
             // so a worktree verb here would be an offer the tree cannot keep.
+            ContextMenuKind::FmMore { actions, .. } => {
+                if actions.is_empty() {
+                    vec!["(no actions installed)"]
+                } else {
+                    actions.iter().map(|entry| entry.title.as_str()).collect()
+                }
+            }
             ContextMenuKind::DailyNewChat => crate::app::projects::CHAT_AGENTS.to_vec(),
             ContextMenuKind::WorkspaceNewChat {
                 offers_worktree: false,
@@ -5816,6 +5845,7 @@ impl AppState {
                 // handler answers that with nothing.
                 ContextMenuKind::ClosedAgent { .. }
                 | ContextMenuKind::DailyNewChat
+                | ContextMenuKind::FmMore { .. }
                 | ContextMenuKind::SidebarBlank
                 | ContextMenuKind::DailyHeader { .. } => {}
                 ContextMenuKind::ProjectNewChat { proj_idx, .. } => {
@@ -7660,6 +7690,7 @@ mod tests {
                 FileManagerHeaderAction::Paste
                 | FileManagerHeaderAction::NewFolder
                 | FileManagerHeaderAction::SendTailscale
+                | FileManagerHeaderAction::More
                 | FileManagerHeaderAction::Search
                 | FileManagerHeaderAction::CopyPath => None,
             };

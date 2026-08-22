@@ -87,6 +87,13 @@ show_row_actions = true
 With the buttons off there is no hidden hit-area either: a click at the row's
 tail selects the row, it cannot trigger an invisible button.
 
+The header ends with **[more]** — the extensible seat. It opens a menu of
+every installed plugin's *File* actions over the current target (your
+selection, or the entry under the cursor), so adding your own file operation
+is writing a plugin manifest with a `contexts = ["file"]` action: it appears
+here by itself. With nothing installed the menu says so with one inert
+`(no actions installed)` row.
+
 ## Handing files onward
 
 - **Click a text preview** → the file opens in the editor tab.

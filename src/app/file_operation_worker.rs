@@ -508,6 +508,10 @@ impl crate::app::App {
                     });
                 true
             }
+            // [more] opens a menu at the pointer, so the mouse road owns
+            // it (`handle_file_manager_mouse_at`); reaching here means a
+            // caller with no position, and a menu with no anchor is refused.
+            FileManagerHeaderAction::More => false,
             FileManagerHeaderAction::SendTailscale => {
                 let Some(paths) = current_action_paths(&self.state, action) else {
                     return false;

@@ -386,6 +386,10 @@ pub(crate) fn compute_file_manager_action_bar_model(
                 FileManagerHeaderAction::SendTailscale => {
                     send_header_target_paths(file_manager).err()
                 }
+                // The extensible menu is always openable — an empty install
+                // answers with its one honest inert row instead of a grey
+                // button nobody can learn anything from.
+                FileManagerHeaderAction::More => None,
             }
         };
         FileManagerActionState {
@@ -2667,7 +2671,7 @@ mod tests {
     fn header_action_areas_are_tagged_disjoint_and_right_aligned() {
         use crate::app::state::FileManagerHeaderAction;
 
-        let area = Rect::new(10, 4, 76, 1);
+        let area = Rect::new(10, 4, 83, 1);
         let actions = compute_file_manager_header_action_areas(area);
         assert_eq!(
             actions.iter().map(|area| area.action).collect::<Vec<_>>(),
@@ -2679,10 +2683,11 @@ mod tests {
                 FileManagerHeaderAction::SendTailscale,
                 FileManagerHeaderAction::Search,
                 FileManagerHeaderAction::CopyPath,
+                FileManagerHeaderAction::More,
             ]
         );
         assert_eq!(
-            actions.last().expect("copy-path action").rect.right(),
+            actions.last().expect("more action").rect.right(),
             area.right()
         );
         assert!(actions.iter().all(|action| {
@@ -2706,8 +2711,36 @@ mod tests {
         use crate::app::state::FileManagerHeaderAction;
 
         let cases = [
-            // 76 leaves exactly the 64 cells all seven labels and their gaps
+            // 83 leaves exactly the 71 cells all eight labels and their gaps
             // cost — the boundary sits AT the full set.
+            (
+                83,
+                vec![
+                    FileManagerHeaderAction::Copy,
+                    FileManagerHeaderAction::Paste,
+                    FileManagerHeaderAction::NewFolder,
+                    FileManagerHeaderAction::Delete,
+                    FileManagerHeaderAction::SendTailscale,
+                    FileManagerHeaderAction::Search,
+                    FileManagerHeaderAction::CopyPath,
+                    FileManagerHeaderAction::More,
+                ],
+            ),
+            // One cell short: the lowest-priority verb — `[more]` — steps off.
+            (
+                82,
+                vec![
+                    FileManagerHeaderAction::Copy,
+                    FileManagerHeaderAction::Paste,
+                    FileManagerHeaderAction::NewFolder,
+                    FileManagerHeaderAction::Delete,
+                    FileManagerHeaderAction::SendTailscale,
+                    FileManagerHeaderAction::Search,
+                    FileManagerHeaderAction::CopyPath,
+                ],
+            ),
+            // 76 leaves exactly the 64 cells all seven remaining labels and
+            // their gaps cost.
             (
                 76,
                 vec![
@@ -3026,7 +3059,8 @@ mod tests {
                 "[delete]",
                 "[send]",
                 "[search]",
-                "[copy path]"
+                "[copy path]",
+                "[more]"
             ]
         );
         assert_eq!(
