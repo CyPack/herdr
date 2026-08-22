@@ -35,9 +35,11 @@ pub(crate) fn truncate_keep_extension(text: &str, max_width: usize) -> String {
     let Some((stem, ext)) = text.rsplit_once('.') else {
         return truncate_end(text, max_width);
     };
-    // A dotfile's leading dot is identity, not an extension; an empty or
-    // slash-carrying tail is not one either.
-    if stem.is_empty() || ext.is_empty() || ext.contains('/') {
+    // A slash-carrying or empty tail is not an extension. (A dotfile's
+    // whole name lands in `ext` here, but a dotfile long enough to truncate
+    // always has `ext_width >= max_width`, so the budget guard below already
+    // sends it down the plain road — proven by the corners test.)
+    if ext.is_empty() || ext.contains('/') {
         return truncate_end(text, max_width);
     }
     let ext_width = display_width(ext);
