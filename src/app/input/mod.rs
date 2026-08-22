@@ -950,6 +950,14 @@ impl App {
                         self.focus_tab_idx_via_api(tab_idx)
                     }
                     MouseAction::FocusPane { ws_idx, pane_id } => {
+                        // TP-FM-DISMISS-01: a click that asks for a pane asks
+                        // to SEE it. With the Files stage covering the center,
+                        // clicking the already-focused agent's row was a silent
+                        // no-op — focus did not change, so no surface change
+                        // ever fired, and the screen stayed on Files.
+                        if self.state.file_manager.is_some() {
+                            self.state.close_file_manager();
+                        }
                         self.focus_pane_internal_via_api(ws_idx, pane_id)
                     }
                     MouseAction::ReviveClosedAgent { agent_id } => {

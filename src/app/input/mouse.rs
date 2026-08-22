@@ -3938,6 +3938,60 @@ mod tests {
         }
     }
 
+    // TP-FM-DISMISS-01: clicking an agent's row asks to SEE that pane.
+    // With the Files stage covering the center, clicking the ALREADY-focused
+    // agent used to be a silent no-op — focus did not change, so the screen
+    // stayed on Files. The click now dismisses Files first, uniformly for the
+    // same agent, a different agent, and the collapsed rail.
+    #[test]
+    fn an_agent_row_click_dismisses_the_files_stage() {
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![crate::workspace::Workspace::test_new("one")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = crate::app::state::Mode::Terminal;
+        app.state.mobile_width_threshold = 0;
+        app.state.ensure_test_terminals();
+        let root = app.state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = app.state.workspaces[0].tabs[0]
+            .panes
+            .get(&root)
+            .map(|pane| pane.attached_terminal_id.clone())
+            .expect("root pane has a terminal");
+        if let Some(terminal) = app.state.terminals.get_mut(&terminal_id) {
+            terminal.set_detected_state(
+                Some(crate::detect::Agent::Pi),
+                crate::detect::AgentState::Idle,
+            );
+        }
+
+        let file_manager =
+            crate::fm::FmState::new(std::env::current_dir().expect("current directory"));
+        app.state
+            .try_open_file_manager_with(|_| Some(file_manager))
+            .expect("Files activation");
+        assert!(app.state.file_manager.is_some(), "fixture: Files is open");
+
+        let area = ratatui::layout::Rect::new(0, 0, 106, 20);
+        crate::ui::compute_view(&mut app.state, area);
+        let panel = app.state.agent_panel_rect();
+        let row = (panel.y..panel.y + panel.height)
+            .find(|row| app.state.agent_detail_target_at(*row) == Some((0, 0, root)))
+            .expect("the agent row is laid out");
+
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 2, row));
+
+        assert!(
+            app.state.file_manager.is_none(),
+            "the click on the (already focused) agent dismisses Files"
+        );
+        assert!(
+            app.state.stage.active_surface()
+                != Some(crate::ui::surface_host::AppSurfaceRef::NativeFiles),
+            "the stage returned to the terminal surface"
+        );
+    }
+
     // TP-DAILY-12 / TP-DOTS-04: the area's header is managed like every other
     // container header — its "⋯" and a right-click on it open the SAME menu.
     // A header with no menu at all was the one row on this sidebar a person
