@@ -1686,6 +1686,46 @@ mod tests {
         assert_eq!(styles.divider.fg, Some(palette.overlay0));
         assert_ne!(styles.divider.fg, Some(palette.surface_dim));
     }
+
+    // TP-FM-DIVIDER-02: the column seam is a thick bar, not a hairline —
+    // the user asked for the boundary between the frozen and the live
+    // columns to read bolder. Asserted on the production trail surface,
+    // the very listing the user was looking at.
+    #[test]
+    fn the_column_divider_draws_the_thick_seam() {
+        let td = TempDir::new("thick-seam");
+        td.dir("alpha");
+        td.file("a.txt");
+        let mut app = AppState::test_new();
+        app.try_open_file_manager_with(|_| Some(FmState::new(&td.root)))
+            .expect("Files activation");
+        let frame = Rect::new(0, 0, 86, 8);
+        let body = file_manager_miller_viewport_area(frame);
+        app.view.terminal_area = frame;
+        {
+            let fm = app.file_manager.as_mut().expect("open FM");
+            let alpha = fm.cwd.join("alpha");
+            // The snapshotting road: it advances the trail AND reads the
+            // directory, exactly what a real descent does.
+            let status = fm.trail_snapshots.select_dir(&mut fm.trail, 0, &alpha);
+            assert_eq!(status, FmDirectoryStatus::Available);
+        }
+        let fm = app.file_manager.as_ref().expect("open FM");
+        app.view.file_manager_trail =
+            trail_view::project_trail_view(body, &fm.trail, &fm.trail_snapshots, &[]);
+        let divider = app
+            .view
+            .file_manager_trail
+            .dividers
+            .first()
+            .expect("two trail columns produce a divider")
+            .rect;
+        let buffer = render_buffer(&app, frame.width, frame.height);
+        let cell = &buffer[(divider.x, divider.y)];
+        assert_eq!(cell.symbol(), "\u{2503}"); // ┃ (thick vertical)
+        let palette = crate::app::state::Palette::catppuccin();
+        assert_eq!(cell.style().fg, Some(palette.overlay0));
+    }
     use super::*;
     use crate::app::state::FileManagerActionBarSelectionKind;
     use crate::app::FileManagerLocationsFocus;

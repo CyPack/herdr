@@ -9,7 +9,7 @@
 use std::path::PathBuf;
 
 use ratatui::layout::Rect;
-use ratatui::widgets::{Block, Borders};
+use ratatui::widgets::{Block, BorderType, Borders};
 use ratatui::Frame;
 
 use super::miller::{miller_auto_follow_offset, miller_viewport_geometry_at_offset};
@@ -733,8 +733,12 @@ pub(crate) fn render_trail_view(
     let active_col = app.file_manager.as_ref().map(|fm| fm.trail.active_col());
     for divider in &view.dividers {
         frame.render_widget(
+            // TP-FM-DIVIDER-02: the seam is drawn thick so the boundary
+            // between the frozen column and the live listing reads at a
+            // glance.
             Block::default()
                 .borders(Borders::LEFT)
+                .border_type(BorderType::Thick)
                 .border_style(styles.divider),
             divider.rect,
         );
