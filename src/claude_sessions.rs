@@ -397,6 +397,36 @@ fn parse_line_timestamp(obj: &serde_json::Map<String, serde_json::Value>) -> Opt
         .map(|ns| SystemTime::UNIX_EPOCH + std::time::Duration::from_nanos(ns))
 }
 
+/// TP-DRAW-16: `max` keeps the newest timestamp forever, so one corrupt
+/// future-dated line would pin the chat at "now" for good. Allow a small
+/// clock-skew window; beyond it the timestamp is treated as absent.
+const FUTURE_TIMESTAMP_SLACK: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
+fn accepted_line_timestamp(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    now: SystemTime,
+) -> Option<SystemTime> {
+    parse_line_timestamp(obj).filter(|ts| *ts <= now + FUTURE_TIMESTAMP_SLACK)
+}
+
+/// TP-DRAW-16, cc-l parity (`_is_noise`): a user line advances the chat clock
+/// only when it is the human actually speaking — not an injected `<…>` block
+/// and not a continuation/interrupt banner. Tool results never reach here:
+/// they carry no text block, so extraction already returns `None` for them.
+fn user_text_advances_clock(text: &str) -> bool {
+    !text.starts_with('<')
+        && !text.starts_with("This session is being continued")
+        && !text.starts_with("[Request interrupted")
+}
+
+/// TP-DRAW-16, cc-l parity: an assistant line advances the clock only when it
+/// carries visible text that is not an injected `<…>` block. While an agent
+/// runs, tool_use-only lines stream in constantly; counting them shows every
+/// agent chat as "1m ago" forever.
+fn assistant_text_advances_clock(text: &str) -> bool {
+    !text.starts_with('<')
+}
+
 fn parse_session_file(path: &Path) -> Option<ClaudeSession> {
     let id = path.file_stem()?.to_str()?.to_string();
     let content = fs::read_to_string(path).ok()?;
@@ -407,6 +437,8 @@ fn parse_session_file(path: &Path) -> Option<ClaudeSession> {
 
     let mut custom_title: Option<String> = None;
     let mut last_message_at: Option<SystemTime> = None;
+    // Taken once per file: the reference point for the future-date reject.
+    let now = SystemTime::now();
     let mut ai_title: Option<String> = None;
     let mut first_user: Option<String> = None;
     let mut msg_count: usize = 0;
@@ -440,19 +472,32 @@ fn parse_session_file(path: &Path) -> Option<ClaudeSession> {
             }
             Some("user") => {
                 msg_count += 1;
+                // One extraction serves both the title chain and the clock
+                // sieve (tool_result-only lines extract to `None`).
+                let text = extract_user_text(obj);
                 if first_user.is_none() {
-                    first_user = extract_user_text(obj);
+                    first_user = text.clone();
                 }
                 // TP-DRAW-15: the newest message timestamp wins, whatever
-                // order the lines were appended in.
-                if let Some(ts) = parse_line_timestamp(obj) {
-                    last_message_at = Some(last_message_at.map_or(ts, |cur| cur.max(ts)));
+                // order the lines were appended in. TP-DRAW-16: but only a
+                // substantive human message may advance the clock.
+                if text.as_deref().is_some_and(user_text_advances_clock) {
+                    if let Some(ts) = accepted_line_timestamp(obj, now) {
+                        last_message_at = Some(last_message_at.map_or(ts, |cur| cur.max(ts)));
+                    }
                 }
             }
             Some("assistant") => {
                 msg_count += 1;
-                if let Some(ts) = parse_line_timestamp(obj) {
-                    last_message_at = Some(last_message_at.map_or(ts, |cur| cur.max(ts)));
+                // TP-DRAW-16: tool_use-only assistant lines are machinery,
+                // not conversation — only visible text advances the clock.
+                if extract_user_text(obj)
+                    .as_deref()
+                    .is_some_and(assistant_text_advances_clock)
+                {
+                    if let Some(ts) = accepted_line_timestamp(obj, now) {
+                        last_message_at = Some(last_message_at.map_or(ts, |cur| cur.max(ts)));
+                    }
                 }
             }
             _ => {}
@@ -644,7 +689,7 @@ mod tests {
             &[
                 r#"{"type":"summary","summary":"s"}"#,
                 r#"{"type":"user","timestamp":"2026-08-19T10:00:00.000Z","message":{"content":"hi"}}"#,
-                r#"{"type":"assistant","timestamp":"2026-08-19T10:05:30.250Z"}"#,
+                r#"{"type":"assistant","timestamp":"2026-08-19T10:05:30.250Z","message":{"content":[{"type":"text","text":"hello back"}]}}"#,
                 r#"{"type":"custom-title","customTitle":"t"}"#,
             ],
         );
@@ -729,11 +774,152 @@ mod tests {
             "dddd",
             &[
                 r#"{"type":"user","timestamp":"2026-08-19T10:05:30.250Z","message":{"content":"late"}}"#,
-                r#"{"type":"assistant","timestamp":"2026-08-19T10:00:00.000Z"}"#,
+                r#"{"type":"assistant","timestamp":"2026-08-19T10:00:00.000Z","message":{"content":[{"type":"text","text":"earlier reply"}]}}"#,
             ],
         );
         let sessions = read_sessions_for_project(&tp.root, "/home/x/proj");
         let expected = std::time::UNIX_EPOCH + Duration::from_millis(1_787_133_930_250);
+        assert_eq!(sessions[0].last_message_at, Some(expected));
+    }
+
+    // ---- TP-DRAW-16: only substantive messages advance the chat clock --------
+
+    #[test]
+    fn tool_use_only_assistant_lines_do_not_advance_the_clock() {
+        // The "always 1m ago" bug: while an agent runs, every tool call
+        // appends an assistant line with no visible text. Counting those
+        // pins the row at "now" forever, so they must not touch the clock.
+        let tp = TempProjects::new("tool-only");
+        tp.write_session(
+            "/home/x/proj",
+            "aaaa",
+            &[
+                r#"{"type":"user","timestamp":"2026-08-19T10:00:00.000Z","message":{"content":"hi"}}"#,
+                r#"{"type":"assistant","timestamp":"2026-08-19T13:00:00.000Z","message":{"content":[{"type":"tool_use","name":"Bash","input":{}}]}}"#,
+                r#"{"type":"assistant","timestamp":"2026-08-19T13:05:00.000Z"}"#,
+            ],
+        );
+        let sessions = read_sessions_for_project(&tp.root, "/home/x/proj");
+        let expected = std::time::UNIX_EPOCH + Duration::from_millis(1_787_133_600_000);
+        assert_eq!(sessions[0].last_message_at, Some(expected));
+    }
+
+    #[test]
+    fn an_assistant_line_with_text_advances_the_clock() {
+        // The sieve must not overreach: a real reply is real activity.
+        let tp = TempProjects::new("asst-text");
+        tp.write_session(
+            "/home/x/proj",
+            "aaaa",
+            &[
+                r#"{"type":"user","timestamp":"2026-08-19T10:00:00.000Z","message":{"content":"hi"}}"#,
+                r#"{"type":"assistant","timestamp":"2026-08-19T13:00:00.000Z","message":{"content":[{"type":"text","text":"done"}]}}"#,
+            ],
+        );
+        let sessions = read_sessions_for_project(&tp.root, "/home/x/proj");
+        let expected = std::time::UNIX_EPOCH + Duration::from_millis(1_787_144_400_000);
+        assert_eq!(sessions[0].last_message_at, Some(expected));
+    }
+
+    #[test]
+    fn injected_angle_bracket_blocks_do_not_advance_the_clock() {
+        // System reminders and command transcripts arrive as ordinary
+        // user/assistant lines whose text starts with "<". cc-l ignores
+        // them and so do we.
+        let tp = TempProjects::new("angle");
+        tp.write_session(
+            "/home/x/proj",
+            "aaaa",
+            &[
+                r#"{"type":"user","timestamp":"2026-08-19T10:00:00.000Z","message":{"content":"hi"}}"#,
+                r#"{"type":"user","timestamp":"2026-08-19T13:00:00.000Z","message":{"content":"<system-reminder>ping</system-reminder>"}}"#,
+                r#"{"type":"assistant","timestamp":"2026-08-19T13:05:00.000Z","message":{"content":[{"type":"text","text":"<system>injected</system>"}]}}"#,
+            ],
+        );
+        let sessions = read_sessions_for_project(&tp.root, "/home/x/proj");
+        let expected = std::time::UNIX_EPOCH + Duration::from_millis(1_787_133_600_000);
+        assert_eq!(sessions[0].last_message_at, Some(expected));
+    }
+
+    #[test]
+    fn continuation_and_interrupt_banners_do_not_advance_the_clock() {
+        // Compact/resume machinery writes these as user lines; they are not
+        // the human speaking (cc-l's noise-prefix parity).
+        let tp = TempProjects::new("banner");
+        tp.write_session(
+            "/home/x/proj",
+            "aaaa",
+            &[
+                r#"{"type":"user","timestamp":"2026-08-19T10:00:00.000Z","message":{"content":"hi"}}"#,
+                r#"{"type":"user","timestamp":"2026-08-19T13:00:00.000Z","message":{"content":"This session is being continued from a previous conversation"}}"#,
+                r#"{"type":"user","timestamp":"2026-08-19T13:05:00.000Z","message":{"content":"[Request interrupted by user]"}}"#,
+            ],
+        );
+        let sessions = read_sessions_for_project(&tp.root, "/home/x/proj");
+        let expected = std::time::UNIX_EPOCH + Duration::from_millis(1_787_133_600_000);
+        assert_eq!(sessions[0].last_message_at, Some(expected));
+    }
+
+    #[test]
+    fn tool_result_user_lines_do_not_advance_the_clock() {
+        // While an agent runs, tool results stream back as user-typed lines
+        // with no text block; they are machinery, not conversation.
+        let tp = TempProjects::new("tool-result");
+        tp.write_session(
+            "/home/x/proj",
+            "aaaa",
+            &[
+                r#"{"type":"user","timestamp":"2026-08-19T10:00:00.000Z","message":{"content":"hi"}}"#,
+                r#"{"type":"user","timestamp":"2026-08-19T13:00:00.000Z","message":{"content":[{"type":"tool_result","tool_use_id":"x","content":"ok"}]}}"#,
+            ],
+        );
+        let sessions = read_sessions_for_project(&tp.root, "/home/x/proj");
+        let expected = std::time::UNIX_EPOCH + Duration::from_millis(1_787_133_600_000);
+        assert_eq!(sessions[0].last_message_at, Some(expected));
+    }
+
+    #[test]
+    fn a_future_dated_line_is_ignored_by_the_clock() {
+        // `max` keeps the newest timestamp forever, so a single corrupt
+        // future-dated line would pin the chat at "now" for good. Reject
+        // anything past the present (plus a small clock-skew allowance).
+        let tp = TempProjects::new("future");
+        tp.write_session(
+            "/home/x/proj",
+            "aaaa",
+            &[
+                r#"{"type":"user","timestamp":"2026-08-19T10:00:00.000Z","message":{"content":"hi"}}"#,
+                r#"{"type":"user","timestamp":"2099-01-01T00:00:00.000Z","message":{"content":"from the future"}}"#,
+            ],
+        );
+        let sessions = read_sessions_for_project(&tp.root, "/home/x/proj");
+        let expected = std::time::UNIX_EPOCH + Duration::from_millis(1_787_133_600_000);
+        assert_eq!(sessions[0].last_message_at, Some(expected));
+    }
+
+    #[test]
+    fn the_clock_matches_the_cc_l_content_sieve_on_a_mixed_transcript() {
+        // Fixture parity with `claude-sessions list` (cc-l): on a realistic
+        // agent-session tail — real message, then a burst of tool traffic and
+        // injected blocks — both tools must date the chat at the last REAL
+        // message. cc-l's sieve: user counts when non-noise; assistant counts
+        // when it has text not starting with "<".
+        let tp = TempProjects::new("ccl-parity");
+        tp.write_session(
+            "/home/x/proj",
+            "aaaa",
+            &[
+                r#"{"type":"user","timestamp":"2026-08-19T09:00:00.000Z","message":{"content":"start the job"}}"#,
+                r#"{"type":"assistant","timestamp":"2026-08-19T10:00:00.000Z","message":{"content":[{"type":"text","text":"working on it"}]}}"#,
+                r#"{"type":"assistant","timestamp":"2026-08-19T13:00:00.000Z","message":{"content":[{"type":"tool_use","name":"Bash","input":{}}]}}"#,
+                r#"{"type":"user","timestamp":"2026-08-19T13:00:05.000Z","message":{"content":[{"type":"tool_result","tool_use_id":"x","content":"out"}]}}"#,
+                r#"{"type":"user","timestamp":"2026-08-19T13:01:00.000Z","message":{"content":"<local-command-stdout>ok</local-command-stdout>"}}"#,
+                r#"{"type":"assistant","timestamp":"2026-08-19T13:02:00.000Z"}"#,
+            ],
+        );
+        let sessions = read_sessions_for_project(&tp.root, "/home/x/proj");
+        // 10:00:00Z — the assistant's last real reply, exactly what cc-l shows.
+        let expected = std::time::UNIX_EPOCH + Duration::from_millis(1_787_133_600_000);
         assert_eq!(sessions[0].last_message_at, Some(expected));
     }
 
