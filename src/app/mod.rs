@@ -1010,6 +1010,7 @@ impl App {
             managed_node_keys: std::collections::HashSet::new(),
             space_icons: config.spaces.icons.clone(),
             spaces_show_empty: config.spaces.show_empty,
+            sidebar_divider_color: config.ui.sidebar.divider_color.clone(),
             projects_pinned,
             projects_sessions: Vec::new(),
             preview_placement: config.preview.placement,
@@ -2168,6 +2169,7 @@ impl App {
                 // (`save_spaces_focus_only`), so the file is always the newer
                 // of the two.
                 self.state.spaces_focus_only = config.ui.sidebar.spaces.focus_only;
+                self.state.sidebar_divider_color = config.ui.sidebar.divider_color.clone();
                 self.state.agent_panel_scroll = 0;
                 self.state.accent = crate::config::parse_color(&config.ui.accent);
                 if !self.state.local_sound_playback && self.state.sound != config.ui.sound {

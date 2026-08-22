@@ -3930,6 +3930,8 @@ pub struct AppState {
     pub spaces_focus_only: bool,
     /// TP-MOD-41: declared-but-memberless rules keep their (dim) header.
     pub spaces_show_empty: bool,
+    /// `ui.sidebar.divider_color` resolved at the edge of use (bar_color).
+    pub sidebar_divider_color: String,
     /// Drawers this display has opened all the way, past the five rows the
     /// glance surface keeps (TP-DRAW-10). Per display, like every other
     /// drawer set here.
@@ -5178,6 +5180,7 @@ impl AppState {
             daily_chat_cwd: None,
             spaces_focus_only: false,
             spaces_show_empty: true,
+            sidebar_divider_color: "peach".to_string(),
             fully_open_chat_drawers: std::collections::HashSet::new(),
             expanded_chat_workspaces: std::collections::HashSet::new(),
             daily_section_collapsed: false,

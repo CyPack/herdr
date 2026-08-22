@@ -3172,15 +3172,11 @@ pub(super) fn render_sidebar_collapsed(app: &AppState, frame: &mut Frame, area: 
     let is_navigating = matches!(app.mode, Mode::Navigate);
 
     let p = &app.palette;
-    let sep_style = if is_navigating {
-        Style::default().fg(p.accent)
-    } else {
-        Style::default().fg(p.surface_dim)
-    };
+    let (sep_symbol, sep_style) = sidebar_divider(app);
     let sep_x = area.x + area.width.saturating_sub(1);
     let buf = frame.buffer_mut();
     for y in area.y..area.y + area.height {
-        buf[(sep_x, y)].set_symbol("│");
+        buf[(sep_x, y)].set_symbol(sep_symbol);
         buf[(sep_x, y)].set_style(sep_style);
     }
 
@@ -3312,16 +3308,12 @@ pub(super) fn render_sidebar(
 ) {
     let p = &app.palette;
     let is_navigating = matches!(app.mode, Mode::Navigate);
-    let sep_style = if is_navigating {
-        Style::default().fg(p.accent)
-    } else {
-        Style::default().fg(p.surface_dim)
-    };
+    let (sep_symbol, sep_style) = sidebar_divider(app);
 
     let sep_x = area.x + area.width.saturating_sub(1);
     let buf = frame.buffer_mut();
     for y in area.y..area.y + area.height {
-        buf[(sep_x, y)].set_symbol("│");
+        buf[(sep_x, y)].set_symbol(sep_symbol);
         buf[(sep_x, y)].set_style(sep_style);
     }
 
@@ -3941,6 +3933,24 @@ fn render_workspace_list(
 }
 
 /// The label a worktree space is known by, or the key itself as a last resort.
+/// The vertical seam between the sidebar and the stage.
+///
+/// TP-CHROME-162: heavy glyph, and a colour that survives a dimmed screen —
+/// `ui.sidebar.divider_color` (default peach) through the bars' own colour
+/// vocabulary. Navigate keeps its accent claim on the seam, so the mode is
+/// still readable at the edge.
+fn sidebar_divider(app: &AppState) -> (&'static str, Style) {
+    let style = if matches!(app.mode, Mode::Navigate) {
+        Style::default().fg(app.palette.accent)
+    } else {
+        Style::default().fg(crate::ui::shell::bar_color(
+            &app.sidebar_divider_color,
+            &app.palette,
+        ))
+    };
+    ("\u{2503}", style)
+}
+
 pub(crate) fn space_label_for_key(app: &AppState, key: &str) -> String {
     (0..app.workspaces.len())
         .find_map(|ws_idx| effective_space(app, ws_idx).filter(|space| space.key == key))
@@ -5268,6 +5278,58 @@ mod tests {
                     row_text(buffer, row, width)
                 )
             })
+    }
+
+    // TP-CHROME-162: the sidebar/stage seam is a heavy glyph in a colour
+    // that survives a dimmed screen. The old `surface_dim` thin line was
+    // reported as "neredeyse gozukmuyor"; Navigate still claims the seam
+    // in accent so the mode stays readable at the edge, and the colour is
+    // the user's to change through the bars' own vocabulary.
+    #[test]
+    fn the_sidebar_seam_is_heavy_and_visible_and_configurable() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.ensure_test_terminals();
+        app.active = Some(0);
+        app.mode = Mode::Terminal;
+
+        let area = Rect::new(0, 0, 26, 8);
+        let seam_x = area.x + area.width - 1;
+        let draw = |app: &crate::app::state::AppState| {
+            let mut terminal = Terminal::new(TestBackend::new(26, 8)).unwrap();
+            terminal
+                .draw(|frame| render_sidebar(app, &TerminalRuntimeRegistry::new(), frame, area))
+                .unwrap();
+            let cell = &terminal.backend().buffer()[(seam_x, 2)];
+            (cell.symbol().to_string(), cell.style().fg)
+        };
+
+        let (symbol, fg) = draw(&app);
+        assert_eq!(symbol, "\u{2503}", "the seam is the heavy glyph");
+        assert_eq!(fg, Some(app.palette.peach), "default reads as peach");
+        assert_ne!(
+            fg,
+            Some(app.palette.surface_dim),
+            "never the vanishing grey"
+        );
+
+        // The colour is configuration, resolved through the bars' vocabulary.
+        app.sidebar_divider_color = "red".to_string();
+        let (_, fg) = draw(&app);
+        assert_eq!(fg, Some(app.palette.red));
+
+        // Navigate still owns the seam in accent — the mode stays readable.
+        app.mode = Mode::Navigate;
+        let (_, fg) = draw(&app);
+        assert_eq!(fg, Some(app.palette.accent));
+
+        // The collapsed rail's seam speaks the same language.
+        app.mode = Mode::Terminal;
+        app.sidebar_divider_color = "peach".to_string();
+        app.sidebar_collapsed = true;
+        let (symbol, fg) = draw(&app);
+        assert_eq!(symbol, "\u{2503}");
+        assert_eq!(fg, Some(app.palette.peach));
     }
 
     #[test]

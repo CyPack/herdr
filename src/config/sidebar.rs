@@ -435,7 +435,7 @@ impl Default for SpacesSidebarConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct SidebarConfig {
     pub agents: AgentsSidebarConfig,
@@ -444,6 +444,28 @@ pub struct SidebarConfig {
     /// buttons instead of bare labels. Shares the section border's vocabulary
     /// because it is the same decision: one frame, one colour, one gradient.
     pub chips: SectionBorderConfig,
+    /// `ui.sidebar.divider_color` — the vertical line between the sidebar and
+    /// the stage. Same vocabulary as the shell bars (palette token or literal
+    /// colour). Default "peach": the old `surface_dim` line disappeared
+    /// entirely on a dimmed screen, which was reported as "the divider is
+    /// almost invisible". Navigate mode still paints it accent.
+    #[serde(default = "default_divider_color")]
+    pub divider_color: String,
+}
+
+fn default_divider_color() -> String {
+    "peach".to_string()
+}
+
+impl Default for SidebarConfig {
+    fn default() -> Self {
+        Self {
+            agents: AgentsSidebarConfig::default(),
+            spaces: SpacesSidebarConfig::default(),
+            chips: SectionBorderConfig::default(),
+            divider_color: default_divider_color(),
+        }
+    }
 }
 
 /// `[ui.sidebar.<section>.border]` — an optional frame around one half of the

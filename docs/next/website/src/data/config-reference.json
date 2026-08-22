@@ -851,6 +851,12 @@
           "type": "integer",
           "default": "26",
           "description": "Default expanded sidebar width in columns. Auto-scales based on workspace names."
+        },
+        {
+          "key": "ui.sidebar.divider_color",
+          "type": "string",
+          "default": "\"peach\"",
+          "description": "Colour of the heavy vertical seam between the sidebar and the stage. Palette token (accent, peach, red, ...) or a literal colour, the same vocabulary as shell bar colours. Navigate mode always paints the seam accent."
         }
       ]
     },
