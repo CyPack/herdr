@@ -277,7 +277,8 @@ fn resize_background_tab_panes_to_area(
             // TP-STAGE-SBS-01: the side-by-side right half's active tab is
             // on screen at the split rect — the full-size sweep would fight
             // the split resize every frame.
-            if app.side_by_side.map(|sbs| sbs.right) == Some(ws_idx)
+            if app.side_by_side.map(|sbs| sbs.right)
+                == Some(crate::app::state::SideBySideRight::Workspace(ws_idx))
                 && tab_idx == ws.active_tab_index()
             {
                 continue;
@@ -472,14 +473,20 @@ fn compute_view_internal(
     // index that vanished, equals the active, or a stage too narrow to
     // split, and the mode is dropped whole.
     let side_by_side = match app.side_by_side {
-        Some(sbs)
-            if terminal_surface_active
-                && Some(sbs.right) != app.active
-                && app.workspaces.get(sbs.right).is_some()
-                && terminal_area.width >= 40 =>
-        {
-            Some(sbs)
-        }
+        Some(sbs) if terminal_surface_active && terminal_area.width >= 40 => match sbs.right {
+            crate::app::state::SideBySideRight::Workspace(right)
+                if Some(right) != app.active && app.workspaces.get(right).is_some() =>
+            {
+                Some(sbs)
+            }
+            // TP-SBS-FILES-01: Files needs no partner workspace — only a
+            // resident file manager to draw.
+            crate::app::state::SideBySideRight::Files if app.file_manager.is_some() => Some(sbs),
+            _ => {
+                app.side_by_side = None;
+                None
+            }
+        },
         Some(_) => {
             app.side_by_side = None;
             None
@@ -505,7 +512,14 @@ fn compute_view_internal(
         }
         None => (tab_bar_rect, terminal_area, None),
     };
-    let file_manager_locations = sync_file_manager_locations_view(app, terminal_area);
+    // TP-SBS-FILES-01: when Files rides the right half, every Files
+    // projection lives in that rectangle — geometry and hits alike.
+    let files_viewport = right_halves
+        .as_ref()
+        .filter(|(sbs, _, _)| matches!(sbs.right, crate::app::state::SideBySideRight::Files))
+        .map(|(_, _, area)| *area)
+        .unwrap_or(terminal_area);
+    let file_manager_locations = sync_file_manager_locations_view(app, files_viewport);
     let file_manager_miller = sync_miller_view(app, file_manager_locations.layout.trail);
     let file_manager_trail = sync_trail_view(app, file_manager_locations.layout.trail);
     let FileManagerRowGeometry {
@@ -523,7 +537,7 @@ fn compute_view_internal(
         )
     });
     let file_manager_header_action_areas = if app.staged_file_manager().is_some() {
-        compute_file_manager_header_action_areas(terminal_area)
+        compute_file_manager_header_action_areas(files_viewport)
     } else {
         Vec::new()
     };
@@ -640,16 +654,26 @@ fn compute_view_internal(
         }
     };
     let right_surface = right_halves.map(|(sbs, strip_rect, area)| {
-        let layout = tab_surface::compute_tab_surface_for(
-            app,
-            terminal_runtimes,
-            sbs.right,
-            area,
-            resize_panes,
-            cell_size,
-        );
+        let layout = match sbs.right {
+            crate::app::state::SideBySideRight::Workspace(right_ws) => {
+                tab_surface::compute_tab_surface_for(
+                    app,
+                    terminal_runtimes,
+                    right_ws,
+                    area,
+                    resize_panes,
+                    cell_size,
+                )
+            }
+            // TP-SBS-FILES-01: Files hosts no panes; its own geometry is the
+            // file-manager projection computed above.
+            crate::app::state::SideBySideRight::Files => TabSurfaceLayout {
+                pane_infos: Vec::new(),
+                split_borders: Vec::new(),
+            },
+        };
         crate::app::state::RightSurfaceView {
-            ws_idx: sbs.right,
+            right: sbs.right,
             area,
             strip_rect,
             pane_infos: layout.pane_infos,
@@ -947,11 +971,21 @@ fn sync_file_manager_view(app: &AppState, snapshot: &TrailViewSnapshot) -> FileM
     }
 }
 
-fn sync_miller_view(app: &mut AppState, viewport_area: Rect) -> MillerViewSnapshot {
-    if app.stage.surface_view() != surface_host::StageSurfaceView::NativeFiles {
-        return MillerViewSnapshot::default();
+/// The Files surface this frame projects: the active stage instance when
+/// Files owns the stage, the resident (backgrounded) one when Files rides
+/// the right half (TP-SBS-FILES-01). `None` hides every Files projection.
+fn files_projection_generation(app: &AppState) -> Option<u32> {
+    if app.stage.surface_view() == surface_host::StageSurfaceView::NativeFiles {
+        return app.stage.active_instance_generation();
     }
-    let Some(files_generation) = app.stage.active_instance_generation() else {
+    if app.files_beside_active() {
+        return app.resident_files_generation();
+    }
+    None
+}
+
+fn sync_miller_view(app: &mut AppState, viewport_area: Rect) -> MillerViewSnapshot {
+    let Some(files_generation) = files_projection_generation(app) else {
         return MillerViewSnapshot::default();
     };
     // Surface ownership is read first so the file-manager borrow below stays a
@@ -999,16 +1033,11 @@ fn sync_miller_view(app: &mut AppState, viewport_area: Rect) -> MillerViewSnapsh
 }
 
 fn sync_trail_view(app: &mut AppState, viewport_area: Rect) -> TrailViewSnapshot {
-    if app.stage.surface_view() != surface_host::StageSurfaceView::NativeFiles {
-        return TrailViewSnapshot::default();
-    }
-    let Some(files_generation) = app.stage.active_instance_generation() else {
+    let Some(files_generation) = files_projection_generation(app) else {
         return TrailViewSnapshot::default();
     };
-    let files_surface_active =
-        app.stage.surface_view() == surface_host::StageSurfaceView::NativeFiles;
     let show_row_actions = app.files_show_row_actions;
-    let Some(file_manager) = app.file_manager.as_mut().filter(|_| files_surface_active) else {
+    let Some(file_manager) = app.file_manager.as_mut() else {
         return TrailViewSnapshot::default();
     };
     let preferred_widths = file_manager.miller.preferred_widths_for(
@@ -1343,34 +1372,52 @@ fn render_side_by_side_right(
             cell.set_style(ratatui::style::Style::default().fg(p.surface1));
         }
     }
-    if let Some(ws) = app.workspaces.get(right.ws_idx) {
-        let mut strip = format!(" {} ", ws.display_name());
-        for (idx, _tab) in ws.tabs.iter().enumerate() {
-            let marker = if idx == ws.active_tab_index() {
-                "*"
-            } else {
-                " "
-            };
-            strip.push_str(&format!("[{}{marker}]", idx + 1));
+    match right.right {
+        crate::app::state::SideBySideRight::Workspace(right_ws) => {
+            if let Some(ws) = app.workspaces.get(right_ws) {
+                let mut strip = format!(" {} ", ws.display_name());
+                for (idx, _tab) in ws.tabs.iter().enumerate() {
+                    let marker = if idx == ws.active_tab_index() {
+                        "*"
+                    } else {
+                        " "
+                    };
+                    strip.push_str(&format!("[{}{marker}]", idx + 1));
+                }
+                let text = self::text::truncate_end(&strip, right.strip_rect.width as usize);
+                frame.render_widget(
+                    ratatui::widgets::Paragraph::new(text).style(
+                        ratatui::style::Style::default()
+                            .bg(p.panel_bg)
+                            .fg(p.subtext0),
+                    ),
+                    right.strip_rect,
+                );
+            }
+            panes::render_panes_for(
+                app,
+                terminal_runtimes,
+                frame,
+                right_ws,
+                &right.pane_infos,
+                &right.split_borders,
+            );
         }
-        let text = self::text::truncate_end(&strip, right.strip_rect.width as usize);
-        frame.render_widget(
-            ratatui::widgets::Paragraph::new(text).style(
-                ratatui::style::Style::default()
-                    .bg(p.panel_bg)
-                    .fg(p.subtext0),
-            ),
-            right.strip_rect,
-        );
+        // TP-SBS-FILES-01: the right half hosts the resident Files surface —
+        // strip names it, the body is the same renderer the full stage uses.
+        crate::app::state::SideBySideRight::Files => {
+            let text = self::text::truncate_end(" Files ", right.strip_rect.width as usize);
+            frame.render_widget(
+                ratatui::widgets::Paragraph::new(text).style(
+                    ratatui::style::Style::default()
+                        .bg(p.panel_bg)
+                        .fg(p.subtext0),
+                ),
+                right.strip_rect,
+            );
+            file_manager::render_file_manager(app, frame, right.area);
+        }
     }
-    panes::render_panes_for(
-        app,
-        terminal_runtimes,
-        frame,
-        right.ws_idx,
-        &right.pane_infos,
-        &right.split_borders,
-    );
 }
 
 /// Layer 1: the single active interactive overlay selected by `app.mode`,
@@ -3114,6 +3161,64 @@ mod tests {
     // rects from one geometry source, then clears both when FM closes so stale
     // terminal coordinates can never remain clickable.
 
+    // TP-SBS-FILES-01: with Files riding the right half, the terminal keeps
+    // the left, the file manager is drawn — and hit-projected — strictly
+    // inside the right rectangle, and the stage stays on the terminal.
+    #[test]
+    fn files_beside_projects_the_file_manager_into_the_right_half() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "herdr-files-beside-{}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&root).expect("temp root");
+        std::fs::write(root.join("a.txt"), b"x").expect("file");
+
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("left")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&root)))
+            .expect("Files activation");
+        // Back to the terminal: Files is resident but backgrounded…
+        app.show_terminal_workspace();
+        assert_eq!(
+            app.stage.surface_view(),
+            crate::ui::surface_host::StageSurfaceView::TerminalWorkspace
+        );
+        // …and then summoned beside it.
+        app.enter_files_beside();
+        assert!(app.files_beside_active());
+
+        let frame = Rect::new(0, 0, 120, 30);
+        compute_view(&mut app, frame);
+
+        let right = app
+            .view
+            .right_surface
+            .as_ref()
+            .expect("the right surface was computed");
+        assert_eq!(right.right, crate::app::state::SideBySideRight::Files);
+        assert!(right.pane_infos.is_empty(), "Files hosts no panes");
+        // The stage stays on the terminal; the pairing survives compute.
+        assert!(app.files_beside_active());
+        // Every Files hit lives inside the right rectangle.
+        let rows = &app.view.file_manager_row_areas;
+        assert!(!rows.is_empty(), "the file rows were projected");
+        for row in rows {
+            assert!(
+                row.rect.x >= right.area.x,
+                "a Files row leaked left of the divider: {:?} vs x={}",
+                row.rect,
+                right.area.x
+            );
+        }
+        std::fs::remove_dir_all(root).expect("remove fixture");
+    }
+
     // TP-STAGE-SBS-01: with a pairing on, compute carves the stage in two —
     // the active workspace's panes stay strictly left of the divider, the
     // right half's panes strictly right of it, and the divider column
@@ -3134,7 +3239,10 @@ mod tests {
             .right_surface
             .as_ref()
             .expect("the right surface was computed");
-        assert_eq!(right.ws_idx, 1);
+        assert_eq!(
+            right.right,
+            crate::app::state::SideBySideRight::Workspace(1)
+        );
         let divider_x = right.area.x - 1;
         assert!(
             !app.view.pane_infos.is_empty() && !right.pane_infos.is_empty(),
@@ -3214,7 +3322,7 @@ mod tests {
             "the same world twice is refused at the door"
         );
         app.side_by_side = Some(crate::app::state::SideBySideView {
-            right: 7,
+            right: crate::app::state::SideBySideRight::Workspace(7),
             ratio_percent: 50,
         });
         compute_view(&mut app, Rect::new(0, 0, 120, 30));

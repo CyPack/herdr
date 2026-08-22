@@ -629,8 +629,22 @@ impl AppState {
     pub(crate) fn staged_file_manager(&self) -> Option<&crate::fm::FmState> {
         match self.stage.surface_view() {
             crate::ui::surface_host::StageSurfaceView::NativeFiles => self.file_manager.as_ref(),
+            // TP-SBS-FILES-01: riding the right half is a way of being
+            // staged — the surface is on screen, so its bars and hits are.
+            crate::ui::surface_host::StageSurfaceView::TerminalWorkspace
+                if self.files_beside_active() =>
+            {
+                self.file_manager.as_ref()
+            }
             crate::ui::surface_host::StageSurfaceView::TerminalWorkspace => None,
         }
+    }
+
+    /// The backgrounded Files tab's generation, for the frame that draws it
+    /// on the right half (TP-SBS-FILES-01).
+    pub(crate) fn resident_files_generation(&self) -> Option<u32> {
+        self.resident_files_instance()
+            .map(|instance| instance.generation())
     }
 
     /// Drop the Files surface's projected stage geometry.

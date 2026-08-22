@@ -1773,11 +1773,20 @@ pub enum AgentAttachmentOpenError {
     Unavailable,
 }
 
-/// One side-by-side pairing: which workspace rides shotgun and how the
-/// stage is split.
+/// What the right half of a side-by-side stage hosts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SideBySideRight {
+    /// Another workspace rides shotgun.
+    Workspace(usize),
+    /// TP-SBS-FILES-01: the resident Files surface rides shotgun, beside the
+    /// focused terminal instead of covering it.
+    Files,
+}
+
+/// One side-by-side pairing: what rides shotgun and how the stage is split.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SideBySideView {
-    pub right: usize,
+    pub right: SideBySideRight,
     pub ratio_percent: u8,
 }
 
@@ -1785,7 +1794,7 @@ pub struct SideBySideView {
 /// is deliberately neither `Debug` nor `PartialEq`, and this view is a
 /// per-frame product, never compared or printed.
 pub struct RightSurfaceView {
-    pub ws_idx: usize,
+    pub right: SideBySideRight,
     /// The pane area (below the strip).
     pub area: Rect,
     /// The one-row strip above it.
@@ -2987,7 +2996,11 @@ impl ContextMenuState {
             }
             ContextMenuKind::AppDock { app } => match app {
                 crate::ui::surface_host::BuiltInAppId::Terminal => vec!["Terminal"],
-                crate::ui::surface_host::BuiltInAppId::Files => vec!["Files"],
+                // TP-SBS-FILES-01: the dock's Files entry also offers the
+                // right-split road the user asked for.
+                crate::ui::surface_host::BuiltInAppId::Files => {
+                    vec!["Files", "Open in right split"]
+                }
             },
             // TP-CHROME-108: the same three items whether or not the popup slot
             // is free. Dropping the first one when a popup is open would shorten
@@ -3008,6 +3021,7 @@ impl ContextMenuState {
                 "Swap with focused pane",
                 "Split right",
                 "Split down",
+                "Open Files beside",
                 "Zoom",
                 "Close pane",
             ],
@@ -3020,6 +3034,7 @@ impl ContextMenuState {
                 "Swap with focused pane",
                 "Split right",
                 "Split down",
+                "Open Files beside",
                 "Zoom",
                 "Close pane",
             ],
@@ -3032,6 +3047,7 @@ impl ContextMenuState {
                 "Clear pane name",
                 "Split right",
                 "Split down",
+                "Open Files beside",
                 "Zoom",
                 "Close pane",
             ],
@@ -3043,6 +3059,7 @@ impl ContextMenuState {
                 "Rename pane",
                 "Split right",
                 "Split down",
+                "Open Files beside",
                 "Zoom",
                 "Close pane",
             ],
@@ -4277,10 +4294,31 @@ impl AppState {
             return false;
         }
         self.side_by_side = Some(SideBySideView {
-            right,
+            right: SideBySideRight::Workspace(right),
             ratio_percent: 50,
         });
         true
+    }
+
+    /// TP-SBS-FILES-01: put the resident Files surface beside the focused
+    /// terminal. Opens the file manager first when none is resident, and
+    /// keeps the stage on the terminal — Files borrows the right half, it
+    /// does not take the screen.
+    pub(crate) fn enter_files_beside(&mut self) {
+        if self.file_manager.is_none() {
+            self.open_file_manager();
+            self.show_terminal_workspace();
+        }
+        self.side_by_side = Some(SideBySideView {
+            right: SideBySideRight::Files,
+            ratio_percent: 50,
+        });
+    }
+
+    /// Whether the right half currently hosts the Files surface.
+    pub(crate) fn files_beside_active(&self) -> bool {
+        self.side_by_side
+            .is_some_and(|sbs| matches!(sbs.right, SideBySideRight::Files))
     }
 
     #[allow(dead_code)] // the exit road lands with the input slice

@@ -1470,9 +1470,12 @@ impl App {
         self.file_manager_mouse_render_override = None;
         // The TYPED stage authority owns Files mouse routing: a hidden Files
         // surface (or a divergent legacy boolean) receives nothing.
-        if self.state.stage.surface_view() != crate::ui::surface_host::StageSurfaceView::NativeFiles
-            || self.state.file_manager.is_none()
-        {
+        // TP-SBS-FILES-01: riding the right half is a way of being on
+        // screen, so it receives clicks too.
+        let files_on_screen = self.state.stage.surface_view()
+            == crate::ui::surface_host::StageSurfaceView::NativeFiles
+            || self.state.files_beside_active();
+        if !files_on_screen || self.state.file_manager.is_none() {
             return FileManagerMouseDispatch::NotHandled;
         }
         if self.state.mode == Mode::ContextMenu {

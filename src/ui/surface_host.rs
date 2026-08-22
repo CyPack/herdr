@@ -65,6 +65,10 @@ impl AppInstanceId {
     pub(crate) const fn app(self) -> BuiltInAppId {
         self.app
     }
+
+    pub(crate) const fn generation(self) -> u32 {
+        self.generation
+    }
 }
 
 /// Hit geometry for one stage app's entry in the workspace tab strip.

@@ -1036,6 +1036,17 @@ pub(super) fn apply_context_menu_action(
             state.request_file_manager_context_action = file_intent;
             leave_modal(state);
         }
+        // TP-SBS-FILES-01: the dock's split verb — before the activate
+        // catch-all below, which would otherwise swallow it.
+        (
+            ContextMenuKind::AppDock {
+                app: crate::ui::surface_host::BuiltInAppId::Files,
+            },
+            Some("Open in right split"),
+        ) => {
+            state.enter_files_beside();
+            leave_modal(state);
+        }
         (ContextMenuKind::AppDock { app }, _) => {
             state.activate_dock_app(app);
             leave_modal(state);
@@ -1545,6 +1556,25 @@ pub(super) fn apply_context_menu_action(
             state.switch_tab(tab_idx);
             state.focus_pane_in_workspace(ws_idx, pane_id);
             state.split_pane(terminal_runtimes, Direction::Vertical);
+            state.mode = Mode::Terminal;
+        }
+        // TP-SBS-FILES-01: the pane's own road to Files-on-the-right — the
+        // user right-clicks the fresh empty split and summons the file
+        // manager beside the terminal.
+        (
+            ContextMenuKind::Pane {
+                ws_idx,
+                tab_idx,
+                pane_id,
+                ..
+            },
+            Some("Open Files beside"),
+        ) => {
+            state.selected = ws_idx;
+            state.active = Some(ws_idx);
+            state.switch_tab(tab_idx);
+            state.focus_pane_in_workspace(ws_idx, pane_id);
+            state.enter_files_beside();
             state.mode = Mode::Terminal;
         }
         (
@@ -2430,6 +2460,16 @@ impl App {
             ) => {
                 self.focus_pane_internal_via_api(ws_idx, pane_id);
                 self.split_focused_pane_via_api(crate::api::schema::SplitDirection::Down);
+                self.state.mode = Mode::Terminal;
+            }
+            (
+                ContextMenuKind::Pane {
+                    ws_idx, pane_id, ..
+                },
+                Some("Open Files beside"),
+            ) => {
+                self.focus_pane_internal_via_api(ws_idx, pane_id);
+                self.state.enter_files_beside();
                 self.state.mode = Mode::Terminal;
             }
             (
@@ -4755,6 +4795,74 @@ mod tests {
         assert!(!a_node_menu("group:docs", false)
             .items()
             .contains(&"Delete module..."));
+    }
+
+    // TP-SBS-FILES-01: both summoning gestures land in the same place —
+    // the pane's own menu and the dock's Files entry both put the resident
+    // file manager beside the terminal, and the stage stays on the terminal.
+    #[test]
+    fn open_files_beside_gestures_summon_the_right_half() {
+        // Gesture 1: the pane menu.
+        let mut state = AppState::test_new();
+        state.workspaces = vec![Workspace::test_new("left")];
+        state.active = Some(0);
+        state.selected = 0;
+        let pane_id = state.workspaces[0].tabs[0].root_pane;
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::Pane {
+                ws_idx: 0,
+                tab_idx: 0,
+                pane_id,
+                source_pane_id: None,
+                has_manual_label: false,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        let idx = menu
+            .items()
+            .iter()
+            .position(|item| *item == "Open Files beside")
+            .expect("the pane menu offers the Files gesture");
+        let mut terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
+        apply_context_menu_action(&mut state, &mut terminal_runtimes, menu, idx);
+        assert!(state.files_beside_active());
+        assert!(state.file_manager.is_some(), "a resident Files was opened");
+        assert_eq!(
+            state.stage.surface_view(),
+            crate::ui::surface_host::StageSurfaceView::TerminalWorkspace,
+            "Files borrows the right half, it does not take the screen"
+        );
+        assert_eq!(state.mode, Mode::Terminal);
+
+        // Gesture 2: the dock's Files entry.
+        let mut state = AppState::test_new();
+        state.workspaces = vec![Workspace::test_new("left")];
+        state.active = Some(0);
+        state.selected = 0;
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::AppDock {
+                app: crate::ui::surface_host::BuiltInAppId::Files,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        assert_eq!(menu.items(), vec!["Files", "Open in right split"]);
+        let idx = menu
+            .items()
+            .iter()
+            .position(|item| *item == "Open in right split")
+            .expect("the dock offers the split verb");
+        let mut terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
+        apply_context_menu_action(&mut state, &mut terminal_runtimes, menu, idx);
+        assert!(state.files_beside_active());
+        assert!(state.file_manager.is_some());
+        assert_eq!(
+            state.stage.surface_view(),
+            crate::ui::surface_host::StageSurfaceView::TerminalWorkspace
+        );
     }
 
     // TP-MOD-43: choosing the delete verb from either heading's menu opens

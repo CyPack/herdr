@@ -223,12 +223,21 @@ pub(crate) fn project_file_manager_locations_view(
     app: &AppState,
     area: Rect,
 ) -> FileManagerLocationsView {
-    if app.stage.surface_view() != StageSurfaceView::NativeFiles || app.file_manager.is_none() {
-        return FileManagerLocationsView::default();
-    }
-    let Some(files_generation) = app.stage.active_instance_generation() else {
+    // TP-SBS-FILES-01: riding the right half is a way of being on screen —
+    // the resident (backgrounded) instance projects there.
+    let files_generation = if app.stage.surface_view() == StageSurfaceView::NativeFiles {
+        app.stage.active_instance_generation()
+    } else if app.files_beside_active() {
+        app.resident_files_generation()
+    } else {
+        None
+    };
+    let Some(files_generation) = files_generation else {
         return FileManagerLocationsView::default();
     };
+    if app.file_manager.is_none() {
+        return FileManagerLocationsView::default();
+    }
     let Some([header, body, _status]) = super::file_manager_frame_areas(area) else {
         return FileManagerLocationsView::default();
     };
