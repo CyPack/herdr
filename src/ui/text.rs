@@ -23,6 +23,34 @@ pub(crate) fn truncate_end(text: &str, max_width: usize) -> String {
     format!("{prefix}…")
 }
 
+/// TP-FM-EXT-01: end-truncation that refuses to eat the extension — the part
+/// that tells the reader what a file IS. `report-2026.xlsx` in 12 cells is
+/// `report…xlsx`, never `report-20…`. Falls back to [`truncate_end`] when
+/// there is no extension to save (directories, dotfiles, bare names) or when
+/// the extension itself would not leave a single cell for the name.
+pub(crate) fn truncate_keep_extension(text: &str, max_width: usize) -> String {
+    if display_width(text) <= max_width {
+        return text.to_string();
+    }
+    let Some((stem, ext)) = text.rsplit_once('.') else {
+        return truncate_end(text, max_width);
+    };
+    // A slash-carrying or empty tail is not an extension. (A dotfile's
+    // whole name lands in `ext` here, but a dotfile long enough to truncate
+    // always has `ext_width >= max_width`, so the budget guard below already
+    // sends it down the plain road — proven by the corners test.)
+    if ext.is_empty() || ext.contains('/') {
+        return truncate_end(text, max_width);
+    }
+    let ext_width = display_width(ext);
+    // One cell for the ellipsis, one at least for the name.
+    if max_width < ext_width + 2 {
+        return truncate_end(text, max_width);
+    }
+    let prefix = take_prefix_width(stem, max_width - ext_width - 1);
+    format!("{prefix}…{ext}")
+}
+
 pub(crate) fn middle_elide(text: &str, max_width: usize) -> String {
     if display_width(text) <= max_width {
         return text.to_string();
@@ -70,6 +98,25 @@ fn take_suffix_width(text: &str, max_width: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // TP-FM-EXT-01: the corner cases that make extension-keeping honest.
+    #[test]
+    fn truncate_keep_extension_covers_its_corners() {
+        // Short names pass through untouched.
+        assert_eq!(truncate_keep_extension("a.rs", 10), "a.rs");
+        // A long name gives up its middle, never its extension — the stem
+        // spends every cell the ellipsis and the extension leave behind.
+        assert_eq!(
+            truncate_keep_extension("report-2026.xlsx", 12),
+            "report-…xlsx"
+        );
+        // No extension: plain end truncation, no stray dots.
+        assert_eq!(truncate_keep_extension("READMEFILE", 7), "README…");
+        // A dotfile's dot is identity, not an extension.
+        assert_eq!(truncate_keep_extension(".bashrc_backup", 8), ".bashrc…");
+        // An extension wider than the budget cannot be saved.
+        assert_eq!(truncate_keep_extension("a.verylongext", 5), "a.ve…");
+    }
 
     #[test]
     fn truncate_end_uses_display_width() {

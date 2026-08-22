@@ -4967,6 +4967,7 @@ mod tests {
                 .expect("open FM")
                 .trail_snapshots,
             &[20],
+            true,
         );
         trail.files_generation = Some(files_generation);
         app.state.view.file_manager_trail = trail;
@@ -5359,6 +5360,7 @@ command = ["view"]
                 .expect("open FM")
                 .trail_snapshots,
             &[20],
+            true,
         );
         trail.files_generation = Some(files_generation);
         app.state.view.file_manager_trail = trail;

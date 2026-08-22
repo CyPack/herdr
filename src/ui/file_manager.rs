@@ -728,8 +728,13 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
         &app.view.file_manager_trail
     } else {
         let trail_area = locations.map_or(body_area, |locations| locations.layout.trail);
-        fallback_trail =
-            trail_view::project_trail_view(trail_area, &fm.trail, &fm.trail_snapshots, &[]);
+        fallback_trail = trail_view::project_trail_view(
+            trail_area,
+            &fm.trail,
+            &fm.trail_snapshots,
+            &[],
+            app.files_show_row_actions,
+        );
         &fallback_trail
     };
     trail_view::render_trail_view(app, frame, trail, &fm.trail_snapshots);
@@ -1614,13 +1619,19 @@ pub(crate) fn render_entry_row_clipped(
     }
     let p = &app.palette;
     let styles = file_manager_visual_styles(p);
-    let suffix = if entry.is_dir() { "/" } else { "" };
     let icon =
         crate::fm::entry_kind::visual_class(entry.kind, &entry.name).glyph(app.file_icon_profile);
-    let full_label = truncate_end(
-        &format!(" {icon} {}{}", entry.display_name(), suffix),
-        logical_width as usize,
-    );
+    // TP-FM-EXT-01: the icon head is fixed; the name spends the rest, and a
+    // file name that must shrink gives up its middle, never its extension.
+    let head = format!(" {icon} ");
+    let name_budget =
+        (logical_width as usize).saturating_sub(crate::ui::text::display_width(&head));
+    let shown = if entry.is_dir() {
+        truncate_end(&format!("{}/", entry.display_name()), name_budget)
+    } else {
+        crate::ui::text::truncate_keep_extension(&entry.display_name(), name_budget)
+    };
+    let full_label = format!("{head}{shown}");
     let label = display_cell_slice(&full_label, source_x, row.width);
     let style = if cursor_focused {
         styles.cursor
@@ -1712,7 +1723,7 @@ mod tests {
         }
         let fm = app.file_manager.as_ref().expect("open FM");
         app.view.file_manager_trail =
-            trail_view::project_trail_view(body, &fm.trail, &fm.trail_snapshots, &[]);
+            trail_view::project_trail_view(body, &fm.trail, &fm.trail_snapshots, &[], false);
         let divider = app
             .view
             .file_manager_trail
@@ -2121,7 +2132,7 @@ mod tests {
         app.view.terminal_area = frame;
         let fm = app.file_manager.as_ref().expect("open FM");
         app.view.file_manager_trail =
-            trail_view::project_trail_view(body, &fm.trail, &fm.trail_snapshots, &[]);
+            trail_view::project_trail_view(body, &fm.trail, &fm.trail_snapshots, &[], false);
 
         let rendered = render_rows(&app, frame.width, frame.height).join("\n");
 
@@ -2146,7 +2157,7 @@ mod tests {
         app.view.terminal_area = frame;
         let fm = app.file_manager.as_ref().expect("open FM");
         app.view.file_manager_trail =
-            trail_view::project_trail_view(body, &fm.trail, &fm.trail_snapshots, &[]);
+            trail_view::project_trail_view(body, &fm.trail, &fm.trail_snapshots, &[], false);
         let before_fm = {
             let fm = app.file_manager.as_ref().expect("open FM");
             (
@@ -3761,10 +3772,19 @@ mod tests {
             "配",
             "the name must start right after icon + separator"
         );
+        // TP-FM-EXT-01 rebase: the ellipsis moved inside the name — the
+        // extension now survives at the end, so the row closes with `toml`.
         assert_eq!(
             buffer[(9u16, 0u16)].symbol(),
-            "…",
-            "display-cell truncation must end the row with an ellipsis"
+            "l",
+            "the extension's last letter closes the row"
+        );
+        let row: String = (0..width)
+            .map(|x| buffer[(x, 0u16)].symbol().chars().next().unwrap_or(' '))
+            .collect();
+        assert!(
+            row.contains("…toml"),
+            "display-cell truncation elides the middle, keeps the extension: {row:?}"
         );
     }
 
@@ -4269,6 +4289,9 @@ mod tests {
             FmState::open_trail_to(&td.root, &leaf, false)
                 .expect("open resident multi-column Trail"),
         );
+        // This test pins the ACTION cell's cursor style, so the opt-in
+        // buttons must be on (TP-FM-ACTIONS-01 ships them hidden).
+        app.files_show_row_actions = true;
         let frame = Rect::new(0, 0, 120, 12);
         crate::ui::compute_view(&mut app, frame);
 

@@ -3962,6 +3962,9 @@ pub struct AppState {
     pub spaces_focus_only: bool,
     /// TP-MOD-41: declared-but-memberless rules keep their (dim) header.
     pub spaces_show_empty: bool,
+    /// TP-FM-ACTIONS-01: whether file rows draw the `>`/`r`/`x` buttons.
+    /// Mirrors `files.show_row_actions`; default off.
+    pub files_show_row_actions: bool,
     /// TP-MOD-43: the open module-delete confirmation, if any.
     pub module_delete: Option<ModuleDeleteConfirmation>,
     /// `ui.sidebar.divider_color` resolved at the edge of use (bar_color).
@@ -5214,6 +5217,7 @@ impl AppState {
             daily_chat_cwd: None,
             spaces_focus_only: false,
             spaces_show_empty: true,
+            files_show_row_actions: false,
             module_delete: None,
             sidebar_divider_color: "peach".to_string(),
             fully_open_chat_drawers: std::collections::HashSet::new(),

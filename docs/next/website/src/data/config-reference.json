@@ -50,7 +50,7 @@
           "key": "theme.custom.bg",
           "type": "color",
           "default": "unset",
-          "description": "Override the bg color token on top of the base theme. Accepts hex, named colors, rgb(r,g,b), or reset aliases. The bg token is the theme's general background \u2014 the surface the screen and the edge bars sit on."
+          "description": "Override the bg color token on top of the base theme. Accepts hex, named colors, rgb(r,g,b), or reset aliases. The bg token is the theme's general background — the surface the screen and the edge bars sit on."
         },
         {
           "key": "theme.custom.panel_bg",
@@ -661,7 +661,7 @@
           "key": "ui.mouse_wheel_host_scroll",
           "type": "enum",
           "default": "\"mobile\"",
-          "description": "Which surfaces let the vertical wheel scroll Herdr's own scrollback over a pane that asked for mouse reporting. \"mobile\" is the phone shell only, where a swipe is the only scroll gesture there is. \"scrollable\" extends it to every surface, so an agent that reports the wheel and then ignores it no longer leaves the content area looking frozen \u2014 at the cost of panes that do act on the wheel without an alternate screen, which stop receiving it. \"never\" always hands the wheel to the pane. No value overrides the scrollback guard: a pane Herdr has no scrollback for, such as any full-screen program, keeps its wheel in every mode.",
+          "description": "Which surfaces let the vertical wheel scroll Herdr's own scrollback over a pane that asked for mouse reporting. \"mobile\" is the phone shell only, where a swipe is the only scroll gesture there is. \"scrollable\" extends it to every surface, so an agent that reports the wheel and then ignores it no longer leaves the content area looking frozen — at the cost of panes that do act on the wheel without an alternate screen, which stop receiving it. \"never\" always hands the wheel to the pane. No value overrides the scrollback guard: a pane Herdr has no scrollback for, such as any full-screen program, keeps its wheel in every mode.",
           "values": [
             "mobile",
             "scrollable",
@@ -891,32 +891,44 @@
         {
           "key": "spaces.icons.project",
           "type": "string",
-          "default": "\"\ud83d\udcc1\"",
+          "default": "\"📁\"",
           "description": "Glyph drawn before a project header's name when the [[spaces.project]] entry has no icon of its own. Empty disables the glyph."
         },
         {
           "key": "spaces.icons.branch",
           "type": "string",
-          "default": "\"\ue0a0\"",
+          "default": "\"\"",
           "description": "Glyph drawn before workspace (branch/checkout) rows in the Spaces tree. The default is the Powerline git-branch glyph (U+E0A0); set a plain glyph if your font lacks it. Empty disables the glyph."
         },
         {
           "key": "spaces.icons.chat",
           "type": "string",
-          "default": "\"\ud83d\udcac\"",
+          "default": "\"💬\"",
           "description": "Glyph drawn before chat rows in a workspace's chat drawer. Empty disables the glyph."
         },
         {
           "key": "spaces.icons.daily",
           "type": "string",
-          "default": "\"\ud83c\udfe0\"",
-          "description": "Glyph drawn before the daily area's header \u2014 the chats no checkout claims. A home rather than a speech bubble: that row names a place, not a conversation. Empty disables the glyph."
+          "default": "\"🏠\"",
+          "description": "Glyph drawn before the daily area's header — the chats no checkout claims. A home rather than a speech bubble: that row names a place, not a conversation. Empty disables the glyph."
         },
         {
           "key": "spaces.show_empty",
           "type": "boolean",
           "default": "true",
           "description": "Whether a declared [[spaces.split]] rule that currently claims no open checkout still draws its (dim) header in the sidebar tree, with an (empty) row beneath. Set false to hide memberless rules until a matching branch is open."
+        }
+      ]
+    },
+    {
+      "id": "files",
+      "title": "Files",
+      "keys": [
+        {
+          "key": "files.show_row_actions",
+          "type": "bool",
+          "default": "false",
+          "description": "Show the `>` (send to agent), `r` (rename) and `x` (delete) action buttons at the right edge of file rows. Hidden by default; all three actions stay reachable from the row's context menu."
         }
       ]
     },
@@ -1375,7 +1387,7 @@
           "key": "shell.bars.bottom.style",
           "type": "string",
           "default": "\"framed\"",
-          "description": "The look this bar wears when its parts do not say otherwise: framed draws the bar's own panel, islands frames each section instead, plain draws neither. It only fills in unwritten border keys \u2014 anything written explicitly wins."
+          "description": "The look this bar wears when its parts do not say otherwise: framed draws the bar's own panel, islands frames each section instead, plain draws neither. It only fills in unwritten border keys — anything written explicitly wins."
         },
         {
           "key": "shell.bars.bottom.border",
@@ -1417,7 +1429,7 @@
           "key": "shell.bars.bottom.hide_when_focused",
           "type": "boolean",
           "default": "false",
-          "description": "Whether focus mode quiets the bottom bar. Focus narrows the display to what is being worked in, and a bar that exists to be glanced at is what that mode is asking to be rid of. Off by default, and per edge: the reason to quiet a status strip is not a reason to quiet the strip holding the controls in use. Only the frame is affected \u2014 what this file says is still what is stored, so leaving focus brings the bar back."
+          "description": "Whether focus mode quiets the bottom bar. Focus narrows the display to what is being worked in, and a bar that exists to be glanced at is what that mode is asking to be rid of. Off by default, and per edge: the reason to quiet a status strip is not a reason to quiet the strip holding the controls in use. Only the frame is affected — what this file says is still what is stored, so leaving focus brings the bar back."
         },
         {
           "key": "shell.bars.bottom.size",
@@ -1429,7 +1441,7 @@
           "key": "shell.bars.left.style",
           "type": "string",
           "default": "\"framed\"",
-          "description": "The look this bar wears when its parts do not say otherwise: framed draws the bar's own panel, islands frames each section instead, plain draws neither. It only fills in unwritten border keys \u2014 anything written explicitly wins."
+          "description": "The look this bar wears when its parts do not say otherwise: framed draws the bar's own panel, islands frames each section instead, plain draws neither. It only fills in unwritten border keys — anything written explicitly wins."
         },
         {
           "key": "shell.bars.left.border",
@@ -1471,7 +1483,7 @@
           "key": "shell.bars.left.hide_when_focused",
           "type": "boolean",
           "default": "false",
-          "description": "Whether focus mode quiets the left bar. Focus narrows the display to what is being worked in, and a bar that exists to be glanced at is what that mode is asking to be rid of. Off by default, and per edge: the reason to quiet a status strip is not a reason to quiet the strip holding the controls in use. Only the frame is affected \u2014 what this file says is still what is stored, so leaving focus brings the bar back."
+          "description": "Whether focus mode quiets the left bar. Focus narrows the display to what is being worked in, and a bar that exists to be glanced at is what that mode is asking to be rid of. Off by default, and per edge: the reason to quiet a status strip is not a reason to quiet the strip holding the controls in use. Only the frame is affected — what this file says is still what is stored, so leaving focus brings the bar back."
         },
         {
           "key": "shell.bars.left.size",
@@ -1483,7 +1495,7 @@
           "key": "shell.bars.right.style",
           "type": "string",
           "default": "\"framed\"",
-          "description": "The look this bar wears when its parts do not say otherwise: framed draws the bar's own panel, islands frames each section instead, plain draws neither. It only fills in unwritten border keys \u2014 anything written explicitly wins."
+          "description": "The look this bar wears when its parts do not say otherwise: framed draws the bar's own panel, islands frames each section instead, plain draws neither. It only fills in unwritten border keys — anything written explicitly wins."
         },
         {
           "key": "shell.bars.right.border",
@@ -1525,7 +1537,7 @@
           "key": "shell.bars.right.hide_when_focused",
           "type": "boolean",
           "default": "false",
-          "description": "Whether focus mode quiets the right bar. Focus narrows the display to what is being worked in, and a bar that exists to be glanced at is what that mode is asking to be rid of. Off by default, and per edge: the reason to quiet a status strip is not a reason to quiet the strip holding the controls in use. Only the frame is affected \u2014 what this file says is still what is stored, so leaving focus brings the bar back."
+          "description": "Whether focus mode quiets the right bar. Focus narrows the display to what is being worked in, and a bar that exists to be glanced at is what that mode is asking to be rid of. Off by default, and per edge: the reason to quiet a status strip is not a reason to quiet the strip holding the controls in use. Only the frame is affected — what this file says is still what is stored, so leaving focus brings the bar back."
         },
         {
           "key": "shell.bars.right.size",
@@ -1537,7 +1549,7 @@
           "key": "shell.bars.top.style",
           "type": "string",
           "default": "\"framed\"",
-          "description": "The look this bar wears when its parts do not say otherwise: framed draws the bar's own panel, islands frames each section instead, plain draws neither. It only fills in unwritten border keys \u2014 anything written explicitly wins."
+          "description": "The look this bar wears when its parts do not say otherwise: framed draws the bar's own panel, islands frames each section instead, plain draws neither. It only fills in unwritten border keys — anything written explicitly wins."
         },
         {
           "key": "shell.bars.top.border",
@@ -1579,7 +1591,7 @@
           "key": "shell.bars.top.hide_when_focused",
           "type": "boolean",
           "default": "false",
-          "description": "Whether focus mode quiets the top bar. Focus narrows the display to what is being worked in, and a bar that exists to be glanced at is what that mode is asking to be rid of. Off by default, and per edge: the reason to quiet a status strip is not a reason to quiet the strip holding the controls in use. Only the frame is affected \u2014 what this file says is still what is stored, so leaving focus brings the bar back."
+          "description": "Whether focus mode quiets the top bar. Focus narrows the display to what is being worked in, and a bar that exists to be glanced at is what that mode is asking to be rid of. Off by default, and per edge: the reason to quiet a status strip is not a reason to quiet the strip holding the controls in use. Only the frame is affected — what this file says is still what is stored, so leaving focus brings the bar back."
         },
         {
           "key": "shell.bars.top.size",
