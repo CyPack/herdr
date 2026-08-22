@@ -55,6 +55,7 @@ pub(crate) use self::file_manager::miller::{
     miller_resize_column_is_live, MillerColumnKind, MillerColumnView, MillerViewSnapshot,
 };
 pub(crate) use self::file_manager::pdf_page_indicator_for;
+pub(crate) use self::file_manager::send_header_target_paths;
 #[cfg(test)]
 pub(crate) use self::file_manager::trail_view::project_trail_view;
 pub(crate) use self::file_manager::trail_view::{
@@ -3582,6 +3583,7 @@ mod tests {
                 crate::app::state::FileManagerHeaderAction::Paste,
                 crate::app::state::FileManagerHeaderAction::NewFolder,
                 crate::app::state::FileManagerHeaderAction::Delete,
+                crate::app::state::FileManagerHeaderAction::SendTailscale,
                 crate::app::state::FileManagerHeaderAction::Search,
                 crate::app::state::FileManagerHeaderAction::CopyPath,
             ]

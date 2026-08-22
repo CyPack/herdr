@@ -66,8 +66,12 @@ Press `/` over a column to open the filter editor:
 
 ## Header verbs and row actions
 
-The header carries the action bar — **New**, **Copy**, **Move**, **Delete** and
-friends — enabled exactly when the selection supports them. The same verbs live
+The header carries the action bar — **New**, **Copy**, **Move**, **Delete**,
+**[send]** and friends — enabled exactly when the selection supports them.
+`[send]` is the header seat of *Send with Tailscale…*: it takes the
+multi-selection when one exists, else the file under the cursor, and opens the
+Taildrop device picker. Files only — a directory in the target disables it,
+exactly as the right-click entry does. The same verbs live
 on the row's **right-click context menu**, together with *Add Reference to
 Agent…* for handing the path to a running agent.
 

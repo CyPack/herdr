@@ -508,6 +508,17 @@ impl crate::app::App {
                     });
                 true
             }
+            FileManagerHeaderAction::SendTailscale => {
+                let Some(paths) = current_action_paths(&self.state, action) else {
+                    return false;
+                };
+                self.state.request_file_manager_context_action =
+                    Some(crate::app::state::FileManagerContextActionIntent {
+                        action: crate::app::state::FileManagerContextMenuAction::SendTailscale,
+                        paths,
+                    });
+                true
+            }
             FileManagerHeaderAction::NewFolder => false,
             // TP-FM-COPYPATH-01: the open directory's absolute path, straight
             // onto the clipboard through the same request every other copy
@@ -1229,6 +1240,11 @@ pub(super) fn current_action_paths(
     action: crate::app::state::FileManagerHeaderAction,
 ) -> Option<Vec<std::path::PathBuf>> {
     let file_manager = state.file_manager.as_ref()?;
+    // Send carries its own target rule (selection else cursor, files only),
+    // shared with the model's enable arm through one helper.
+    if action == crate::app::state::FileManagerHeaderAction::SendTailscale {
+        return crate::ui::send_header_target_paths(file_manager).ok();
+    }
     let action_bar = crate::ui::compute_file_manager_action_bar_model(
         file_manager,
         &state.file_manager_clipboard,

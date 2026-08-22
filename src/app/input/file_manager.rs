@@ -2646,6 +2646,49 @@ mod tests {
         app
     }
 
+    // TP-FM-SEND-01: clicking the header's [send] queues the SAME context
+    // intent the right-click menu queues, and the sync road opens the
+    // Taildrop picker carrying exactly those paths.
+    #[test]
+    fn the_send_header_verb_rides_the_context_road_to_the_picker() {
+        let td = TempDir::new("send-header-road");
+        td.file("beta.txt");
+        let mut app = super::super::app_for_mouse_test();
+        app.state
+            .try_open_file_manager_with(|_| Some(FmState::new(&td.root)))
+            .expect("Files activation");
+        let beta = td.root.join("beta.txt");
+        {
+            let file_manager = app.state.file_manager.as_mut().expect("open FM");
+            let idx = file_manager
+                .entries
+                .iter()
+                .position(|entry| entry.path == beta)
+                .expect("beta entry");
+            file_manager.cursor = idx;
+        }
+
+        assert!(app.dispatch_file_manager_header_action(
+            crate::app::state::FileManagerHeaderAction::SendTailscale
+        ));
+        let intent = app
+            .state
+            .request_file_manager_context_action
+            .as_ref()
+            .expect("the send intent was queued");
+        assert_eq!(intent.action, FileManagerContextMenuAction::SendTailscale);
+        assert_eq!(intent.paths, vec![beta.clone()]);
+
+        assert!(app.sync_file_manager_requests());
+        let send = app
+            .state
+            .tailscale_send
+            .as_ref()
+            .expect("the Taildrop picker opened");
+        assert_eq!(send.paths, vec![beta]);
+        assert_eq!(app.state.mode, Mode::TailscaleSend);
+    }
+
     // TP-SBS-FILES-01: riding the right half is a way of being on screen, so
     // a left click on a Files row inside the right rectangle moves the Files
     // cursor exactly as it does on the full-stage surface. The center gate

@@ -307,6 +307,41 @@ pub(crate) fn compute_file_manager_row_geometry_in_content(
 
 /// Build the persistent action-bar content from already-prepared FM state.
 /// This is pure client presentation logic: no metadata or directory reads.
+/// The header seat of "Send with Tailscale...": the multi-selection when one
+/// exists, else the cursor entry — files only, the way Taildrop takes them
+/// (the context menu's own rule, so the two roads cannot drift).
+pub(crate) fn send_header_target_paths(
+    file_manager: &FmState,
+) -> Result<Vec<std::path::PathBuf>, FileManagerActionDisabledReason> {
+    let selected = file_manager.multi_selection_paths();
+    let targets: Vec<_> = if selected.is_empty() {
+        file_manager
+            .entries
+            .get(file_manager.cursor)
+            .map(|entry| vec![entry.path.clone()])
+            .unwrap_or_default()
+    } else {
+        // Live entries only, in visible order — the bulk verbs' identity rule.
+        file_manager
+            .entries
+            .iter()
+            .filter(|entry| selected.contains(&entry.path))
+            .map(|entry| entry.path.clone())
+            .collect()
+    };
+    if targets.is_empty() {
+        return Err(FileManagerActionDisabledReason::NoSelection);
+    }
+    let any_directory = file_manager
+        .entries
+        .iter()
+        .any(|entry| entry.is_dir() && targets.contains(&entry.path));
+    if any_directory {
+        return Err(FileManagerActionDisabledReason::UnsupportedSelection);
+    }
+    Ok(targets)
+}
+
 pub(crate) fn compute_file_manager_action_bar_model(
     file_manager: &FmState,
     clipboard: &[std::path::PathBuf],
@@ -346,6 +381,11 @@ pub(crate) fn compute_file_manager_action_bar_model(
                 // TP-FM-COPYPATH-01: reads the header's own directory, so it
                 // needs no selection and writes nothing — always offered.
                 FileManagerHeaderAction::CopyPath => None,
+                // The header seat of the context menu's Taildrop entry —
+                // enabled exactly when its target rule finds sendable files.
+                FileManagerHeaderAction::SendTailscale => {
+                    send_header_target_paths(file_manager).err()
+                }
             }
         };
         FileManagerActionState {
@@ -2627,7 +2667,7 @@ mod tests {
     fn header_action_areas_are_tagged_disjoint_and_right_aligned() {
         use crate::app::state::FileManagerHeaderAction;
 
-        let area = Rect::new(10, 4, 69, 1);
+        let area = Rect::new(10, 4, 76, 1);
         let actions = compute_file_manager_header_action_areas(area);
         assert_eq!(
             actions.iter().map(|area| area.action).collect::<Vec<_>>(),
@@ -2636,6 +2676,7 @@ mod tests {
                 FileManagerHeaderAction::Paste,
                 FileManagerHeaderAction::NewFolder,
                 FileManagerHeaderAction::Delete,
+                FileManagerHeaderAction::SendTailscale,
                 FileManagerHeaderAction::Search,
                 FileManagerHeaderAction::CopyPath,
             ]
@@ -2665,15 +2706,16 @@ mod tests {
         use crate::app::state::FileManagerHeaderAction;
 
         let cases = [
-            // 69 leaves exactly the 57 cells all six labels and their gaps
+            // 76 leaves exactly the 64 cells all seven labels and their gaps
             // cost — the boundary sits AT the full set.
             (
-                69,
+                76,
                 vec![
                     FileManagerHeaderAction::Copy,
                     FileManagerHeaderAction::Paste,
                     FileManagerHeaderAction::NewFolder,
                     FileManagerHeaderAction::Delete,
+                    FileManagerHeaderAction::SendTailscale,
                     FileManagerHeaderAction::Search,
                     FileManagerHeaderAction::CopyPath,
                 ],
@@ -2681,29 +2723,52 @@ mod tests {
             // One cell short of the full set: the lowest-priority verb —
             // `[copy path]` — is the one that steps off.
             (
-                68,
+                75,
                 vec![
                     FileManagerHeaderAction::Copy,
                     FileManagerHeaderAction::Paste,
                     FileManagerHeaderAction::NewFolder,
                     FileManagerHeaderAction::Delete,
+                    FileManagerHeaderAction::SendTailscale,
                     FileManagerHeaderAction::Search,
                 ],
             ),
-            // 57 fits the five-with-search set exactly; one below drops
+            // 64 fits the six-with-search set exactly; one below drops
             // `[search]` next — the drop order is the reverse of ALL.
             (
-                57,
+                64,
                 vec![
                     FileManagerHeaderAction::Copy,
                     FileManagerHeaderAction::Paste,
                     FileManagerHeaderAction::NewFolder,
                     FileManagerHeaderAction::Delete,
+                    FileManagerHeaderAction::SendTailscale,
                     FileManagerHeaderAction::Search,
                 ],
             ),
             (
-                56,
+                63,
+                vec![
+                    FileManagerHeaderAction::Copy,
+                    FileManagerHeaderAction::Paste,
+                    FileManagerHeaderAction::NewFolder,
+                    FileManagerHeaderAction::Delete,
+                    FileManagerHeaderAction::SendTailscale,
+                ],
+            ),
+            // 55 fits five exactly; one below drops `[send]` next.
+            (
+                55,
+                vec![
+                    FileManagerHeaderAction::Copy,
+                    FileManagerHeaderAction::Paste,
+                    FileManagerHeaderAction::NewFolder,
+                    FileManagerHeaderAction::Delete,
+                    FileManagerHeaderAction::SendTailscale,
+                ],
+            ),
+            (
+                54,
                 vec![
                     FileManagerHeaderAction::Copy,
                     FileManagerHeaderAction::Paste,
@@ -2775,6 +2840,101 @@ mod tests {
         assert!(
             header.contains('\u{258c}'),
             "the caret marks editing: {header:?}"
+        );
+    }
+
+    // TP-FM-SEND-01: the header's [send] wears the context menu's own rule —
+    // the multi-selection when one exists, else the cursor entry, files only —
+    // so the header road and the right-click road cannot drift apart.
+    #[test]
+    fn the_send_verb_enables_on_files_and_refuses_directories() {
+        use crate::app::state::FileManagerHeaderAction;
+
+        let td = TempDir::new("send-verb-model");
+        td.dir("alpha-dir");
+        td.file("beta.txt");
+        td.file("gamma.txt");
+        let mut fm = FmState::new(&td.root);
+        let position = |fm: &FmState, name: &str| {
+            fm.entries
+                .iter()
+                .position(|entry| entry.path.ends_with(name))
+                .expect("fixture entry")
+        };
+
+        // Cursor fallback: standing on a file with no selection sends it.
+        fm.cursor = position(&fm, "beta.txt");
+        let model = compute_file_manager_action_bar_model(
+            &fm,
+            &[],
+            false,
+            FileManagerLocationsFocus::Trail,
+        );
+        let send = model
+            .action_state(FileManagerHeaderAction::SendTailscale)
+            .expect("send rides the bar");
+        assert!(send.enabled, "a file under the cursor is sendable");
+        assert_eq!(
+            send_header_target_paths(&fm).expect("cursor target"),
+            vec![td.root.join("beta.txt")]
+        );
+
+        // A directory under the cursor refuses — Taildrop takes files.
+        fm.cursor = position(&fm, "alpha-dir");
+        let model = compute_file_manager_action_bar_model(
+            &fm,
+            &[],
+            false,
+            FileManagerLocationsFocus::Trail,
+        );
+        let send = model
+            .action_state(FileManagerHeaderAction::SendTailscale)
+            .expect("send rides the bar");
+        assert!(!send.enabled);
+        assert_eq!(
+            send.disabled_reason,
+            Some(FileManagerActionDisabledReason::UnsupportedSelection)
+        );
+
+        // A multi-selection of files wins over the cursor, in visible order.
+        let beta = position(&fm, "beta.txt");
+        let gamma = position(&fm, "gamma.txt");
+        assert!(fm.replace_selection(beta));
+        assert!(fm.toggle_selection(gamma));
+        assert_eq!(
+            send_header_target_paths(&fm)
+                .expect("selection target")
+                .len(),
+            2
+        );
+        let model = compute_file_manager_action_bar_model(
+            &fm,
+            &[],
+            false,
+            FileManagerLocationsFocus::Trail,
+        );
+        assert!(
+            model
+                .action_state(FileManagerHeaderAction::SendTailscale)
+                .expect("send rides the bar")
+                .enabled
+        );
+
+        // Mixing a directory into the selection refuses the whole send.
+        assert!(fm.toggle_selection(position(&fm, "alpha-dir")));
+        let model = compute_file_manager_action_bar_model(
+            &fm,
+            &[],
+            false,
+            FileManagerLocationsFocus::Trail,
+        );
+        let send = model
+            .action_state(FileManagerHeaderAction::SendTailscale)
+            .expect("send rides the bar");
+        assert!(!send.enabled);
+        assert_eq!(
+            send.disabled_reason,
+            Some(FileManagerActionDisabledReason::UnsupportedSelection)
         );
     }
 
@@ -2864,6 +3024,7 @@ mod tests {
                 "[paste]",
                 "[new folder]",
                 "[delete]",
+                "[send]",
                 "[search]",
                 "[copy path]"
             ]

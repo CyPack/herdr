@@ -912,6 +912,9 @@ pub enum FileManagerHeaderAction {
     /// Open the trail filter editor — the `/` key's road, reachable by
     /// mouse (TP-FM-FILTER-03).
     Search,
+    /// Open the Taildrop picker for the selected files — the header seat of
+    /// the context menu's "Send with Tailscale...", sharing its target rule.
+    SendTailscale,
 }
 
 /// Client-local native-FM operation kind. Runtime execution stays in the
@@ -1112,11 +1115,12 @@ impl FileManagerOperationState {
 }
 
 impl FileManagerHeaderAction {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Copy,
         Self::Paste,
         Self::NewFolder,
         Self::Delete,
+        Self::SendTailscale,
         Self::Search,
         Self::CopyPath,
     ];
@@ -1129,6 +1133,7 @@ impl FileManagerHeaderAction {
             Self::Delete => "[delete]",
             Self::Search => "[search]",
             Self::CopyPath => "[copy path]",
+            Self::SendTailscale => "[send]",
         }
     }
 }
@@ -1182,7 +1187,7 @@ pub struct FileManagerActionState {
 pub struct FileManagerActionBarModel {
     pub selection: Option<FileManagerActionBarSelection>,
     pub clipboard_count: usize,
-    pub actions: [FileManagerActionState; 6],
+    pub actions: [FileManagerActionState; 7],
 }
 
 impl FileManagerActionBarModel {
@@ -7635,6 +7640,7 @@ mod tests {
                 FileManagerHeaderAction::Delete => delete_reason,
                 FileManagerHeaderAction::Paste
                 | FileManagerHeaderAction::NewFolder
+                | FileManagerHeaderAction::SendTailscale
                 | FileManagerHeaderAction::Search
                 | FileManagerHeaderAction::CopyPath => None,
             };
