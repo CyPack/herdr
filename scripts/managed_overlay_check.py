@@ -39,6 +39,10 @@ MERGE_FN = "merge_managed_spaces_str"
 # here only when appending it would be wrong, never when appending it was
 # merely forgotten.
 EXEMPT_FIELDS = {
+    # `show_empty` is a single user-authored switch, not a collection the
+    # promote/move machinery appends to — the managed overlay never writes it,
+    # so there is nothing for the merge to carry (TP-MOD-41).
+    "show_empty": "scalar user switch; the managed overlay never writes it",
     # `[spaces.icons]` is one table of defaults, not a list of entries. There
     # is no meaning to "append another icons table"; letting the overlay
     # override it would be a policy decision about who owns the row glyphs,

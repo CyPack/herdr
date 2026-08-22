@@ -1116,6 +1116,18 @@
           "description": "While prefix mode is active, temporarily switch the macOS host input source to an ASCII-capable keyboard layout so prefix commands are read as ASCII even when a CJK IME is active, then restore the previous input source when prefix mode exits. macOS only; a no-op elsewhere and a best-effort no-op if the switch fails."
         }
       ]
+    },
+    {
+      "id": "spaces",
+      "title": "Spaces",
+      "keys": [
+        {
+          "key": "spaces.show_empty",
+          "type": "boolean",
+          "default": "true",
+          "description": "Whether a declared [[spaces.split]] rule that currently claims no open checkout still draws its (dim) header in the sidebar tree, with an (empty) row beneath. Set false to hide memberless rules until a matching branch is open."
+        }
+      ]
     }
   ]
 }
