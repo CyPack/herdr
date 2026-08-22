@@ -1494,7 +1494,19 @@ impl App {
             return FileManagerMouseDispatch::Consumed;
         }
 
-        let center = self.state.view.terminal_area;
+        // TP-SBS-FILES-01: riding the right half moves every Files hit into
+        // the right rectangle, so the center gate follows the projected right
+        // surface — the shrunken terminal half holds no Files geometry there.
+        let center = if self.state.files_beside_active() {
+            self.state
+                .view
+                .right_surface
+                .as_ref()
+                .map(|right| right.area)
+                .unwrap_or(self.state.view.terminal_area)
+        } else {
+            self.state.view.terminal_area
+        };
         let in_center = rect_contains(center, mouse.column, mouse.row);
         if !in_center {
             return FileManagerMouseDispatch::NotHandled;
@@ -2632,6 +2644,75 @@ mod tests {
         app.try_open_file_manager_with(|_| Some(fm))
             .expect("Files activation");
         app
+    }
+
+    // TP-SBS-FILES-01: riding the right half is a way of being on screen, so
+    // a left click on a Files row inside the right rectangle moves the Files
+    // cursor exactly as it does on the full-stage surface. The center gate
+    // has to follow the projected right surface — the shrunken terminal half
+    // no longer contains any Files geometry.
+    #[test]
+    fn a_click_in_the_right_half_moves_the_files_cursor() {
+        let td = TempDir::new("fm3-beside-click");
+        td.file("00.txt");
+        td.file("01.txt");
+        td.file("02.txt");
+        let mut app = super::super::app_for_mouse_test();
+        app.state.workspaces = vec![crate::workspace::Workspace::test_new("left")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state
+            .try_open_file_manager_with(|_| Some(FmState::new(&td.root)))
+            .expect("Files activation");
+        app.state.show_terminal_workspace();
+        app.state.enter_files_beside();
+        assert!(app.state.files_beside_active());
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        compute_view(&mut app.state, Rect::new(0, 0, 120, 30));
+
+        let right = app
+            .state
+            .view
+            .right_surface
+            .as_ref()
+            .expect("the right surface was computed")
+            .area;
+        let cursor_before = app.state.file_manager.as_ref().expect("open FM").cursor;
+        let target = app
+            .state
+            .view
+            .file_manager_row_areas
+            .iter()
+            .find(|row| row.entry_idx != cursor_before)
+            .expect("a projected row away from the cursor")
+            .clone();
+        assert!(
+            target.rect.x >= right.x,
+            "precondition: the clicked row lives in the right half ({:?} vs x={})",
+            target.rect,
+            right.x
+        );
+
+        let dispatch = app.handle_file_manager_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            target.rect.x,
+            target.rect.y,
+        ));
+        assert_eq!(
+            dispatch,
+            FileManagerMouseDispatch::Consumed,
+            "the right half receives the click instead of dropping it"
+        );
+        let file_manager = app.state.file_manager.as_ref().expect("Files stays open");
+        assert_eq!(
+            file_manager.cursor, target.entry_idx,
+            "the click moved the cursor to the clicked row"
+        );
+        assert_eq!(
+            file_manager.entries[file_manager.cursor].path,
+            target.entry_path
+        );
     }
 
     #[test]

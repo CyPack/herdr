@@ -3203,6 +3203,13 @@ mod tests {
             .expect("the right surface was computed");
         assert_eq!(right.right, crate::app::state::SideBySideRight::Files);
         assert!(right.pane_infos.is_empty(), "Files hosts no panes");
+        // The staged exception keeps the action bar alive while Files rides
+        // the right half — New/Copy and friends do not vanish beside a
+        // terminal stage.
+        assert!(
+            app.view.file_manager_action_bar.is_some(),
+            "the Files action bar is computed while riding the right half"
+        );
         // The stage stays on the terminal; the pairing survives compute.
         assert!(app.files_beside_active());
         // Every Files hit lives inside the right rectangle.
@@ -3217,6 +3224,37 @@ mod tests {
             );
         }
         std::fs::remove_dir_all(root).expect("remove fixture");
+    }
+
+    // TP-SBS-FILES-01: the pairing self-heals in compute — Files on the
+    // right with no resident file manager drops the mode whole instead of
+    // drawing a vacant half.
+    #[test]
+    fn a_missing_file_manager_heals_the_files_pairing() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("left")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        assert!(
+            app.file_manager.is_none(),
+            "precondition: no resident Files"
+        );
+        app.side_by_side = Some(crate::app::state::SideBySideView {
+            right: crate::app::state::SideBySideRight::Files,
+            ratio_percent: 50,
+        });
+
+        compute_view(&mut app, Rect::new(0, 0, 120, 30));
+
+        assert!(
+            app.side_by_side.is_none(),
+            "the vacant Files pairing was dropped whole"
+        );
+        assert!(
+            app.view.right_surface.is_none(),
+            "no right surface is computed for the healed pairing"
+        );
     }
 
     // TP-STAGE-SBS-01: with a pairing on, compute carves the stage in two —
