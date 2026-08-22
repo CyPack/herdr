@@ -4960,6 +4960,55 @@ mod tests {
         );
     }
 
+    // TP-DRAW-15: the phone drawer's chat ages survive a server restart —
+    // same clock as the desktop drawer (message > mtime > sighting).
+    #[test]
+    fn the_phone_drawer_age_survives_a_restart() {
+        use ratatui::{backend::TestBackend, Terminal};
+        let mut app = tree_app(76, 63);
+        app.mobile_width_threshold = 90;
+        app.chat_drawer_mode = crate::app::state::ChatDrawerMode::Manual;
+        app.view.mobile_header_rect = Rect::new(0, 0, 76, 2);
+        app.view.terminal_area = Rect::new(0, 2, 76, 61);
+        app.mobile_drawer = crate::app::state::MobileDrawer::Spaces;
+
+        let now = std::time::SystemTime::now();
+        let now_ms = now
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let key = crate::persist::workspace_chats::ledger_key(&app.workspaces[1].identity_cwd);
+        for row in app.workspace_chat_rows.get_mut(&key).unwrap() {
+            row.last_seen_ms = now_ms; // the restart re-sighted every chat
+            row.last_modified = Some(now); // and the resume touched the file
+            row.last_message_at = Some(now - std::time::Duration::from_secs(3 * 86_400));
+        }
+
+        let mut terminal = Terminal::new(TestBackend::new(76, 63)).unwrap();
+        terminal
+            .draw(|frame| {
+                let areas = mobile_drawer_areas(&app);
+                render_mobile_drawer_content(&app, &TerminalRuntimeRegistry::new(), frame, &areas);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let all: String = (0..63)
+            .map(|y| {
+                (0..76)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+                    + "\n"
+            })
+            .collect();
+        assert!(
+            all.contains("3d"),
+            "phone rows date from the message: {all}"
+        );
+        assert!(!all.contains("now"), "a restart must not reset ages: {all}");
+    }
+
     #[test]
     fn the_spaces_drawer_leads_with_spaces_and_puts_agents_below() {
         let mut app = crate::app::state::AppState::test_new();

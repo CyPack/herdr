@@ -9172,6 +9172,72 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
     // TP-WSCHAT-15: the drawer is closed until asked for. With a dozen-plus
     // workspaces, opening every drawer at once would bury the workspace list
     // the tab exists for.
+    // TP-DRAW-15: the drawer's age column survives a server restart. The
+    // restart shape is: sighting and mtime both say "now" (re-sighted, file
+    // touched by the resume) while the last message is days old — the screen
+    // must say "3d", because that is the question the column answers.
+    #[test]
+    fn a_restart_cannot_reset_the_drawer_age_to_now() {
+        let (mut app, key) = app_with_chat_drawer(1);
+        let now = std::time::SystemTime::now();
+        let now_ms = crate::app::state::system_time_to_ms(now);
+        {
+            let rows = app.workspace_chat_rows.get_mut(&key).unwrap();
+            rows[0].last_seen_ms = now_ms;
+            rows[0].last_modified = Some(now);
+            rows[0].last_message_at = Some(now - std::time::Duration::from_secs(3 * 86_400));
+        }
+        app.expanded_chat_workspaces.insert(key);
+
+        // TP-CHAT-MOVE-06: chat rows draw from the laid-out areas, so the
+        // test walks the same two steps the real frame does.
+        let area = Rect::new(0, 0, 30, 24);
+        let (_, chat_rows, _, _, _, _, _, _) = compute_workspace_list_areas(&app, area);
+        assert!(!chat_rows.is_empty(), "the drawer laid out its row");
+        app.view.workspace_chat_row_areas = chat_rows;
+
+        let mut terminal = Terminal::new(TestBackend::new(30, 24)).unwrap();
+        terminal
+            .draw(|frame| render_workspace_chat_rows(&app, frame, area.height))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let all: String = (0..24).map(|y| row_text(buffer, y, 30) + "\n").collect();
+        assert!(all.contains("3d"), "the row dates from the message: {all}");
+        assert!(!all.contains("now"), "a restart must not reset ages: {all}");
+    }
+
+    // TP-DRAW-15: the same restart shape through the daily/module body
+    // (`render_chat_row`) — the surface the user actually reported.
+    #[test]
+    fn a_daily_or_module_row_age_survives_a_restart_too() {
+        let app = AppState::test_new();
+        let now = std::time::SystemTime::now();
+        let chat = crate::app::state::WorkspaceChatRow {
+            session_id: "restarted".into(),
+            agent: "claude".into(),
+            title: Some("three days quiet".into()),
+            last_seen_ms: crate::app::state::system_time_to_ms(now),
+            last_modified: Some(now),
+            last_message_at: Some(now - std::time::Duration::from_secs(3 * 86_400)),
+        };
+        let mut terminal = Terminal::new(TestBackend::new(30, 3)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_chat_row(&app, frame, Rect::new(0, 0, 30, 1), &chat, now, 2);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let line = row_text(buffer, 0, 30);
+        assert!(
+            line.contains("3d"),
+            "daily/module rows date from the message: {line}"
+        );
+        assert!(
+            !line.contains("now"),
+            "a restart must not reset ages: {line}"
+        );
+    }
+
     #[test]
     fn a_workspaces_chat_drawer_is_closed_until_it_is_opened() {
         let (mut app, key) = app_with_chat_drawer(2);
