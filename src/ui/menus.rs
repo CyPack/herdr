@@ -473,6 +473,25 @@ pub(super) fn render_bar_config_panel(app: &AppState, frame: &mut Frame) {
             }
         }
     }
+
+    // TP-CHROME-161: the last inner line teaches the face's real keys. Dim,
+    // unselectable, and different per face — Apps has no \u{2190}\u{2192} adjustment.
+    if popup.height >= 5 {
+        let hint_rect = Rect::new(
+            popup.x + 1,
+            popup.y + popup.height - 2,
+            popup.width.saturating_sub(2),
+            1,
+        );
+        frame.render_widget(
+            Paragraph::new(crate::ui::text::truncate_end(
+                crate::app::bar_config_panel::panel_hint(panel.tab),
+                hint_rect.width as usize,
+            ))
+            .style(Style::default().fg(p.overlay0)),
+            hint_rect,
+        );
+    }
 }
 
 pub(super) fn render_agent_reference_picker(app: &AppState, frame: &mut Frame) {
@@ -524,6 +543,88 @@ mod tests {
         FileManagerContextMenuTargetKind, MenuListState,
     };
     use ratatui::{backend::TestBackend, buffer::Buffer, Terminal};
+
+    // TP-CHROME-160/161: one popup width for both faces (no jump on Tab),
+    // one extra line for the hint, and the hint is neither a row nor a click
+    // target. The Configure face must show every style choice on screen —
+    // the exact discoverability the user reported missing — and each face
+    // must teach its own real keys.
+    #[test]
+    fn the_panel_enumerates_choices_and_teaches_its_keys_on_screen() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.view.terminal_area = Rect::new(0, 0, 80, 30);
+        app.bar_config_panel = Some(crate::app::bar_config_panel::BarConfigPanelState::open(
+            crate::ui::shell::BarEdge::Top,
+            &Default::default(),
+        ));
+
+        let configure = app.bar_config_panel_popup_rect().expect("popup");
+        assert_eq!(configure.width, 56, "both faces share one width");
+        let rows = app.bar_config_panel.as_ref().unwrap().forward_row_count() as u16;
+        assert_eq!(configure.height, rows + 5, "one line reserved for the hint");
+        let hit = app.bar_config_panel_row_hit_areas();
+        assert_eq!(hit.len() as u16, rows);
+        let last_row_y = hit.last().unwrap().y;
+        assert_eq!(
+            last_row_y,
+            configure.y + configure.height - 3,
+            "rows stop above the hint line"
+        );
+
+        let backend = TestBackend::new(80, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_bar_config_panel(&app, frame))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let text: String = (0..30)
+            .map(|y| {
+                (0..80)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+                    + "\n"
+            })
+            .collect();
+        assert!(text.contains("islands"), "every style is on screen: {text}");
+        assert!(
+            text.contains("[framed]"),
+            "the selection wears brackets: {text}"
+        );
+        assert!(
+            text.contains("\u{2190}\u{2192} change"),
+            "the Configure face teaches its arrow verb: {text}"
+        );
+
+        // The Apps face keeps the width and swaps the hint for its own keys.
+        app.bar_config_panel.as_mut().unwrap().tab =
+            crate::app::bar_config_panel::BarPanelTab::Apps;
+        let apps = app.bar_config_panel_popup_rect().expect("popup");
+        assert_eq!(apps.width, 56);
+        let backend = TestBackend::new(80, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_bar_config_panel(&app, frame))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let text: String = (0..30)
+            .map(|y| {
+                (0..80)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+                    + "\n"
+            })
+            .collect();
+        assert!(text.contains("Tab configure"), "{text}");
+        assert!(
+            !text.contains("\u{2190}\u{2192} change"),
+            "Apps must not claim an arrow verb it does not have: {text}"
+        );
+    }
+
     use std::path::PathBuf;
 
     fn multiple_file_menu(highlighted: usize) -> AppState {

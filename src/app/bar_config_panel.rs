@@ -532,22 +532,59 @@ pub(crate) fn section_app_rows(bar: &ShellBarConfig) -> Vec<BarAppRow> {
 
 /// What a row shows for its current draft value — one string, so the render
 /// pass and its tests read the same words (TP-CHROME-150).
+/// TP-CHROME-160: a small closed set is ENUMERATED, not merely echoed.
+/// "Style: pills" told the user nothing about islands existing — the exact
+/// discoverability gap they reported. The selected member wears brackets.
+fn enumerate_choice<'a, I>(choices: I, selected: &str) -> String
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    choices
+        .into_iter()
+        .map(|choice| {
+            if choice == selected {
+                format!("[{choice}]")
+            } else {
+                choice.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" \u{b7} ")
+}
+
+/// TP-CHROME-161: each face teaches its own real keys — the Apps face has no
+/// ←→ adjustment, so its hint must not claim one.
+pub(crate) const fn panel_hint(tab: BarPanelTab) -> &'static str {
+    match tab {
+        BarPanelTab::Configure => {
+            "\u{2190}\u{2192} change \u{b7} Enter select \u{b7} Tab apps \u{b7} Esc close"
+        }
+        BarPanelTab::Apps => "Enter run \u{b7} Tab configure \u{b7} Esc close",
+    }
+}
+
 pub(crate) fn row_value_label(state: &BarConfigPanelState, row: BarPanelRow) -> String {
     let bar = edge_config(&state.draft, state.edge);
     match row {
         BarPanelRow::Enabled => format!("Enabled: {}", if bar.enabled { "on" } else { "off" }),
-        BarPanelRow::Style => format!(
-            "Style: {}",
-            if bar.style.is_empty() {
+        BarPanelRow::Style => {
+            let current = if bar.style.is_empty() {
                 "framed"
             } else {
                 &bar.style
-            }
+            };
+            format!(
+                "Style: {}",
+                enumerate_choice(BAR_STYLE_CHOICES.iter().copied(), current)
+            )
+        }
+        BarPanelRow::Border => format!(
+            "Border: {}",
+            enumerate_choice(["auto", "on", "off"], border_word(bar.border))
         ),
-        BarPanelRow::Border => format!("Border: {}", border_word(bar.border)),
-        BarPanelRow::Size => format!("Size: {}", bar.size),
+        BarPanelRow::Size => format!("Size: \u{25c2} {} \u{25b8}", bar.size),
         BarPanelRow::Color => format!(
-            "Colour: {}",
+            "Colour: \u{25c2} {} \u{25b8}",
             if bar.color.is_empty() {
                 "(default)"
             } else {
@@ -555,7 +592,7 @@ pub(crate) fn row_value_label(state: &BarConfigPanelState, row: BarPanelRow) -> 
             }
         ),
         BarPanelRow::Background => format!(
-            "Backdrop: {}",
+            "Backdrop: \u{25c2} {} \u{25b8}",
             if bar.background.is_empty() {
                 "(theme)"
             } else {
@@ -564,11 +601,14 @@ pub(crate) fn row_value_label(state: &BarConfigPanelState, row: BarPanelRow) -> 
         ),
         BarPanelRow::Scope => format!(
             "Apply to: {}",
-            if state.scope_all {
-                "all bars"
-            } else {
-                "this bar"
-            }
+            enumerate_choice(
+                ["this bar", "all bars"],
+                if state.scope_all {
+                    "all bars"
+                } else {
+                    "this bar"
+                }
+            )
         ),
         BarPanelRow::OtherBar(edge) => format!(
             "{} bar: {}",
@@ -590,14 +630,12 @@ impl crate::app::state::AppState {
     pub(crate) fn bar_config_panel_popup_rect(&self) -> Option<ratatui::layout::Rect> {
         let panel = self.bar_config_panel.as_ref()?;
         let area = self.view.terminal_area;
-        let width = match panel.tab {
-            BarPanelTab::Apps => 56u16,
-            BarPanelTab::Configure => 44u16,
-        }
-        .min(area.width.saturating_sub(2))
-        .max(4);
+        // TP-CHROME-160/161: one width for both faces — the enumerated rows
+        // and the hint line need the room, and the popup no longer jumps when
+        // Tab switches faces.
+        let width = 56u16.min(area.width.saturating_sub(2)).max(4);
         let height = (panel.forward_row_count() as u16)
-            .saturating_add(4)
+            .saturating_add(5)
             .min(area.height.saturating_sub(2))
             .max(4);
         if area.width < 8 || area.height < 6 {
@@ -615,11 +653,13 @@ impl crate::app::state::AppState {
         let Some(popup) = self.bar_config_panel_popup_rect() else {
             return Vec::new();
         };
+        // The last inner line belongs to the hint (TP-CHROME-161) — rows must
+        // neither draw over it nor make it clickable.
         let inner = ratatui::layout::Rect::new(
             popup.x + 1,
             popup.y + 3,
             popup.width.saturating_sub(2),
-            popup.height.saturating_sub(4),
+            popup.height.saturating_sub(5),
         );
         (0..panel.forward_row_count())
             .take(inner.height as usize)
@@ -928,6 +968,91 @@ mod tests {
                 BarPanelRow::Cancel,
             ]
         );
+    }
+
+    // TP-CHROME-160: a small closed set is enumerated with the selection
+    // bracketed — the user's exact report was "styles'ta sadece pills var,
+    // islands eksik": every member must be VISIBLE in the row itself.
+    #[test]
+    fn the_style_row_enumerates_every_choice_and_brackets_the_selection() {
+        let mut state = BarConfigPanelState::open(BarEdge::Top, &bars());
+        edge_config_mut(&mut state.draft, BarEdge::Top).style = "pills".to_string();
+        let label = row_value_label(&state, BarPanelRow::Style);
+        assert_eq!(
+            label,
+            "Style: framed \u{b7} islands \u{b7} plain \u{b7} [pills]"
+        );
+        for choice in BAR_STYLE_CHOICES {
+            assert!(
+                label.contains(choice),
+                "{choice} must be discoverable: {label}"
+            );
+        }
+
+        // The selection marker follows the value, not a fixed slot.
+        edge_config_mut(&mut state.draft, BarEdge::Top).style = "islands".to_string();
+        let label = row_value_label(&state, BarPanelRow::Style);
+        assert!(
+            label.contains("[islands]") && !label.contains("[pills]"),
+            "{label}"
+        );
+
+        // An empty style IS framed (the cycle's own normalisation).
+        edge_config_mut(&mut state.draft, BarEdge::Top).style = String::new();
+        let label = row_value_label(&state, BarPanelRow::Style);
+        assert!(label.contains("[framed]"), "{label}");
+    }
+
+    // TP-CHROME-160: the same treatment for the other small closed sets.
+    #[test]
+    fn border_and_scope_rows_enumerate_their_choices() {
+        let mut state = BarConfigPanelState::open(BarEdge::Top, &bars());
+        edge_config_mut(&mut state.draft, BarEdge::Top).border = Some(true);
+        assert_eq!(
+            row_value_label(&state, BarPanelRow::Border),
+            "Border: auto \u{b7} [on] \u{b7} off"
+        );
+        assert_eq!(
+            row_value_label(&state, BarPanelRow::Scope),
+            "Apply to: [this bar] \u{b7} all bars"
+        );
+        state.scope_all = true;
+        assert_eq!(
+            row_value_label(&state, BarPanelRow::Scope),
+            "Apply to: this bar \u{b7} [all bars]"
+        );
+    }
+
+    // TP-CHROME-160: long/open sets wear stepper arrows instead — the
+    // affordance is "there are neighbours", not the whole list.
+    #[test]
+    fn long_value_rows_wear_stepper_arrows() {
+        let state = BarConfigPanelState::open(BarEdge::Top, &bars());
+        for row in [
+            BarPanelRow::Size,
+            BarPanelRow::Color,
+            BarPanelRow::Background,
+        ] {
+            let label = row_value_label(&state, row);
+            assert!(
+                label.contains('\u{25c2}') && label.contains('\u{25b8}'),
+                "steppable row shows its arrows: {label}"
+            );
+        }
+    }
+
+    // TP-CHROME-161: each face teaches its own real keys — Apps has no
+    // \u{2190}\u{2192} adjustment, so its hint must not claim one.
+    #[test]
+    fn the_hint_line_matches_each_faces_real_keys() {
+        let configure = panel_hint(BarPanelTab::Configure);
+        assert!(configure.contains("\u{2190}\u{2192}") && configure.contains("Tab apps"));
+        let apps = panel_hint(BarPanelTab::Apps);
+        assert!(
+            !apps.contains("\u{2190}"),
+            "Apps face has no left/right verb: {apps}"
+        );
+        assert!(apps.contains("Tab configure"));
     }
 
     // TP-CHROME-150: every cycle is total — nothing the person can reach
