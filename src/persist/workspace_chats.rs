@@ -477,6 +477,9 @@ pub fn project_rows(
                     title: None,
                     last_seen_ms: chat.last_seen_ms,
                     last_modified: None,
+                    // The ledger only witnesses sightings; the store merge
+                    // fills the message clock in when the transcript is found.
+                    last_message_at: None,
                 })
                 .collect();
             (key.clone(), rows)
@@ -756,6 +759,7 @@ mod tests {
             title: None,
             last_seen_ms,
             last_modified: None,
+            last_message_at: None,
         }
     }
 
@@ -1197,6 +1201,7 @@ mod move_semantics_tests {
             title: Some("a conversation".to_string()),
             last_seen_ms,
             last_modified: None,
+            last_message_at: None,
         }
     }
 

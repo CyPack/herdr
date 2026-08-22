@@ -1738,7 +1738,7 @@ fn render_mobile_drawer_content(
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .map(|d| d.as_millis() as u64)
                                 .unwrap_or(row.last_seen_ms);
-                            chat_age_label(now_ms, row.last_seen_ms)
+                            chat_age_label(now_ms, row.last_activity_ms())
                         })
                         .unwrap_or_default();
                     // Depth 1: the section has no checkout above it to hang
@@ -1793,7 +1793,7 @@ fn render_mobile_drawer_content(
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .map(|d| d.as_millis() as u64)
                                 .unwrap_or(row.last_seen_ms);
-                            chat_age_label(now_ms, row.last_seen_ms)
+                            chat_age_label(now_ms, row.last_activity_ms())
                         })
                         .unwrap_or_default();
                     // Depth 1: the section has no checkout above it to hang
@@ -1850,7 +1850,7 @@ fn render_mobile_drawer_content(
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .map(|d| d.as_millis() as u64)
                                 .unwrap_or(row.last_seen_ms);
-                            chat_age_label(now_ms, row.last_seen_ms)
+                            chat_age_label(now_ms, row.last_activity_ms())
                         })
                         .unwrap_or_default();
                     let indent = drawer_indent(*depth, content.width);
@@ -1967,8 +1967,9 @@ fn render_mobile_drawer_content(
                             .duration_since(std::time::UNIX_EPOCH)
                             .map(|d| d.as_millis() as u64)
                             .unwrap_or(0);
+                        // TP-DRAW-15: the message's own time, not the file's.
                         let seen_ms = session
-                            .last_modified
+                            .activity_time()
                             .duration_since(std::time::UNIX_EPOCH)
                             .map(|d| d.as_millis() as u64)
                             .unwrap_or(now_ms);
@@ -2831,6 +2832,7 @@ mod tests {
                     title: Some(format!("chat {idx}")),
                     last_seen_ms: 1_000 + idx as u64,
                     last_modified: None,
+                    last_message_at: None,
                 })
                 .collect(),
         );
@@ -3097,6 +3099,7 @@ mod tests {
                         title: Some(format!("ws{idx} chat {c}")),
                         last_seen_ms: 1_000 + c as u64,
                         last_modified: None,
+                        last_message_at: None,
                     })
                     .collect(),
             );
@@ -3709,6 +3712,7 @@ mod tests {
             id: id.to_string(),
             title: title.to_string(),
             last_modified: std::time::SystemTime::now(),
+            last_message_at: None,
             msg_count: 3,
             opening: None,
         };
@@ -3908,6 +3912,7 @@ mod tests {
                 title: Some("a filed conversation".into()),
                 last_seen_ms: 5_000,
                 last_modified: None,
+                last_message_at: None,
             }],
         );
 
@@ -3939,6 +3944,7 @@ mod tests {
                     title: Some(format!("daily chat {idx}")),
                     last_seen_ms: 5_000 + idx as u64,
                     last_modified: None,
+                    last_message_at: None,
                 })
                 .collect(),
         );

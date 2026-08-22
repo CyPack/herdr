@@ -4097,15 +4097,9 @@ fn render_chat_row(
     } else {
         format!("{icon} ")
     };
-    let age = chat
-        .last_modified
-        .map(|seen| format_relative_time(seen, now))
-        .unwrap_or_else(|| {
-            std::time::UNIX_EPOCH
-                .checked_add(std::time::Duration::from_millis(chat.last_seen_ms))
-                .map(|seen| format_relative_time(seen, now))
-                .unwrap_or_default()
-        });
+    // TP-DRAW-15: one clock for every row — the transcript's last message
+    // when known, else mtime, else the ledger sighting (last resort only).
+    let age = format_relative_time(chat.last_activity_time(), now);
     let age_width = super::text::display_width(&age);
     let width = rect.width as usize;
     let prefix_width = usize::from(indent) + marker.len() + super::text::display_width(&icon_span);
@@ -4368,15 +4362,8 @@ fn render_workspace_chat_rows(app: &AppState, frame: &mut Frame, list_bottom: u1
         // could not be located the ledger's own sighting answers the same
         // question — a drawer where only some rows are dated reads as broken
         // rather than partial.
-        let age = chat
-            .last_modified
-            .map(|seen| format_relative_time(seen, now))
-            .unwrap_or_else(|| {
-                std::time::UNIX_EPOCH
-                    .checked_add(std::time::Duration::from_millis(chat.last_seen_ms))
-                    .map(|seen| format_relative_time(seen, now))
-                    .unwrap_or_default()
-            });
+        // TP-DRAW-15: same clock as every other row (message > mtime > sighting).
+        let age = format_relative_time(chat.last_activity_time(), now);
         let age_width = super::text::display_width(&age);
         // TP-ICON-01/03: the chat glyph, never a state dot — an empty
         // configured glyph turns the column off.
@@ -4683,7 +4670,8 @@ fn render_projects_list(app: &AppState, frame: &mut Frame, area: Rect) {
                     continue;
                 };
                 let width = rect.width as usize;
-                let rel = format_relative_time(session.last_modified, now);
+                // TP-DRAW-15: the message's own time, not the file's.
+                let rel = format_relative_time(session.activity_time(), now);
                 let rel_width = display_width(&rel);
                 // Wired-state marker in the 3-column indent, synced with the
                 // tab bar: "▸" = this chat IS the focused tab, "●" = open in
@@ -6705,6 +6693,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             id: id.to_string(),
             title: title.to_string(),
             last_modified: std::time::SystemTime::UNIX_EPOCH,
+            last_message_at: None,
             msg_count,
             opening: None,
         }
@@ -7807,6 +7796,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
                 title: Some(format!("chat {idx}")),
                 last_seen_ms: 1_000 + idx as u64,
                 last_modified: None,
+                last_message_at: None,
             })
             .collect::<Vec<_>>();
         app.workspace_chat_rows.insert(key.clone(), rows);
@@ -7859,6 +7849,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
                 title: Some(format!("moved chat {idx}")),
                 last_seen_ms: 3_000 + idx as u64,
                 last_modified: None,
+                last_message_at: None,
             })
             .collect::<Vec<_>>();
         app.workspace_chat_rows.insert(key, rows);
@@ -8127,6 +8118,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
                 title: Some(format!("daily chat {idx}")),
                 last_seen_ms: 2_000 + idx as u64,
                 last_modified: None,
+                last_message_at: None,
             })
             .collect::<Vec<_>>();
         app.workspace_chat_rows.insert(key, rows);
@@ -10569,6 +10561,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
                 title: Some(format!("chat {i}")),
                 last_seen_ms: 1_000 + i as u64,
                 last_modified: None,
+                last_message_at: None,
             })
             .collect();
         app.workspace_chat_rows.insert(key.clone(), rows);
@@ -11137,6 +11130,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             title: None,
             last_seen_ms: 1,
             last_modified: None,
+            last_message_at: None,
         };
         app.workspace_chat_rows
             .insert("/home/user".to_string(), vec![row("home-chat")]);
@@ -11290,6 +11284,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
                     title: Some("remembered chat".to_string()),
                     last_seen_ms: 1_000,
                     last_modified: None,
+                    last_message_at: None,
                 }],
             );
             app.expanded_chat_workspaces.insert(key);

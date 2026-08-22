@@ -3758,6 +3758,7 @@ mod tests {
                     title: Some(format!("chat {i}")),
                     last_seen_ms: 1_000 + i as u64,
                     last_modified: None,
+                    last_message_at: None,
                 })
                 .collect(),
         );
@@ -3839,6 +3840,7 @@ mod tests {
                     title: Some("first".to_string()),
                     last_seen_ms: 2_000,
                     last_modified: None,
+                    last_message_at: None,
                 },
                 crate::app::state::WorkspaceChatRow {
                     session_id: "daily-b".to_string(),
@@ -3846,6 +3848,7 @@ mod tests {
                     title: Some("second".to_string()),
                     last_seen_ms: 1_000,
                     last_modified: None,
+                    last_message_at: None,
                 },
             ],
         );
@@ -3960,6 +3963,7 @@ mod tests {
                 title: Some("daily chat".to_string()),
                 last_seen_ms: 10,
                 last_modified: None,
+                last_message_at: None,
             }],
         );
         app.state.mouse_capture = true;
@@ -4106,6 +4110,7 @@ mod tests {
                     title: Some(format!("daily chat {idx}")),
                     last_seen_ms: 10 + idx as u64,
                     last_modified: None,
+                    last_message_at: None,
                 })
                 .collect(),
         );
@@ -4326,6 +4331,7 @@ mod tests {
                 title: Some("remembered chat".into()),
                 last_seen_ms: 1,
                 last_modified: None,
+                last_message_at: None,
             }],
         );
 
@@ -4407,6 +4413,7 @@ mod tests {
                 title: Some("remembered chat".into()),
                 last_seen_ms: 1,
                 last_modified: None,
+                last_message_at: None,
             }],
         );
         app.state.expanded_chat_workspaces.insert(key);
@@ -4517,6 +4524,7 @@ mod tests {
                 title: Some("probe chat".into()),
                 last_seen_ms: 1,
                 last_modified: None,
+                last_message_at: None,
             }],
         );
 
@@ -7050,6 +7058,7 @@ mod tests {
                 id: "s1".to_string(),
                 title: "a chat".to_string(),
                 last_modified: std::time::SystemTime::UNIX_EPOCH,
+                last_message_at: None,
                 msg_count: 3,
                 opening: None,
             }],

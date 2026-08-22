@@ -268,6 +268,7 @@ mod tests {
             title: Some(title.into()),
             last_seen_ms: ms,
             last_modified: None,
+            last_message_at: None,
         }
     }
 

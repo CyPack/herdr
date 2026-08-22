@@ -26,8 +26,15 @@ pub struct ClaudeSession {
     pub id: String,
     /// Display title: `custom-title` > `ai-title` > first user message > "(untitled)".
     pub title: String,
-    /// File modification time; used for chronological ordering (newest first).
+    /// File modification time. An upper bound on activity: a resume that
+    /// appends a bookkeeping line refreshes it without any message being sent.
     pub last_modified: SystemTime,
+    /// TP-DRAW-15: when the last user/assistant message in the transcript was
+    /// written, from the line's own `timestamp` field. `None` for a transcript
+    /// with no timestamped messages (older formats). This — not the file's
+    /// mtime and never the ledger's sighting — is what "how old is this chat"
+    /// means to a person reading the list.
+    pub last_message_at: Option<SystemTime>,
     /// Number of user + assistant turns (a rough activity signal).
     pub msg_count: usize,
     /// Normalised opening: the *shape* of the first user message.
@@ -41,6 +48,15 @@ pub struct ClaudeSession {
     ///
     /// `None` when the chat has no readable first user message.
     pub opening: Option<String>,
+}
+
+impl ClaudeSession {
+    /// The moment this chat last moved, as a reader understands "moved":
+    /// the last message's own timestamp when the transcript records one,
+    /// else the file mtime (TP-DRAW-15).
+    pub fn activity_time(&self) -> SystemTime {
+        self.last_message_at.unwrap_or(self.last_modified)
+    }
 }
 
 /// Placeholder shown when a session has no derivable title.
@@ -318,8 +334,8 @@ fn read_recent_inner(
     // Chronological: newest first (mtime desc). Ties broken by id for a stable,
     // deterministic order (important for reproducible tests and rendering).
     sessions.sort_by(|a, b| {
-        b.last_modified
-            .cmp(&a.last_modified)
+        b.activity_time()
+            .cmp(&a.activity_time())
             .then_with(|| a.id.cmp(&b.id))
     });
     (sessions, total)
@@ -368,6 +384,19 @@ pub fn read_opening_for_session(
     None
 }
 
+/// The jsonl line's own `timestamp` field ("2026-08-19T10:05:30.250Z") as a
+/// SystemTime. RFC 3339; anything absent, non-string, unparseable, or
+/// pre-epoch is `None` — a bad line must never poison the session (TP-DRAW-15).
+fn parse_line_timestamp(obj: &serde_json::Map<String, serde_json::Value>) -> Option<SystemTime> {
+    let raw = obj.get("timestamp")?.as_str()?;
+    let parsed =
+        time::OffsetDateTime::parse(raw, &time::format_description::well_known::Rfc3339).ok()?;
+    let ns = parsed.unix_timestamp_nanos();
+    u64::try_from(ns)
+        .ok()
+        .map(|ns| SystemTime::UNIX_EPOCH + std::time::Duration::from_nanos(ns))
+}
+
 fn parse_session_file(path: &Path) -> Option<ClaudeSession> {
     let id = path.file_stem()?.to_str()?.to_string();
     let content = fs::read_to_string(path).ok()?;
@@ -377,6 +406,7 @@ fn parse_session_file(path: &Path) -> Option<ClaudeSession> {
         .unwrap_or(SystemTime::UNIX_EPOCH);
 
     let mut custom_title: Option<String> = None;
+    let mut last_message_at: Option<SystemTime> = None;
     let mut ai_title: Option<String> = None;
     let mut first_user: Option<String> = None;
     let mut msg_count: usize = 0;
@@ -413,9 +443,17 @@ fn parse_session_file(path: &Path) -> Option<ClaudeSession> {
                 if first_user.is_none() {
                     first_user = extract_user_text(obj);
                 }
+                // TP-DRAW-15: the newest message timestamp wins, whatever
+                // order the lines were appended in.
+                if let Some(ts) = parse_line_timestamp(obj) {
+                    last_message_at = Some(last_message_at.map_or(ts, |cur| cur.max(ts)));
+                }
             }
             Some("assistant") => {
                 msg_count += 1;
+                if let Some(ts) = parse_line_timestamp(obj) {
+                    last_message_at = Some(last_message_at.map_or(ts, |cur| cur.max(ts)));
+                }
             }
             _ => {}
         }
@@ -433,6 +471,7 @@ fn parse_session_file(path: &Path) -> Option<ClaudeSession> {
         id,
         title,
         last_modified,
+        last_message_at,
         msg_count,
         opening,
     })
@@ -592,6 +631,90 @@ mod tests {
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].title, "real title");
         assert_eq!(sessions[0].msg_count, 1);
+    }
+
+    // ---- TP-DRAW-15: a chat's age is its last message's own time -------------
+
+    #[test]
+    fn the_last_message_timestamp_comes_from_the_last_user_or_assistant_line() {
+        let tp = TempProjects::new("last-msg");
+        tp.write_session(
+            "/home/x/proj",
+            "aaaa",
+            &[
+                r#"{"type":"summary","summary":"s"}"#,
+                r#"{"type":"user","timestamp":"2026-08-19T10:00:00.000Z","message":{"content":"hi"}}"#,
+                r#"{"type":"assistant","timestamp":"2026-08-19T10:05:30.250Z"}"#,
+                r#"{"type":"custom-title","customTitle":"t"}"#,
+            ],
+        );
+        let sessions = read_sessions_for_project(&tp.root, "/home/x/proj");
+        assert_eq!(sessions.len(), 1);
+        // The LAST message line wins, and non-message lines after it change
+        // nothing — the reader asks "when did someone last speak here".
+        let expected = std::time::UNIX_EPOCH + Duration::from_millis(1_787_133_930_250);
+        assert_eq!(sessions[0].last_message_at, Some(expected));
+        assert_eq!(sessions[0].activity_time(), expected);
+    }
+
+    #[test]
+    fn a_transcript_without_messages_carries_no_last_message_time() {
+        let tp = TempProjects::new("no-msg");
+        let path = tp.write_session(
+            "/home/x/proj",
+            "bbbb",
+            &[r#"{"type":"ai-title","aiTitle":"only a title"}"#],
+        );
+        let sessions = read_sessions_for_project(&tp.root, "/home/x/proj");
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].last_message_at, None);
+        // Honest fallback: with no timestamped message the file's own mtime
+        // still answers, so the row is dated rather than blank.
+        let mtime = fs::metadata(&path).unwrap().modified().unwrap();
+        assert_eq!(sessions[0].activity_time(), mtime);
+    }
+
+    #[test]
+    fn a_malformed_timestamp_does_not_poison_the_last_good_one() {
+        let tp = TempProjects::new("bad-ts");
+        tp.write_session(
+            "/home/x/proj",
+            "cccc",
+            &[
+                r#"{"type":"user","timestamp":"2026-08-19T10:00:00.000Z","message":{"content":"hi"}}"#,
+                r#"{"type":"assistant","timestamp":"not-a-date"}"#,
+                r#"{"type":"user","message":{"content":"no timestamp field at all"}}"#,
+            ],
+        );
+        let sessions = read_sessions_for_project(&tp.root, "/home/x/proj");
+        assert_eq!(sessions.len(), 1);
+        // Unparseable or absent timestamps are skipped, never zeroed in.
+        let expected = std::time::UNIX_EPOCH + Duration::from_millis(1_787_133_600_000);
+        assert_eq!(sessions[0].last_message_at, Some(expected));
+    }
+
+    #[test]
+    fn the_listing_orders_by_the_message_clock_not_the_file_clock() {
+        // Two files written back-to-back (mtimes practically equal, "old"
+        // freshly written): the one whose LAST MESSAGE is newer must lead.
+        // This is the restart scenario — a resume refreshes mtimes wholesale,
+        // and only the message clock keeps the order truthful.
+        let tp = TempProjects::new("order");
+        // Ids chosen so the alphabetical tie-break would give the WRONG
+        // order: only the message clock can put z-fresh first.
+        tp.write_session(
+            "/home/x/proj",
+            "a-stale",
+            &[r#"{"type":"user","timestamp":"2026-08-01T00:00:00.000Z","message":{"content":"a"}}"#],
+        );
+        tp.write_session(
+            "/home/x/proj",
+            "z-fresh",
+            &[r#"{"type":"user","timestamp":"2026-08-19T00:00:00.000Z","message":{"content":"b"}}"#],
+        );
+        let sessions = read_sessions_for_project(&tp.root, "/home/x/proj");
+        let ids: Vec<&str> = sessions.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(ids, ["z-fresh", "a-stale"]);
     }
 
     // ---- T1.1d: missing / empty project dir -> empty list, no panic ----------

@@ -661,10 +661,13 @@ pub struct WorkspaceChatRow {
     pub agent: String,
     pub title: Option<String>,
     pub last_seen_ms: u64,
-    /// Transcript mtime, when the chat's own file could be found. Drives the
-    /// relative-age column; absent for a chat whose store location is unknown,
-    /// in which case the row simply carries no age rather than a wrong one.
+    /// Transcript mtime, when the chat's own file could be found. An upper
+    /// bound on activity — a resume touches it without a message being sent.
     pub last_modified: Option<std::time::SystemTime>,
+    /// TP-DRAW-15: the last user/assistant message's own timestamp, when the
+    /// transcript records one. The age column and the ordering both prefer
+    /// this: it is the only source that survives a server restart unchanged.
+    pub last_message_at: Option<std::time::SystemTime>,
 }
 
 /// Milliseconds since the epoch, saturating at 0 for times before it.
@@ -690,9 +693,22 @@ impl WorkspaceChatRow {
     /// move", so one column can order and date every row — a drawer where only
     /// some rows carry an age reads as broken rather than partial.
     pub fn last_activity_ms(&self) -> u64 {
-        self.last_modified
-            .map(system_time_to_ms)
-            .unwrap_or(self.last_seen_ms)
+        system_time_to_ms(self.last_activity_time())
+    }
+
+    /// TP-DRAW-15: the one answer to "when did this chat last move", used by
+    /// the age column and the ordering alike so the two can never disagree.
+    /// Preference: the transcript's own last message timestamp — the only
+    /// reference a server restart cannot refresh — then the transcript mtime,
+    /// then the moment the ledger last sighted the chat.
+    pub(crate) fn last_activity_time(&self) -> std::time::SystemTime {
+        self.last_message_at
+            .or(self.last_modified)
+            .unwrap_or_else(|| {
+                std::time::UNIX_EPOCH
+                    .checked_add(std::time::Duration::from_millis(self.last_seen_ms))
+                    .unwrap_or(std::time::UNIX_EPOCH)
+            })
     }
 
     /// Ordering key: last activity, with the id breaking ties so the order is
@@ -4620,6 +4636,7 @@ impl AppState {
                     Some(row) => {
                         row.title = Some(session.title.clone());
                         row.last_modified = Some(session.last_modified);
+                        row.last_message_at = session.last_message_at;
                     }
                     None => rows.push(WorkspaceChatRow {
                         session_id: session.id.clone(),
@@ -4627,6 +4644,7 @@ impl AppState {
                         title: Some(session.title.clone()),
                         last_seen_ms: system_time_to_ms(session.last_modified),
                         last_modified: Some(session.last_modified),
+                        last_message_at: session.last_message_at,
                     }),
                 }
             }
@@ -4669,6 +4687,7 @@ impl AppState {
                 if let Some(session) = found.get(&row.session_id) {
                     row.title = Some(session.title.clone());
                     row.last_modified = Some(session.last_modified);
+                    row.last_message_at = session.last_message_at;
                 }
             }
         }
@@ -6289,6 +6308,7 @@ mod tests {
                     title: None,
                     last_seen_ms: 1,
                     last_modified: None,
+                    last_message_at: None,
                 },
                 WorkspaceChatRow {
                     session_id: "ledger-only".into(),
@@ -6296,6 +6316,7 @@ mod tests {
                     title: None,
                     last_seen_ms: 2,
                     last_modified: None,
+                    last_message_at: None,
                 },
             ],
         );
@@ -6455,6 +6476,7 @@ mod tests {
                 title: None,
                 last_seen_ms: 1,
                 last_modified: None,
+                last_message_at: None,
             }],
         );
 
@@ -6486,6 +6508,7 @@ mod tests {
                     title: Some("older".into()),
                     last_seen_ms: 10,
                     last_modified: None,
+                    last_message_at: None,
                 },
                 WorkspaceChatRow {
                     session_id: "new".into(),
@@ -6493,6 +6516,7 @@ mod tests {
                     title: Some("newer".into()),
                     last_seen_ms: 9_000,
                     last_modified: None,
+                    last_message_at: None,
                 },
                 WorkspaceChatRow {
                     session_id: "mid".into(),
@@ -6500,6 +6524,7 @@ mod tests {
                     title: Some("middle".into()),
                     last_seen_ms: 500,
                     last_modified: None,
+                    last_message_at: None,
                 },
             ],
         );
@@ -6514,6 +6539,63 @@ mod tests {
         let _ = std::fs::remove_dir_all(&cwd);
     }
 
+    // TP-DRAW-15: the age clock prefers the transcript's own last message —
+    // the only reference a server restart cannot refresh. A restart re-sights
+    // every open chat (last_seen_ms := now) and a resume can touch the file
+    // (mtime := now); the message the person actually sent stays put.
+    #[test]
+    fn the_age_clock_prefers_the_last_message_over_mtime_and_sighting() {
+        use std::time::{Duration, UNIX_EPOCH};
+        let three_days_ago = UNIX_EPOCH + Duration::from_millis(1_000_000_000_000);
+        let just_now_ms = 1_000_259_200_000_u64; // 3 days later
+        let just_now = UNIX_EPOCH + Duration::from_millis(just_now_ms);
+
+        let mut row = WorkspaceChatRow {
+            session_id: "restarted".into(),
+            agent: "claude".into(),
+            title: None,
+            last_seen_ms: just_now_ms,     // restart re-sighted it
+            last_modified: Some(just_now), // resume touched the file
+            last_message_at: Some(three_days_ago),
+        };
+        assert_eq!(
+            row.last_activity_time(),
+            three_days_ago,
+            "the label must read 3d, not now"
+        );
+
+        // Fallback chain, in order: message > mtime > sighting.
+        row.last_message_at = None;
+        assert_eq!(row.last_activity_time(), just_now);
+        row.last_modified = None;
+        assert_eq!(row.last_activity_ms(), just_now_ms);
+    }
+
+    // TP-DRAW-15: ordering and the age column read the same clock. If they
+    // did not, the list could sort one way and label another.
+    #[test]
+    fn rows_order_by_the_message_clock_when_the_sighting_disagrees() {
+        use std::time::{Duration, UNIX_EPOCH};
+        let stale = WorkspaceChatRow {
+            session_id: "stale-but-resighted".into(),
+            agent: "claude".into(),
+            title: None,
+            last_seen_ms: 2_000_000_000_000, // sighting says "just now"
+            last_modified: None,
+            last_message_at: Some(UNIX_EPOCH + Duration::from_millis(1_000_000_000_000)),
+        };
+        let fresh = WorkspaceChatRow {
+            session_id: "actually-fresh".into(),
+            agent: "claude".into(),
+            title: None,
+            last_seen_ms: 1_500_000_000_000, // sighting is older…
+            last_modified: None,
+            last_message_at: Some(UNIX_EPOCH + Duration::from_millis(1_900_000_000_000)),
+        };
+        // …but the message clock says fresh moved last, so fresh leads.
+        assert!(fresh.sort_key() > stale.sort_key());
+    }
+
     // TP-DRAW-05: every row can be dated. A row whose transcript was never
     // located still knows when the ledger last saw it, and that answers the
     // same question — a drawer where only some rows carry an age reads as
@@ -6526,6 +6608,7 @@ mod tests {
             title: None,
             last_seen_ms: 1_700_000_000_000,
             last_modified: None,
+            last_message_at: None,
         };
         assert_eq!(row.last_activity_ms(), 1_700_000_000_000);
 
@@ -6533,6 +6616,7 @@ mod tests {
             last_modified: Some(
                 std::time::UNIX_EPOCH + std::time::Duration::from_millis(1_800_000_000_000),
             ),
+            last_message_at: None,
             ..row
         };
         assert_eq!(
@@ -6565,6 +6649,7 @@ mod tests {
                 title: None,
                 last_seen_ms: 5,
                 last_modified: None,
+                last_message_at: None,
             }],
         );
 
@@ -6610,6 +6695,7 @@ mod tests {
                     title: None,
                     last_seen_ms: 1,
                     last_modified: None,
+                    last_message_at: None,
                 },
                 WorkspaceChatRow {
                     session_id: "elsewhere-session".into(),
@@ -6617,6 +6703,7 @@ mod tests {
                     title: None,
                     last_seen_ms: 2,
                     last_modified: None,
+                    last_message_at: None,
                 },
             ],
         );
@@ -6803,6 +6890,7 @@ mod tests {
                     title: None,
                     last_seen_ms: 0,
                     last_modified: None,
+                    last_message_at: None,
                 }],
             );
             state

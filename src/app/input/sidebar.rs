@@ -1631,6 +1631,7 @@ mod tests {
                 id: format!("s{i}"),
                 title: "t".to_string(),
                 last_modified: std::time::SystemTime::UNIX_EPOCH,
+                last_message_at: None,
                 msg_count: 1,
                 opening: None,
             })
@@ -3641,6 +3642,7 @@ mod tests {
             id: id.to_string(),
             title: format!("chat {id}"),
             last_modified: std::time::SystemTime::UNIX_EPOCH,
+            last_message_at: None,
             msg_count: 3,
             opening: None,
         }
@@ -4144,6 +4146,7 @@ mod tests {
                     title: Some(format!("daily chat {idx}")),
                     last_seen_ms: 10 + idx as u64,
                     last_modified: None,
+                    last_message_at: None,
                 })
                 .collect(),
         );
@@ -4257,6 +4260,7 @@ mod tests {
                 title: Some("a filed conversation".into()),
                 last_seen_ms: 1,
                 last_modified: None,
+                last_message_at: None,
             }],
         );
         state
@@ -4285,6 +4289,7 @@ mod tests {
                 title: Some("a filed conversation".into()),
                 last_seen_ms: 1,
                 last_modified: None,
+                last_message_at: None,
             }],
         );
         state

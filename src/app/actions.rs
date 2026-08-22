@@ -8449,6 +8449,7 @@ mod tests {
                 title: Some("a remembered chat".to_string()),
                 last_seen_ms: 1_000,
                 last_modified: None,
+                last_message_at: None,
             }],
         );
         key

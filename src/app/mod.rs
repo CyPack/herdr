@@ -3478,6 +3478,7 @@ mod tests {
                 title: Some("a re-homed chat".to_string()),
                 last_seen_ms: 7,
                 last_modified: None,
+                last_message_at: None,
             }],
         );
         let mut ledger = crate::persist::workspace_chats::WorkspaceChatLedger::default();
@@ -3633,6 +3634,7 @@ mod tests {
                     title: Some("nightly sweep".to_string()),
                     last_seen_ms: crate::persist::workspace_chats::now_ms(),
                     last_modified: None,
+                    last_message_at: None,
                 },
                 crate::app::state::WorkspaceChatRow {
                     session_id: "real".to_string(),
@@ -3640,6 +3642,7 @@ mod tests {
                     title: Some("kenar cizgisi".to_string()),
                     last_seen_ms: crate::persist::workspace_chats::now_ms(),
                     last_modified: None,
+                    last_message_at: None,
                 },
             ],
         );
