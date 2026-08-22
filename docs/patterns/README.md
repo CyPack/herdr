@@ -25,6 +25,7 @@ commit, a `TP-*` behavior id (see `behaviors/`), or a named test.
 | `pty-ipc-runtime.md` | PTY/IPC runtime layer |
 | `remote-media-transport.md` | Remote client audio/video design |
 | `feature-change-map.md` | Where a change of each kind usually lands |
+| `fm-architecture-decision.md` | Files surface model evaluated (stage vs pane vs embed vs hybrid), the DnD verdict, and the web-port references |
 
 ## The rules that bind every recipe
 
