@@ -1689,7 +1689,7 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
     // the tree (which read the MEMBERS) — the exact mismatch the user hit:
     // "popup'ta gözüküyor ama ağaçta yok". One source, two surfaces.
     let mut parent_of_space = parent_of_space;
-    if app.spaces_show_empty {
+    if app.spaces_show_empty && !app.spaces_focus_only {
         for rule in &app.space_split_rules {
             if rule.key.is_empty() || parent_of_space.contains_key(&rule.key) {
                 continue;
@@ -1762,7 +1762,7 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
         }
         // TP-MOD-41: memberless split rules seed too — a top-level bucket has
         // no node above it to carry it in.
-        if app.spaces_show_empty {
+        if app.spaces_show_empty && !app.spaces_focus_only {
             for rule in &app.space_split_rules {
                 if rule.key.is_empty() {
                     continue;
@@ -2001,7 +2001,7 @@ fn walk_tree(
                             .node_children
                             .get(space_key.as_str())
                             .is_some_and(|kids| !kids.is_empty());
-                        if app.spaces_show_empty {
+                        if app.spaces_show_empty && !app.spaces_focus_only {
                             // TP-MOD-41, revising TP-MOD-15: the declared rule
                             // keeps its header even with no member — dim, with
                             // the moved-in chats and the empty row beneath, and
@@ -10210,6 +10210,23 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         );
         // The label is the rule's own, not the raw key.
         assert_eq!(space_label_for_key(&app, "herdr:web"), "Web");
+    }
+
+    // TP-MOD-41 x TP-FOCUS-NODE-01: focus mode answers "what am I working
+    // in right now" — an empty seat is never an answer to that, so the
+    // filtered tree drops it even while the default tree keeps it.
+    #[test]
+    fn focus_mode_drops_the_empty_seats() {
+        let mut app = app_with_one_populated_bucket();
+        app.space_split_rules
+            .push(split_rule(&["web/*"], "herdr:web", "Web"));
+        app.spaces_focus_only = true;
+
+        let rows = tree_rows(&app);
+        assert!(
+            !rows.contains(&"group:herdr:web".to_string()),
+            "an empty seat is not an answer to focus: {rows:?}"
+        );
     }
 
     // TP-MOD-41: the switch. `show_empty = false` restores the old
