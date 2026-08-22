@@ -1708,6 +1708,30 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
                 .push(key.clone());
         }
     }
+    // The lists above were filled in HashMap iteration order, which is a
+    // different order every process — and, for two buckets that tie on
+    // first-member (memberless seats tie at MAX), a different SCREEN order
+    // every frame: the measured "modules keep swapping places" flicker.
+    // The walk's later sort is stable, so fixing the order here fixes it
+    // everywhere: first the declaration order of the rule that named the
+    // bucket, then the key as the total-order backstop.
+    let rule_order: std::collections::HashMap<&str, usize> = app
+        .space_split_rules
+        .iter()
+        .enumerate()
+        .map(|(idx, rule)| (rule.key.as_str(), idx))
+        .collect();
+    for buckets in buckets_of_node.values_mut() {
+        buckets.sort_by(|a, b| {
+            let rank = |key: &String| {
+                (
+                    rule_order.get(key.as_str()).copied().unwrap_or(usize::MAX),
+                    key.clone(),
+                )
+            };
+            rank(a).cmp(&rank(b))
+        });
+    }
 
     // Whether ws_idx's space hangs anywhere under `target` — the folded-node
     // active-checkout promise needs the whole chain, not just the owner.
@@ -10191,6 +10215,42 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         ];
         app.space_split_rules = vec![split_rule(&["feat/tui-*"], "herdr:tui", "TUI")];
         app
+    }
+
+    // TP-MOD-42: seats hold still. Ten memberless rules under one parent tie
+    // on first-member, and before the declaration-order tie-break their
+    // screen order was HashMap iteration order — different every process,
+    // and visibly "modules keep swapping places" on the live tree (measured
+    // minutes after TP-MOD-41 shipped). With ten rules a lucky pass is
+    // one in 10!, so this test is a reliable trip-wire, not a coin flip.
+    #[test]
+    fn memberless_seats_keep_their_declaration_order() {
+        let mut app = app_with_one_populated_bucket();
+        app.space_nodes = vec![crate::spaces::SpaceNode {
+            key: "group:packs".into(),
+            name: "PACKS".into(),
+            icon: None,
+            parent: None,
+            dir: None,
+        }];
+        let names: Vec<String> = (0..10).map(|i| format!("herdr:seat-{i}")).collect();
+        for name in &names {
+            let mut rule = split_rule(&["no-branch-matches/*"], name, name);
+            rule.parent = Some("group:packs".into());
+            app.space_split_rules.push(rule);
+        }
+
+        let expected: Vec<String> = names.iter().map(|n| format!("group:{n}")).collect();
+        for round in 0..3 {
+            let seats: Vec<String> = tree_rows(&app)
+                .into_iter()
+                .filter(|row| row.starts_with("group:herdr:seat-"))
+                .collect();
+            assert_eq!(
+                seats, expected,
+                "round {round}: seats follow the declaration order, every time"
+            );
+        }
     }
 
     // TP-MOD-41 (revising TP-MOD-15): a split rule that claims no open
