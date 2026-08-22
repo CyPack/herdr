@@ -1709,8 +1709,18 @@ mod tests {
     #[test]
     fn a_filter_projects_only_matching_names_and_moves_within_them() {
         let td = TempDir::new("filter");
-        for name in ["apple", "banana", "cherry", "apricot"] {
-            fs::create_dir_all(td.root.join(name)).expect("mk");
+        // Explicit, strictly ordered mtimes: four dirs born in one syscall
+        // burst tie on the clock, and a tie leaves the order to readdir —
+        // which under a loaded parallel run really did flip apple/apricot.
+        for (age, name) in ["apple", "banana", "cherry", "apricot"].iter().enumerate() {
+            let dir = td.root.join(name);
+            fs::create_dir_all(&dir).expect("mk");
+            fs::File::open(&dir)
+                .expect("open filter fixture dir")
+                .set_times(fs::FileTimes::new().set_modified(
+                    std::time::UNIX_EPOCH + std::time::Duration::from_secs(100 - age as u64),
+                ))
+                .expect("set filter fixture mtime");
         }
         let mut trail = TrailState::new(&td.root);
         let mut snaps = TrailSnapshots::new(false);
