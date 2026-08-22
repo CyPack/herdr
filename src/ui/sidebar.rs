@@ -1764,7 +1764,11 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
         // no node above it to carry it in.
         if app.spaces_show_empty && !app.spaces_focus_only {
             for rule in &app.space_split_rules {
-                if rule.key.is_empty() {
+                // Only the memberless need a seat of their own — a claimed
+                // rule's root already arrives through its checkouts, and
+                // seeding it again would hand a single-member space the
+                // group header TP-SPLIT-GROUP-03 says one member never earns.
+                if rule.key.is_empty() || members_by_key.contains_key(&rule.key) {
                     continue;
                 }
                 let mut root = rule.key.clone();
@@ -10080,6 +10084,9 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         ];
         app.space_split_rules = vec![split_rule(&["feat/t4f-*"], "herdr:t4f", "T4F")];
 
+        // TP-MOD-41: the unclaimed rule now takes its dim seat AFTER the
+        // checkouts (TP-MOD-14: scaffolding never pushes the work down) —
+        // and still must not disturb the rows it does not claim.
         assert_eq!(
             workspace_list_entries(&app),
             vec![
@@ -10093,6 +10100,12 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
                 WorkspaceListEntry::Workspace {
                     ws_idx: 1,
                     indented: true
+                },
+                WorkspaceListEntry::GroupHeader {
+                    space_key: "herdr:t4f".into()
+                },
+                WorkspaceListEntry::EmptyModule {
+                    node_key: "herdr:t4f".into()
                 },
             ],
             "rules must not disturb checkouts they do not claim"
