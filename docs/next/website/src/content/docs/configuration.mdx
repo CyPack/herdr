@@ -603,7 +603,7 @@ widget = { kind = "clock", format = "%H:%M" }
 
 `min`, `max` and `cells` keep describing what goes **inside** the frame. A `cells = 10` section showing a ten-cell picture still shows all ten when a frame is added around it; the two cells the frame costs are charged on top rather than taken out of what was asked for.
 
-An island's `color` is its own, and inheriting rather than falling back: a section that names no colour wears the bar's, not the warm default. There is no per-section `gradient` — a fade needs a run of cells to happen across, and an island is a handful of them.
+An island's `color` is its own, and inheriting rather than falling back: a section that names no colour wears the bar's, not the warm default. A written colour also reaches the words inside the frame — the stroke and the text speak the same family, the way a pill's band and label share one `color`; a section that writes none keeps the plain text tone. There is no per-section `gradient` — a fade needs a run of cells to happen across, and an island is a handful of them.
 
 `size` is where this gets counted twice, so it is worth spelling out. A frame costs two cells across the bar as well as along it, and an island needs at least one row left inside its own — so a bar has to leave three. `size = 3` leaves three only when the bar keeps none for itself; a bar with `border = true` spends two of its own, so it needs `size = 5` before an island fits. Asking for one that does not fit leaves the bar undivided and says so, naming both numbers, rather than drawing a box with nothing in it.
 
