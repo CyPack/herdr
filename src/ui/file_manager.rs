@@ -84,9 +84,11 @@ fn file_manager_visual_styles(palette: &Palette) -> FileManagerVisualStyles {
             .fg(palette.overlay1)
             .bg(palette.panel_bg)
             .add_modifier(Modifier::BOLD),
-        divider: Style::default()
-            .fg(palette.surface_dim)
-            .bg(palette.panel_bg),
+        // TP-FM-DIVIDER-01: the column divider reads in the theme's own
+        // structural tone. `surface_dim` disappeared against the panel —
+        // the reported "kolonlar arasi cizgi rengi" that made resizing feel
+        // blind — while `overlay0` is the palette's designated boundary tone.
+        divider: Style::default().fg(palette.overlay0).bg(palette.panel_bg),
         enabled_action: Style::default().fg(palette.overlay1).bg(palette.panel_bg),
         disabled_action: Style::default()
             .fg(palette.overlay0)
@@ -1674,6 +1676,16 @@ fn render_row_action(frame: &mut Frame, action_area: &FileManagerRowActionArea, 
 
 #[cfg(test)]
 mod tests {
+
+    // TP-FM-DIVIDER-01: the divider wears the palette's boundary tone, not
+    // the surface tone that vanished against the panel background.
+    #[test]
+    fn the_column_divider_reads_in_the_boundary_tone() {
+        let palette = crate::app::state::Palette::catppuccin();
+        let styles = file_manager_visual_styles(&palette);
+        assert_eq!(styles.divider.fg, Some(palette.overlay0));
+        assert_ne!(styles.divider.fg, Some(palette.surface_dim));
+    }
     use super::*;
     use crate::app::state::FileManagerActionBarSelectionKind;
     use crate::app::FileManagerLocationsFocus;
