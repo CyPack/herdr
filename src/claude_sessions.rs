@@ -700,21 +700,41 @@ mod tests {
         // This is the restart scenario — a resume refreshes mtimes wholesale,
         // and only the message clock keeps the order truthful.
         let tp = TempProjects::new("order");
-        // Ids chosen so the alphabetical tie-break would give the WRONG
-        // order: only the message clock can put z-fresh first.
-        tp.write_session(
-            "/home/x/proj",
-            "a-stale",
-            &[r#"{"type":"user","timestamp":"2026-08-01T00:00:00.000Z","message":{"content":"a"}}"#],
-        );
+        // Written and named so every OTHER clock gives the wrong order:
+        // z-fresh is written FIRST (older mtime) and sorts LAST by id — only
+        // the message clock can put it first.
         tp.write_session(
             "/home/x/proj",
             "z-fresh",
             &[r#"{"type":"user","timestamp":"2026-08-19T00:00:00.000Z","message":{"content":"b"}}"#],
         );
+        std::thread::sleep(Duration::from_millis(25));
+        tp.write_session(
+            "/home/x/proj",
+            "a-stale",
+            &[r#"{"type":"user","timestamp":"2026-08-01T00:00:00.000Z","message":{"content":"a"}}"#],
+        );
         let sessions = read_sessions_for_project(&tp.root, "/home/x/proj");
         let ids: Vec<&str> = sessions.iter().map(|s| s.id.as_str()).collect();
         assert_eq!(ids, ["z-fresh", "a-stale"]);
+    }
+
+    #[test]
+    fn an_out_of_order_transcript_still_reports_the_newest_message() {
+        // Lines appended out of chronological order (a merge, a repair, an
+        // imported chat): the NEWEST message timestamp wins, not the last line.
+        let tp = TempProjects::new("ooo");
+        tp.write_session(
+            "/home/x/proj",
+            "dddd",
+            &[
+                r#"{"type":"user","timestamp":"2026-08-19T10:05:30.250Z","message":{"content":"late"}}"#,
+                r#"{"type":"assistant","timestamp":"2026-08-19T10:00:00.000Z"}"#,
+            ],
+        );
+        let sessions = read_sessions_for_project(&tp.root, "/home/x/proj");
+        let expected = std::time::UNIX_EPOCH + Duration::from_millis(1_787_133_930_250);
+        assert_eq!(sessions[0].last_message_at, Some(expected));
     }
 
     // ---- T1.1d: missing / empty project dir -> empty list, no panic ----------
