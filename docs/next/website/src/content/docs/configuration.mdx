@@ -1152,6 +1152,38 @@ The JSON form is meant for agents writing config. Alongside each kind it carries
 
 Metrics are listed twice on purpose: `names` is what to write, and `aliases` records that `ram` also works and means the same as `mem`.
 
+### The bar panel
+
+Everything above can also be driven without opening the config file. Right-click
+a bar section (one without its own click action asks straight away; one with an
+action offers the panel from its context menu) and the **bar panel** opens.
+
+It wears two faces, and **Tab** turns them:
+
+- **Configure** — the knobs for the strip under the pointer: enabled, style,
+  border, size, colour, backdrop, plus the other three edges' switches and the
+  scope choice. Small closed sets are enumerated in the row itself with the
+  selection bracketed — `Style: framed · islands · plain · [pills]` — so every
+  choice is visible before you press anything; long sets (Size, Colour,
+  Backdrop) wear `◂ value ▸` stepper arrows. A custom hex colour you typed
+  stays reachable after cycling away from it.
+- **Apps** — the inventory: what each configured section *shows* (in the
+  config's own words, grouped runs folded exactly as their frames fold) and
+  what a press on it reaches. **Enter** on a live row runs it through the same
+  road the bar's own click takes.
+
+The last line of each face teaches its real keys — `←→ change · Enter select ·
+Tab apps · Esc close` on Configure — so nothing depends on remembering a
+shortcut.
+
+Two things make the panel safe to explore. The preview shows the **draft**, and
+**Esc** restores the snapshot you opened with. And **Apply persists a diff, not
+a form**: an untouched panel writes nothing, a changed field writes only itself
+on its own edge — every value you never touched keeps following your
+hand-written config. `Apply to: all bars` fans the focused edge's changes to
+every edge in one Apply, and an explicit per-edge switch you pressed still wins
+over the fan-out.
+
 ### Recipes
 
 Each of these is a complete fragment. After editing, `herdr config check` reports anything Herdr would refuse, and `herdr server reload-config` applies it without restarting panes.
@@ -1236,6 +1268,31 @@ widget = { kind = "icon", glyph = "\uf4bc", text = "cpu" }
 ```
 
 With the switch on the glyph is drawn, with it off the text is. Give every glyph section a `text` and one config works on both machines.
+
+### When a bar does not look right
+
+The failures people actually hit, in the order they hit them:
+
+- **The frame is drawn but the inside is empty** — a `content` section on an
+  old build needed `min`/`max` written out; current builds treat a missing
+  `max` as unbounded. Write both bounds if you support both.
+- **`size = 1` with `border = true` shows nothing** — the frame spends the
+  bar's only row. Either drop the border at `size = 1` or give the bar
+  `size = 3`.
+- **A popup opens and instantly closes** — the command exited. `argv = ["true"]`
+  is a flash by definition; point the action at something long-lived.
+- **A full-screen tool says the terminal is too small** — popup percentages are
+  measured against the pane area, which already lost the sidebar. For btop-like
+  tools ask for `width = "97%", height = "92%"`.
+- **A meter with no name** — `meter` draws only the ratio bar. Put a `label`
+  section beside it, or use `resource`, which writes its own caption.
+- **`net` shows nothing in a meter or sparkline** — it has no 0-100 ratio to
+  draw. Use it with `resource`.
+- **An icon glyph vanishes** — a raw private-use glyph pasted into TOML can
+  land as an empty string. Escape it (`"\uE0B0"`) instead of pasting.
+- **Edits do not reach the screen** — run `herdr config check`, then
+  `herdr server reload-config`; both report what they refused. On builds older
+  than the reload fix a running client needed a restart to pick bars up.
 
 ## Notifications
 

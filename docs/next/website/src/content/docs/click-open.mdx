@@ -1,0 +1,47 @@
+---
+title: Click to open
+description: Ctrl+click any path a terminal prints — what counts as a path, how :line suffixes and quotes are read, and where each kind of target opens.
+---
+
+Agents and build tools print paths all day. In Herdr you do not copy them:
+**Ctrl+click the path where it was printed** and it opens — for any program's
+output, not one agent's.
+
+## The gesture
+
+Hold **Ctrl** and left-click a path token in any terminal pane. The press is
+consumed by Herdr (the program in the pane never sees it), so a miss cannot
+type into your shell. A plain click without Ctrl stays an ordinary terminal
+click.
+
+Ctrl+click on a **URL** opens it through the link handler instead; Super+click
+does not.
+
+## What counts as a path
+
+The token under the cell is resolved with the same soft-wrap line walk the URL
+detector uses, so a path broken across wrapped lines is still one token. The
+scanner then:
+
+- accepts **quoted spans** — the one way a path with spaces survives
+  (`'my report.pdf'` / `"my report.pdf"`);
+- strips a trailing **`:line`** or **`:line:col`** suffix (`src/ui.rs:1289`
+  opens `src/ui.rs`), and trailing sentence punctuation;
+- refuses URLs (they belong to the link handler), bare words, and all-digit
+  "extensions" — `word.123` is a version string, not a file;
+- expands `~` through the worktree expander and resolves relative paths
+  against the pane's **foreground process working directory**, so `./target`
+  means what the program that printed it meant.
+
+## Where it opens
+
+| target | what happens |
+|---|---|
+| directory | Files opens **there**, trail on that directory |
+| text file | opens through the same open-file seam the Files preview click and context menu use — the editor tab, or the plugin that claimed the type |
+| image / PDF | the preview viewer |
+| missing path | a **toast** says so — a miss never fails silently |
+
+One resolver serves the Files preview click, the context menu's open, and
+Ctrl+click alike, so what the menu offers and what the click does cannot
+drift apart.

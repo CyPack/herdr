@@ -1,0 +1,92 @@
+---
+title: Files
+description: The built-in file manager — opening it, riding it beside a terminal, navigating columns, filtering, and the verbs on its rows and header.
+---
+
+Herdr ships a file manager as a first-class surface. It is not a wrapper around an
+external tool: it draws Miller columns over the working directory of the pane you
+came from, previews what the cursor stands on, and hands files to agents, editors
+and viewers through the same plugin seams the rest of the app uses.
+
+## Opening Files
+
+There are three roads in, and they answer two different questions.
+
+**Take the stage.** Click **Files** in the dock (top-left app strip). The stage
+switches to the Files surface for the active workspace; the terminal keeps running
+behind it, and clicking an agent row or the terminal app brings it back.
+
+**Ride beside the terminal.** When you want the terminal *and* the files at once:
+
+- right-click a pane and choose **Open Files beside**, or
+- right-click the dock's **Files** entry and choose **Open in right split**.
+
+Both put the resident Files surface into the **right half** of the stage while the
+terminal stays on the left. Every Files interaction — clicks, the action bar, the
+locations rail — lives inside that right rectangle. Mouse input is fully routed
+there; keyboard focus still belongs to the terminal side (a known limit today, so
+drive the beside-mode with the mouse).
+
+Files is **resident**: closing the surface backgrounds it rather than destroying
+it, so the trail you walked is still there when you summon it again.
+
+## The three regions
+
+- **Locations rail** (left edge): pinned roots and known places. Click the rail
+  toggle to open the drawer, click an entry to jump the trail there.
+- **Trail columns** (center): Miller columns — each column is one directory, the
+  next column is what the selected entry contains. The column separator is a
+  heavy `┃` so the frozen path and the live column read apart at a glance.
+- **Preview** (right): what the cursor stands on — text, image, or PDF, with
+  page controls on the PDF indicator. Clicking a text preview opens the file in
+  the editor tab; clicking a picture opens the viewer.
+
+## Navigating
+
+- **Click a row** to move the cursor there; clicking a directory descends into
+  it and previews its listing. This works the same on the full stage and in the
+  right half beside a terminal.
+- **Scroll** over any column body to scroll *that* column — rows, headers and
+  empty space alike. The selection stays where you put it.
+- **Drag a column divider** to resize; the resize is one typed transaction, so
+  fast pointer movement cannot tear it.
+- Long file names keep their extension: a name that does not fit is clipped in
+  the middle (`some-long-report-…xlsx`), never at the tail, so the part that
+  tells you what the file *is* survives next to its date.
+
+## Filtering with `/`
+
+Press `/` over a column to open the filter editor:
+
+- typed characters narrow the live listing as you type;
+- the cursor always stands on a **match** — filtering never leaves it on a row
+  the filter hid, and arrow keys move within matches;
+- **Enter** keeps the filter and hands the keys back to navigation;
+- **Esc** first drops the filter, a second **Esc** drops the selection.
+
+## Header verbs and row actions
+
+The header carries the action bar — **New**, **Copy**, **Move**, **Delete** and
+friends — enabled exactly when the selection supports them. The same verbs live
+on the row's **right-click context menu**, together with *Add Reference to
+Agent…* for handing the path to a running agent.
+
+Per-row action buttons (`>` send, `r` rename, `x` delete at the row's tail) are
+**off by default** — the context menu already carries them, and the row stays
+clean for the name and the date. Turn them on if you want them:
+
+```toml
+[files]
+show_row_actions = true
+```
+
+With the buttons off there is no hidden hit-area either: a click at the row's
+tail selects the row, it cannot trigger an invisible button.
+
+## Handing files onward
+
+- **Click a text preview** → the file opens in the editor tab.
+- **Click a picture** → the viewer (or the popup a plugin registered).
+- **Add Reference to Agent…** → the path lands in the agent's composer.
+- Ctrl+click a path *printed in any terminal* opens it in Files — that
+  contract has its own page: [Click to open](/docs/click-open/).
