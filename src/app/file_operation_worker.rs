@@ -638,6 +638,7 @@ impl crate::app::App {
         changed |= self.consume_file_manager_context_open();
         changed |= self.consume_file_manager_context_enlarge();
         changed |= self.consume_file_manager_context_send_tailscale();
+        changed |= self.consume_file_manager_context_open_agent_here();
         changed |= self.consume_file_manager_context_rename();
         changed |= self.consume_file_manager_context_delete();
         changed |= self.consume_file_manager_context_copy();
@@ -1158,6 +1159,33 @@ impl crate::app::App {
             return false;
         };
         let _ = crate::app::input::open_tailscale_send(&mut self.state, intent.paths);
+        true
+    }
+
+    /// TP-FM-OPENHERE-01: "open agent here" rides the daily section's own
+    /// road — a `ProjectChatTabRequest` rooted at the clicked directory — so
+    /// the chat lands in the side panel exactly the way a daily chat does.
+    fn consume_file_manager_context_open_agent_here(&mut self) -> bool {
+        use crate::app::state::FileManagerContextMenuAction;
+
+        let is_open_here = self
+            .state
+            .request_file_manager_context_action
+            .as_ref()
+            .is_some_and(|intent| intent.action == FileManagerContextMenuAction::OpenAgentHere);
+        if !is_open_here {
+            return false;
+        }
+        let Some(intent) = self.state.request_file_manager_context_action.take() else {
+            return false;
+        };
+        let Some(project_path) = intent.paths.into_iter().next() else {
+            return true;
+        };
+        self.state.request_project_chat_tab = Some(crate::app::state::ProjectChatTabRequest {
+            project_path,
+            session_id: None,
+        });
         true
     }
 

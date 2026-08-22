@@ -2646,6 +2646,38 @@ mod tests {
         app
     }
 
+    // TP-FM-OPENHERE-01: the queued "open agent here" intent lands as a
+    // ProjectChatTabRequest rooted at the clicked directory — the side
+    // panel's daily-chat road, aimed by right-click.
+    #[test]
+    fn open_agent_here_roots_a_project_chat_at_the_directory() {
+        let td = TempDir::new("open-agent-here");
+        td.dir("workdir");
+        let mut app = super::super::app_for_mouse_test();
+        app.state
+            .try_open_file_manager_with(|_| Some(FmState::new(&td.root)))
+            .expect("Files activation");
+        let target = td.root.join("workdir");
+        app.state.request_file_manager_context_action =
+            Some(crate::app::state::FileManagerContextActionIntent {
+                action: FileManagerContextMenuAction::OpenAgentHere,
+                paths: vec![target.clone()],
+            });
+
+        assert!(app.sync_file_manager_requests());
+        assert!(
+            app.state.request_file_manager_context_action.is_none(),
+            "the intent was consumed"
+        );
+        let request = app
+            .state
+            .request_project_chat_tab
+            .as_ref()
+            .expect("a project chat was requested");
+        assert_eq!(request.project_path, target);
+        assert_eq!(request.session_id, None);
+    }
+
     // The reported doubt (S36): "rows only answer on the timestamp side".
     // Pinned the other way round: on the full stage a click on the NAME half
     // of a projected trail row moves the cursor there — the row's hit rect is
@@ -10928,7 +10960,7 @@ command = ["view"]
                 assert!(popup.x >= screen.x && popup.y >= screen.y);
                 assert!(popup.right() <= screen.right());
                 assert!(popup.bottom() <= screen.bottom());
-                assert_eq!(popup.height, 10, "eight complete rows plus borders");
+                assert_eq!(popup.height, 11, "nine complete rows plus borders");
 
                 app.state.context_menu = None;
                 app.state.mode = Mode::Terminal;
@@ -11229,21 +11261,22 @@ command = ["inspect"]
         let ContextMenuKind::File { model } = &menu.kind else {
             panic!("expected file menu")
         };
-        // Eight built-ins, then the plugin entry last. Both the count and the
-        // number of Down presses moved when Send with Tailscale joined the
-        // built-ins; what is being asserted — that the plugin entry is last and
-        // keyboard-reachable — is unchanged.
-        assert_eq!(model.items.len(), 9);
-        assert_eq!(model.items[8].label, "Inspect file");
+        // Nine built-ins, then the plugin entry last. Both the count and the
+        // number of Down presses move whenever a verb joins the built-ins
+        // (Send with Tailscale, then Open agent here); what is being asserted
+        // — that the plugin entry is last and keyboard-reachable — is
+        // unchanged.
+        assert_eq!(model.items.len(), 10);
+        assert_eq!(model.items[9].label, "Inspect file");
         assert_eq!(
-            model.items[8].action,
+            model.items[9].action,
             FileManagerContextMenuAction::Plugin {
                 plugin_id: "example.files".into(),
                 action_id: "inspect".into(),
             }
         );
 
-        for _ in 0..8 {
+        for _ in 0..9 {
             app.route_client_input(b"\x1b[B".to_vec());
         }
         app.route_client_input(b"\r".to_vec());

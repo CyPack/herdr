@@ -3047,6 +3047,7 @@ mod tests {
                 // it: both open something that asks a question rather than
                 // acting on the click.
                 "Send with Tailscale...".to_string(),
+                "Open agent here...".to_string(),
             ]
         );
 

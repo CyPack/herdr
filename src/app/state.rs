@@ -1224,6 +1224,9 @@ pub enum FileManagerContextMenuAction {
     /// chosen, and a plugin action has nowhere to ask: it runs headless and
     /// cannot put a picker on the screen.
     SendTailscale,
+    /// Start an agent chat rooted at the selected directory, in the side
+    /// panel — the daily section's road, aimed by right-click.
+    OpenAgentHere,
     Plugin {
         plugin_id: String,
         action_id: String,
@@ -1231,7 +1234,7 @@ pub enum FileManagerContextMenuAction {
 }
 
 impl FileManagerContextMenuAction {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Open,
         Self::Enlarge,
         Self::Copy,
@@ -1240,6 +1243,7 @@ impl FileManagerContextMenuAction {
         Self::Compress,
         Self::SendAgent,
         Self::SendTailscale,
+        Self::OpenAgentHere,
     ];
 
     pub fn label(&self) -> &str {
@@ -1252,6 +1256,7 @@ impl FileManagerContextMenuAction {
             Self::Compress => "Compress",
             Self::SendAgent => "Add Reference to Agent...",
             Self::SendTailscale => "Send with Tailscale...",
+            Self::OpenAgentHere => "Open agent here...",
             Self::Plugin { action_id, .. } => action_id,
         }
     }
@@ -1389,6 +1394,20 @@ impl FileManagerContextMenuModel {
                                 Some(FileManagerActionDisabledReason::UnsupportedSelection)
                             } else {
                                 copy_reason
+                            }
+                        }
+                        // The chat opens in one directory, so the entry asks
+                        // for exactly one and it has to BE a directory.
+                        FileManagerContextMenuAction::OpenAgentHere => {
+                            if selection.paths.len() == 1
+                                && matches!(
+                                    target_kind,
+                                    FileManagerContextMenuTargetKind::Directory
+                                )
+                            {
+                                None
+                            } else {
+                                Some(FileManagerActionDisabledReason::UnsupportedSelection)
                             }
                         }
                         FileManagerContextMenuAction::Plugin { .. } => {
@@ -7727,6 +7746,17 @@ mod tests {
                             item.enabled
                         }
                     }
+                    // The mirror of Taildrop: a chat roots in a directory,
+                    // so the file half must find it present and disabled.
+                    FileManagerContextMenuAction::OpenAgentHere => {
+                        if matches!(expected_kind, FileManagerContextMenuTargetKind::Directory) {
+                            item.enabled
+                        } else {
+                            !item.enabled
+                                && item.disabled_reason
+                                    == Some(FileManagerActionDisabledReason::UnsupportedSelection)
+                        }
+                    }
                     _ => item.enabled,
                 }
             }));
@@ -7760,6 +7790,7 @@ mod tests {
                 FileManagerContextMenuAction::Compress,
                 FileManagerContextMenuAction::SendAgent,
                 FileManagerContextMenuAction::SendTailscale,
+                FileManagerContextMenuAction::OpenAgentHere,
             ]
         );
         assert_eq!(
@@ -7777,6 +7808,7 @@ mod tests {
                 "Compress",
                 "Add Reference to Agent...",
                 "Send with Tailscale...",
+                "Open agent here...",
             ]
         );
         for action in [
@@ -7925,6 +7957,7 @@ mod tests {
                 "Compress",
                 "Add Reference to Agent...",
                 "Send with Tailscale...",
+                "Open agent here...",
             ]
         );
     }
@@ -8167,12 +8200,12 @@ mod tests {
                 .expect("file context model");
 
         assert_eq!(model.paths, paths);
-        // Eight built-in entries, then the plugin ones. The index moved when
-        // Send with Tailscale joined the built-ins; the shape being asserted —
+        // Nine built-in entries, then the plugin ones. The index moves
+        // whenever a verb joins the built-ins; the shape being asserted —
         // plugins come last, in sorted order — is unchanged.
-        assert_eq!(model.items.len(), 10);
+        assert_eq!(model.items.len(), 11);
         assert_eq!(
-            model.items[8..]
+            model.items[9..]
                 .iter()
                 .map(|item| item.label.as_str())
                 .collect::<Vec<_>>(),
@@ -8182,11 +8215,11 @@ mod tests {
             plugin_id: "alpha.files".into(),
             action_id: "inspect".into(),
         };
-        assert_eq!(model.items[8].action, plugin_action);
-        assert!(model.items[8].enabled);
+        assert_eq!(model.items[9].action, plugin_action);
+        assert!(model.items[9].enabled);
 
         let intent = FileManagerContextActionIntent {
-            action: model.items[8].action.clone(),
+            action: model.items[9].action.clone(),
             paths: model.paths.clone(),
         };
         let params = intent
