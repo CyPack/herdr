@@ -421,6 +421,11 @@ pub(crate) struct FileOperationCancellation {
 }
 
 impl FileOperationCancellation {
+    /// The raw flag, for engines (the zip writer) that poll a bool directly.
+    pub(crate) fn flag(&self) -> &AtomicBool {
+        &self.cancelled
+    }
+
     pub(crate) fn cancel(&self) {
         self.cancelled.store(true, Ordering::Release);
     }

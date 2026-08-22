@@ -10,8 +10,6 @@
 //! and a progress callback, testable without the app. The operation-worker
 //! seat that drives it (progress UI, cancel button, the `[zip]` header verb)
 //! rides on top.
-#![allow(dead_code)] // engine-first slice: the worker seat and the [zip] verb
-                     // consume this in the next slice, and this allow leaves with them.
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -174,6 +172,62 @@ pub(crate) fn compress_paths_to_zip(
         return Err(io_err(destination, &error));
     }
     Ok(())
+}
+
+/// The worker-shaped seat over the engine: N sources into the one archive
+/// the plan names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CompressOperationPlan {
+    pub(crate) sources: Vec<PathBuf>,
+    pub(crate) destination: PathBuf,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CompressOperationExecutionStatus {
+    Completed,
+    Cancelled,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CompressOperationExecutionResult {
+    pub(crate) status: CompressOperationExecutionStatus,
+    /// The path the failure happened on, when there is one to name.
+    pub(crate) failed_path: Option<PathBuf>,
+}
+
+/// Drive the engine under the worker's contract: the shared cancellation
+/// flag, and per-entry progress reported as an item index.
+pub(crate) fn execute_compress_operation_with_observer(
+    plan: &CompressOperationPlan,
+    cancellation: &crate::fm::operations::FileOperationCancellation,
+    report_progress: &mut dyn FnMut(usize),
+) -> CompressOperationExecutionResult {
+    match compress_paths_to_zip(
+        &plan.sources,
+        &plan.destination,
+        cancellation.flag(),
+        |done, _total| report_progress(done.saturating_sub(1)),
+    ) {
+        Ok(()) => CompressOperationExecutionResult {
+            status: CompressOperationExecutionStatus::Completed,
+            failed_path: None,
+        },
+        Err(CompressError::Cancelled) => CompressOperationExecutionResult {
+            status: CompressOperationExecutionStatus::Cancelled,
+            failed_path: None,
+        },
+        Err(CompressError::Io { path, .. }) | Err(CompressError::SourceSymlink { path }) => {
+            CompressOperationExecutionResult {
+                status: CompressOperationExecutionStatus::Failed,
+                failed_path: Some(path),
+            }
+        }
+        Err(CompressError::NothingToCompress) => CompressOperationExecutionResult {
+            status: CompressOperationExecutionStatus::Failed,
+            failed_path: None,
+        },
+    }
 }
 
 #[cfg(test)]

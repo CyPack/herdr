@@ -522,6 +522,7 @@ fn file_manager_operation_kind_label(kind: FileManagerOperationKind) -> &'static
         FileManagerOperationKind::PermanentDelete => "delete",
         FileManagerOperationKind::Rename => "rename",
         FileManagerOperationKind::BulkRename => "bulk rename",
+        FileManagerOperationKind::Compress => "compress",
     }
 }
 
@@ -3106,13 +3107,13 @@ mod tests {
         let context = FileManagerContextMenuModel::from_action_bar(&action_bar)
             .expect("single-selection context catalog");
         assert!(
-            !context
+            context
                 .items
                 .iter()
                 .find(|item| item.action == FileManagerContextMenuAction::Compress)
                 .expect("compress catalog entry")
                 .enabled,
-            "Compress has no v1 operation owner"
+            "Compress is owned by the zip engine now"
         );
     }
 

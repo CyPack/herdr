@@ -931,6 +931,7 @@ pub enum FileManagerOperationKind {
     PermanentDelete,
     Rename,
     BulkRename,
+    Compress,
 }
 
 /// One explicit lifecycle state for a bounded native-FM operation.
@@ -1390,9 +1391,11 @@ impl FileManagerContextMenuModel {
                                 Some(FileManagerActionDisabledReason::UnsupportedSelection),
                                 |_| copy_reason,
                             ),
-                        FileManagerContextMenuAction::Compress => {
-                            Some(FileManagerActionDisabledReason::UnsupportedAction)
-                        }
+                        // One archive in the listing's own directory: the
+                        // selection is all this model layer can ask — a
+                        // read-only cwd surfaces as the operation's own
+                        // failure, named, not as a silent grey.
+                        FileManagerContextMenuAction::Compress => copy_reason,
                         // Taildrop takes files. A folder is offered but
                         // disabled rather than hidden: the entry is the answer
                         // to "can I send this?", and a menu that silently drops
@@ -7753,11 +7756,6 @@ mod tests {
             assert_eq!(model.paths, vec![path]);
             assert!(model.items.iter().all(|item| {
                 match item.action {
-                    FileManagerContextMenuAction::Compress => {
-                        !item.enabled
-                            && item.disabled_reason
-                                == Some(FileManagerActionDisabledReason::UnsupportedAction)
-                    }
                     // Neither fixture name promises a picture, so Enlarge is
                     // correctly unavailable for both.
                     FileManagerContextMenuAction::Enlarge => {
@@ -7863,12 +7861,11 @@ mod tests {
                 Some(FileManagerActionDisabledReason::ReadOnlyTarget)
             );
         }
+        // Compress writes a NEW file, so a read-only listing greys the
+        // verbs that touch existing entries but leaves it to fail loudly —
+        // the model layer carries no cwd authority (TP-FM-ZIP-01).
         let compress = file_context_item(&model, FileManagerContextMenuAction::Compress);
-        assert!(!compress.enabled);
-        assert_eq!(
-            compress.disabled_reason,
-            Some(FileManagerActionDisabledReason::UnsupportedAction)
-        );
+        assert!(compress.enabled);
     }
 
     // TP-C3.1-CONTEXT-MODEL: multiple selection permits only bulk-capable
@@ -7898,12 +7895,9 @@ mod tests {
         ] {
             assert!(file_context_item(&model, action).enabled);
         }
+        // A multi-selection compresses into one archive (TP-FM-ZIP-01).
         let compress = file_context_item(&model, FileManagerContextMenuAction::Compress);
-        assert!(!compress.enabled);
-        assert_eq!(
-            compress.disabled_reason,
-            Some(FileManagerActionDisabledReason::UnsupportedAction)
-        );
+        assert!(compress.enabled);
         for action in [
             FileManagerContextMenuAction::Open,
             FileManagerContextMenuAction::Rename,

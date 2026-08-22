@@ -6,6 +6,9 @@ use std::thread::JoinHandle;
 
 use tokio::sync::Notify;
 
+use crate::fm::compress::{
+    CompressOperationExecutionResult, CompressOperationExecutionStatus, CompressOperationPlan,
+};
 use crate::fm::delete::{
     execute_delete_operation_with_observer, DeleteOperationExecutionResult,
     DeleteOperationExecutionStatus, DeleteOperationItemOutcome, DeleteOperationKind,
@@ -61,6 +64,7 @@ pub(super) enum FileOperationWorkerResult {
     Delete(DeleteOperationExecutionResult),
     Rename(RenameOperationExecutionResult),
     BulkRename(BulkRenameOperationExecutionResult),
+    Compress(CompressOperationExecutionResult),
 }
 
 #[derive(Debug, Default)]
@@ -82,6 +86,7 @@ enum FileOperationWorkerTask {
     Delete(DeleteOperationPlan),
     Rename(RenameOperationPlan),
     BulkRename(BulkRenameOperationPlan),
+    Compress(CompressOperationPlan),
 }
 
 struct FileOperationWorkerState {
@@ -161,6 +166,13 @@ impl FileOperationWorker {
             ),
             FileOperationWorkerTask::BulkRename(plan) => FileOperationWorkerResult::BulkRename(
                 crate::fm::rename::execute_bulk_rename_operation(plan, cancellation),
+            ),
+            FileOperationWorkerTask::Compress(plan) => FileOperationWorkerResult::Compress(
+                crate::fm::compress::execute_compress_operation_with_observer(
+                    plan,
+                    cancellation,
+                    &mut |_| {},
+                ),
             ),
         })
     }
@@ -277,6 +289,13 @@ impl FileOperationWorker {
         plan: BulkRenameOperationPlan,
     ) -> Result<u64, FileOperationStartError> {
         self.start_task(FileOperationWorkerTask::BulkRename(plan))
+    }
+
+    pub(super) fn start_compress(
+        &mut self,
+        plan: CompressOperationPlan,
+    ) -> Result<u64, FileOperationStartError> {
+        self.start_task(FileOperationWorkerTask::Compress(plan))
     }
 
     fn start_task(
@@ -417,6 +436,13 @@ fn execute_worker_task_with_progress(
         ),
         FileOperationWorkerTask::BulkRename(plan) => FileOperationWorkerResult::BulkRename(
             execute_bulk_rename_operation_with_observer(plan, cancellation, report_progress),
+        ),
+        FileOperationWorkerTask::Compress(plan) => FileOperationWorkerResult::Compress(
+            crate::fm::compress::execute_compress_operation_with_observer(
+                plan,
+                cancellation,
+                report_progress,
+            ),
         ),
     }
 }
@@ -646,7 +672,7 @@ impl crate::app::App {
         changed |= self.consume_file_manager_context_rename();
         changed |= self.consume_file_manager_context_delete();
         changed |= self.consume_file_manager_context_copy();
-        changed |= self.consume_unsupported_file_manager_context_action();
+        changed |= self.consume_file_manager_context_compress();
         changed
     }
 
@@ -728,6 +754,9 @@ impl crate::app::App {
             }
             Ok(FileOperationWorkerResult::BulkRename(result)) => {
                 apply_bulk_rename_execution_result(operation, &result)
+            }
+            Ok(FileOperationWorkerResult::Compress(result)) => {
+                apply_compress_execution_result(operation, &result)
             }
             Err(FileOperationWorkerError::Panicked) => {
                 mark_operation_worker_failure(operation);
@@ -1193,18 +1222,66 @@ impl crate::app::App {
         true
     }
 
-    fn consume_unsupported_file_manager_context_action(&mut self) -> bool {
+    /// TP-FM-ZIP-01: the Compress verb — the selection into ONE archive in
+    /// the listing's own directory, named after its single source or
+    /// `archive`, stepping around collisions the desktop way.
+    fn consume_file_manager_context_compress(&mut self) -> bool {
         use crate::app::state::FileManagerContextMenuAction;
 
-        let is_unsupported = self
+        let is_compress = self
             .state
             .request_file_manager_context_action
             .as_ref()
             .is_some_and(|intent| intent.action == FileManagerContextMenuAction::Compress);
-        if !is_unsupported {
+        if !is_compress {
             return false;
         }
-        self.state.request_file_manager_context_action = None;
+        let Some(intent) = self.state.request_file_manager_context_action.take() else {
+            return false;
+        };
+        let Some(file_manager) = self.state.file_manager.as_ref() else {
+            return true;
+        };
+        let destination_directory = file_manager.cwd.clone();
+        let stem = match intent.paths.as_slice() {
+            [only] => only
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+                .unwrap_or_else(|| String::from("archive")),
+            _ => String::from("archive"),
+        };
+        let destination =
+            crate::fm::compress::unique_zip_destination(&destination_directory, &stem);
+        let total_items = intent.paths.len();
+        let items = intent
+            .paths
+            .iter()
+            .map(|path| crate::app::state::FileManagerOperationItemState {
+                path: path.clone(),
+                recovery_path: None,
+                status: crate::app::state::FileManagerOperationItemStatus::Pending,
+            })
+            .collect();
+        let affected = std::iter::once(destination.clone()).collect::<BTreeSet<_>>();
+        let plan = CompressOperationPlan {
+            sources: intent.paths,
+            destination,
+        };
+        let generation = match self.file_operation_worker.start_compress(plan) {
+            Ok(generation) => generation,
+            Err(FileOperationStartError::Busy) => return true,
+        };
+        self.record_file_operation_reconcile_baseline(generation, &destination_directory, affected);
+        self.state.file_manager_operation = Some(crate::app::state::FileManagerOperationState {
+            generation,
+            kind: crate::app::state::FileManagerOperationKind::Compress,
+            destination_directory,
+            total_items,
+            completed_items: 0,
+            failed_items: 0,
+            status: crate::app::state::FileManagerOperationStatus::Running,
+            items,
+        });
         true
     }
 
@@ -1400,6 +1477,49 @@ fn mark_operation_worker_failure(operation: &mut crate::app::state::FileManagerO
     for item in &mut operation.items {
         item.status = crate::app::state::FileManagerOperationItemStatus::Failed;
     }
+}
+
+/// TP-FM-ZIP-01: one archive, N entries — completion paints every item with
+/// the one terminal answer, and a failure names the path it happened on.
+fn apply_compress_execution_result(
+    operation: &mut crate::app::state::FileManagerOperationState,
+    result: &CompressOperationExecutionResult,
+) {
+    use crate::app::state::{FileManagerOperationItemStatus, FileManagerOperationStatus};
+
+    let (status, item_status) = match result.status {
+        CompressOperationExecutionStatus::Completed => (
+            FileManagerOperationStatus::Completed,
+            FileManagerOperationItemStatus::Completed,
+        ),
+        CompressOperationExecutionStatus::Cancelled => (
+            FileManagerOperationStatus::Cancelled,
+            FileManagerOperationItemStatus::Pending,
+        ),
+        CompressOperationExecutionStatus::Failed => (
+            FileManagerOperationStatus::Failed,
+            FileManagerOperationItemStatus::Pending,
+        ),
+    };
+    operation.completed_items = match result.status {
+        CompressOperationExecutionStatus::Completed => operation.total_items,
+        _ => 0,
+    };
+    operation.failed_items = match result.status {
+        CompressOperationExecutionStatus::Failed => 1,
+        _ => 0,
+    };
+    for item in operation.items.iter_mut() {
+        item.status = if result.failed_path.as_deref() == Some(item.path.as_path()) {
+            FileManagerOperationItemStatus::Retained
+        } else {
+            item_status
+        };
+    }
+    if let Some(path) = &result.failed_path {
+        tracing::warn!(path = %path.display(), "fm: compress failed on a source");
+    }
+    operation.status = status;
 }
 
 fn apply_delete_execution_result(
@@ -2416,14 +2536,22 @@ mod tests {
         assert!(app.state.preview_viewer.is_none());
     }
 
-    // TP-C6.3-AUTHORITY/LIFECYCLE: an unsupported action cannot remain queued
-    // forever or reach a filesystem owner even when injected outside the UI.
+    // TP-FM-ZIP-01: the Compress verb rides the worker end to end — the
+    // intent starts a background generation, the operation reaches Completed,
+    // and the archive stands in the listing's own directory, sources intact,
+    // round-tripping its content.
     #[test]
-    fn unsupported_context_action_is_consumed_without_side_effects() {
-        let td = TempDir::new("unsupported-context-action");
+    fn compress_context_action_writes_the_archive_beside_its_sources() {
+        use std::io::Read as _;
+
+        let td = TempDir::new("compress-context-action");
         let selected = td.root.join("selected.txt");
-        fs::write(&selected, b"selected").expect("write unsupported-action fixture");
-        let before = fs::read(&selected).expect("read unsupported-action fixture");
+        fs::write(&selected, b"selected").expect("write compress fixture");
+        // A stale archive already sits at the natural destination: the verb
+        // must step around it, not overwrite it — the product-layer proof of
+        // the engine's `unique_zip_destination` contract.
+        let occupied = td.root.join("selected.zip");
+        fs::write(&occupied, b"occupied").expect("write occupied archive");
         let mut file_manager = crate::fm::FmState::new(&td.root);
         assert!(file_manager.replace_selection(0));
         let mut app = test_app();
@@ -2437,12 +2565,58 @@ mod tests {
 
         assert!(app.sync_file_operations_for_test());
         assert!(app.state.request_file_manager_context_action.is_none());
-        assert!(app.state.file_manager_operation.is_none());
-        assert!(app.state.file_manager_delete_confirmation.is_none());
+        {
+            let operation = app
+                .state
+                .file_manager_operation
+                .as_ref()
+                .expect("a compress operation started");
+            assert_eq!(
+                operation.kind,
+                crate::app::state::FileManagerOperationKind::Compress
+            );
+            assert_eq!(operation.destination_directory, td.root);
+        }
+
+        let wait = LoadAwareDeadline::new(5, "the compress operation to complete");
+        while app
+            .state
+            .file_manager_operation
+            .as_ref()
+            .is_some_and(FileManagerOperationState::is_running)
+        {
+            let _ = app.sync_file_operations_for_test();
+            wait.check();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let operation = app
+            .state
+            .file_manager_operation
+            .as_ref()
+            .expect("the operation reached a terminal state");
         assert_eq!(
-            fs::read(selected).expect("unsupported action preserves fixture"),
-            before
+            operation.status,
+            crate::app::state::FileManagerOperationStatus::Completed
         );
+
+        // The source is intact, the occupied archive is untouched, and the
+        // new archive steps around it and round-trips beside the source.
+        assert_eq!(
+            fs::read(&selected).expect("source intact"),
+            b"selected".to_vec()
+        );
+        assert_eq!(
+            fs::read(&occupied).expect("occupied archive intact"),
+            b"occupied".to_vec()
+        );
+        let archive_path = td.root.join("selected (2).zip");
+        let archive = fs::File::open(&archive_path).expect("the archive was written");
+        let mut zip = zip::ZipArchive::new(archive).expect("a readable archive");
+        let mut entry = zip.by_index(0).expect("one entry");
+        assert_eq!(entry.name(), "selected.txt");
+        let mut content = Vec::new();
+        entry.read_to_end(&mut content).expect("entry content");
+        assert_eq!(content, b"selected".to_vec());
     }
 
     // TP-C4.1-LIFECYCLE/WATCHER: Paste starts one background generation,

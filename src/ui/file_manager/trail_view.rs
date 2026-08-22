@@ -2096,8 +2096,19 @@ mod tests {
     #[test]
     fn a_filtered_column_projects_matching_rows_with_true_indices() {
         let td = TempDir::new("view-filter");
-        for name in ["apple", "banana", "apricot"] {
-            std::fs::create_dir_all(td.root.join(name)).expect("mk");
+        // Explicit, strictly ordered mtimes: dirs born in one syscall burst
+        // tie on the clock, and a tie leaves the order to readdir — which
+        // under a loaded parallel run really did flip apple/apricot. The
+        // iteration order below IS the visible order the assertions read.
+        for (age, name) in ["apple", "banana", "apricot"].iter().enumerate() {
+            let dir = td.root.join(name);
+            std::fs::create_dir_all(&dir).expect("mk");
+            std::fs::File::open(&dir)
+                .expect("open filter fixture dir")
+                .set_times(std::fs::FileTimes::new().set_modified(
+                    std::time::UNIX_EPOCH + std::time::Duration::from_secs(100 - age as u64),
+                ))
+                .expect("set filter fixture mtime");
         }
         let trail = crate::fm::trail::TrailState::new(&td.root);
         let mut snaps = crate::fm::trail_snapshots::TrailSnapshots::new(false);
