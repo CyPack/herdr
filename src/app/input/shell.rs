@@ -310,8 +310,17 @@ impl AppState {
     /// TYPED stage authority AND live Files domain state, so a divergent
     /// legacy boolean can never grant keyboard focus to a hidden surface.
     pub(crate) fn shell_key_input_owner(&self) -> ShellInputOwner {
-        let files_surface_focused = self.stage.surface_view()
+        // TP-SBS-FOCUS-01: Files owns the keyboard on its full stage, and in
+        // the right half of a split whose focus the person clicked over —
+        // both gated on live Files domain state, so a divergent boolean can
+        // never grant keys to a hidden surface.
+        let files_beside_focused = self.files_beside_active()
+            && self
+                .side_by_side
+                .is_some_and(|sbs| sbs.focus == crate::app::state::SideBySideFocus::Right);
+        let files_surface_focused = (self.stage.surface_view()
             == crate::ui::surface_host::StageSurfaceView::NativeFiles
+            || files_beside_focused)
             && self.file_manager.is_some();
         route_shell_input(ShellInputRouteContext {
             topmost_overlay: self.blocking_overlay_active(),

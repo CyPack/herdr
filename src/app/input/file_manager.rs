@@ -1552,6 +1552,13 @@ impl App {
         if !in_center {
             return FileManagerMouseDispatch::NotHandled;
         }
+        // TP-SBS-FOCUS-01: a press inside the Files half claims the keyboard
+        // for it — mouse-first: the half you click is the half you type into.
+        if self.state.files_beside_active() && matches!(mouse.kind, MouseEventKind::Down(_)) {
+            if let Some(sbs) = self.state.side_by_side.as_mut() {
+                sbs.focus = crate::app::state::SideBySideFocus::Right;
+            }
+        }
 
         let active_files_generation = self.state.stage.active_instance_generation();
         let locations = self.state.view.file_manager_locations.clone();
@@ -3014,6 +3021,100 @@ command = ["inspect"]
     // cursor exactly as it does on the full-stage surface. The center gate
     // has to follow the projected right surface — the shrunken terminal half
     // no longer contains any Files geometry.
+    // TP-SBS-FOCUS-01: mouse-first focus — the half you click is the half
+    // you type into. A press in the Files half hands the keyboard to Files
+    // (the router resolves FocusedComponent and a j actually moves the
+    // cursor); a press back in the terminal half returns it, and the very
+    // same key goes back to being none of Files' business.
+    #[test]
+    fn clicking_a_half_moves_the_keyboard_with_it() {
+        let td = TempDir::new("fm-beside-key-focus");
+        td.file("00.txt");
+        td.file("01.txt");
+        td.file("02.txt");
+        let mut app = super::super::app_for_mouse_test();
+        app.state.workspaces = vec![crate::workspace::Workspace::test_new("left")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state
+            .try_open_file_manager_with(|_| Some(FmState::new(&td.root)))
+            .expect("Files activation");
+        app.state.show_terminal_workspace();
+        app.state.enter_files_beside();
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        compute_view(&mut app.state, Rect::new(0, 0, 120, 30));
+
+        // Entering the split must not steal the keyboard from the terminal.
+        assert_eq!(
+            app.state.side_by_side.expect("split").focus,
+            crate::app::state::SideBySideFocus::Left
+        );
+        assert!(
+            !matches!(
+                app.state.shell_key_input_owner(),
+                crate::app::input::shell::ShellInputOwner::FocusedComponent
+            ),
+            "the terminal half keeps the keys until Files is clicked"
+        );
+
+        let target = app
+            .state
+            .view
+            .file_manager_row_areas
+            .first()
+            .expect("a projected Files row")
+            .clone();
+        app.handle_mouse(mouse(
+            crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            target.rect.x + 1,
+            target.rect.y,
+        ));
+        assert_eq!(
+            app.state.side_by_side.expect("split").focus,
+            crate::app::state::SideBySideFocus::Right,
+            "a press in the Files half claims the keyboard"
+        );
+        assert!(
+            matches!(
+                app.state.shell_key_input_owner(),
+                crate::app::input::shell::ShellInputOwner::FocusedComponent
+            ),
+            "the router hands keys to the focused Files half"
+        );
+
+        // And the keys actually work: the product byte road delivers a
+        // Down arrow and the Files cursor moves.
+        let before = app.state.file_manager.as_ref().expect("open FM").cursor;
+        app.route_client_input(b"\x1b[B".to_vec());
+        let after = app.state.file_manager.as_ref().expect("open FM").cursor;
+        assert_ne!(
+            before,
+            after,
+            "Down moves the Files cursor while focused (mode={:?} rail_focus={:?} owner={:?})",
+            app.state.mode,
+            app.state.file_manager_locations.focus,
+            app.state.shell_key_input_owner()
+        );
+
+        // Clicking back into the terminal half returns the keyboard.
+        let terminal = app.state.view.terminal_area;
+        app.handle_mouse(mouse(
+            crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            terminal.x + 2,
+            terminal.y + 2,
+        ));
+        assert_eq!(
+            app.state.side_by_side.expect("split").focus,
+            crate::app::state::SideBySideFocus::Left,
+            "a press in the terminal half takes the keyboard back"
+        );
+        assert!(!matches!(
+            app.state.shell_key_input_owner(),
+            crate::app::input::shell::ShellInputOwner::FocusedComponent
+        ));
+    }
+
     #[test]
     fn a_click_in_the_right_half_moves_the_files_cursor() {
         let td = TempDir::new("fm3-beside-click");

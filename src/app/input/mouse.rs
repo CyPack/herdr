@@ -1255,6 +1255,11 @@ impl AppState {
                     if self.mode != Mode::Terminal {
                         self.mode = Mode::Terminal;
                     }
+                    // TP-SBS-FOCUS-01: clicking back into the terminal half
+                    // returns the keyboard to it.
+                    if let Some(sbs) = self.side_by_side.as_mut() {
+                        sbs.focus = crate::app::state::SideBySideFocus::Left;
+                    }
 
                     if self.forward_pane_mouse_button(terminal_runtimes, &info, mouse) {
                         self.selection = None;
@@ -4299,6 +4304,7 @@ mod tests {
         app.state.side_by_side = Some(crate::app::state::SideBySideView {
             right: crate::app::state::SideBySideRight::Workspace(1),
             ratio_percent: 50,
+            focus: Default::default(),
         });
         crate::ui::compute_view(&mut app.state, ratatui::layout::Rect::new(0, 0, 120, 30));
         app

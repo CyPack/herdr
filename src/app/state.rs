@@ -1851,11 +1851,27 @@ pub enum SideBySideRight {
     Files,
 }
 
+/// Which half of a side-by-side stage owns the keyboard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SideBySideFocus {
+    /// The left half — the terminal. The default: entering the split must
+    /// not steal the keyboard from the pane the person was typing into.
+    #[default]
+    Left,
+    /// The right half — the beside surface (Files, or the partner
+    /// workspace's pane).
+    Right,
+}
+
 /// One side-by-side pairing: what rides shotgun and how the stage is split.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SideBySideView {
     pub right: SideBySideRight,
     pub ratio_percent: u8,
+    /// TP-SBS-FOCUS-01: keyboard focus follows the half the person last
+    /// clicked. Dies with the split, so leaving the mode can never strand
+    /// the keyboard on a surface that no longer exists.
+    pub focus: SideBySideFocus,
 }
 
 /// The computed right half of a side-by-side stage. No derives: `PaneInfo`
@@ -4401,6 +4417,7 @@ impl AppState {
         self.side_by_side = Some(SideBySideView {
             right: SideBySideRight::Workspace(right),
             ratio_percent: 50,
+            focus: Default::default(),
         });
         true
     }
@@ -4417,6 +4434,7 @@ impl AppState {
         self.side_by_side = Some(SideBySideView {
             right: SideBySideRight::Files,
             ratio_percent: 50,
+            focus: Default::default(),
         });
     }
 

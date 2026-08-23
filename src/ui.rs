@@ -3393,6 +3393,7 @@ mod tests {
         app.side_by_side = Some(crate::app::state::SideBySideView {
             right: crate::app::state::SideBySideRight::Files,
             ratio_percent: 50,
+            focus: Default::default(),
         });
 
         compute_view(&mut app, Rect::new(0, 0, 120, 30));
@@ -3510,6 +3511,7 @@ mod tests {
         app.side_by_side = Some(crate::app::state::SideBySideView {
             right: crate::app::state::SideBySideRight::Workspace(1),
             ratio_percent: 20,
+            focus: Default::default(),
         });
         compute_view(&mut app, Rect::new(0, 0, 120, 30));
         let narrow = app
@@ -3520,6 +3522,7 @@ mod tests {
         app.side_by_side = Some(crate::app::state::SideBySideView {
             right: crate::app::state::SideBySideRight::Workspace(1),
             ratio_percent: 80,
+            focus: Default::default(),
         });
         compute_view(&mut app, Rect::new(0, 0, 120, 30));
         let wide = app.view.sbs_divider_rect.expect("still split");
@@ -3554,6 +3557,7 @@ mod tests {
         app.side_by_side = Some(crate::app::state::SideBySideView {
             right: crate::app::state::SideBySideRight::Workspace(7),
             ratio_percent: 50,
+            focus: Default::default(),
         });
         compute_view(&mut app, Rect::new(0, 0, 120, 30));
         assert!(
