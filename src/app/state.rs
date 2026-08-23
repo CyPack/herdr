@@ -1888,6 +1888,9 @@ pub struct ViewState {
     /// Laid-out rows for the Projects tab (project headers + chat sessions).
     /// Empty on every non-Projects tab and when the sidebar is collapsed.
     pub project_row_areas: Vec<ProjectRowArea>,
+    /// The `projects_sessions_generation` these `project_row_areas` were
+    /// laid out against. A click only counts when it still matches.
+    pub project_rows_generation: u64,
     /// Complete AppDock entry targets for the current frame. Empty whenever
     /// the live shell projects no dock region.
     pub app_dock_entry_areas: Vec<crate::ui::app_dock::AppDockEntryArea>,
@@ -3963,6 +3966,14 @@ pub struct AppState {
     /// Cached chat sessions per pinned project, aligned with `projects_pinned`.
     /// Filled by `refresh_project_sessions*`; read-only during render.
     pub projects_sessions: Vec<ProjectSessions>,
+    /// Bumped every time `projects_sessions` is rewritten by the session
+    /// poll. `compute_view` snapshots it next to `project_row_areas`, and the
+    /// Projects-tab click path refuses a hit whose rects were laid out
+    /// against an older list — the same stale-projection guard
+    /// `resident_files_generation` gives the Files surface. Without it a
+    /// click lands on whatever chat *now* occupies the stale index, which is
+    /// how a chat opened in the wrong project directory.
+    pub projects_sessions_generation: u64,
     /// Live click-bridge tab↔session bindings (preview↔tab sync), newest
     /// first. Refreshed by the runtime's fingerprint poll; shared runtime
     /// fact, read-only for any presentation layer.
@@ -4953,6 +4964,7 @@ impl AppState {
                 }
             })
             .collect();
+        self.projects_sessions_generation = self.projects_sessions_generation.wrapping_add(1);
     }
 
     /// The (workspace, tab) already wired to Claude Code session
@@ -5294,6 +5306,7 @@ impl AppState {
             space_icons: Default::default(),
             projects_pinned: Vec::new(),
             projects_sessions: Vec::new(),
+            projects_sessions_generation: 0,
             preview_bindings: Vec::new(),
             preview_placement: crate::config::PreviewPlacement::default(),
             collapsed_project_paths: std::collections::HashSet::new(),
@@ -5363,6 +5376,7 @@ impl AppState {
                 workspace_empty_module_areas: Vec::new(),
                 sidebar_tab_hit_areas: Vec::new(),
                 project_row_areas: Vec::new(),
+                project_rows_generation: 0,
                 app_dock_entry_areas: Vec::new(),
                 file_manager_locations: Default::default(),
                 file_manager_miller: Default::default(),

@@ -315,11 +315,21 @@ impl AppState {
     }
 
     /// The Projects-tab row (if any) whose laid-out rect contains `(col, row)`.
+    ///
+    /// TP-PROJTAB-01: refuses the hit entirely when the session poll rewrote
+    /// `projects_sessions` after these rects were laid out. The rects carry
+    /// indices into the list they were computed against; resolving them
+    /// against a newer list opens whichever chat *now* holds the index — a
+    /// chat in the wrong project directory. A no-op click is honest; the next
+    /// frame lays out fresh rects.
     pub(super) fn project_row_kind_at(
         &self,
         col: u16,
         row: u16,
     ) -> Option<crate::app::state::ProjectRowKind> {
+        if self.view.project_rows_generation != self.projects_sessions_generation {
+            return None;
+        }
         self.view
             .project_row_areas
             .iter()
@@ -3713,6 +3723,62 @@ mod tests {
         );
         // A chat click must not disturb the project's collapse state.
         assert!(app.state.collapsed_project_paths.is_empty());
+    }
+
+    // TP-PROJTAB-01: a click resolved against stale row rects must not act.
+    // The session poll rewrites the chat list newest-first while the laid-out
+    // rects still describe the old order; acting on the stale index is
+    // exactly how a chat resumed in the wrong project directory. The guard
+    // turns that click into a no-op instead — the next frame lays out fresh
+    // rects and the next click means what the user sees.
+    #[test]
+    fn a_stale_projects_click_is_inert_after_the_list_shifts() {
+        let mut app = projects_tab_app(vec![test_chat("sess-1"), test_chat("sess-2")]);
+        let rect = project_row_rect(&app, |kind| {
+            matches!(
+                kind,
+                crate::app::state::ProjectRowKind::Chat {
+                    proj_idx: 0,
+                    chat_idx: 1
+                }
+            )
+        });
+
+        // The poll lands between two computes: a fresh chat takes the top
+        // slot and every row shifts one down under the unchanged rects.
+        app.state.projects_sessions[0]
+            .sessions
+            .insert(0, test_chat("sess-0"));
+        app.state.projects_sessions[0].total_count += 1;
+        app.state.projects_sessions_generation =
+            app.state.projects_sessions_generation.wrapping_add(1);
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            rect.x + 2,
+            rect.y,
+        ));
+
+        assert_eq!(
+            app.state.request_project_chat_tab, None,
+            "a stale click must not resume whichever neighbour now holds the index"
+        );
+    }
+
+    // TP-PROJTAB-01: the guard's other half — the poll writer actually bumps
+    // the generation, so a stale projection is *detectable* at all.
+    #[test]
+    fn the_session_poll_bumps_the_projects_generation() {
+        let mut app = projects_tab_app(Vec::new());
+        let before = app.state.projects_sessions_generation;
+        // `projects_pinned` is empty here, so the refresh never touches
+        // the directory — any existing path serves as the projects root.
+        app.state.refresh_project_sessions_in(&std::env::temp_dir());
+        assert_eq!(
+            app.state.projects_sessions_generation,
+            before.wrapping_add(1),
+            "every poll rewrite must move the generation"
+        );
     }
 
     // T5a-4: clicking the "(no chats)" row starts a NEW chat in that project
