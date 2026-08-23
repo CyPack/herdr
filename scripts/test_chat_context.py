@@ -371,6 +371,65 @@ class ClassifyTest(unittest.TestCase):
         self.assertEqual(seats[0]["key"], alpha)  # plain ledger dir key
         self.assertEqual(seats[0]["basis"], "repo")
 
+    def test_glob_mechanics_do_not_feed_the_lexicon(self):
+        # Measured on the live corpus: pattern tokens ("sor-inventory" → "sor")
+        # made one module swallow every chat naming a shared domain word.
+        # The lexicon reads human names (label/key) and the curated dictionary,
+        # never glob patterns.
+        facts = self._base_facts(title="inventory of my garden plants")
+        self.assertEqual(cc.classify(facts, self.rules), [])
+
+    def test_dir_hint_is_deterministic_evidence(self):
+        # A known non-repo working directory (a pipeline workspace) seats the
+        # chat on its module without any keyword — measured: the voorinfra-api
+        # task dir carried 19 of the last 120 home chats.
+        hint_dir = os.path.join(self.home, "tasks", "alpha-upload-api")
+        rules = cc.load_space_rules(
+            _rules_toml(self.td.name),
+            home=self.home,
+            dir_hints={hint_dir: "alpha:upload"},
+        )
+        facts = self._base_facts(
+            title="",
+            cwd_runs=[
+                {"dir": self.home, "weight": 2, "first_ts": "", "last_ts": ""},
+                {"dir": hint_dir, "weight": 12, "first_ts": "", "last_ts": ""},
+            ],
+        )
+        seats = cc.classify(facts, rules)
+        self.assertTrue(seats)
+        self.assertEqual(seats[0]["key"], "module:alpha:upload")
+        self.assertEqual(seats[0]["basis"], "dir-hint")
+        self.assertGreaterEqual(seats[0]["conf"], 0.8)
+
+    def test_extra_lexicon_extends_a_module_vocabulary(self):
+        rules = cc.load_space_rules(
+            _rules_toml(self.td.name),
+            home=self.home,
+            extra_lexicon={"alpha:upload": ["portal", "yukle"]},
+        )
+        facts = self._base_facts(title="portal yukle isini bitir")
+        seats = cc.classify(facts, rules)
+        self.assertTrue(seats)
+        self.assertEqual(seats[0]["key"], "module:alpha:upload")
+
+    def test_corpus_generic_words_never_seat(self):
+        # "agent", "claude", "test" appear in half the corpus — a rule whose
+        # only overlap is such a word must not claim the chat.
+        cfg = Path(self.td.name) / "agents.toml"
+        cfg.write_text(
+            """
+[[spaces.split]]
+repo = "~/projects/alpha"
+match = ["codex/*"]
+key = "alpha:agents"
+label = "Agent Dalları"
+"""
+        )
+        rules = cc.load_space_rules(str(cfg), home=self.home)
+        facts = self._base_facts(title="claude agent hakkinda genel soru test")
+        self.assertEqual(cc.classify(facts, rules), [])
+
 
 class PlanTest(unittest.TestCase):
     """T-A10 + K2c — plan emission, dry-run, per-target cap."""

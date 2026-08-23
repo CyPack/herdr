@@ -431,17 +431,71 @@ _WORD_RE = re.compile(r"[a-z0-9]{3,}")
 
 # Tokens too generic to seat a chat on their own: they appear in almost every
 # prompt in this corpus and would turn the lexicon layer into a lottery.
+# "agent"/"claude"/"codex" earned their place by measurement: the first live
+# dry-run seated 150 chats under the agents bucket on those words alone.
 _STOPWORDS = {
     "the", "and", "for", "with", "this", "that", "les", "der", "die",
     "dosya", "dosyalari", "files", "file", "yap", "yeni", "new", "main",
     "bir", "icin", "gibi", "olarak", "sonra", "once", "module", "modul",
+    "agent", "agents", "claude", "codex", "test", "code", "dallar",
+    "dallari", "genel", "veri", "data", "has",
+    # measured on the live corpus, second calibration pass: "task" seated
+    # methodology chats under Task İzolasyonu, "herdr" seated every herdr
+    # conversation under the web module.
+    "task", "tasks", "taak", "sistem", "system", "continue", "herdr",
+    "proje", "projesi", "web",
+}
+
+# Curated domain vocabulary per live module key — data, not code: the label
+# alone cannot say that "naspan" is OTDR work or "goconnectit" is Euronet.
+# Keys that do not exist in the loaded rules are silently unused.
+DEFAULT_EXTRA_LEXICON: dict[str, list[str]] = {
+    "ccd:t4f": ["t4f", "storing", "productie", "opmerking", "weekly", "taak", "monteur"],
+    "ccd:bamcheck": ["bamcheck"],
+    "ccd:whatsapp": ["whatsapp", "openwa", "evolution", "chatwoot"],
+    "ccd:circet": ["circet", "kast", "lade", "vezel", "miller", "kanban"],
+    "ccd:has": ["hasrapport", "hasfill", "workbench"],
+    "ccd:otdr": ["otdr", "yokogawa", "aq7280", "naspan", "voorspan", "midspan", "sor", "lasse", "marker"],
+    "ccd:co-euronet": [
+        "voorinfra", "euronet", "scu", "goconnectit", "planbord", "planboard",
+        "yukle", "upload", "huisnummer", "postcode", "sor",
+    ],
+    "ccd:co-odc": ["odc"],
+    "ccd:platform": ["ingest", "kraal", "mega", "sse", "multiprofile"],
+    "mnm:sealed": ["sealed", "0023"],
+    "mnm:infra-db": ["supabase", "migration", "veldops", "mnmveldops"],
+    "mnm:mobil": ["pwa", "serwist", "offline"],
+    "mnm:admin": ["admin"],
+    "herdr:termius": ["termius", "iphone", "mobil"],
+}
+
+# Known non-repo working directories that ARE module work — deterministic
+# evidence, measured on the corpus (the voorinfra-api task dir alone carried
+# 19 of the last 120 home chats).
+DEFAULT_DIR_HINTS: dict[str, str] = {
+    "~/projects/scrapling-workspace/tasks/voorinfra-api": "ccd:co-euronet",
+    "~/scripts/voorinfra-drive-sync": "ccd:co-euronet",
+    "~/projects/sor-dosyalari-cok-hassas-lasse-lar": "ccd:otdr",
+    "~/projects/sor-dosyasi-duzeltme": "ccd:otdr",
 }
 
 
 class SpaceRules:
-    def __init__(self, splits: list[dict], projects: list[dict]):
+    def __init__(
+        self,
+        splits: list[dict],
+        projects: list[dict],
+        dir_hints: dict[str, str] | None = None,
+        extra_lexicon: dict[str, list[str]] | None = None,
+    ):
         self.splits = splits
         self.projects = projects
+        self.by_key = {r["key"]: r for r in splits}
+        self.extra_lexicon = extra_lexicon or {}
+        # only hints whose target rule actually exists can seat a chat
+        self.dir_hints = {
+            d: k for d, k in (dir_hints or {}).items() if k in self.by_key
+        }
         # repo dir -> rules in declaration order (first match wins)
         self.by_repo: dict[str, list[dict]] = defaultdict(list)
         for rule in splits:
@@ -477,12 +531,14 @@ class SpaceRules:
         return None
 
 
-def _rule_tokens(rule: dict) -> set[str]:
+def _rule_tokens(rule: dict, extra_lexicon: dict[str, list[str]]) -> set[str]:
+    """Human names only — label, key and the curated dictionary. Never glob
+    patterns: measured live, "*sor-inventory*" leaking the token "sor" made
+    one module swallow every chat naming a shared domain word."""
     tokens: set[str] = set()
     for source in [rule.get("label") or "", rule.get("key") or ""]:
         tokens |= set(_WORD_RE.findall(source.lower()))
-    for pat in rule.get("patterns", []):
-        tokens |= set(_WORD_RE.findall(pat.lower().replace("*", " ")))
+    tokens |= {t.lower() for t in extra_lexicon.get(rule.get("key") or "", [])}
     return tokens - _STOPWORDS
 
 
@@ -490,6 +546,8 @@ def load_space_rules(
     config_path: str = DEFAULT_CONFIG,
     managed_path: str | None = None,
     home: str | None = None,
+    dir_hints: dict[str, str] | None = None,
+    extra_lexicon: dict[str, list[str]] | None = None,
 ) -> SpaceRules:
     home = home or os.path.expanduser("~")
 
@@ -533,7 +591,12 @@ def load_space_rules(
                     "repos": [_expand(r) for r in raw.get("repos") or []],
                 }
             )
-    return SpaceRules(splits, projects)
+    hints = {
+        _expand(d): k
+        for d, k in (dir_hints if dir_hints is not None else DEFAULT_DIR_HINTS).items()
+    }
+    lexicon = extra_lexicon if extra_lexicon is not None else DEFAULT_EXTRA_LEXICON
+    return SpaceRules(splits, projects, dir_hints=hints, extra_lexicon=lexicon)
 
 
 # ---------------------------------------------------------------------------
@@ -557,79 +620,133 @@ def _branch_candidates(facts: dict, rules: SpaceRules, repo: str) -> list[str]:
     return names
 
 
-def _lexicon_hits(text: str, rule: dict) -> int:
+def _lexicon_hits(text: str, rule: dict, extra_lexicon: dict[str, list[str]]) -> int:
     words = set(_WORD_RE.findall(text.lower()))
-    return len(words & _rule_tokens(rule))
+    return len(words & _rule_tokens(rule, extra_lexicon))
 
 
 def classify(facts: dict, rules: SpaceRules) -> list[dict]:
-    """Return seat candidates sorted by confidence; [] means stay open."""
+    """Return seat candidates sorted by evidence weight; [] means stay open.
+
+    Layer order (K3): deterministic first — the chat actually worked in a
+    repo checkout (cwd/commit evidence) or in a known hinted directory —
+    then the lexicon, then open. A wrong seat is worse than no seat.
+    """
     home = os.path.expanduser("~")
     repo_weight: dict[str, int] = defaultdict(int)
+    hint_weight: dict[str, int] = defaultdict(int)
     for run in facts.get("cwd_runs", []):
         d = run["dir"]
         if d.rstrip("/") == home:
             continue
-        repo = rules.owning_repo(d)
-        if repo:
-            repo_weight[repo] += run["weight"]
+        for hint_dir, key in rules.dir_hints.items():
+            if d == hint_dir or d.startswith(hint_dir + os.sep):
+                hint_weight[key] += run["weight"]
+                break
+        else:
+            repo = rules.owning_repo(d)
+            if repo:
+                repo_weight[repo] += run["weight"]
     for c in facts.get("commits", []):
         repo = rules.owning_repo(c.get("repo") or "")
         if repo:
             repo_weight[repo] += 20
 
     text = " ".join([facts.get("title") or "", facts.get("last_prompt") or ""])
-    seats: list[dict] = []
+    weighted: list[tuple[int, dict]] = []
 
-    for repo, weight in sorted(repo_weight.items(), key=lambda kv: -kv[1]):
+    for key, weight in hint_weight.items():
+        if weight < _REPO_DOMINANCE_MIN_WEIGHT:
+            continue
+        rule = rules.by_key[key]
+        weighted.append(
+            (
+                weight,
+                {
+                    "key": MODULE_KEY_PREFIX + key,
+                    "dir": rule["repo"],
+                    "conf": 0.85,
+                    "basis": "dir-hint",
+                    "label": rule["label"],
+                },
+            )
+        )
+
+    for repo, weight in repo_weight.items():
         if weight < _REPO_DOMINANCE_MIN_WEIGHT:
             continue
         candidates = _branch_candidates(facts, rules, repo)
         rule = rules.match_module(repo, candidates) if candidates else None
         if rule:
             conf = 0.9 if any(c.get("sha") for c in facts.get("commits", [])) else 0.85
-            seats.append(
-                {
-                    "key": MODULE_KEY_PREFIX + rule["key"],
-                    "dir": rule["repo"],
-                    "conf": conf,
-                    "basis": "repo+branch",
-                    "label": rule["label"],
-                }
+            weighted.append(
+                (
+                    weight,
+                    {
+                        "key": MODULE_KEY_PREFIX + rule["key"],
+                        "dir": rule["repo"],
+                        "conf": conf,
+                        "basis": "repo+branch",
+                        "label": rule["label"],
+                    },
+                )
             )
             continue
         # lexicon restricted to this repo's own rules
         best, best_hits = None, 0
         for r in rules.by_repo.get(repo, []):
-            hits = _lexicon_hits(text, r)
+            hits = _lexicon_hits(text, r, rules.extra_lexicon)
             if hits > best_hits:
                 best, best_hits = r, hits
         if best:
-            seats.append(
-                {
-                    "key": MODULE_KEY_PREFIX + best["key"],
-                    "dir": best["repo"],
-                    "conf": 0.7,
-                    "basis": "repo+lexicon",
-                    "label": best["label"],
-                }
+            weighted.append(
+                (
+                    weight,
+                    {
+                        "key": MODULE_KEY_PREFIX + best["key"],
+                        "dir": best["repo"],
+                        "conf": 0.7,
+                        "basis": "repo+lexicon",
+                        "label": best["label"],
+                    },
+                )
             )
         else:
-            seats.append(
-                {"key": repo, "dir": repo, "conf": 0.75, "basis": "repo", "label": os.path.basename(repo)}
+            weighted.append(
+                (
+                    weight,
+                    {
+                        "key": repo,
+                        "dir": repo,
+                        "conf": 0.75,
+                        "basis": "repo",
+                        "label": os.path.basename(repo),
+                    },
+                )
             )
 
-    if seats:
+    if weighted:
+        weighted.sort(key=lambda wv: -wv[0])
+        seats, seen = [], set()
+        for _, seat in weighted:
+            if seat["key"] in seen:
+                continue
+            seen.add(seat["key"])
+            seats.append(seat)
         return seats[:3]
 
     # Pure-home chat: lexicon across every rule.
     best, best_hits = None, 0
     for rule in rules.splits:
-        hits = _lexicon_hits(text, rule)
+        hits = _lexicon_hits(text, rule, rules.extra_lexicon)
         if hits > best_hits:
             best, best_hits = rule, hits
     if best and best_hits >= 1:
-        conf = min(0.6 + 0.05 * (best_hits - 1), 0.75)
+        # One shared word is a hunch (0.60 — below the apply threshold);
+        # two independent hits are a claim (0.68). The applied plan defaults
+        # to min-conf 0.65, so single-word seats surface in reports but are
+        # never written without an explicit lower threshold.
+        conf = 0.6 if best_hits == 1 else min(0.63 + 0.05 * (best_hits - 1), 0.75)
         return [
             {
                 "key": MODULE_KEY_PREFIX + best["key"],
@@ -789,7 +906,7 @@ def main(argv=None) -> int:
     sp.add_argument("--slugs", nargs="*", default=None)
 
     pp = sub.add_parser("plan", help="seat-plan üret")
-    pp.add_argument("--min-conf", type=float, default=0.6)
+    pp.add_argument("--min-conf", type=float, default=0.65)
     pp.add_argument("--cap", type=int, default=150)
     pp.add_argument("--out", default=os.path.expanduser("~/.cache/herdr-chat-context/seat-plan.json"))
     pp.add_argument("--dry-run", action="store_true")
