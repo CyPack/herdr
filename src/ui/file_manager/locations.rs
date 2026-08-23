@@ -354,7 +354,14 @@ pub(crate) fn render_file_manager_locations(
     frame: &mut Frame,
     view: &FileManagerLocationsView,
 ) {
-    let active_generation = app.stage.active_instance_generation();
+    // TP-SBS-FILES-02: the generation the SCREEN is showing. Asking the
+    // STAGE's instead made this return early while Files rode the right half
+    // — the rail went unpainted while the layout kept reserving its columns,
+    // so every row rectangle sat ~21 columns right of the name a person sees
+    // and every press landed in empty space. The surface was drawn and dead
+    // to the mouse; one authority for both sides is what makes the geometry
+    // and the paint agree.
+    let active_generation = app.on_screen_files_generation();
     if view.files_generation != active_generation
         || view.model_revision != app.file_manager_locations_model.revision()
     {

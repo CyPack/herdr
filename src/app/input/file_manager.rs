@@ -163,7 +163,8 @@ fn stage_location_navigation(
     {
         return false;
     }
-    let files_generation = state.stage.active_instance_generation();
+    // TP-SBS-FILES-02: on-screen authority, so the rail answers on the right half too.
+    let files_generation = state.on_screen_files_generation();
     let model_revision = state.file_manager_locations_model.revision();
     if intent == FileManagerLocationNavigationIntent::EnterTrail
         && files_generation.is_some_and(|files_generation| {
@@ -263,7 +264,7 @@ fn handle_locations_rail_key(
 
 fn focus_locations_from_trail_root(state: &mut AppState) -> bool {
     let view = &state.view.file_manager_locations;
-    let frame_is_live = view.files_generation == state.stage.active_instance_generation()
+    let frame_is_live = view.files_generation == state.on_screen_files_generation()
         && view.model_revision == state.file_manager_locations_model.revision();
     let has_wide_rail = view.layout.rail.is_some();
     let has_compact_action = view.locations_action_area.is_some();
@@ -1262,7 +1263,7 @@ impl App {
         if max_start == 0 {
             return false;
         }
-        let Some(files_generation) = self.state.stage.active_instance_generation() else {
+        let Some(files_generation) = self.state.on_screen_files_generation() else {
             return false;
         };
         // The same detent filter the cursor road uses: this host reports one
@@ -1316,7 +1317,7 @@ impl App {
         delta: isize,
         now: std::time::Instant,
     ) -> bool {
-        let Some(files_generation) = self.state.stage.active_instance_generation() else {
+        let Some(files_generation) = self.state.on_screen_files_generation() else {
             return false;
         };
         let direction = if delta < 0 { -1 } else { 1 };
@@ -1560,7 +1561,10 @@ impl App {
             }
         }
 
-        let active_files_generation = self.state.stage.active_instance_generation();
+        // TP-SBS-FILES-02: the generation the SCREEN is showing, not the
+        // stage's own — while Files rides the right half the stage belongs to
+        // the terminal, and comparing against it dropped every press.
+        let active_files_generation = self.state.on_screen_files_generation();
         let locations = self.state.view.file_manager_locations.clone();
         let locations_frame_is_live = locations.files_generation == active_files_generation
             && locations.model_revision == self.state.file_manager_locations_model.revision();

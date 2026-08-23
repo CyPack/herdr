@@ -213,6 +213,19 @@ class HeadfulSession:
         self.send(f"\x1b[<0;{col + 1};{row + 1}m".encode())
         self.settle(settle)
 
+    def right_click(self, row: int, col: int, *, settle: float = 5.0) -> None:
+        """A real secondary press and release at (row, col), SGR-encoded.
+
+        Button 2 is the right button in SGR; the release carries the same
+        button code. Sending both halves matters more here than for the left:
+        a press without its release leaves the app believing a secondary drag
+        is still in flight, and every later gesture measures that instead.
+        """
+        self.send(f"\x1b[<2;{col + 1};{row + 1}M".encode())
+        time.sleep(0.15)
+        self.send(f"\x1b[<2;{col + 1};{row + 1}m".encode())
+        self.settle(settle)
+
     def reload_config_via_cli(self) -> subprocess.CompletedProcess:
         """Reload through the same command a person would type."""
         return subprocess.run(

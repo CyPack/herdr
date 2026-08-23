@@ -647,6 +647,27 @@ impl AppState {
             .map(|instance| instance.generation())
     }
 
+    /// The generation of the Files surface THIS FRAME PUT ON SCREEN — the
+    /// single authority both the render and the pointer must ask.
+    ///
+    /// TP-SBS-FILES-02: they used to ask different questions. The render
+    /// projected the right half from `resident_files_generation`, while every
+    /// pointer gate compared row geometry against
+    /// `stage.active_instance_generation` — which, while Files rides the
+    /// right half, belongs to the TERMINAL that owns the stage. The stamps
+    /// could therefore never match, so every press on a file row was dropped
+    /// as stale geometry: the surface was drawn, and dead to the mouse.
+    /// One question, one answer, both sides.
+    pub(crate) fn on_screen_files_generation(&self) -> Option<u32> {
+        if self.stage.surface_view() == crate::ui::surface_host::StageSurfaceView::NativeFiles {
+            return self.stage.active_instance_generation();
+        }
+        if self.files_beside_active() {
+            return self.resident_files_generation();
+        }
+        None
+    }
+
     /// Drop the Files surface's projected stage geometry.
     ///
     /// Shared by the close path and the tab-switch path: in both cases the

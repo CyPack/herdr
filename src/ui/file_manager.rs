@@ -785,8 +785,21 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
         );
     }
 
-    let live_files_view = area == app.view.terminal_area
-        && app.stage.surface_view() == crate::ui::surface_host::StageSurfaceView::NativeFiles;
+    // TP-SBS-FILES-02: "live" means THIS frame projected the geometry for the
+    // rectangle being painted — true on the full stage, and true for the right
+    // half while Files rides it. Asking only about the stage made the beside
+    // half fall back to a second, rail-less projection while every hit
+    // rectangle still came from the projected (rail-reserving) one: the names
+    // were painted ~21 columns left of the rectangles that answer presses, so
+    // the surface was drawn and dead to the mouse.
+    let live_files_view = (area == app.view.terminal_area
+        && app.stage.surface_view() == crate::ui::surface_host::StageSurfaceView::NativeFiles)
+        || (app.files_beside_active()
+            && app
+                .view
+                .right_surface
+                .as_ref()
+                .is_some_and(|right| right.area == area));
     let locations = live_files_view.then_some(&app.view.file_manager_locations);
     if let Some(locations) = locations {
         locations::render_file_manager_locations(app, frame, locations);

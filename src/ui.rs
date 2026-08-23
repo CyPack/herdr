@@ -990,13 +990,9 @@ fn sync_file_manager_view(app: &AppState, snapshot: &TrailViewSnapshot) -> FileM
 /// Files owns the stage, the resident (backgrounded) one when Files rides
 /// the right half (TP-SBS-FILES-01). `None` hides every Files projection.
 fn files_projection_generation(app: &AppState) -> Option<u32> {
-    if app.stage.surface_view() == surface_host::StageSurfaceView::NativeFiles {
-        return app.stage.active_instance_generation();
-    }
-    if app.files_beside_active() {
-        return app.resident_files_generation();
-    }
-    None
+    // TP-SBS-FILES-02: one authority, asked by both the render and the
+    // pointer — see `AppState::on_screen_files_generation`.
+    app.on_screen_files_generation()
 }
 
 fn sync_miller_view(app: &mut AppState, viewport_area: Rect) -> MillerViewSnapshot {
