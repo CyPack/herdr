@@ -1057,6 +1057,40 @@ never into your own file. Only the fields you actually changed are written,
 and a field written there overrides the same field in your config; delete a
 line from it to hand that field back to your own file.
 
+#### Re-aiming one section by id
+
+A section can carry an `id` — a short name of your own choosing — and the
+managed file can then re-aim that one section's press without copying the
+rest of your bar:
+
+```toml
+# config.toml — the section you own
+[[shell.bars.top.sections]]
+kind   = "content"
+id     = "cpu"
+widget = { kind = "meter", metric = "cpu" }
+```
+
+```toml
+# bars.managed.toml — written next to it
+[[shell.bars.top.section_overrides]]
+id     = "cpu"
+action = { kind = "popup", argv = ["btop"], width = "97%", height = "92%" }
+```
+
+Binding is by `id`, not by position: reordering the sections in your own file
+does not silently re-aim a different one. An override naming an id no section
+carries is reported and skipped; an id two sections share is ambiguous, so it
+is reported and left alone rather than guessed at — and an override written
+without an id is set aside the same way. Sections that name no `id` are
+untouched by all of this; the key only exists for the ones you want the
+managed layer to reach.
+
+`section_overrides` also stay out of `Apply to: all bars`: a press aimed at
+*this* bar's `cpu` says nothing about another edge's, so the fan-out carries
+each edge's own overrides through unchanged instead of copying one bar's aim
+onto all of them.
+
 #### Running a plugin action
 
 A section can invoke an installed plugin's action instead of a command line of its own:
