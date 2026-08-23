@@ -375,10 +375,9 @@ pub struct AgentsSidebarConfig {
     /// Optional frame around this section of the left panel.
     pub border: SectionBorderConfig,
     /// `ui.sidebar.agents.passive_color` — the ink a passive agent's name is
-    /// drawn in. `auto` follows the theme's peach: the grey that used to live
-    /// here vanished on a dimmed screen, the same report that recoloured the
-    /// graveyard (TP-AGPANEL-49). Any bar-colour token or `#rrggbb` literal
-    /// names an exact ink instead.
+    /// drawn in. `auto` — the default — is the panel's muted theme tone. Any
+    /// bar-colour token or `#rrggbb` literal names an exact ink instead, and
+    /// a `[[spaces.split]]` rule's own `passive_color` outranks this one.
     pub passive_color: String,
     #[serde(deserialize_with = "deserialize_sidebar_rows")]
     pub rows: AgentSidebarRows,

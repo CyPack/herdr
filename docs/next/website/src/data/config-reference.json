@@ -750,7 +750,7 @@
           "key": "ui.sidebar.agents.passive_color",
           "type": "string",
           "default": "\"auto\"",
-          "description": "The ink a passive agent's name is drawn in. auto follows the theme's peach; any bar-colour token or #rrggbb literal names an exact ink. Never dimmed: dim peach is the closed-agent (ghost) class."
+          "description": "The ink a passive agent's name is drawn in. auto — the default — is the panel's muted theme tone; any bar-colour token or #rrggbb literal names an exact ink, and a [[spaces.split]] rule's own passive_color outranks it. Never dimmed: a dimmed row is the closed-agent (ghost) class."
         },
         {
           "key": "ui.sidebar.agents.row_gap",
