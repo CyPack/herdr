@@ -359,10 +359,13 @@ impl super::App {
     /// display's open browser drive another display's worker.
     ///
     /// TP-SUR-FM-02
+    /// TP-SBS-FILES-03: the surface THIS SCREEN is showing — the full stage
+    /// when Files owns it, the right half when Files rides beside a terminal.
+    /// Asking who owned the STAGE answered `None` for the beside half, and
+    /// every completed read was then thrown away as belonging to a dead
+    /// instance.
     fn active_files_generation(&self) -> Option<u32> {
-        (self.state.stage.surface_view() == crate::ui::surface_host::StageSurfaceView::NativeFiles)
-            .then(|| self.state.stage.active_instance_generation())
-            .flatten()
+        self.state.on_screen_files_generation()
     }
 
     #[cfg(test)]
@@ -1969,5 +1972,43 @@ mod tests {
             Some(target.as_path()),
             "the detail panel follows the focused row, not the activated one"
         );
+    }
+
+    /// TP-SBS-FILES-03: the directory watcher refreshes the beside half too.
+    /// Asking whether Files owned the STAGE made every refresh land on a
+    /// `None` generation and be dropped, so a directory changing on disk went
+    /// unseen for as long as Files rode the right half.
+    #[test]
+    fn the_watcher_refreshes_a_files_surface_riding_the_right_half() {
+        let root = std::env::temp_dir().join(format!(
+            "herdr-watch-beside-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut app = test_app();
+        app.state.workspaces = vec![crate::workspace::Workspace::test_new("left")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&root)))
+            .unwrap();
+        app.state.show_terminal_workspace();
+        app.state.enter_files_beside();
+        assert!(app.state.files_beside_active());
+
+        assert_eq!(
+            app.active_files_generation(),
+            app.state.on_screen_files_generation(),
+            "the watcher follows the surface the screen is showing"
+        );
+        assert!(
+            app.active_files_generation().is_some(),
+            "riding the right half is a way of being on screen"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

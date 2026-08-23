@@ -401,10 +401,10 @@ impl super::App {
     pub(crate) fn sync_file_preview_worker(&mut self) -> bool {
         // This display's Files view: the scheduled work runs inside it.
         // TP-SUR-FM-02
-        let files_generation = (self.state.stage.surface_view()
-            == crate::ui::surface_host::StageSurfaceView::NativeFiles)
-            .then(|| self.state.stage.active_instance_generation())
-            .flatten();
+        // TP-SBS-FILES-03: the surface this screen is showing. Asking who
+        // owned the STAGE queued NOTHING while Files rode the right half, so
+        // the detail panel stayed empty there.
+        let files_generation = self.state.on_screen_files_generation();
         let target = files_generation.and_then(|files_generation| {
             self.state.file_manager.as_ref().and_then(|file_manager| {
                 let selected_path = file_manager.selected()?.path.clone();
@@ -1686,6 +1686,54 @@ mod tests {
             );
             second_wait.check();
             std::thread::yield_now();
+        }
+    }
+
+    /// TP-SBS-FILES-03: the preview worker is scheduled for the beside half.
+    ///
+    /// While the gate asked who owned the STAGE, `sync_file_preview_worker`
+    /// read a `None` generation and queued NOTHING at all: the detail panel
+    /// stayed empty for as long as Files rode the right half. This drives the
+    /// same loop the full-stage proof does, with Files beside a terminal.
+    #[test]
+    fn the_preview_worker_is_scheduled_for_a_files_surface_beside_the_terminal() {
+        let td = TempDir::new("beside-current");
+        std::fs::write(td.root.join("sample.rs"), "pub fn main() {}\n")
+            .expect("write Rust preview fixture");
+        let mut app = test_app();
+        app.state.workspaces = vec![crate::workspace::Workspace::test_new("left")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&td.root)))
+            .expect("Files activation");
+        app.state.show_terminal_workspace();
+        app.state.enter_files_beside();
+        assert!(app.state.files_beside_active(), "the pairing is up");
+        assert!(
+            app.state.on_screen_files_generation().is_some(),
+            "riding the right half IS being on screen"
+        );
+
+        let wait = LoadAwareDeadline::new(5, "the beside half to apply its preview");
+        loop {
+            let _ = app.sync_file_preview_worker();
+            let highlighted =
+                app.state
+                    .file_manager
+                    .as_ref()
+                    .and_then(|state| match &state.preview {
+                        crate::fm::FmPreview::File(crate::fm::FmFilePreview::Text(preview)) => {
+                            preview.highlighted.as_ref()
+                        }
+                        _ => None,
+                    });
+            if let Some(highlighted) = highlighted {
+                assert_eq!(highlighted.syntax_name.as_deref(), Some("Rust"));
+                break;
+            }
+            wait.check();
+            std::thread::sleep(Duration::from_millis(5));
         }
     }
 }

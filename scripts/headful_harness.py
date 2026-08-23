@@ -59,10 +59,16 @@ class HeadfulSession:
         cols: int = 120,
         rows: int = 40,
         root: Path | None = None,
+        cwd: Path | str = "/tmp",
     ) -> None:
         self.binary = binary
         self.cols = cols
         self.rows = rows
+        # Where the session — and therefore the file manager — starts. The
+        # default is the shared temp dir, but a proof that has to SEE its own
+        # fixtures needs a directory nothing else writes to: a crowded listing
+        # scrolls them off screen and the assertion reads as a product bug.
+        self.cwd = str(cwd)
         self._root = root or Path(tempfile.mkdtemp(prefix="herdr-headful-"))
         self._config_text = config_text
         self._proc: subprocess.Popen | None = None
@@ -120,7 +126,7 @@ class HeadfulSession:
             stdout=slave,
             stderr=slave,
             env=self._env(),
-            cwd="/tmp",
+            cwd=self.cwd,
             preexec_fn=os.setsid,
         )
         os.close(slave)

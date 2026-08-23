@@ -13,7 +13,6 @@ use crate::app::state::{
 };
 use crate::app::FileManagerLocationsFocus;
 use crate::fm::miller::MILLER_COLUMN_MIN_WIDTH;
-use crate::ui::surface_host::StageSurfaceView;
 
 pub(crate) const WIDE_RAIL_TARGET: u16 = 24;
 pub(crate) const WIDE_RAIL_MIN: u16 = 18;
@@ -225,13 +224,9 @@ pub(crate) fn project_file_manager_locations_view(
 ) -> FileManagerLocationsView {
     // TP-SBS-FILES-01: riding the right half is a way of being on screen —
     // the resident (backgrounded) instance projects there.
-    let files_generation = if app.stage.surface_view() == StageSurfaceView::NativeFiles {
-        app.stage.active_instance_generation()
-    } else if app.files_beside_active() {
-        app.resident_files_generation()
-    } else {
-        None
-    };
+    // TP-SBS-FILES-03: that ladder has ONE owner now, so no consumer can
+    // drift back to asking the stage.
+    let files_generation = app.on_screen_files_generation();
     let Some(files_generation) = files_generation else {
         return FileManagerLocationsView::default();
     };
@@ -298,7 +293,9 @@ fn location_row_line(app: &AppState, item: &FileManagerLocationItem, width: u16)
     if width == 0 {
         return Line::default();
     }
-    let active_generation = app.stage.active_instance_generation();
+    // TP-SBS-FILES-03: one authority for the whole surface — the stage's own
+    // generation belongs to the terminal while Files rides the right half.
+    let active_generation = app.on_screen_files_generation();
     let model_revision = app.file_manager_locations_model.revision();
     let current_rail_cursor = app.file_manager_locations.focus == FileManagerLocationsFocus::Rail
         && app

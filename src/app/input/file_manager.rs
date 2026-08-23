@@ -839,10 +839,9 @@ pub(super) fn handle_file_manager_key(
             }
         }
         (KeyCode::Char('.'), KeyModifiers::NONE) => {
-            let files_generation = (state.stage.surface_view()
-                == crate::ui::surface_host::StageSurfaceView::NativeFiles)
-                .then(|| state.stage.active_instance_generation())
-                .flatten();
+            // TP-SBS-FILES-03: the surface this screen is showing, so the
+            // toggle is not silently dead beside a terminal.
+            let files_generation = state.on_screen_files_generation();
             if let Some(request) = state.file_manager.as_ref().and_then(|file_manager| {
                 files_generation.map(|generation| file_manager.request_hidden_toggle(generation))
             }) {
@@ -12877,5 +12876,39 @@ command = ["inspect"]
             );
         }
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// TP-SBS-FILES-03: `.` toggles hidden files on the beside half too.
+    ///
+    /// The key built its refresh request from a generation that asked who
+    /// owned the STAGE. Beside a terminal that is nobody, so the request was
+    /// never built and the key died silently — the one Files key that looked
+    /// broken rather than absent.
+    #[test]
+    fn the_hidden_toggle_answers_on_a_files_surface_beside_the_terminal() {
+        let dir = TempDir::new("hidden-beside");
+        dir.file("visible.txt");
+        let mut state = AppState::test_new();
+        state.workspaces = vec![crate::workspace::Workspace::test_new("left")];
+        state.active = Some(0);
+        state.selected = 0;
+        state
+            .try_open_file_manager_with(|_| Some(FmState::new(&dir.root)))
+            .expect("Files activation");
+        state.show_terminal_workspace();
+        state.enter_files_beside();
+        assert!(state.files_beside_active(), "the pairing is up");
+
+        let dispatch = handle_file_manager_key(
+            &mut state,
+            crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Char('.'),
+                KeyModifiers::NONE,
+            ),
+        );
+        assert!(
+            matches!(dispatch, FileManagerKeyDispatch::Refresh(_)),
+            "the hidden toggle must queue its refresh while Files rides the right half"
+        );
     }
 }

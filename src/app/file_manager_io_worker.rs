@@ -654,10 +654,13 @@ impl super::App {
     /// display's open browser drive another display's worker.
     ///
     /// TP-SUR-FM-02
+    /// TP-SBS-FILES-03: the surface THIS SCREEN is showing — the full stage
+    /// when Files owns it, the right half when Files rides beside a terminal.
+    /// Asking who owned the STAGE answered `None` for the beside half, and
+    /// every completed read was then thrown away as belonging to a dead
+    /// instance.
     fn active_file_manager_generation(&self) -> Option<u32> {
-        (self.state.stage.surface_view() == crate::ui::surface_host::StageSurfaceView::NativeFiles)
-            .then(|| self.state.stage.active_instance_generation())
-            .flatten()
+        self.state.on_screen_files_generation()
     }
 
     fn file_manager_location_authority_is_current(
@@ -2803,6 +2806,63 @@ mod tests {
         assert!(
             production.contains("FileManagerIoRequest::TrailRefresh"),
             "watcher refresh must submit the shared bounded I/O lane"
+        );
+    }
+
+    /// TP-SBS-FILES-03: work queued by a Files surface that rides the RIGHT
+    /// HALF still belongs to it when the result comes home.
+    ///
+    /// The gate used to ask whether Files owned the STAGE. Beside a terminal
+    /// the stage is the terminal's, so the answer was always no and every
+    /// completed read — a directory's listing above all — was discarded as
+    /// belonging to a dead instance. Measured: pressing a directory row in
+    /// the beside half queued the request, ran the worker, and dropped the
+    /// answer, so the child column never appeared.
+    #[test]
+    fn a_files_surface_riding_the_right_half_owns_the_work_it_queued() {
+        let td = TempDir::new();
+        let root = td.dir("root");
+        std::fs::create_dir_all(root.join("child")).unwrap();
+        let mut app = test_app();
+        app.state.workspaces = vec![crate::workspace::Workspace::test_new("left")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&root)))
+            .unwrap();
+        app.state.show_terminal_workspace();
+        app.state.enter_files_beside();
+        assert!(app.state.files_beside_active(), "the pairing is up");
+
+        let on_screen = app.state.on_screen_files_generation();
+        assert!(on_screen.is_some(), "the beside half IS on screen");
+        assert_eq!(
+            app.active_file_manager_generation(),
+            on_screen,
+            "the result gate must ask what the screen is showing, not what owns the stage"
+        );
+    }
+
+    /// The same gate stays SHUT when Files is on no screen at all: a hidden
+    /// surface must not adopt results, or a closed browser would keep
+    /// mutating state behind the user.
+    #[test]
+    fn a_files_surface_on_no_screen_adopts_no_results() {
+        let td = TempDir::new();
+        let root = td.dir("root");
+        let mut app = test_app();
+        app.state.workspaces = vec![crate::workspace::Workspace::test_new("left")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&root)))
+            .unwrap();
+        app.state.show_terminal_workspace();
+        assert!(!app.state.files_beside_active(), "not beside either");
+        assert_eq!(
+            app.active_file_manager_generation(),
+            None,
+            "a Files surface nobody can see owns no results"
         );
     }
 }

@@ -3372,6 +3372,65 @@ mod tests {
         std::fs::remove_dir_all(root).expect("remove fixture");
     }
 
+    // TP-SBS-FILES-02: one authority projects the beside half, so the rail
+    // it draws and the rectangles it hands the pointer describe the same
+    // screen. While the render asked whether Files owned the STAGE, the rail
+    // went unpainted in the right half while the layout kept reserving its
+    // columns: every row rectangle sat a rail's width right of the name a
+    // person sees, and the surface was drawn and dead to the mouse.
+    #[test]
+    fn the_beside_half_paints_the_rail_its_row_rects_reserve_room_for() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "herdr-beside-rail-{}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&root).expect("temp root");
+        std::fs::write(root.join("a.txt"), b"x").expect("file");
+
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("left")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&root)))
+            .expect("Files activation");
+        app.show_terminal_workspace();
+        app.enter_files_beside();
+        compute_view(&mut app, Rect::new(0, 0, 120, 30));
+
+        let locations = &app.view.file_manager_locations;
+        assert_eq!(
+            locations.files_generation,
+            app.on_screen_files_generation(),
+            "the projection is stamped with what the screen is showing"
+        );
+        let rail = locations
+            .layout
+            .rail
+            .expect("the beside half projects its locations rail");
+        let trail = locations.layout.trail;
+        assert!(
+            trail.x >= rail.x + rail.width,
+            "the trail starts after the rail the render is told to paint: \
+             rail={rail:?} trail={trail:?}"
+        );
+        let first = app
+            .view
+            .file_manager_row_areas
+            .first()
+            .expect("the file rows were projected");
+        assert!(
+            first.rect.x >= trail.x,
+            "row rectangles live inside the trail they were projected into: \
+             row={:?} trail={trail:?}",
+            first.rect
+        );
+        std::fs::remove_dir_all(&root).expect("remove fixture");
+    }
+
     // TP-SBS-FILES-01: the pairing self-heals in compute — Files on the
     // right with no resident file manager drops the mode whole instead of
     // drawing a vacant half.
