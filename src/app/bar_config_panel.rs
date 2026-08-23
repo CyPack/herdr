@@ -63,6 +63,59 @@ pub(crate) fn panel_rows(edge: BarEdge) -> Vec<BarPanelRow> {
     rows
 }
 
+/// The closed set of action kinds the edit form cycles through — the same
+/// kinds a press on the bar resolves, plus `none` to disarm a press. Free
+/// text here would let a typo write a kind nothing fires (the meter-display
+/// lesson: a closed set refuses at the edge, not at draw time).
+pub(crate) const EDIT_KIND_CHOICES: [&str; 5] = ["popup", "run", "workspace", "plugin", "none"];
+
+/// Which part of the edit form holds the cursor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BarAppEditField {
+    Kind,
+    Value,
+    Width,
+    Height,
+    Save,
+    Cancel,
+}
+
+impl BarAppEditField {
+    pub(crate) const ALL: [Self; 6] = [
+        Self::Kind,
+        Self::Value,
+        Self::Width,
+        Self::Height,
+        Self::Save,
+        Self::Cancel,
+    ];
+}
+
+/// The Apps face's mini editor: rebind what a press on one identified row
+/// does. A client-local draft — nothing reaches the disk until Save, and
+/// Save rides a read-modify-write because the overlay serializer replaces
+/// an edge's whole `section_overrides` array (TP-CHROME-166).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct BarAppEditForm {
+    /// The section id the override will bind to, resolved when the form
+    /// opened: the row's action-carrying section, or its first identified
+    /// one when no action is bound yet.
+    pub section_id: String,
+    /// What the row shows, echoed in the form header.
+    pub shows: String,
+    /// Index into `EDIT_KIND_CHOICES`.
+    pub kind_choice: usize,
+    /// One line of text, read per kind: popup/run split it into argv on
+    /// whitespace, workspace reads a name, plugin reads an action id, and
+    /// none ignores it.
+    pub value_text: String,
+    pub width_text: String,
+    pub height_text: String,
+    pub field: BarAppEditField,
+    /// Why the last Save was refused — cleared by the next edit.
+    pub validation_error: Option<String>,
+}
+
 /// Blocking client-local panel state. Owns no watcher, worker, process, pane,
 /// or server state; closing it discards only presentation data — the draft.
 #[derive(Debug, Clone, PartialEq)]
@@ -80,6 +133,8 @@ pub(crate) struct BarConfigPanelState {
     /// every edge.
     pub scope_all: bool,
     pub selected: usize,
+    /// The Apps face's editor, when one is open (TP-CHROME-166).
+    pub edit: Option<BarAppEditForm>,
 }
 
 impl BarConfigPanelState {
@@ -91,7 +146,204 @@ impl BarConfigPanelState {
             original: bars.clone(),
             scope_all: false,
             selected: 0,
+            edit: None,
         }
+    }
+
+    /// Open the editor for the selected Apps row, seeded from what the row
+    /// does today. A row whose sections carry no id cannot be re-aimed by
+    /// the overlay at all, so the attempt is refused with the hint rather
+    /// than opening a form that could never save.
+    pub(crate) fn open_edit_form(&mut self) -> Result<(), String> {
+        let rows = self.app_rows();
+        let Some(row) = rows.get(self.selected) else {
+            return Err("no row is selected".to_string());
+        };
+        let Some(section_id) = row.section_id.clone() else {
+            return Err(
+                "the overlay binds by id and none of this row's sections carries one; \
+                 add id = \"...\" to the section in your config.toml to edit it here"
+                    .to_string(),
+            );
+        };
+        // The seed follows the run road's choice: the first action-carrying
+        // section speaks for the row; a dead-end row seeds an empty action.
+        let bar = edge_config(&self.original, self.edge);
+        let seed = row
+            .section_indices
+            .iter()
+            .filter_map(|&idx| bar.sections.get(idx))
+            .map(|section| &section.action)
+            .find(|action| action_summary(action).is_some())
+            .cloned()
+            .unwrap_or_default();
+        let kind_choice = EDIT_KIND_CHOICES
+            .iter()
+            .position(|kind| *kind == seed.kind.as_str())
+            .unwrap_or(EDIT_KIND_CHOICES.len() - 1); // an unset kind seeds as none
+        let value_text = match seed.kind.as_str() {
+            "workspace" => seed.name.clone(),
+            "plugin" => seed.command.clone(),
+            _ => seed.argv.join(" "),
+        };
+        let size_text = |size: Option<crate::popup_size::PopupSize>| match size {
+            Some(crate::popup_size::PopupSize::Cells(cells)) => cells.to_string(),
+            Some(crate::popup_size::PopupSize::Percent(percent)) => format!("{percent}%"),
+            None => String::new(),
+        };
+        self.edit = Some(BarAppEditForm {
+            section_id,
+            shows: row.shows.clone(),
+            kind_choice,
+            value_text,
+            width_text: size_text(seed.width),
+            height_text: size_text(seed.height),
+            field: BarAppEditField::Kind,
+            validation_error: None,
+        });
+        Ok(())
+    }
+
+    /// Move the form cursor one field down (or up), stopping at the ends.
+    pub(crate) fn edit_field_step(&mut self, forward: bool) {
+        let Some(form) = self.edit.as_mut() else {
+            return;
+        };
+        let fields = BarAppEditField::ALL;
+        let Some(at) = fields.iter().position(|field| *field == form.field) else {
+            return;
+        };
+        let next = if forward {
+            (at + 1).min(fields.len() - 1)
+        } else {
+            at.saturating_sub(1)
+        };
+        form.field = fields[next];
+    }
+
+    /// Cycle the kind choice through the closed set, wrapping at both ends.
+    pub(crate) fn edit_cycle_kind(&mut self, forward: bool) {
+        let Some(form) = self.edit.as_mut() else {
+            return;
+        };
+        let len = EDIT_KIND_CHOICES.len();
+        form.kind_choice = if forward {
+            (form.kind_choice + 1) % len
+        } else {
+            (form.kind_choice + len - 1) % len
+        };
+        form.validation_error = None;
+    }
+
+    /// Type into whichever text field holds the cursor.
+    pub(crate) fn edit_insert_text(&mut self, text: &str) {
+        let Some(form) = self.edit.as_mut() else {
+            return;
+        };
+        match form.field {
+            BarAppEditField::Value => form.value_text.push_str(text),
+            BarAppEditField::Width => form.width_text.push_str(text),
+            BarAppEditField::Height => form.height_text.push_str(text),
+            _ => return,
+        }
+        form.validation_error = None;
+    }
+
+    /// Backspace in whichever text field holds the cursor.
+    pub(crate) fn edit_delete_char(&mut self) {
+        let Some(form) = self.edit.as_mut() else {
+            return;
+        };
+        match form.field {
+            BarAppEditField::Value => {
+                form.value_text.pop();
+            }
+            BarAppEditField::Width => {
+                form.width_text.pop();
+            }
+            BarAppEditField::Height => {
+                form.height_text.pop();
+            }
+            _ => return,
+        }
+        form.validation_error = None;
+    }
+
+    /// Parse the form and merge it over the overlay's existing overrides —
+    /// the full list the serializer will write. Pure: the disk never
+    /// appears here, so the refusals (a bad size, a kind missing its
+    /// value) are testable without one.
+    pub(crate) fn edit_save_payload(
+        &self,
+        existing: Vec<crate::config::ManagedSectionOverride>,
+    ) -> Result<Vec<crate::config::ManagedSectionOverride>, String> {
+        let Some(form) = self.edit.as_ref() else {
+            return Err("no editor is open".to_string());
+        };
+        let kind = EDIT_KIND_CHOICES
+            .get(form.kind_choice)
+            .copied()
+            .unwrap_or("none");
+        // Sizes are parsed for every kind so a typo is refused rather than
+        // silently carried; they are only written for the kind that reads
+        // them.
+        let parse_size = |text: &str, name: &str| {
+            let text = text.trim();
+            if text.is_empty() {
+                return Ok(None);
+            }
+            crate::popup_size::PopupSize::parse_cli(text)
+                .map(Some)
+                .map_err(|err| format!("{name} {err}"))
+        };
+        let width = parse_size(&form.width_text, "width:")?;
+        let height = parse_size(&form.height_text, "height:")?;
+        let value = form.value_text.trim();
+        let action = match kind {
+            // an empty kind is how a press is disarmed
+            "none" => crate::config::ShellBarSectionActionConfig::default(),
+            "popup" | "run" => {
+                let argv: Vec<String> = value.split_whitespace().map(str::to_string).collect();
+                if argv.is_empty() {
+                    return Err(format!("a {kind} action needs a command line"));
+                }
+                crate::config::ShellBarSectionActionConfig {
+                    kind: kind.to_string(),
+                    argv,
+                    width: if kind == "popup" { width } else { None },
+                    height: if kind == "popup" { height } else { None },
+                    ..Default::default()
+                }
+            }
+            "workspace" => {
+                if value.is_empty() {
+                    return Err("a workspace action needs the workspace's name".to_string());
+                }
+                crate::config::ShellBarSectionActionConfig {
+                    kind: kind.to_string(),
+                    name: value.to_string(),
+                    ..Default::default()
+                }
+            }
+            "plugin" => {
+                if value.is_empty() {
+                    return Err("a plugin action needs its action id".to_string());
+                }
+                crate::config::ShellBarSectionActionConfig {
+                    kind: kind.to_string(),
+                    command: value.to_string(),
+                    ..Default::default()
+                }
+            }
+            other => return Err(format!("unknown action kind {other:?}")),
+        };
+        Ok(crate::config::upsert_section_override(
+            existing,
+            crate::config::ManagedSectionOverride {
+                id: form.section_id.clone(),
+                action: Some(action),
+            },
+        ))
     }
 
     pub(crate) fn rows(&self) -> Vec<BarPanelRow> {
@@ -116,8 +368,14 @@ impl BarConfigPanelState {
         true
     }
 
-    /// How many selectable rows the FORWARD tab offers.
+    /// How many selectable rows the FORWARD tab offers. While the Apps
+    /// editor is open its fields are the rows — the mouse map and the
+    /// Down-clamp both read this, so the form is reachable by click for
+    /// free (TP-CHROME-166).
     pub(crate) fn forward_row_count(&self) -> usize {
+        if self.edit.is_some() {
+            return BarAppEditField::ALL.len();
+        }
         match self.tab {
             BarPanelTab::Apps => self.app_rows().len(),
             BarPanelTab::Configure => self.rows().len(),
@@ -402,6 +660,45 @@ pub(crate) struct BarAppRow {
     /// Whether Enter/click has a primary action to run — a dead-end row is
     /// offered greyed, never silent.
     pub live: bool,
+    /// The id the edit form would bind an override to: the action-carrying
+    /// section's, or the first identified one when no action is bound yet.
+    /// `None` means the row cannot be edited from here — the overlay binds
+    /// by id and none of the row's sections carries one (TP-CHROME-166).
+    pub section_id: Option<String>,
+}
+
+/// One form row's text, in the same label-then-value shape the Configure
+/// rows wear. Pure, so the render only draws (TP-CHROME-166).
+pub(crate) fn edit_row_label(form: &BarAppEditForm, field: BarAppEditField) -> String {
+    let value_name = match EDIT_KIND_CHOICES.get(form.kind_choice).copied() {
+        Some("workspace") => "workspace",
+        Some("plugin") => "action id",
+        Some("none") => "(disarmed)",
+        _ => "command",
+    };
+    let text_or_dash = |text: &str| {
+        if text.is_empty() {
+            "\u{2014}".to_string()
+        } else {
+            text.to_string()
+        }
+    };
+    match field {
+        BarAppEditField::Kind => format!(
+            "kind       \u{2039} {} \u{203a}",
+            EDIT_KIND_CHOICES
+                .get(form.kind_choice)
+                .copied()
+                .unwrap_or("?")
+        ),
+        BarAppEditField::Value => {
+            format!("{value_name:<10} {}", text_or_dash(&form.value_text))
+        }
+        BarAppEditField::Width => format!("width      {}", text_or_dash(&form.width_text)),
+        BarAppEditField::Height => format!("height     {}", text_or_dash(&form.height_text)),
+        BarAppEditField::Save => "[ Save ]".to_string(),
+        BarAppEditField::Cancel => "[ Cancel ]".to_string(),
+    }
 }
 
 /// What one section's widget puts on the strip, in the config's own words.
@@ -484,6 +781,7 @@ pub(crate) fn section_app_rows(bar: &ShellBarConfig) -> Vec<BarAppRow> {
             shows: "undivided strip".to_string(),
             does: "\u{2014}".to_string(),
             live: false,
+            section_id: None,
         }];
     }
     let mut rows: Vec<BarAppRow> = Vec::new();
@@ -513,11 +811,22 @@ pub(crate) fn section_app_rows(bar: &ShellBarConfig) -> Vec<BarAppRow> {
         } else {
             "\u{2014}".to_string()
         };
+        // The id the edit form binds to follows the same choice the run road
+        // makes: the first action-carrying section speaks for the row. A row
+        // with no action yet falls back to its first identified section, so
+        // a dead-end row can still be given a press.
+        let section_id = run
+            .iter()
+            .find(|&&idx| action_summary(&sections[idx].action).is_some())
+            .or_else(|| run.iter().find(|&&idx| !sections[idx].id.is_empty()))
+            .map(|&idx| sections[idx].id.clone())
+            .filter(|id| !id.is_empty());
         rows.push(BarAppRow {
             section_indices: std::mem::take(run),
             shows,
             does,
             live,
+            section_id,
         });
     };
     for (idx, section) in sections.iter().enumerate() {
@@ -566,7 +875,7 @@ pub(crate) const fn panel_hint(tab: BarPanelTab) -> &'static str {
         BarPanelTab::Configure => {
             "\u{2190}\u{2192} change \u{b7} Enter select \u{b7} Tab apps \u{b7} Esc close"
         }
-        BarPanelTab::Apps => "Enter run \u{b7} Tab configure \u{b7} Esc close",
+        BarPanelTab::Apps => "Enter run \u{b7} e edit \u{b7} Tab configure \u{b7} Esc close",
     }
 }
 
@@ -778,6 +1087,32 @@ impl crate::app::App {
         let Some(panel) = self.state.bar_config_panel.as_ref() else {
             return;
         };
+        // While the editor is up its fields are the rows: a press on a text
+        // field moves the cursor there, the two verbs act (TP-CHROME-166).
+        if panel.edit.is_some() {
+            let Some(&field) = BarAppEditField::ALL.get(panel.selected) else {
+                return;
+            };
+            match field {
+                BarAppEditField::Save => self.save_bar_app_edit(),
+                BarAppEditField::Cancel => {
+                    if let Some(panel) = self.state.bar_config_panel.as_mut() {
+                        panel.edit = None;
+                    }
+                }
+                other => {
+                    if let Some(form) = self
+                        .state
+                        .bar_config_panel
+                        .as_mut()
+                        .and_then(|panel| panel.edit.as_mut())
+                    {
+                        form.field = other;
+                    }
+                }
+            }
+            return;
+        }
         match panel.tab {
             BarPanelTab::Apps => self.run_bar_app_row(panel.selected),
             BarPanelTab::Configure => match panel.rows().get(panel.selected) {
@@ -893,6 +1228,27 @@ impl crate::app::App {
     }
 
     pub(crate) fn handle_bar_config_panel_key(&mut self, key: crossterm::event::KeyEvent) {
+        // The open editor answers first: while it is up, every key is the
+        // form's — a stray 'e' must land in the text, not reopen the form.
+        if self
+            .state
+            .bar_config_panel
+            .as_ref()
+            .is_some_and(|panel| panel.edit.is_some())
+        {
+            self.handle_bar_app_edit_key(key);
+            return;
+        }
+        if key.code == crossterm::event::KeyCode::Char('e')
+            && self
+                .state
+                .bar_config_panel
+                .as_ref()
+                .is_some_and(|panel| panel.tab == BarPanelTab::Apps)
+        {
+            self.open_bar_app_edit();
+            return;
+        }
         match key.code {
             crossterm::event::KeyCode::Esc => self.cancel_bar_config_panel(),
             crossterm::event::KeyCode::Enter => self.press_bar_config_panel_row(),
@@ -938,6 +1294,112 @@ impl crate::app::App {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Open the Apps row editor, or say why it cannot open — the overlay
+    /// binds by id, and a row without one has nothing to bind to.
+    pub(crate) fn open_bar_app_edit(&mut self) {
+        let Some(panel) = self.state.bar_config_panel.as_mut() else {
+            return;
+        };
+        if let Err(hint) = panel.open_edit_form() {
+            self.warn_about_bar_section_action("this row cannot be edited here", hint);
+        }
+    }
+
+    /// Keys while the Apps row editor is open. The named keys come first
+    /// and everything else that carries a character is typing — so 'e'
+    /// lands in the text rather than reopening the form, and 'j' spells
+    /// rather than walks.
+    pub(crate) fn handle_bar_app_edit_key(&mut self, key: crossterm::event::KeyEvent) {
+        if key.code == crossterm::event::KeyCode::Enter {
+            let on_cancel = self
+                .state
+                .bar_config_panel
+                .as_ref()
+                .and_then(|panel| panel.edit.as_ref())
+                .is_some_and(|form| form.field == BarAppEditField::Cancel);
+            if on_cancel {
+                if let Some(panel) = self.state.bar_config_panel.as_mut() {
+                    panel.edit = None;
+                }
+            } else {
+                self.save_bar_app_edit();
+            }
+            return;
+        }
+        let Some(panel) = self.state.bar_config_panel.as_mut() else {
+            return;
+        };
+        match key.code {
+            crossterm::event::KeyCode::Esc => {
+                panel.edit = None;
+            }
+            crossterm::event::KeyCode::Tab | crossterm::event::KeyCode::Down => {
+                panel.edit_field_step(true);
+            }
+            crossterm::event::KeyCode::Up => {
+                panel.edit_field_step(false);
+            }
+            crossterm::event::KeyCode::Left | crossterm::event::KeyCode::Right => {
+                if panel
+                    .edit
+                    .as_ref()
+                    .is_some_and(|form| form.field == BarAppEditField::Kind)
+                {
+                    panel.edit_cycle_kind(key.code == crossterm::event::KeyCode::Right);
+                }
+            }
+            crossterm::event::KeyCode::Backspace => {
+                panel.edit_delete_char();
+            }
+            crossterm::event::KeyCode::Char(ch) => {
+                panel.edit_insert_text(&ch.to_string());
+            }
+            _ => {}
+        }
+    }
+
+    /// Save the editor: read the overlay's current overrides, merge the
+    /// form over them, write the whole list back, and take the same reload
+    /// road Apply takes — which closes the panel, because a reload moves
+    /// the world the panel's snapshot describes (TP-CHROME-151). The disk,
+    /// not the form, is what every surface ends up showing (TP-CHROME-166).
+    pub(crate) fn save_bar_app_edit(&mut self) {
+        let Some(panel) = self.state.bar_config_panel.as_mut() else {
+            return;
+        };
+        let edge = bar_edge_name(panel.edge);
+        let existing = crate::config::read_managed_section_overrides(edge);
+        let list = match panel.edit_save_payload(existing) {
+            Ok(list) => list,
+            Err(err) => {
+                if let Some(form) = panel.edit.as_mut() {
+                    form.validation_error = Some(err);
+                }
+                return;
+            }
+        };
+        let over = crate::config::ManagedBarOverride {
+            section_overrides: list,
+            ..Default::default()
+        };
+        match crate::config::persist_managed_bar_overrides(&[(edge, over)]) {
+            Ok(()) => {
+                self.state.close_bar_config_panel();
+                self.dispatch_api_request(
+                    "tui.bars.section-edit",
+                    crate::api::schema::Method::ServerReloadConfig(
+                        crate::api::schema::EmptyParams::default(),
+                    ),
+                );
+            }
+            Err(err) => {
+                // The form survives a failed write — closing here would
+                // throw away edits the person can still fix or cancel.
+                self.warn_about_bar_section_action("could not save the press", err);
+            }
         }
     }
 }
@@ -1238,6 +1700,7 @@ mod tests {
                 shows: "undivided strip".to_string(),
                 does: "\u{2014}".to_string(),
                 live: false,
+                section_id: None,
             }],
             "an undivided strip is one honest row, never an empty list"
         );
@@ -1400,6 +1863,424 @@ mod tests {
             app.state.bar_config_panel.is_some(),
             "an inert press neither runs nor closes"
         );
+    }
+
+    // TP-CHROME-166: the editor opens seeded from what the row does today —
+    // an empty form would trade an edit for a retype, and the person came to
+    // change one thing, not to remember four.
+    #[test]
+    fn pressing_e_on_an_identified_row_opens_a_seeded_edit_form() {
+        let mut app = test_app();
+        let mut bars = crate::config::ShellBarsConfig::default();
+        bars.top.enabled = true;
+        let mut sec = crate::config::ShellBarSectionConfig {
+            kind: "content".to_string(),
+            id: "cpu".to_string(),
+            ..Default::default()
+        };
+        sec.widget.kind = "meter".to_string();
+        sec.widget.metric = "cpu".to_string();
+        sec.action.kind = "popup".to_string();
+        sec.action.argv = vec!["btop".to_string()];
+        sec.action.width = Some(crate::popup_size::PopupSize::Percent(97));
+        sec.action.height = Some(crate::popup_size::PopupSize::Cells(30));
+        bars.top.sections = vec![sec];
+        app.state.shell_bars_config = bars;
+
+        app.open_bar_config_panel(BarEdge::Top);
+        app.handle_bar_config_panel_key(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Tab,
+        ));
+        app.handle_bar_config_panel_key(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Char('e'),
+        ));
+        let panel = app.state.bar_config_panel.as_ref().expect("panel stays");
+        let form = panel.edit.as_ref().expect("the editor opened");
+        assert_eq!(form.section_id, "cpu");
+        assert_eq!(EDIT_KIND_CHOICES[form.kind_choice], "popup");
+        assert_eq!(form.value_text, "btop", "argv seeds the value line");
+        assert_eq!(form.width_text, "97%", "a percent width echoes as one");
+        assert_eq!(form.height_text, "30", "a cells height echoes as a number");
+        assert!(form.validation_error.is_none());
+    }
+
+    // TP-CHROME-166: the overlay binds by id, so a row without one has
+    // nothing to bind to — the refusal says what to add rather than opening
+    // a form whose Save could never land.
+    #[test]
+    fn an_unidentified_row_refuses_the_edit_form_with_the_add_id_hint() {
+        let mut app = test_app();
+        let mut bars = crate::config::ShellBarsConfig::default();
+        bars.top.enabled = true;
+        let mut sec = crate::config::ShellBarSectionConfig {
+            kind: "content".to_string(),
+            ..Default::default()
+        };
+        sec.widget.kind = "clock".to_string();
+        bars.top.sections = vec![sec];
+        app.state.shell_bars_config = bars;
+
+        app.open_bar_config_panel(BarEdge::Top);
+        app.handle_bar_config_panel_key(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Tab,
+        ));
+        app.handle_bar_config_panel_key(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Char('e'),
+        ));
+        let panel = app.state.bar_config_panel.as_ref().expect("panel stays");
+        assert!(panel.edit.is_none(), "no id, no form");
+        let toast = app.state.toast.as_ref().expect("the refusal is spoken");
+        assert!(
+            toast.context.contains("add id"),
+            "the hint names the fix: {}",
+            toast.context
+        );
+    }
+
+    // TP-CHROME-166: the kind is a closed set that cycles and wraps — free
+    // text here would let a typo write a kind nothing fires.
+    #[test]
+    fn the_edit_form_kind_cycles_the_closed_set_and_wraps() {
+        let mut bars = crate::config::ShellBarsConfig::default();
+        bars.top.enabled = true;
+        let mut sec = crate::config::ShellBarSectionConfig {
+            kind: "content".to_string(),
+            id: "cpu".to_string(),
+            ..Default::default()
+        };
+        sec.action.kind = "popup".to_string();
+        sec.action.argv = vec!["btop".to_string()];
+        bars.top.sections = vec![sec];
+        let mut state = BarConfigPanelState::open(BarEdge::Top, &bars);
+        state.switch_tab(BarPanelTab::Apps);
+        state.open_edit_form().expect("an identified row opens");
+        let start = state.edit.as_ref().expect("form").kind_choice;
+        assert_eq!(EDIT_KIND_CHOICES[start], "popup");
+        for _ in 0..EDIT_KIND_CHOICES.len() {
+            state.edit_cycle_kind(true);
+        }
+        assert_eq!(
+            state.edit.as_ref().expect("form").kind_choice,
+            start,
+            "a full forward lap wraps home"
+        );
+        state.edit_cycle_kind(false);
+        assert_eq!(
+            EDIT_KIND_CHOICES[state.edit.as_ref().expect("form").kind_choice],
+            "none",
+            "one step back from popup wraps to the far end"
+        );
+    }
+
+    // TP-CHROME-166: the save payload is the read-modify-write's pure half —
+    // the form merges over what the overlay already carries, so editing one
+    // override can never eat its neighbours.
+    #[test]
+    fn the_save_payload_merges_over_the_existing_overrides() {
+        let mut bars = crate::config::ShellBarsConfig::default();
+        bars.top.enabled = true;
+        let mut sec = crate::config::ShellBarSectionConfig {
+            kind: "content".to_string(),
+            id: "cpu".to_string(),
+            ..Default::default()
+        };
+        sec.action.kind = "popup".to_string();
+        sec.action.argv = vec!["btop".to_string()];
+        bars.top.sections = vec![sec];
+        let mut state = BarConfigPanelState::open(BarEdge::Top, &bars);
+        state.switch_tab(BarPanelTab::Apps);
+        state.open_edit_form().expect("form opens");
+        {
+            let form = state.edit.as_mut().expect("form");
+            form.kind_choice = EDIT_KIND_CHOICES
+                .iter()
+                .position(|k| *k == "run")
+                .expect("run is in the set");
+            form.value_text = "gotop --rate 2".to_string();
+            form.width_text.clear();
+            form.height_text.clear();
+        }
+        let neighbour = crate::config::ManagedSectionOverride {
+            id: "clock".to_string(),
+            action: Some(crate::config::ShellBarSectionActionConfig {
+                kind: "popup".to_string(),
+                argv: vec!["khal".to_string()],
+                ..Default::default()
+            }),
+        };
+        let list = state
+            .edit_save_payload(vec![neighbour])
+            .expect("a well-formed form saves");
+        assert_eq!(list.len(), 2, "the neighbour rode along");
+        assert!(list.iter().any(|o| o.id == "clock"));
+        let cpu = list.iter().find(|o| o.id == "cpu").expect("the edit");
+        let action = cpu.action.as_ref().expect("an action was written");
+        assert_eq!(action.kind, "run");
+        assert_eq!(
+            action.argv,
+            vec!["gotop".to_string(), "--rate".to_string(), "2".to_string()],
+            "the value line splits into argv on whitespace"
+        );
+    }
+
+    // TP-CHROME-166: a size the parser refuses refuses the Save — the form
+    // stays up and says why, because a silently-dropped size and a saved one
+    // look identical from the bar.
+    #[test]
+    fn a_bad_size_refuses_the_save_and_names_why() {
+        let mut bars = crate::config::ShellBarsConfig::default();
+        bars.top.enabled = true;
+        let mut sec = crate::config::ShellBarSectionConfig {
+            kind: "content".to_string(),
+            id: "cpu".to_string(),
+            ..Default::default()
+        };
+        sec.action.kind = "popup".to_string();
+        sec.action.argv = vec!["btop".to_string()];
+        bars.top.sections = vec![sec];
+        let mut state = BarConfigPanelState::open(BarEdge::Top, &bars);
+        state.switch_tab(BarPanelTab::Apps);
+        state.open_edit_form().expect("form opens");
+        state.edit.as_mut().expect("form").width_text = "huge".to_string();
+        let err = state
+            .edit_save_payload(Vec::new())
+            .expect_err("a bad width cannot save");
+        assert!(
+            err.contains("percentage"),
+            "the refusal teaches the accepted shapes: {err}"
+        );
+    }
+
+    // TP-CHROME-166: Esc closes the editor and only the editor — the panel
+    // underneath survives, and nothing was written anywhere.
+    #[test]
+    fn escape_closes_the_editor_and_keeps_the_panel() {
+        let mut app = test_app();
+        let mut bars = crate::config::ShellBarsConfig::default();
+        bars.top.enabled = true;
+        let mut sec = crate::config::ShellBarSectionConfig {
+            kind: "content".to_string(),
+            id: "cpu".to_string(),
+            ..Default::default()
+        };
+        sec.action.kind = "popup".to_string();
+        sec.action.argv = vec!["btop".to_string()];
+        bars.top.sections = vec![sec];
+        app.state.shell_bars_config = bars;
+
+        app.open_bar_config_panel(BarEdge::Top);
+        app.handle_bar_config_panel_key(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Tab,
+        ));
+        app.handle_bar_config_panel_key(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Char('e'),
+        ));
+        assert!(app
+            .state
+            .bar_config_panel
+            .as_ref()
+            .is_some_and(|panel| panel.edit.is_some()));
+        app.handle_bar_config_panel_key(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Esc,
+        ));
+        let panel = app.state.bar_config_panel.as_ref().expect("panel survives");
+        assert!(panel.edit.is_none(), "only the editor closed");
+    }
+
+    // TP-CHROME-166: typing lands in the text field the cursor is on, and a
+    // stray 'e' lands in the text rather than reopening the form.
+    #[test]
+    fn typing_in_the_form_edits_the_focused_text_field() {
+        let mut app = test_app();
+        let mut bars = crate::config::ShellBarsConfig::default();
+        bars.top.enabled = true;
+        let mut sec = crate::config::ShellBarSectionConfig {
+            kind: "content".to_string(),
+            id: "cpu".to_string(),
+            ..Default::default()
+        };
+        sec.action.kind = "run".to_string();
+        sec.action.argv = vec!["gotop".to_string()];
+        bars.top.sections = vec![sec];
+        app.state.shell_bars_config = bars;
+
+        app.open_bar_config_panel(BarEdge::Top);
+        app.handle_bar_config_panel_key(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Tab,
+        ));
+        app.handle_bar_config_panel_key(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Char('e'),
+        ));
+        // move the cursor to the Value field and type
+        {
+            let panel = app.state.bar_config_panel.as_mut().expect("panel");
+            let form = panel.edit.as_mut().expect("form");
+            form.field = BarAppEditField::Value;
+        }
+        app.handle_bar_config_panel_key(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Char('e'),
+        ));
+        app.handle_bar_config_panel_key(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Backspace,
+        ));
+        app.handle_bar_config_panel_key(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Char('x'),
+        ));
+        let panel = app.state.bar_config_panel.as_ref().expect("panel");
+        let form = panel.edit.as_ref().expect("the form is still up");
+        assert_eq!(
+            form.value_text, "gotopx",
+            "'e' typed, backspace erased, 'x' typed"
+        );
+    }
+
+    // TP-CHROME-166: the whole road — Save reads the overlay, keeps the
+    // neighbour, writes the change, and the reload makes the disk what the
+    // panel's row reads. XDG_CONFIG_HOME is pointed at a throwaway so the
+    // real overlay is never touched (nextest isolates processes, so the
+    // env var races nothing).
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn saving_the_form_rewrites_the_overlay_and_the_row_reads_the_new_press() {
+        let dir = std::env::temp_dir().join(format!("herdr-bar-app-edit-{}", std::process::id()));
+        std::env::set_var("XDG_CONFIG_HOME", &dir);
+        let config_dir = crate::config::config_dir();
+        std::fs::create_dir_all(&config_dir).expect("mkdir");
+        std::fs::write(
+            config_dir.join("config.toml"),
+            r#"
+[shell.bars.top]
+enabled = true
+[[shell.bars.top.sections]]
+kind = "content"
+id = "clock"
+widget = { kind = "clock" }
+[[shell.bars.top.sections]]
+kind = "content"
+id = "cpu"
+widget = { kind = "meter", metric = "cpu" }
+"#,
+        )
+        .expect("seed config");
+        // the overlay already carries a neighbour the save must not eat
+        crate::config::persist_managed_bar_overrides(&[(
+            "top",
+            crate::config::ManagedBarOverride {
+                section_overrides: vec![crate::config::ManagedSectionOverride {
+                    id: "clock".to_string(),
+                    action: Some(crate::config::ShellBarSectionActionConfig {
+                        kind: "popup".to_string(),
+                        argv: vec!["khal".to_string()],
+                        ..Default::default()
+                    }),
+                }],
+                ..Default::default()
+            },
+        )])
+        .expect("seed overlay");
+
+        let mut app = test_app();
+        let loaded = crate::config::load_live_config().expect("the seeded config loads");
+        app.state.shell_bars_config = loaded.config.shell.bars.clone();
+
+        app.open_bar_config_panel(BarEdge::Top);
+        if let Some(panel) = app.state.bar_config_panel.as_mut() {
+            panel.switch_tab(BarPanelTab::Apps);
+            panel.selected = 1; // the cpu row
+        }
+        app.handle_bar_config_panel_key(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Char('e'),
+        ));
+        {
+            let panel = app.state.bar_config_panel.as_mut().expect("panel");
+            let form = panel.edit.as_mut().expect("form");
+            form.kind_choice = EDIT_KIND_CHOICES
+                .iter()
+                .position(|k| *k == "run")
+                .expect("run");
+            form.value_text = "gotop".to_string();
+            form.width_text.clear();
+            form.height_text.clear();
+        }
+        app.save_bar_app_edit();
+
+        // A clean save takes Apply's road: the reload closes the panel,
+        // because its snapshot describes a world that just moved
+        // (TP-CHROME-151).
+        assert!(
+            app.state.bar_config_panel.is_none(),
+            "a clean save lands and closes the panel"
+        );
+        let written = std::fs::read_to_string(crate::config::managed_bars_path())
+            .expect("the overlay was written");
+        let list = crate::config::managed_section_overrides_from_str(&written, "top");
+        assert_eq!(list.len(), 2, "the neighbour survived: {written}");
+        assert!(list.iter().any(|o| o.id == "clock"));
+        let cpu = list.iter().find(|o| o.id == "cpu").expect("the edit");
+        assert_eq!(cpu.action.as_ref().expect("action").kind, "run");
+        // The reload already folded the overlay back in: the world the next
+        // panel opens onto reads the new press.
+        let rows = section_app_rows(&app.state.shell_bars_config.top);
+        assert!(
+            rows[1].does.contains("gotop [run]"),
+            "the reloaded bars read the new press: {}",
+            rows[1].does
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // TP-CHROME-166: the mouse reaches the form too — a press on the row a
+    // field sits on moves the cursor there, and a press on Cancel closes
+    // the editor without writing.
+    #[test]
+    fn a_press_on_a_form_row_moves_the_cursor_and_cancel_closes() {
+        let mut app = test_app();
+        let mut bars = crate::config::ShellBarsConfig::default();
+        bars.top.enabled = true;
+        let mut sec = crate::config::ShellBarSectionConfig {
+            kind: "content".to_string(),
+            id: "cpu".to_string(),
+            ..Default::default()
+        };
+        sec.action.kind = "popup".to_string();
+        sec.action.argv = vec!["btop".to_string()];
+        bars.top.sections = vec![sec];
+        app.state.shell_bars_config = bars;
+
+        app.open_bar_config_panel(BarEdge::Top);
+        app.handle_bar_config_panel_key(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Tab,
+        ));
+        app.handle_bar_config_panel_key(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Char('e'),
+        ));
+        let value_idx = BarAppEditField::ALL
+            .iter()
+            .position(|f| *f == BarAppEditField::Value)
+            .expect("value row");
+        if let Some(panel) = app.state.bar_config_panel.as_mut() {
+            panel.selected = value_idx;
+        }
+        app.press_bar_config_panel_row();
+        assert_eq!(
+            app.state
+                .bar_config_panel
+                .as_ref()
+                .and_then(|panel| panel.edit.as_ref())
+                .map(|form| form.field),
+            Some(BarAppEditField::Value),
+            "the press moved the cursor to the field it landed on"
+        );
+        let cancel_idx = BarAppEditField::ALL
+            .iter()
+            .position(|f| *f == BarAppEditField::Cancel)
+            .expect("cancel row");
+        if let Some(panel) = app.state.bar_config_panel.as_mut() {
+            panel.selected = cancel_idx;
+        }
+        app.press_bar_config_panel_row();
+        let panel = app.state.bar_config_panel.as_ref().expect("panel stays");
+        assert!(panel.edit.is_none(), "Cancel closed only the editor");
     }
 
     fn test_app() -> crate::app::App {

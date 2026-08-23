@@ -265,6 +265,70 @@ pub(crate) fn merge_managed_bars_str(config: &mut Config, content: &str) -> Vec<
     }
 }
 
+/// The section overrides one edge's overlay document currently carries — the
+/// READ side of the edit form's read-modify-write. The serializer below
+/// replaces the whole `section_overrides` array for an edge, so a writer that
+/// did not first read this list would silently drop every override it was not
+/// editing. A missing edge, a broken document, or no overrides at all are an
+/// empty list: the form then writes the first override rather than failing.
+pub(crate) fn managed_section_overrides_from_str(
+    content: &str,
+    edge: &str,
+) -> Vec<ManagedSectionOverride> {
+    #[derive(Debug, Default, serde::Deserialize)]
+    #[serde(default)]
+    struct ManagedBarsFile {
+        shell: ManagedShell,
+    }
+    #[derive(Debug, Default, serde::Deserialize)]
+    #[serde(default)]
+    struct ManagedShell {
+        bars: ManagedBars,
+    }
+    #[derive(Debug, Default, serde::Deserialize)]
+    #[serde(default)]
+    struct ManagedBars {
+        top: Option<ManagedBarOverride>,
+        bottom: Option<ManagedBarOverride>,
+        left: Option<ManagedBarOverride>,
+        right: Option<ManagedBarOverride>,
+    }
+    let Ok(managed) = toml::from_str::<ManagedBarsFile>(content) else {
+        return Vec::new();
+    };
+    let bars = managed.shell.bars;
+    let over = match edge {
+        "top" => bars.top,
+        "bottom" => bars.bottom,
+        "left" => bars.left,
+        "right" => bars.right,
+        _ => None,
+    };
+    over.map(|over| over.section_overrides).unwrap_or_default()
+}
+
+/// Same list, from the overlay file on disk.
+pub(crate) fn read_managed_section_overrides(edge: &str) -> Vec<ManagedSectionOverride> {
+    match read_optional_config(&managed_bars_path()) {
+        Ok(Some(content)) => managed_section_overrides_from_str(&content, edge),
+        _ => Vec::new(),
+    }
+}
+
+/// Replace the override naming `over.id`, or append when none does — the
+/// WRITE side of the form's read-modify-write. Pure, so the pairing with the
+/// read side above is testable without a disk.
+pub(crate) fn upsert_section_override(
+    mut list: Vec<ManagedSectionOverride>,
+    over: ManagedSectionOverride,
+) -> Vec<ManagedSectionOverride> {
+    match list.iter_mut().find(|existing| existing.id == over.id) {
+        Some(slot) => *slot = over,
+        None => list.push(over),
+    }
+    list
+}
+
 /// Re-aim one named section's press. Binding is by `id`: an id no section
 /// carries is reported and skipped, and an id two sections carry is
 /// ambiguous — reported and left alone rather than guessed at.
@@ -1239,6 +1303,56 @@ widget = { kind = "clock" }
             .sections
             .iter()
             .all(|s| s.action.kind.is_empty()));
+    }
+
+    // TP-CHROME-166: the serializer replaces an edge's whole
+    // `section_overrides` array, so editing ONE override must ride a
+    // read-modify-write — the read side sees the neighbours, the upsert
+    // touches only the named id, and the rewritten document still carries
+    // everything it carried before plus the change.
+    #[test]
+    fn an_upsert_by_id_keeps_the_neighbouring_overrides() {
+        let over = |id: &str, kind: &str, argv0: &str| ManagedSectionOverride {
+            id: id.to_string(),
+            action: Some(crate::config::ShellBarSectionActionConfig {
+                kind: kind.to_string(),
+                argv: vec![argv0.to_string()],
+                ..Default::default()
+            }),
+        };
+        let seeded = ManagedBarOverride {
+            section_overrides: vec![over("clock", "popup", "khal"), over("cpu", "popup", "btop")],
+            ..Default::default()
+        };
+        let doc = upsert_managed_bars_doc("", &[("top", seeded)]).unwrap();
+
+        let current = managed_section_overrides_from_str(&doc, "top");
+        assert_eq!(current.len(), 2, "the read side sees both overrides");
+
+        let next = upsert_section_override(current, over("cpu", "run", "gotop"));
+        assert_eq!(next.len(), 2, "an existing id replaces in place");
+        let rewritten = ManagedBarOverride {
+            section_overrides: next,
+            ..Default::default()
+        };
+        let doc = upsert_managed_bars_doc(&doc, &[("top", rewritten)]).unwrap();
+
+        let reread = managed_section_overrides_from_str(&doc, "top");
+        assert_eq!(reread.len(), 2);
+        let clock = reread.iter().find(|o| o.id == "clock").expect("clock row");
+        assert_eq!(
+            clock.action.as_ref().expect("clock action").argv,
+            vec!["khal".to_string()],
+            "the neighbour survived the rewrite"
+        );
+        let cpu = reread.iter().find(|o| o.id == "cpu").expect("cpu row");
+        assert_eq!(cpu.action.as_ref().expect("cpu action").kind, "run");
+
+        // an id nobody carries appends rather than replacing
+        let appended = upsert_section_override(reread, over("mem", "popup", "htop"));
+        assert_eq!(appended.len(), 3);
+        // and the other edges are not the read side's business
+        assert!(managed_section_overrides_from_str(&doc, "bottom").is_empty());
     }
 
     use super::*;

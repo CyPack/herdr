@@ -36,8 +36,13 @@ pub use self::{
 };
 
 pub(crate) use self::io::{
-    persist_managed_bar_overrides, upsert_top_level_bool, ManagedBarOverride,
+    persist_managed_bar_overrides, read_managed_section_overrides, upsert_section_override,
+    upsert_top_level_bool, ManagedBarOverride, ManagedSectionOverride,
 };
+// Only tests read the overlay path and parse the document directly; the
+// production road goes through `read_managed_section_overrides` above.
+#[cfg(test)]
+pub(crate) use self::io::{managed_bars_path, managed_section_overrides_from_str};
 pub(crate) use self::keybinds::parse_key_combo;
 
 pub const CONFIG_PATH_ENV_VAR: &str = "HERDR_CONFIG_PATH";

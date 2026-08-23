@@ -451,25 +451,56 @@ pub(super) fn render_bar_config_panel(app: &AppState, frame: &mut Frame) {
             }
         }
         crate::app::bar_config_panel::BarPanelTab::Apps => {
-            for (idx, (row, rect)) in panel
-                .app_rows()
-                .iter()
-                .zip(app.bar_config_panel_row_hit_areas())
-                .enumerate()
-            {
-                let marker = if idx == panel.selected { ">" } else { " " };
-                let label = crate::ui::text::truncate_end(
-                    &format!("{marker} {}  {}", row.shows, row.does),
-                    rect.width as usize,
-                );
-                let style = if !row.live {
-                    Style::default().fg(p.overlay0)
-                } else if idx == panel.selected {
-                    Style::default().bg(p.surface1).fg(p.text)
-                } else {
-                    Style::default().fg(p.subtext0)
-                };
-                frame.render_widget(Paragraph::new(label).style(style), rect);
+            if let Some(form) = panel.edit.as_ref() {
+                // TP-CHROME-166: the editor wears the Configure face's
+                // shape — label rows, one selected, two verbs at the end.
+                for (idx, (field, rect)) in crate::app::bar_config_panel::BarAppEditField::ALL
+                    .iter()
+                    .zip(app.bar_config_panel_row_hit_areas())
+                    .enumerate()
+                {
+                    let marker = if idx == panel.selected { ">" } else { " " };
+                    let value = crate::app::bar_config_panel::edit_row_label(form, *field);
+                    let label = crate::ui::text::truncate_end(
+                        &format!("{marker} {value}"),
+                        rect.width as usize,
+                    );
+                    let focused = *field == form.field;
+                    let style = if focused || idx == panel.selected {
+                        Style::default().bg(p.surface1).fg(p.text)
+                    } else {
+                        Style::default().fg(p.subtext0)
+                    };
+                    frame.render_widget(Paragraph::new(label).style(style), rect);
+                }
+            } else {
+                for (idx, (row, rect)) in panel
+                    .app_rows()
+                    .iter()
+                    .zip(app.bar_config_panel_row_hit_areas())
+                    .enumerate()
+                {
+                    let marker = if idx == panel.selected { ">" } else { " " };
+                    // A row the editor cannot reach says so where the eye
+                    // already is (TP-CHROME-166).
+                    let badge = if row.section_id.is_none() {
+                        "  \u{b7}no id"
+                    } else {
+                        ""
+                    };
+                    let label = crate::ui::text::truncate_end(
+                        &format!("{marker} {}  {}{badge}", row.shows, row.does),
+                        rect.width as usize,
+                    );
+                    let style = if !row.live {
+                        Style::default().fg(p.overlay0)
+                    } else if idx == panel.selected {
+                        Style::default().bg(p.surface1).fg(p.text)
+                    } else {
+                        Style::default().fg(p.subtext0)
+                    };
+                    frame.render_widget(Paragraph::new(label).style(style), rect);
+                }
             }
         }
     }
@@ -483,12 +514,27 @@ pub(super) fn render_bar_config_panel(app: &AppState, frame: &mut Frame) {
             popup.width.saturating_sub(2),
             1,
         );
+        let (hint, hint_style) = match panel.edit.as_ref() {
+            Some(form) => match form.validation_error.as_deref() {
+                // A refused Save says why, where the hint was — the reader
+                // is already looking there (TP-CHROME-166).
+                Some(err) => (err.to_string(), Style::default().fg(p.red)),
+                None => (
+                    "Enter save \u{b7} Esc back \u{b7} Tab next field".to_string(),
+                    Style::default().fg(p.overlay0),
+                ),
+            },
+            None => (
+                crate::app::bar_config_panel::panel_hint(panel.tab).to_string(),
+                Style::default().fg(p.overlay0),
+            ),
+        };
         frame.render_widget(
             Paragraph::new(crate::ui::text::truncate_end(
-                crate::app::bar_config_panel::panel_hint(panel.tab),
+                &hint,
                 hint_rect.width as usize,
             ))
-            .style(Style::default().fg(p.overlay0)),
+            .style(hint_style),
             hint_rect,
         );
     }
