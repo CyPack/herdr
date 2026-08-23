@@ -61,6 +61,7 @@ pub(crate) use self::file_manager::trail_view::project_trail_view;
 pub(crate) use self::file_manager::trail_view::{
     trail_row_at, trail_section_header_at, TrailRowView, TrailViewSnapshot,
 };
+pub(crate) use self::file_manager::zip_header_target_paths;
 #[cfg(test)]
 pub(crate) use self::file_manager::PdfPageIndicator;
 use self::file_manager::{
@@ -3586,6 +3587,7 @@ mod tests {
                 crate::app::state::FileManagerHeaderAction::NewFolder,
                 crate::app::state::FileManagerHeaderAction::Delete,
                 crate::app::state::FileManagerHeaderAction::SendTailscale,
+                crate::app::state::FileManagerHeaderAction::Compress,
                 crate::app::state::FileManagerHeaderAction::Search,
                 crate::app::state::FileManagerHeaderAction::CopyPath,
                 crate::app::state::FileManagerHeaderAction::More,

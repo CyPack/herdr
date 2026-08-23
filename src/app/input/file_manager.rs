@@ -2939,6 +2939,37 @@ command = ["inspect"]
     // intent the right-click menu queues, and the sync road opens the
     // Taildrop picker carrying exactly those paths.
     #[test]
+    fn the_zip_header_verb_rides_the_context_road_to_the_compress_intent() {
+        let td = TempDir::new("zip-header-road");
+        td.file("beta.txt");
+        let mut app = super::super::app_for_mouse_test();
+        app.state
+            .try_open_file_manager_with(|_| Some(FmState::new(&td.root)))
+            .expect("Files activation");
+        let beta = td.root.join("beta.txt");
+        {
+            let file_manager = app.state.file_manager.as_mut().expect("open FM");
+            let idx = file_manager
+                .entries
+                .iter()
+                .position(|entry| entry.path == beta)
+                .expect("beta entry");
+            file_manager.cursor = idx;
+        }
+
+        assert!(app.dispatch_file_manager_header_action(
+            crate::app::state::FileManagerHeaderAction::Compress
+        ));
+        let intent = app
+            .state
+            .request_file_manager_context_action
+            .as_ref()
+            .expect("the compress intent was queued");
+        assert_eq!(intent.action, FileManagerContextMenuAction::Compress);
+        assert_eq!(intent.paths, vec![beta.clone()]);
+    }
+
+    #[test]
     fn the_send_header_verb_rides_the_context_road_to_the_picker() {
         let td = TempDir::new("send-header-road");
         td.file("beta.txt");

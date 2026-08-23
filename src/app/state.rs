@@ -915,6 +915,9 @@ pub enum FileManagerHeaderAction {
     /// Open the Taildrop picker for the selected files — the header seat of
     /// the context menu's "Send with Tailscale...", sharing its target rule.
     SendTailscale,
+    /// The header seat of the context menu's Compress entry — same intent
+    /// road, same engine; directories are welcome (the walk is recursive).
+    Compress,
     /// Open the extensible actions menu: every installed plugin's File
     /// actions, in one place — the header's own door for "add your own
     /// file operation".
@@ -1120,12 +1123,13 @@ impl FileManagerOperationState {
 }
 
 impl FileManagerHeaderAction {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Copy,
         Self::Paste,
         Self::NewFolder,
         Self::Delete,
         Self::SendTailscale,
+        Self::Compress,
         Self::Search,
         Self::CopyPath,
         Self::More,
@@ -1140,6 +1144,7 @@ impl FileManagerHeaderAction {
             Self::Search => "[search]",
             Self::CopyPath => "[copy path]",
             Self::SendTailscale => "[send]",
+            Self::Compress => "[zip]",
             Self::More => "[more]",
         }
     }
@@ -1194,7 +1199,7 @@ pub struct FileManagerActionState {
 pub struct FileManagerActionBarModel {
     pub selection: Option<FileManagerActionBarSelection>,
     pub clipboard_count: usize,
-    pub actions: [FileManagerActionState; 8],
+    pub actions: [FileManagerActionState; 9],
 }
 
 impl FileManagerActionBarModel {
@@ -7707,6 +7712,7 @@ mod tests {
                 FileManagerHeaderAction::Paste
                 | FileManagerHeaderAction::NewFolder
                 | FileManagerHeaderAction::SendTailscale
+                | FileManagerHeaderAction::Compress
                 | FileManagerHeaderAction::More
                 | FileManagerHeaderAction::Search
                 | FileManagerHeaderAction::CopyPath => None,

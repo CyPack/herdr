@@ -310,25 +310,32 @@ pub(crate) fn compute_file_manager_row_geometry_in_content(
 /// The header seat of "Send with Tailscale...": the multi-selection when one
 /// exists, else the cursor entry — files only, the way Taildrop takes them
 /// (the context menu's own rule, so the two roads cannot drift).
-pub(crate) fn send_header_target_paths(
-    file_manager: &FmState,
-) -> Result<Vec<std::path::PathBuf>, FileManagerActionDisabledReason> {
+/// The header verbs' shared target rule: the multi-selection when one
+/// exists, else the entry under the cursor — live entries only, in visible
+/// order (the bulk verbs' identity rule). One core so [send] and [zip]
+/// cannot drift on what "the current target" means.
+fn header_selection_or_cursor(file_manager: &FmState) -> Vec<std::path::PathBuf> {
     let selected = file_manager.multi_selection_paths();
-    let targets: Vec<_> = if selected.is_empty() {
+    if selected.is_empty() {
         file_manager
             .entries
             .get(file_manager.cursor)
             .map(|entry| vec![entry.path.clone()])
             .unwrap_or_default()
     } else {
-        // Live entries only, in visible order — the bulk verbs' identity rule.
         file_manager
             .entries
             .iter()
             .filter(|entry| selected.contains(&entry.path))
             .map(|entry| entry.path.clone())
             .collect()
-    };
+    }
+}
+
+pub(crate) fn send_header_target_paths(
+    file_manager: &FmState,
+) -> Result<Vec<std::path::PathBuf>, FileManagerActionDisabledReason> {
+    let targets = header_selection_or_cursor(file_manager);
     if targets.is_empty() {
         return Err(FileManagerActionDisabledReason::NoSelection);
     }
@@ -338,6 +345,19 @@ pub(crate) fn send_header_target_paths(
         .any(|entry| entry.is_dir() && targets.contains(&entry.path));
     if any_directory {
         return Err(FileManagerActionDisabledReason::UnsupportedSelection);
+    }
+    Ok(targets)
+}
+
+/// The [zip] seat's target rule: the same selection-else-cursor core, with
+/// directories welcome — the compress engine walks them recursively. Only
+/// an empty directory answers with nothing to compress.
+pub(crate) fn zip_header_target_paths(
+    file_manager: &FmState,
+) -> Result<Vec<std::path::PathBuf>, FileManagerActionDisabledReason> {
+    let targets = header_selection_or_cursor(file_manager);
+    if targets.is_empty() {
+        return Err(FileManagerActionDisabledReason::NoSelection);
     }
     Ok(targets)
 }
@@ -386,6 +406,10 @@ pub(crate) fn compute_file_manager_action_bar_model(
                 FileManagerHeaderAction::SendTailscale => {
                     send_header_target_paths(file_manager).err()
                 }
+                // The header seat of the context menu's Compress entry —
+                // enabled whenever the target rule finds any live entry;
+                // directories are welcome, the engine's walk is recursive.
+                FileManagerHeaderAction::Compress => zip_header_target_paths(file_manager).err(),
                 // The extensible menu is always openable — an empty install
                 // answers with its one honest inert row instead of a grey
                 // button nobody can learn anything from.
@@ -2672,7 +2696,7 @@ mod tests {
     fn header_action_areas_are_tagged_disjoint_and_right_aligned() {
         use crate::app::state::FileManagerHeaderAction;
 
-        let area = Rect::new(10, 4, 83, 1);
+        let area = Rect::new(10, 4, 89, 1);
         let actions = compute_file_manager_header_action_areas(area);
         assert_eq!(
             actions.iter().map(|area| area.action).collect::<Vec<_>>(),
@@ -2682,6 +2706,7 @@ mod tests {
                 FileManagerHeaderAction::NewFolder,
                 FileManagerHeaderAction::Delete,
                 FileManagerHeaderAction::SendTailscale,
+                FileManagerHeaderAction::Compress,
                 FileManagerHeaderAction::Search,
                 FileManagerHeaderAction::CopyPath,
                 FileManagerHeaderAction::More,
@@ -2712,22 +2737,36 @@ mod tests {
         use crate::app::state::FileManagerHeaderAction;
 
         let cases = [
-            // 83 leaves exactly the 71 cells all eight labels and their gaps
-            // cost — the boundary sits AT the full set.
+            // 89 leaves exactly the 77 cells all nine labels and their gaps cost — the boundary sits AT the full set.
             (
-                83,
+                89,
                 vec![
                     FileManagerHeaderAction::Copy,
                     FileManagerHeaderAction::Paste,
                     FileManagerHeaderAction::NewFolder,
                     FileManagerHeaderAction::Delete,
                     FileManagerHeaderAction::SendTailscale,
+                    FileManagerHeaderAction::Compress,
                     FileManagerHeaderAction::Search,
                     FileManagerHeaderAction::CopyPath,
                     FileManagerHeaderAction::More,
                 ],
             ),
             // One cell short: the lowest-priority verb — `[more]` — steps off.
+            (
+                88,
+                vec![
+                    FileManagerHeaderAction::Copy,
+                    FileManagerHeaderAction::Paste,
+                    FileManagerHeaderAction::NewFolder,
+                    FileManagerHeaderAction::Delete,
+                    FileManagerHeaderAction::SendTailscale,
+                    FileManagerHeaderAction::Compress,
+                    FileManagerHeaderAction::Search,
+                    FileManagerHeaderAction::CopyPath,
+                ],
+            ),
+            // 82 fits the eight-without-more set exactly; the drop order below is the reverse of ALL.
             (
                 82,
                 vec![
@@ -2736,52 +2775,61 @@ mod tests {
                     FileManagerHeaderAction::NewFolder,
                     FileManagerHeaderAction::Delete,
                     FileManagerHeaderAction::SendTailscale,
+                    FileManagerHeaderAction::Compress,
                     FileManagerHeaderAction::Search,
                     FileManagerHeaderAction::CopyPath,
                 ],
             ),
-            // 76 leaves exactly the 64 cells all seven remaining labels and
-            // their gaps cost.
             (
-                76,
+                81,
                 vec![
                     FileManagerHeaderAction::Copy,
                     FileManagerHeaderAction::Paste,
                     FileManagerHeaderAction::NewFolder,
                     FileManagerHeaderAction::Delete,
                     FileManagerHeaderAction::SendTailscale,
+                    FileManagerHeaderAction::Compress,
                     FileManagerHeaderAction::Search,
-                    FileManagerHeaderAction::CopyPath,
                 ],
             ),
-            // One cell short of the full set: the lowest-priority verb —
-            // `[copy path]` — is the one that steps off.
+            // 70 fits the seven-with-search set exactly; 69 drops `[search]`.
             (
-                75,
+                70,
                 vec![
                     FileManagerHeaderAction::Copy,
                     FileManagerHeaderAction::Paste,
                     FileManagerHeaderAction::NewFolder,
                     FileManagerHeaderAction::Delete,
                     FileManagerHeaderAction::SendTailscale,
+                    FileManagerHeaderAction::Compress,
                     FileManagerHeaderAction::Search,
                 ],
             ),
-            // 64 fits the six-with-search set exactly; one below drops
-            // `[search]` next — the drop order is the reverse of ALL.
             (
-                64,
+                69,
                 vec![
                     FileManagerHeaderAction::Copy,
                     FileManagerHeaderAction::Paste,
                     FileManagerHeaderAction::NewFolder,
                     FileManagerHeaderAction::Delete,
                     FileManagerHeaderAction::SendTailscale,
-                    FileManagerHeaderAction::Search,
+                    FileManagerHeaderAction::Compress,
+                ],
+            ),
+            // 61 fits the six-with-zip set exactly; 60 drops `[zip]`.
+            (
+                61,
+                vec![
+                    FileManagerHeaderAction::Copy,
+                    FileManagerHeaderAction::Paste,
+                    FileManagerHeaderAction::NewFolder,
+                    FileManagerHeaderAction::Delete,
+                    FileManagerHeaderAction::SendTailscale,
+                    FileManagerHeaderAction::Compress,
                 ],
             ),
             (
-                63,
+                60,
                 vec![
                     FileManagerHeaderAction::Copy,
                     FileManagerHeaderAction::Paste,
@@ -3044,6 +3092,53 @@ mod tests {
         assert_eq!(empty_model.clipboard_count, 0);
     }
 
+    // TP-FM-ZIP-02: the header's [zip] seat shares the context menu's
+    // Compress semantics — any live entry compresses, directories included
+    // (the engine's walk is recursive), and only an empty directory disables
+    // the verb. The deliberate contrast with [send] is the directory rule.
+    #[test]
+    fn the_zip_verb_enables_on_files_and_directories_alike() {
+        let td = TempDir::new("zip-verb-matrix");
+        td.file("beta.txt");
+        std::fs::create_dir(td.root.join("nested")).expect("mk nested");
+        let mut fm = FmState::new(&td.root);
+        let dir_idx = fm
+            .entries
+            .iter()
+            .position(|entry| entry.is_dir())
+            .expect("nested entry");
+        fm.cursor = dir_idx;
+        let model = compute_file_manager_action_bar_model(
+            &fm,
+            &[],
+            false,
+            FileManagerLocationsFocus::Trail,
+        );
+        assert!(
+            model
+                .action_state(FileManagerHeaderAction::Compress)
+                .expect("zip catalog entry")
+                .enabled,
+            "a directory under the cursor keeps [zip] enabled"
+        );
+
+        let empty = TempDir::new("zip-verb-empty");
+        let empty_model = compute_file_manager_action_bar_model(
+            &FmState::new(&empty.root),
+            &[],
+            false,
+            FileManagerLocationsFocus::Trail,
+        );
+        assert_eq!(
+            empty_model
+                .action_state(FileManagerHeaderAction::Compress)
+                .expect("zip catalog entry")
+                .disabled_reason,
+            Some(FileManagerActionDisabledReason::NoSelection),
+            "an empty directory has nothing to compress"
+        );
+    }
+
     // TP-C6.3-CATALOG: the durable cross-surface matrix is typed rather than
     // inferred from rendered labels. Actions without a v1 execution owner are
     // visible but disabled instead of advertising a silent no-op.
@@ -3059,6 +3154,7 @@ mod tests {
                 "[new folder]",
                 "[delete]",
                 "[send]",
+                "[zip]",
                 "[search]",
                 "[copy path]",
                 "[more]"

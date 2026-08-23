@@ -538,6 +538,17 @@ impl crate::app::App {
             // it (`handle_file_manager_mouse_at`); reaching here means a
             // caller with no position, and a menu with no anchor is refused.
             FileManagerHeaderAction::More => false,
+            FileManagerHeaderAction::Compress => {
+                let Some(paths) = current_action_paths(&self.state, action) else {
+                    return false;
+                };
+                self.state.request_file_manager_context_action =
+                    Some(crate::app::state::FileManagerContextActionIntent {
+                        action: crate::app::state::FileManagerContextMenuAction::Compress,
+                        paths,
+                    });
+                true
+            }
             FileManagerHeaderAction::SendTailscale => {
                 let Some(paths) = current_action_paths(&self.state, action) else {
                     return false;
@@ -1353,6 +1364,10 @@ pub(super) fn current_action_paths(
     // shared with the model's enable arm through one helper.
     if action == crate::app::state::FileManagerHeaderAction::SendTailscale {
         return crate::ui::send_header_target_paths(file_manager).ok();
+    }
+    // [zip] shares the same selection-else-cursor rule, directories welcome.
+    if action == crate::app::state::FileManagerHeaderAction::Compress {
+        return crate::ui::zip_header_target_paths(file_manager).ok();
     }
     let action_bar = crate::ui::compute_file_manager_action_bar_model(
         file_manager,
