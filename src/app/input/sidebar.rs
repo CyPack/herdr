@@ -4353,6 +4353,7 @@ mod tests {
             label: "Bucket".to_string(),
             icon: None,
             parent: None,
+            passive_color: None,
         }];
         state.workspace_chat_rows.insert(
             crate::persist::workspace_chats::module_ledger_key("bucket"),

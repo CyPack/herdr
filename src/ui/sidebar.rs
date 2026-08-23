@@ -3984,7 +3984,27 @@ fn render_workspace_list(
 /// `auto` — the default — follows the theme's peach through the same warm
 /// default the bars use; anything else goes through the bars' own colour
 /// vocabulary, exactly like `ui.sidebar.divider_color` below it.
-fn passive_agent_ink(app: &AppState) -> ratatui::style::Color {
+fn passive_agent_ink(app: &AppState, ws_idx: usize) -> ratatui::style::Color {
+    // Module first, global second, theme last (TP-AGPANEL-51). The rule
+    // lookup is the same first-match walk the spaces tree already does per
+    // workspace, and it only runs on frames that draw — an idle panel costs
+    // nothing (resource doctrine).
+    if let Some(spec) = app
+        .workspaces
+        .get(ws_idx)
+        .and_then(|ws| ws.worktree_space().map(|space| (ws, space)))
+        .and_then(|(ws, space)| {
+            crate::spaces::resolve_space_rule(
+                &app.space_split_rules,
+                &space.repo_root,
+                &space.checkout_path,
+                ws.branch().as_deref(),
+            )
+        })
+        .and_then(|rule| rule.passive_color.as_deref())
+    {
+        return crate::ui::shell::bar_color(spec, &app.palette);
+    }
     let spec = app.sidebar_agents_passive_color.trim();
     if spec.eq_ignore_ascii_case("auto") {
         return app.palette.peach;
@@ -5176,7 +5196,7 @@ fn render_agent_detail(
             // here vanished on a dimmed screen (the same report that
             // recoloured the graveyard). Plain, never DIM: DIM peach is the
             // ghost class.
-            Style::default().fg(passive_agent_ink(app))
+            Style::default().fg(passive_agent_ink(app, detail.ws_idx))
         };
         let status_style = if is_active {
             Style::default().fg(panel_contrast_fg(p))
@@ -9881,6 +9901,67 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         assert!(red.len() >= 4, "the config is wired: {}", red.len());
     }
 
+    // TP-AGPANEL-51: a module's own passive ink wins over the global one,
+    // and a module that names none inherits it — module > global > theme.
+    // The user asked for exactly this ladder: per-module colours, on top of
+    // a manual-or-auto global.
+    #[test]
+    fn a_modules_passive_ink_overrides_the_global_one() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![
+            worktree_on_branch("alpha", "feat/tui-alpha"),
+            worktree_on_branch("beta", "feat/other-beta"),
+        ];
+        let mut rule = split_rule(&["feat/tui-*"], "herdr:tui", "TUI");
+        rule.passive_color = Some("blue".to_string());
+        app.space_split_rules = vec![rule];
+        app.ensure_test_terminals();
+        for ws_idx in 0..2 {
+            let pane = app.workspaces[ws_idx].tabs[0].root_pane;
+            let terminal_id = app.workspaces[ws_idx].tabs[0].panes[&pane]
+                .attached_terminal_id
+                .clone();
+            app.terminals.get_mut(&terminal_id).unwrap().detected_agent = Some(Agent::Pi);
+        }
+        // nobody active: both rows are passive
+        app.active = None;
+        app.selected = 0;
+
+        let area = Rect::new(0, 0, 34, 10);
+        let backend = ratatui::backend::TestBackend::new(34, 10);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let registry = TerminalRuntimeRegistry::new();
+        terminal
+            .draw(|frame| render_agent_detail(&app, &registry, frame, area))
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let row_of = |needle: &str| {
+            (0..area.height)
+                .find(|&y| {
+                    (0..area.width)
+                        .map(|x| buffer[(x, y)].symbol())
+                        .collect::<String>()
+                        .contains(needle)
+                })
+                .unwrap_or_else(|| panic!("{needle} row"))
+        };
+        let count_ink = |y: u16, ink: ratatui::style::Color| {
+            (0..area.width)
+                .filter(|&x| buffer[(x, y)].fg == ink)
+                .count()
+        };
+        let alpha_y = row_of("alpha");
+        assert!(
+            count_ink(alpha_y, app.palette.blue) >= 5,
+            "the claimed module's own ink wins"
+        );
+        let beta_y = row_of("beta");
+        assert!(
+            count_ink(beta_y, app.palette.peach) >= 4,
+            "an unclaimed workspace inherits the global auto ink"
+        );
+    }
+
     // T46 · nobody who did not ask for a frame pays for one.
     #[test]
     fn without_a_frame_the_two_sections_keep_exactly_their_old_rectangles() {
@@ -10174,6 +10255,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             label: label.to_string(),
             icon: None,
             parent: None,
+            passive_color: None,
         }
     }
 
@@ -10297,6 +10379,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
                 label: "Web".to_string(),
                 icon: None,
                 parent: None,
+                passive_color: None,
             },
         ];
 
@@ -11366,6 +11449,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             label: "Docs".into(),
             icon: None,
             parent: None,
+            passive_color: None,
         }];
         app.active = Some(0);
         app.selected = 0;
@@ -12954,6 +13038,7 @@ mod module_gap_tests {
             label: format!("{key} label"),
             icon: None,
             parent: None,
+            passive_color: None,
         }];
         app
     }
@@ -13079,6 +13164,7 @@ mod module_gap_tests {
             label: "Bucket Mod".to_string(),
             icon: None,
             parent: None,
+            passive_color: None,
         }];
 
         let keys: Vec<String> = app
@@ -13162,6 +13248,7 @@ mod module_gap_tests {
                 label: "Same".to_string(),
                 icon: None,
                 parent: None,
+                passive_color: None,
             },
             crate::spaces::SpaceSplitRule {
                 repo_root: repo,
@@ -13170,6 +13257,7 @@ mod module_gap_tests {
                 label: "Same".to_string(),
                 icon: None,
                 parent: None,
+                passive_color: None,
             },
         ];
 

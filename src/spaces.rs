@@ -41,6 +41,9 @@ pub struct SpaceSplitRule {
     /// Node key this bucket hangs under. `None` keeps today's placement:
     /// a claiming project when one exists, top level otherwise.
     pub parent: Option<String>,
+    /// The ink passive agent names under this module wear; `None` inherits
+    /// the global `ui.sidebar.agents.passive_color` (TP-AGPANEL-51).
+    pub passive_color: Option<String>,
 }
 
 impl SpaceSplitRule {
@@ -413,6 +416,7 @@ mod tests {
             label: label.to_string(),
             icon: None,
             parent: None,
+            passive_color: None,
         }
     }
 

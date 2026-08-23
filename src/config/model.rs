@@ -499,6 +499,10 @@ pub struct SpaceSplitEntry {
     /// Node key this bucket hangs under. Blank keeps today's placement
     /// (a claiming project, or top level).
     pub parent: String,
+    /// The ink passive agent names under this module wear. Blank inherits
+    /// `ui.sidebar.agents.passive_color`; a bar-colour token or `#rrggbb`
+    /// literal overrides it for this module alone (TP-AGPANEL-51).
+    pub passive_color: String,
 }
 
 /// One authored `[[spaces.project]]` table, before validation.
@@ -623,6 +627,10 @@ impl SpacesConfig {
                     parent: {
                         let parent = entry.parent.trim();
                         (!parent.is_empty()).then(|| parent.to_string())
+                    },
+                    passive_color: {
+                        let ink = entry.passive_color.trim();
+                        (!ink.is_empty()).then(|| ink.to_string())
                     },
                 }
             })
@@ -3459,6 +3467,41 @@ key = "k5"
         );
     }
 
+    // TP-AGPANEL-51: the authored ink must survive validation into the rule
+    // the renderer reads — a broken carry here would leave every module on
+    // the global colour while the config claims otherwise, silently.
+    #[test]
+    fn a_split_rules_passive_ink_survives_validation() {
+        let spaces = SpacesConfig {
+            split: vec![
+                SpaceSplitEntry {
+                    repo: "~/panel".into(),
+                    patterns: vec!["feat/*".into()],
+                    key: "panel:feat".into(),
+                    passive_color: "  blue  ".into(),
+                    ..Default::default()
+                },
+                SpaceSplitEntry {
+                    repo: "~/panel".into(),
+                    patterns: vec!["fix/*".into()],
+                    key: "panel:fix".into(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let rules = spaces.rules();
+        assert_eq!(
+            rules[0].passive_color.as_deref(),
+            Some("blue"),
+            "trimmed and carried"
+        );
+        assert_eq!(
+            rules[1].passive_color, None,
+            "blank inherits the global ink"
+        );
+    }
+
     #[test]
     fn space_split_entry_problem_rejects_unusable_entries() {
         let usable = SpaceSplitEntry {
@@ -3468,6 +3511,7 @@ key = "k5"
             label: String::new(),
             icon: String::new(),
             parent: String::new(),
+            passive_color: String::new(),
         };
         assert_eq!(space_split_entry_problem(&usable), None);
 

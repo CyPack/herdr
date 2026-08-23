@@ -2805,6 +2805,7 @@ mod module_repo_tests {
             label: "Docs bucket".to_string(),
             icon: None,
             parent: Some("docs".to_string()),
+            passive_color: None,
         }];
 
         // Whatever the tree resolves, the answer must never be the bare
