@@ -474,6 +474,7 @@ fn compute_view_internal(
     // The pairing self-heals here rather than at every consumer: a right
     // index that vanished, equals the active, or a stage too narrow to
     // split, and the mode is dropped whole.
+    let mut sbs_divider_rect = None;
     let side_by_side = match app.side_by_side {
         Some(sbs) if terminal_surface_active && terminal_area.width >= 40 => match sbs.right {
             crate::app::state::SideBySideRight::Workspace(right)
@@ -500,6 +501,14 @@ fn compute_view_internal(
             let ratio = u16::from(sbs.ratio_percent.clamp(20, 80));
             let left_w = (terminal_area.width.saturating_sub(1)) * ratio / 100;
             let right_x = terminal_area.x + left_w + 1;
+            // The split already leaves this one column empty between the
+            // halves — name it so the mouse can grab it (the ratio drag).
+            sbs_divider_rect = Some(Rect::new(
+                terminal_area.x + left_w,
+                terminal_area.y,
+                1,
+                terminal_area.height,
+            ));
             let right_w = terminal_area.width.saturating_sub(left_w).saturating_sub(1);
             let left_strip = Rect::new(tab_bar_rect.x, tab_bar_rect.y, left_w, tab_bar_rect.height);
             let right_strip = Rect::new(right_x, tab_bar_rect.y, right_w, tab_bar_rect.height);
@@ -735,6 +744,7 @@ fn compute_view_internal(
         sidebar_tab_hit_areas,
         project_row_areas,
         project_rows_generation: app.projects_sessions_generation,
+        sbs_divider_rect,
         app_dock_entry_areas,
         file_manager_locations,
         file_manager_miller,
@@ -916,6 +926,7 @@ fn compute_mobile_view(
         stage_tab_hit_areas: Vec::new(),
         project_row_areas: Vec::new(),
         project_rows_generation: app.projects_sessions_generation,
+        sbs_divider_rect: None,
         app_dock_entry_areas: Vec::new(),
         file_manager_locations,
         file_manager_miller,
@@ -3487,6 +3498,48 @@ mod tests {
     // TP-STAGE-SBS-01: a pairing that stopped making sense heals on compute
     // — right vanished, right == active, or a stage too narrow — rather
     // than every consumer re-checking it.
+    // TP-SBS-DRAG-01: the ratio the drag commits is the geometry the next
+    // frame draws — the divider's own x moves with it, on the cell layer.
+    #[test]
+    fn the_sbs_divider_rect_follows_the_ratio() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("l"), Workspace::test_new("r")];
+        app.active = Some(0);
+        app.mode = Mode::Terminal;
+        app.ensure_test_terminals();
+        app.side_by_side = Some(crate::app::state::SideBySideView {
+            right: crate::app::state::SideBySideRight::Workspace(1),
+            ratio_percent: 20,
+        });
+        compute_view(&mut app, Rect::new(0, 0, 120, 30));
+        let narrow = app
+            .view
+            .sbs_divider_rect
+            .expect("a split names its divider");
+
+        app.side_by_side = Some(crate::app::state::SideBySideView {
+            right: crate::app::state::SideBySideRight::Workspace(1),
+            ratio_percent: 80,
+        });
+        compute_view(&mut app, Rect::new(0, 0, 120, 30));
+        let wide = app.view.sbs_divider_rect.expect("still split");
+
+        assert!(
+            narrow.x < wide.x,
+            "a bigger ratio moves the divider right: {} vs {}",
+            narrow.x,
+            wide.x
+        );
+        assert_eq!(wide.width, 1, "the handle is the one empty column");
+
+        app.side_by_side = None;
+        compute_view(&mut app, Rect::new(0, 0, 120, 30));
+        assert!(
+            app.view.sbs_divider_rect.is_none(),
+            "no split, no handle to grab"
+        );
+    }
+
     #[test]
     fn an_invalid_pairing_heals_on_compute() {
         let mut app = crate::app::state::AppState::test_new();

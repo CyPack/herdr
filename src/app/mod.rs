@@ -1089,6 +1089,7 @@ impl App {
                 stage_tab_hit_areas: Vec::new(),
                 project_row_areas: Vec::new(),
                 project_rows_generation: 0,
+                sbs_divider_rect: None,
                 app_dock_entry_areas: Vec::new(),
                 file_manager_locations: Default::default(),
                 file_manager_miller: Default::default(),

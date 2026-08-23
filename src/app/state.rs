@@ -1903,6 +1903,9 @@ pub struct ViewState {
     /// The `projects_sessions_generation` these `project_row_areas` were
     /// laid out against. A click only counts when it still matches.
     pub project_rows_generation: u64,
+    /// The one-column divider between the side-by-side halves, when the
+    /// stage is split — the grab handle for the ratio drag.
+    pub sbs_divider_rect: Option<Rect>,
     /// Complete AppDock entry targets for the current frame. Empty whenever
     /// the live shell projects no dock region.
     pub app_dock_entry_areas: Vec<crate::ui::app_dock::AppDockEntryArea>,
@@ -5389,6 +5392,7 @@ impl AppState {
                 sidebar_tab_hit_areas: Vec::new(),
                 project_row_areas: Vec::new(),
                 project_rows_generation: 0,
+                sbs_divider_rect: None,
                 app_dock_entry_areas: Vec::new(),
                 file_manager_locations: Default::default(),
                 file_manager_miller: Default::default(),

@@ -101,6 +101,8 @@ impl MillerDividerId {
 pub(crate) enum ResizeTargetId {
     Shell(DividerId),
     Miller(MillerDividerId),
+    /// The one divider between the side-by-side halves of the stage.
+    SideBySide,
 }
 
 impl ResizeTargetId {
@@ -108,6 +110,7 @@ impl ResizeTargetId {
         match self {
             Self::Shell(divider) => divider.axis,
             Self::Miller(divider) => divider.axis,
+            Self::SideBySide => ShellDirection::Horizontal,
         }
     }
 }
@@ -671,6 +674,12 @@ impl ShellInteractionState {
         self.resize.as_ref().map(|transaction| &transaction.target)
     }
 
+    pub(crate) fn side_by_side_resize_active(&self) -> bool {
+        self.resize
+            .as_ref()
+            .is_some_and(|transaction| matches!(&transaction.target, ResizeTargetId::SideBySide))
+    }
+
     pub(crate) fn miller_resize_active(&self) -> bool {
         self.resize
             .as_ref()
@@ -770,6 +779,19 @@ impl ResizeTransaction {
     ) -> Option<Self> {
         Self::begin_target(
             ResizeTargetId::Miller(divider),
+            view_generation,
+            pointer_origin,
+            original_tracks,
+        )
+    }
+
+    pub(crate) fn begin_side_by_side(
+        view_generation: u64,
+        pointer_origin: Position,
+        original_tracks: [u16; 2],
+    ) -> Option<Self> {
+        Self::begin_target(
+            ResizeTargetId::SideBySide,
             view_generation,
             pointer_origin,
             original_tracks,

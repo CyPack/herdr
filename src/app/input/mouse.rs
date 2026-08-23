@@ -141,6 +141,14 @@ impl AppState {
             return self.handle_settings_mouse(mouse).map(MouseAction::Settings);
         }
 
+        // TP-SBS-DRAG-01: the one empty column between the side-by-side
+        // halves is a grab handle. An active drag owns the pointer outright;
+        // a Down on the named column arms it. Handled before every other
+        // surface so a mid-drag pointer crossing a pane cannot leak into it.
+        if self.handle_sbs_divider_mouse(&mouse) {
+            return None;
+        }
+
         let launcher_enabled = self.view.layout != ViewLayout::Mobile
             && !self.sidebar_collapsed
             && matches!(
@@ -2492,6 +2500,85 @@ impl AppState {
         self.enter_overlay_mode(Mode::ContextMenu);
     }
 
+    /// The committed ratio for a pair of half widths. The preview bounds
+    /// already hold the drag inside the band, but integer floor on both the
+    /// bound (`total*20/100`) and this division can still land one percent
+    /// outside it — total 101 puts the minimum track at 20 cells, and
+    /// 20*100/101 floors to 19. The clamp is that last percent, not
+    /// decoration.
+    pub(super) fn sbs_ratio_from_tracks_impl(left: u16, right: u16) -> u8 {
+        let total = u32::from(left).saturating_add(u32::from(right)).max(1);
+        let ratio = ((u32::from(left) * 100) / total) as u8;
+        ratio.clamp(20, 80)
+    }
+
+    /// The side-by-side divider's whole gesture: arm on the named column,
+    /// preview while dragging, commit the clamped ratio on release. Returns
+    /// true when the event belongs to the divider.
+    fn handle_sbs_divider_mouse(&mut self, mouse: &MouseEvent) -> bool {
+        use crate::ui::shell::{ResizeBounds, ResizeDecision, ResizeTransaction};
+
+        if self.shell_interaction.side_by_side_resize_active() {
+            match mouse.kind {
+                MouseEventKind::Drag(MouseButton::Left) => {
+                    let total = self.shell_interaction.resize_original_total().unwrap_or(0);
+                    // The same 20-80 band the committed ratio promises, held
+                    // live so the preview cannot starve a half either.
+                    let min = (((u32::from(total)) * 20) / 100).max(1) as u16;
+                    if let Some(bounds) = ResizeBounds::new(min, total, min, total) {
+                        let _ = self.shell_interaction.preview_resize(
+                            ratatui::layout::Position::new(mouse.column, mouse.row),
+                            bounds,
+                        );
+                    }
+                    true
+                }
+                MouseEventKind::Up(MouseButton::Left) => {
+                    let update = self.shell_interaction.commit_resize(0);
+                    if let ResizeDecision::Committed([left, right]) = update.decision() {
+                        if let Some(sbs) = self.side_by_side.as_mut() {
+                            sbs.ratio_percent = Self::sbs_ratio_from_tracks_impl(left, right);
+                        }
+                    }
+                    true
+                }
+                // While armed, every other pointer event stays with the
+                // divider — leaking a mid-drag Move into a pane would scroll
+                // whatever the pointer happens to cross.
+                _ => true,
+            }
+        } else {
+            if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+                return false;
+            }
+            let Some(divider) = self.view.sbs_divider_rect else {
+                return false;
+            };
+            let on_divider = mouse.column == divider.x
+                && mouse.row >= divider.y
+                && mouse.row < divider.y.saturating_add(divider.height);
+            if !on_divider {
+                return false;
+            }
+            let left_w = divider.x.saturating_sub(self.view.terminal_area.x);
+            let right_w = self
+                .view
+                .right_surface
+                .as_ref()
+                .map(|surface| surface.area.width)
+                .unwrap_or(0);
+            let Some(transaction) = ResizeTransaction::begin_side_by_side(
+                0,
+                ratatui::layout::Position::new(mouse.column, mouse.row),
+                [left_w, right_w],
+            ) else {
+                return false;
+            };
+            self.shell_interaction.begin_resize(transaction);
+            true
+        }
+    }
+
     fn handle_right_click_passthrough(
         &mut self,
         terminal_runtimes: &TerminalRuntimeRegistry,
@@ -4008,6 +4095,166 @@ mod tests {
     // agent used to be a silent no-op — focus did not change, so the screen
     // stayed on Files. The click now dismisses Files first, uniformly for the
     // same agent, a different agent, and the collapsed rail.
+    // TP-SBS-DRAG-01: integer floor on both the bound and the division can
+    // land one percent outside the band — total 101 floors 20 cells to 19%
+    // and 81 cells to 80%+floor artefacts. The clamp is that last percent.
+    #[test]
+    fn the_committed_ratio_never_leaves_the_band() {
+        assert_eq!(
+            crate::app::state::AppState::sbs_ratio_from_tracks_impl(20, 81),
+            20,
+            "total 101: the floor lands at 19 without the clamp"
+        );
+        assert_eq!(
+            crate::app::state::AppState::sbs_ratio_from_tracks_impl(81, 20),
+            80
+        );
+        assert_eq!(
+            crate::app::state::AppState::sbs_ratio_from_tracks_impl(0, 0),
+            20
+        );
+        assert_eq!(
+            crate::app::state::AppState::sbs_ratio_from_tracks_impl(60, 60),
+            50
+        );
+    }
+
+    fn sbs_drag_app() -> crate::app::App {
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![
+            crate::workspace::Workspace::test_new("left"),
+            crate::workspace::Workspace::test_new("right"),
+        ];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = crate::app::state::Mode::Terminal;
+        app.state.mobile_width_threshold = 0;
+        app.state.ensure_test_terminals();
+        app.state.side_by_side = Some(crate::app::state::SideBySideView {
+            right: crate::app::state::SideBySideRight::Workspace(1),
+            ratio_percent: 50,
+        });
+        crate::ui::compute_view(&mut app.state, ratatui::layout::Rect::new(0, 0, 120, 30));
+        app
+    }
+
+    // TP-SBS-DRAG-01: the one empty column between the halves is a grab
+    // handle — Down on it arms the shared resize transaction, Drag moves the
+    // split live, Up commits the new ratio (clamped to the 20-80 the state
+    // already promises), and the released pointer stops owning anything.
+    #[test]
+    fn dragging_the_sbs_divider_commits_a_new_ratio() {
+        let mut app = sbs_drag_app();
+        let divider = app
+            .state
+            .view
+            .sbs_divider_rect
+            .expect("a split names its divider");
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            divider.x,
+            divider.y + 2,
+        ));
+        assert!(
+            app.state.shell_interaction.side_by_side_resize_active(),
+            "a press on the divider arms the transaction"
+        );
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Drag(MouseButton::Left),
+            divider.x + 24,
+            divider.y + 2,
+        ));
+        app.handle_mouse(mouse(
+            MouseEventKind::Up(MouseButton::Left),
+            divider.x + 24,
+            divider.y + 2,
+        ));
+
+        let ratio = app
+            .state
+            .side_by_side
+            .expect("the split survives")
+            .ratio_percent;
+        assert!(
+            ratio > 50,
+            "dragging right grows the left half; ratio stayed {ratio}"
+        );
+        assert!(
+            !app.state.shell_interaction.side_by_side_resize_active(),
+            "Up releases the transaction"
+        );
+
+        // A drag after release owns nothing — the capture does not leak.
+        app.handle_mouse(mouse(
+            MouseEventKind::Drag(MouseButton::Left),
+            divider.x + 40,
+            divider.y + 2,
+        ));
+        assert_eq!(
+            app.state.side_by_side.expect("still split").ratio_percent,
+            ratio,
+            "a released divider ignores stray drags"
+        );
+    }
+
+    // TP-SBS-DRAG-01: the commit clamps to the same 20-80 band the state
+    // promises everywhere else — a drag to the far edge cannot starve a half.
+    #[test]
+    fn an_sbs_drag_to_the_edge_clamps_the_ratio() {
+        let mut app = sbs_drag_app();
+        let divider = app
+            .state
+            .view
+            .sbs_divider_rect
+            .expect("a split names its divider");
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            divider.x,
+            divider.y,
+        ));
+        app.handle_mouse(mouse(
+            MouseEventKind::Drag(MouseButton::Left),
+            119,
+            divider.y,
+        ));
+        app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), 119, divider.y));
+
+        let ratio = app
+            .state
+            .side_by_side
+            .expect("the split survives")
+            .ratio_percent;
+        assert!(
+            (20..=80).contains(&ratio) && ratio >= 70,
+            "an edge drag lands at the clamp band's edge; got {ratio}"
+        );
+    }
+
+    // TP-SBS-DRAG-01: a press anywhere else arms nothing — the drag must not
+    // eat ordinary clicks.
+    #[test]
+    fn a_press_off_the_divider_arms_no_sbs_drag() {
+        let mut app = sbs_drag_app();
+        let divider = app
+            .state
+            .view
+            .sbs_divider_rect
+            .expect("a split names its divider");
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            divider.x + 10,
+            divider.y + 2,
+        ));
+        assert!(
+            !app.state.shell_interaction.side_by_side_resize_active(),
+            "a press off the divider must not arm the drag"
+        );
+    }
+
     #[test]
     fn an_agent_row_click_dismisses_the_files_stage() {
         let mut app = app_for_mouse_test();
