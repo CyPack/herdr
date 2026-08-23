@@ -747,6 +747,12 @@
           "description": "Two or more stops to fade the agents frame between along its long axis. Both ends must carry channel values."
         },
         {
+          "key": "ui.sidebar.agents.passive_color",
+          "type": "string",
+          "default": "\"auto\"",
+          "description": "The ink a passive agent's name is drawn in. auto follows the theme's peach; any bar-colour token or #rrggbb literal names an exact ink. Never dimmed: dim peach is the closed-agent (ghost) class."
+        },
+        {
           "key": "ui.sidebar.agents.row_gap",
           "type": "integer",
           "default": "0",

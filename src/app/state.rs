@@ -4098,6 +4098,9 @@ pub struct AppState {
     pub module_delete: Option<ModuleDeleteConfirmation>,
     /// `ui.sidebar.divider_color` resolved at the edge of use (bar_color).
     pub sidebar_divider_color: String,
+    /// `ui.sidebar.agents.passive_color` — resolved at the edge of use;
+    /// `auto` reads as the palette's peach (TP-AGPANEL-50).
+    pub sidebar_agents_passive_color: String,
     /// Drawers this display has opened all the way, past the five rows the
     /// glance surface keeps (TP-DRAW-10). Per display, like every other
     /// drawer set here.
@@ -5383,6 +5386,7 @@ impl AppState {
             files_show_row_actions: false,
             module_delete: None,
             sidebar_divider_color: "peach".to_string(),
+            sidebar_agents_passive_color: "auto".to_string(),
             fully_open_chat_drawers: std::collections::HashSet::new(),
             expanded_chat_workspaces: std::collections::HashSet::new(),
             daily_section_collapsed: false,

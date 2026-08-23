@@ -3979,6 +3979,19 @@ fn render_workspace_list(
 }
 
 /// The label a worktree space is known by, or the key itself as a last resort.
+/// The ink a passive agent's name is drawn in (TP-AGPANEL-50).
+///
+/// `auto` — the default — follows the theme's peach through the same warm
+/// default the bars use; anything else goes through the bars' own colour
+/// vocabulary, exactly like `ui.sidebar.divider_color` below it.
+fn passive_agent_ink(app: &AppState) -> ratatui::style::Color {
+    let spec = app.sidebar_agents_passive_color.trim();
+    if spec.eq_ignore_ascii_case("auto") {
+        return app.palette.peach;
+    }
+    crate::ui::shell::bar_color(spec, &app.palette)
+}
+
 /// The vertical seam between the sidebar and the stage.
 ///
 /// TP-CHROME-162: heavy glyph, and a colour that survives a dimmed screen —
@@ -5158,8 +5171,12 @@ fn render_agent_detail(
                 .add_modifier(Modifier::BOLD)
         } else {
             // TP-AGPANEL-02: passive rows give up their bold so the eye lands
-            // on the active one.
-            Style::default().fg(p.subtext0)
+            // on the active one. TP-AGPANEL-50: the ink itself is configured —
+            // `auto` follows the theme's peach, because the grey that lived
+            // here vanished on a dimmed screen (the same report that
+            // recoloured the graveyard). Plain, never DIM: DIM peach is the
+            // ghost class.
+            Style::default().fg(passive_agent_ink(app))
         };
         let status_style = if is_active {
             Style::default().fg(panel_contrast_fg(p))
@@ -9784,6 +9801,84 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             !passive_name_is_bold,
             "a passive agent's name must give up its bold so the active one stands out"
         );
+    }
+
+    // TP-AGPANEL-50: the passive card's NAME is drawn in the configured ink —
+    // `auto` follows the theme's peach. The grey it replaces is the same grey
+    // whose report recoloured the graveyard (TP-AGPANEL-49): at lowered
+    // brightness it was nearly invisible, and a living agent nobody can see
+    // is a click target nobody can find. Plain peach, no DIM, keeps the
+    // living row a different class from the DIM-peach ghost.
+    #[test]
+    fn a_passive_agents_name_wears_the_configured_ink() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("alpha"), Workspace::test_new("beta")];
+        app.ensure_test_terminals();
+        for ws_idx in 0..2 {
+            let pane = app.workspaces[ws_idx].tabs[0].root_pane;
+            let terminal_id = app.workspaces[ws_idx].tabs[0].panes[&pane]
+                .attached_terminal_id
+                .clone();
+            let terminal = app.terminals.get_mut(&terminal_id).unwrap();
+            terminal.detected_agent = Some(Agent::Pi);
+        }
+        app.active = Some(0);
+        app.selected = 0;
+
+        let area = Rect::new(0, 0, 34, 8);
+        let passive_name_cells = |app: &crate::app::state::AppState| {
+            let backend = ratatui::backend::TestBackend::new(34, 8);
+            let mut terminal = ratatui::Terminal::new(backend).unwrap();
+            let registry = TerminalRuntimeRegistry::new();
+            terminal
+                .draw(|frame| render_agent_detail(app, &registry, frame, area))
+                .unwrap();
+            let buffer = terminal.backend().buffer().clone();
+            let row_text = |y: u16| -> String {
+                (0..area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            };
+            // The state icon is a wide glyph, so a string index into the
+            // row is NOT a buffer column (the emoji continuation-cell
+            // lesson): scan the whole row for styled cells instead.
+            let y = (0..area.height)
+                .find(|&y| row_text(y).contains("beta"))
+                .expect("the passive agent is listed");
+            (0..area.width)
+                .map(|x| buffer[(x, y)].style())
+                .collect::<Vec<_>>()
+        };
+        // The row also carries the state icon in its own status ink, so the
+        // name is asserted by counting: at least "beta"'s four letters must
+        // wear the expected ink, and none of the cells wearing it may DIM —
+        // DIM plus this ink is the ghost class.
+        let ink_cells = |styles: &[Style], ink: ratatui::style::Color| {
+            styles
+                .iter()
+                .filter(|style| style.fg == Some(ink))
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+
+        // auto — the default — reads as the palette's peach, undimmed.
+        let peach = ink_cells(&passive_name_cells(&app), app.palette.peach);
+        assert!(
+            peach.len() >= 4,
+            "the four letters of \"beta\" wear the auto (peach) ink: {}",
+            peach.len()
+        );
+        assert!(
+            peach
+                .iter()
+                .all(|style| !style.add_modifier.contains(Modifier::DIM)),
+            "a living passive row must not collapse into the ghost class"
+        );
+
+        // a written colour names an exact ink through the bars' vocabulary
+        app.sidebar_agents_passive_color = "red".to_string();
+        let red = ink_cells(&passive_name_cells(&app), app.palette.red);
+        assert!(red.len() >= 4, "the config is wired: {}", red.len());
     }
 
     // T46 · nobody who did not ask for a frame pays for one.

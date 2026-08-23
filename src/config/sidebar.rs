@@ -374,6 +374,12 @@ where
 pub struct AgentsSidebarConfig {
     /// Optional frame around this section of the left panel.
     pub border: SectionBorderConfig,
+    /// `ui.sidebar.agents.passive_color` — the ink a passive agent's name is
+    /// drawn in. `auto` follows the theme's peach: the grey that used to live
+    /// here vanished on a dimmed screen, the same report that recoloured the
+    /// graveyard (TP-AGPANEL-49). Any bar-colour token or `#rrggbb` literal
+    /// names an exact ink instead.
+    pub passive_color: String,
     #[serde(deserialize_with = "deserialize_sidebar_rows")]
     pub rows: AgentSidebarRows,
     #[serde(default, deserialize_with = "deserialize_rows_by_agent")]
@@ -393,6 +399,7 @@ impl Default for AgentsSidebarConfig {
     fn default() -> Self {
         Self {
             border: SectionBorderConfig::default(),
+            passive_color: "auto".to_string(),
             rows: vec![
                 vec![
                     AgentSidebarToken::StateIcon,
