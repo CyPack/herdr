@@ -427,6 +427,24 @@ rows = [
 
 `row_gap` controls the blank terminal rows between entries, independently for the Agent and Space panels. It defaults to `0`, which packs entries together; set it to `1` to restore the previous spacing. It does not add spacing between the content lines declared in `rows`. Consecutive indented worktree children remain packed as one Space group.
 
+`passive_color` names the ink a passive agent's name is drawn in:
+
+```toml
+[ui.sidebar.agents]
+passive_color = "auto"
+```
+
+`auto` — the default — follows the theme's peach. The grey that used to live
+here all but vanished on a dimmed screen, the same report that recoloured the
+closed-agent rows; a living agent nobody can see is a click target nobody can
+find. Any of the shell bars' colour tokens or a `#rrggbb` literal names an
+exact ink instead. The passive name is never dimmed — dim peach is what a
+*closed* agent wears, and the two must stay different classes at a glance.
+The vertical seam between the sidebar and the stage follows the same
+vocabulary through its own key, `ui.sidebar.divider_color` (default `peach`);
+in Navigate mode the seam keeps the accent so the mode stays readable at the
+edge.
+
 Override the complete Agent layout for a known agent under `rows_by_agent`:
 
 ```toml
