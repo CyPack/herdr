@@ -168,8 +168,8 @@ pub(crate) fn render_section_widget(
             render_icon_art(frame, art, palette, area);
             return;
         }
-        crate::ui::shell::SectionWidget::Meter { metric } => {
-            render_meter(frame, resources, *metric, palette, area);
+        crate::ui::shell::SectionWidget::Meter { metric, display } => {
+            render_meter(frame, resources, *metric, *display, palette, area);
             return;
         }
         crate::ui::shell::SectionWidget::Sparkline { metric } => {
@@ -353,31 +353,46 @@ fn render_meter(
     frame: &mut Frame,
     resources: &crate::resource::ResourceSample,
     metric: crate::resource::ResourceMetric,
+    display: crate::resource::MeterDisplay,
     palette: &Palette,
     area: Rect,
 ) {
-    const FULL: &str = "\u{2588}";
-
     let Some(ratio) = crate::resource::meter_ratio(resources, metric) else {
         return;
     };
     let (full, eighths) = crate::resource::meter_cells(ratio, area.width);
-    let colour = super::shell::bar_color(crate::resource::meter_colour(ratio), palette);
-    let partial = crate::resource::eighth_block(eighths);
+    let partial = display.partial_symbol(eighths);
 
     let buffer = frame.buffer_mut();
     for row in 0..area.height {
         for column in 0..full {
             if let Some(cell) = buffer.cell_mut((area.x + column, area.y + row)) {
-                cell.set_symbol(FULL);
-                cell.set_fg(colour);
+                cell.set_symbol(display.full_symbol());
+                cell.set_fg(super::shell::bar_color(
+                    display.cell_colour(ratio, column, area.width),
+                    palette,
+                ));
+            }
+        }
+        // The dots track: an explicitly empty cell, so a low value reads as
+        // "mostly empty" rather than "mostly missing".
+        if let Some(empty) = display.empty_symbol() {
+            let track_from = full + u16::from(partial.is_some());
+            for column in track_from..area.width {
+                if let Some(cell) = buffer.cell_mut((area.x + column, area.y + row)) {
+                    cell.set_symbol(empty);
+                    cell.set_fg(super::shell::bar_color("surface", palette));
+                }
             }
         }
         if let Some(symbol) = partial {
             if full < area.width {
                 if let Some(cell) = buffer.cell_mut((area.x + full, area.y + row)) {
                     cell.set_symbol(symbol);
-                    cell.set_fg(colour);
+                    cell.set_fg(super::shell::bar_color(
+                        display.cell_colour(ratio, full, area.width),
+                        palette,
+                    ));
                 }
             }
         }

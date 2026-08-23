@@ -435,6 +435,93 @@ pub(crate) fn meter_cells(ratio: f32, width: u16) -> (u16, u8) {
     (full, remainder)
 }
 
+/// How a meter draws its fill. A closed set: an unknown name is refused at
+/// parse time rather than drawn blank (the section-kind rule).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum MeterDisplay {
+    /// Horizontal eighth-blocks — the original look.
+    #[default]
+    Bar,
+    /// Vertical eighth-blocks for the partial cell (▁▂▃▄▅▆▇, full █).
+    Blocks,
+    /// Braille density ramp (⣀ ⣤ ⣶, full ⣿).
+    Braille,
+    /// The bar's fill recoloured by position: green start, red end.
+    Gradient,
+    /// Round dots — full • over an explicit empty · track.
+    Dots,
+}
+
+impl MeterDisplay {
+    pub(crate) fn parse(name: &str) -> Option<Self> {
+        match name {
+            "bar" => Some(Self::Bar),
+            "blocks" => Some(Self::Blocks),
+            "braille" => Some(Self::Braille),
+            "gradient" => Some(Self::Gradient),
+            "dots" => Some(Self::Dots),
+            _ => None,
+        }
+    }
+
+    pub(crate) const fn full_symbol(self) -> &'static str {
+        match self {
+            Self::Bar | Self::Blocks | Self::Gradient => "\u{2588}",
+            Self::Braille => "\u{28ff}",
+            Self::Dots => "\u{2022}",
+        }
+    }
+
+    /// The glyph for the one partial cell, or `None` when this display
+    /// rounds instead (dots have no half dot worth drawing).
+    pub(crate) const fn partial_symbol(self, eighths: u8) -> Option<&'static str> {
+        match self {
+            Self::Bar | Self::Gradient => eighth_block(eighths),
+            Self::Blocks => match eighths {
+                1 => Some("\u{2581}"),
+                2 => Some("\u{2582}"),
+                3 => Some("\u{2583}"),
+                4 => Some("\u{2584}"),
+                5 => Some("\u{2585}"),
+                6 => Some("\u{2586}"),
+                7 => Some("\u{2587}"),
+                _ => None,
+            },
+            Self::Braille => match eighths {
+                1 | 2 => Some("\u{28c0}"),
+                3 | 4 => Some("\u{28e4}"),
+                5 | 6 => Some("\u{28f6}"),
+                7 => Some("\u{28ff}"),
+                _ => None,
+            },
+            Self::Dots => None,
+        }
+    }
+
+    /// What an empty cell shows: dots draw an explicit track, every other
+    /// display leaves the cell untouched.
+    pub(crate) const fn empty_symbol(self) -> Option<&'static str> {
+        match self {
+            Self::Dots => Some("\u{00b7}"),
+            _ => None,
+        }
+    }
+
+    /// The colour name for the cell at `column` of `width`. Every display
+    /// but the gradient colours by VALUE (the existing meter rule); the
+    /// gradient colours by POSITION, so the fill walks green → yellow → red
+    /// as it grows and the palette stays in charge of the actual colours.
+    pub(crate) fn cell_colour(self, ratio: f32, column: u16, width: u16) -> &'static str {
+        match self {
+            Self::Gradient => {
+                let position = (f32::from(column) + 0.5) / f32::from(width.max(1));
+                meter_colour(position)
+            }
+            _ => meter_colour(ratio),
+        }
+    }
+}
+
 /// The eighth-block glyph for a partial cell, or `None` for an empty one.
 pub(crate) const fn eighth_block(eighths: u8) -> Option<&'static str> {
     match eighths {
@@ -605,6 +692,88 @@ fn usage_text(label: &str, usage: Option<Usage>) -> String {
 
 #[cfg(test)]
 mod tests {
+    // C1: the display family's shared contract, property-style — fills are
+    // monotone in value, exact at both ends, sane at width 1, and NaN or a
+    // negative sample clamps to empty instead of panicking or overdrawing.
+    #[test]
+    fn meter_fill_is_monotone_and_exact_at_the_ends() {
+        for width in [1u16, 5, 13, 80] {
+            let mut last = (0u16, 0u8);
+            for step in 0..=100u32 {
+                #[allow(clippy::cast_precision_loss)]
+                let ratio = step as f32 / 100.0;
+                let (full, eighths) = meter_cells(ratio, width);
+                let total = u32::from(full) * 8 + u32::from(eighths);
+                let last_total = u32::from(last.0) * 8 + u32::from(last.1);
+                assert!(
+                    total >= last_total,
+                    "fill is monotone (w={width} step={step})"
+                );
+                assert!(full <= width);
+                last = (full, eighths);
+            }
+            assert_eq!(meter_cells(0.0, width), (0, 0), "empty at zero");
+            assert_eq!(meter_cells(1.0, width), (width, 0), "full at one");
+        }
+        assert_eq!(meter_cells(f32::NAN, 10), (0, 0), "NaN clamps to empty");
+        assert_eq!(meter_cells(-3.0, 10), (0, 0), "negative clamps to empty");
+        assert_eq!(meter_cells(7.0, 10), (10, 0), "overdrive clamps to full");
+    }
+
+    // C1: each display names a full glyph, its own partial ramp (or none for
+    // dots, which round), and only dots draw an explicit empty track.
+    #[test]
+    fn every_display_names_its_glyph_family() {
+        use MeterDisplay as D;
+        assert_eq!(D::parse("bar"), Some(D::Bar));
+        assert_eq!(D::parse("blocks"), Some(D::Blocks));
+        assert_eq!(D::parse("braille"), Some(D::Braille));
+        assert_eq!(D::parse("gradient"), Some(D::Gradient));
+        assert_eq!(D::parse("dots"), Some(D::Dots));
+        assert_eq!(D::parse("wave"), None, "the set is closed");
+
+        let blocks_ladder: Vec<_> = (1..=7).map(|e| D::Blocks.partial_symbol(e)).collect();
+        assert_eq!(
+            blocks_ladder,
+            ["\u{2581}", "\u{2582}", "\u{2583}", "\u{2584}", "\u{2585}", "\u{2586}", "\u{2587}"]
+                .map(Some),
+            "the blocks ladder climbs the vertical eighths in order"
+        );
+        assert_eq!(D::Braille.partial_symbol(1), Some("\u{28c0}"));
+        assert_eq!(D::Braille.partial_symbol(3), Some("\u{28e4}"));
+        assert_eq!(D::Braille.partial_symbol(5), Some("\u{28f6}"));
+        assert_eq!(D::Braille.partial_symbol(7), Some("\u{28ff}"));
+        assert_eq!(D::Bar.partial_symbol(4), eighth_block(4));
+        assert_eq!(D::Dots.partial_symbol(4), None, "dots round, no half dot");
+        for display in [D::Bar, D::Blocks, D::Braille, D::Gradient] {
+            assert_eq!(display.empty_symbol(), None);
+            assert_eq!(display.partial_symbol(0), None);
+            assert_eq!(display.partial_symbol(8), None);
+        }
+        assert_eq!(D::Dots.empty_symbol(), Some("\u{00b7}"));
+        assert_eq!(D::Dots.full_symbol(), "\u{2022}");
+    }
+
+    // C1: the gradient colours by POSITION (green start, red end, whatever
+    // the value); every other display keeps the value-coloured rule.
+    #[test]
+    fn the_gradient_walks_the_ramp_by_position() {
+        use MeterDisplay as D;
+        assert_eq!(D::Gradient.cell_colour(0.1, 0, 10), meter_colour(0.05));
+        assert_eq!(D::Gradient.cell_colour(0.1, 9, 10), meter_colour(0.95));
+        assert_ne!(
+            D::Gradient.cell_colour(0.1, 0, 10),
+            D::Gradient.cell_colour(0.1, 9, 10),
+            "the two ends of the ramp differ"
+        );
+        assert_eq!(D::Bar.cell_colour(0.97, 0, 10), meter_colour(0.97));
+        assert_eq!(
+            D::Bar.cell_colour(0.97, 0, 10),
+            D::Bar.cell_colour(0.97, 9, 10),
+            "value colouring is position-blind"
+        );
+    }
+
     use super::*;
 
     // TP-CHROME-106: the list a refusal offers and the names `parse` takes are two halves

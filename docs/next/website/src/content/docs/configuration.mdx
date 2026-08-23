@@ -783,7 +783,7 @@ A section is empty until it is given a widget. There are six kinds:
 |---|---|---|
 | `label` | fixed text | `text` |
 | `resource` | a machine counter, as a figure | `metric` |
-| `meter` | the same counter, as a filled bar | `metric` |
+| `meter` | the same counter, as a filled bar | `metric`, `display` |
 | `sparkline` | the same counter over time, one column per reading | `metric` |
 | `icon` | one picture | `glyph`, or `art`, or `pixels` + `palette` |
 | `clock` | the time | `format` |
@@ -804,6 +804,8 @@ widget = { kind = "label", text = "  CPU" }
 #### A machine counter
 
 `resource` writes the number; `meter` draws how full it is. Both name the same `metric`, and the value is sampled on the server's own clock rather than read by whatever draws it — so two sections showing the same metric always agree.
+
+A meter can also name how its fill is drawn with `display`: `bar` (the default), `blocks` (vertical eighth-steps), `braille` (a density ramp), `gradient` (the bar recoloured green-to-red by position) or `dots` (round dots over an explicit `·` track). A name outside that set is refused with a message rather than drawn blank. Every display repaints only when the sampled value changes on the resource tick — the cost the bar already paid — and none of them animates while nothing changes: an idle meter costs nothing, by design (`docs/patterns/resource-doctrine.md`).
 
 There are seven metrics, and `ram` is accepted as another word for `mem`:
 

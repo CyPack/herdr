@@ -1194,6 +1194,10 @@ pub struct ShellBarSectionWidgetConfig {
     /// Ignored by every other kind, and refused when the kind is `resource` and
     /// this names nothing the build knows.
     pub metric: String,
+    /// How a `meter` widget draws its fill: `bar` (the default), `blocks`,
+    /// `braille`, `gradient` or `dots`. Empty means `bar`; an unknown name is
+    /// refused rather than drawn blank. Ignored by every other kind.
+    pub display: String,
     /// One grapheme an `icon` widget draws, for the case where the font already
     /// has the picture.
     pub glyph: String,

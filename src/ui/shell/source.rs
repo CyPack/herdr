@@ -575,6 +575,11 @@ pub(crate) enum BarConfigProblem {
         index: usize,
         metric: String,
     },
+    UnknownMeterDisplay {
+        edge: &'static str,
+        index: usize,
+        display: String,
+    },
     IconWithoutPicture {
         edge: &'static str,
         index: usize,
@@ -885,6 +890,16 @@ impl std::fmt::Display for BarConfigProblem {
                 "shell.bars.{edge}.sections[{index}].widget.kind is \"{kind}\"; expected \
                  {offered}, so this section shows nothing",
                 offered = accepted_names(&SectionKind::offered(WIDGET_KINDS))
+            ),
+            Self::UnknownMeterDisplay {
+                edge,
+                index,
+                display,
+            } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}].widget.display is \"{display}\"; expected \
+                 \"bar\", \"blocks\", \"braille\", \"gradient\" or \"dots\", so this section \
+                 shows nothing"
             ),
             Self::UnknownSectionWidgetMetric {
                 edge,
@@ -2031,6 +2046,9 @@ pub(crate) enum SectionWidget {
     /// difference between reading a bar and reading a figure.
     Meter {
         metric: crate::resource::ResourceMetric,
+        /// How the fill is drawn. Defaults to the original bar; a closed set
+        /// parsed by name so a typo is refused rather than drawn blank.
+        display: crate::resource::MeterDisplay,
     },
     /// The same metric over time: one column per reading, newest on the right.
     ///
@@ -2090,7 +2108,7 @@ impl SectionWidget {
     /// metric being read.
     pub(crate) const fn metric(&self) -> Option<crate::resource::ResourceMetric> {
         match self {
-            Self::Resource { metric } | Self::Meter { metric } | Self::Sparkline { metric } => {
+            Self::Resource { metric } | Self::Meter { metric, .. } | Self::Sparkline { metric } => {
                 Some(*metric)
             }
             Self::None
@@ -2531,7 +2549,7 @@ const WIDGET_KINDS: &[SectionKind<SectionWidget>] = &[
     },
     SectionKind {
         name: "meter",
-        keys: &["metric"],
+        keys: &["metric", "display"],
         refuses: &[],
         example: "[shell.bars.top]\nenabled = true\n\n\
                   [[shell.bars.top.sections]]\nkind = \"content\"\n\
@@ -2594,7 +2612,19 @@ fn sparkline_widget(at: SectionAt<'_>) -> Result<SectionWidget, BarConfigProblem
 }
 
 fn meter_widget(at: SectionAt<'_>) -> Result<SectionWidget, BarConfigProblem> {
-    named_metric(at).map(|metric| SectionWidget::Meter { metric })
+    let metric = named_metric(at)?;
+    let display = if at.config.widget.display.is_empty() {
+        crate::resource::MeterDisplay::default()
+    } else {
+        crate::resource::MeterDisplay::parse(&at.config.widget.display).ok_or(
+            BarConfigProblem::UnknownMeterDisplay {
+                edge: at.edge,
+                index: at.index,
+                display: at.config.widget.display.clone(),
+            },
+        )?
+    };
+    Ok(SectionWidget::Meter { metric, display })
 }
 
 /// A section that shows a number names its metric, and a metric this build does not
@@ -5693,6 +5723,64 @@ mod tests {
     // A metric is a second name inside a widget that already named itself, and
     // a wrong one fails in the same silent way a wrong kind does: the section
     // draws nothing and looks exactly like a section meant to draw nothing.
+    // C1/TP-CHROME-164: a meter names how it draws — an unknown display is
+    // refused with a message naming the closed set, an empty one defaults to
+    // the original bar, and a named one is carried into the widget.
+    #[test]
+    fn a_meter_display_parses_the_closed_set_and_refuses_typos() {
+        let mut typo = plain_section("fill");
+        typo.widget.kind = "meter".to_string();
+        typo.widget.metric = "cpu".to_string();
+        typo.widget.display = "wave".to_string();
+        let mut blocks = plain_section("fill");
+        blocks.widget.kind = "meter".to_string();
+        blocks.widget.metric = "cpu".to_string();
+        blocks.widget.display = "blocks".to_string();
+        let mut plain = plain_section("fill");
+        plain.widget.kind = "meter".to_string();
+        plain.widget.metric = "cpu".to_string();
+
+        let config = ShellBarsConfig {
+            top: bar_with_sections(vec![typo, blocks, plain]),
+            ..Default::default()
+        };
+        let reported = shell_bar_config_problems(&config, true)
+            .into_iter()
+            .map(|problem| problem.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(reported.len(), 1, "{reported:?}");
+        assert!(
+            reported[0].contains("sections[0].widget.display is \"wave\""),
+            "the message names the display that was wrong: {reported:?}"
+        );
+        assert!(
+            reported[0].contains("\"braille\""),
+            "the message offers the closed set: {reported:?}"
+        );
+
+        let chrome = ShellBarChrome::themed_by_default(&config, true);
+        assert_eq!(
+            chrome.widget_for(RegionId::TopBar, 0),
+            Some(&SectionWidget::None),
+            "a refused display carries no widget"
+        );
+        assert_eq!(
+            chrome.widget_for(RegionId::TopBar, 1),
+            Some(&SectionWidget::Meter {
+                metric: crate::resource::ResourceMetric::Cpu,
+                display: crate::resource::MeterDisplay::Blocks,
+            })
+        );
+        assert_eq!(
+            chrome.widget_for(RegionId::TopBar, 2),
+            Some(&SectionWidget::Meter {
+                metric: crate::resource::ResourceMetric::Cpu,
+                display: crate::resource::MeterDisplay::Bar,
+            }),
+            "an empty display means the original bar"
+        );
+    }
+
     // It gets its own message rather than sharing the unknown-kind one, because
     // the two send a person to different lines of the same file.
     // TP-CHROME-56: an unknown metric is refused, and carries no widget.
@@ -5761,7 +5849,14 @@ mod tests {
         let metric = crate::resource::ResourceMetric::Cpu;
         let cases: &[(&str, SectionWidget, bool)] = &[
             ("resource", SectionWidget::Resource { metric }, true),
-            ("meter", SectionWidget::Meter { metric }, true),
+            (
+                "meter",
+                SectionWidget::Meter {
+                    metric,
+                    display: Default::default(),
+                },
+                true,
+            ),
             ("sparkline", SectionWidget::Sparkline { metric }, true),
             ("none", SectionWidget::None, false),
             (
