@@ -850,6 +850,20 @@ pub enum ProjectRowKind {
     More { proj_idx: usize },
 }
 
+/// One in-flight drag of an agent-panel row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AgentPanelDrag {
+    /// The row that was pressed — the drag's payload.
+    pub pane_id: crate::layout::PaneId,
+    /// The terminal row of the press; leaving it converts the press into a
+    /// drag (the one-row threshold that keeps clicks being clicks).
+    pub pressed_row: u16,
+    /// Where the pointer is now.
+    pub current_row: u16,
+    /// True once the pointer has left the pressed row.
+    pub dragging: bool,
+}
+
 /// A laid-out Projects-tab row: its screen rect plus what it points at. Computed
 /// by `compute_view` (geometry) and consumed by the pure render and the mouse
 /// hit-testing path, exactly like [`WorkspaceCardArea`].
@@ -4121,6 +4135,15 @@ pub struct AppState {
     pub sidebar_tab: SidebarTab,
     pub workspace_scroll: usize,
     pub agent_panel_scroll: usize,
+    /// The user's hand-made agent-panel order, newest drag wins. Panes not
+    /// named here keep their natural (workspace × pane) order after the named
+    /// ones. Applied only while no agent-view override is active — a view's
+    /// own sort owns the list it asked for. Session-local for now; surviving
+    /// restart is the persistence slice this deliberately leaves open.
+    pub agent_panel_order: Vec<crate::layout::PaneId>,
+    /// One in-flight agent-row drag. `dragging` stays false until the pointer
+    /// leaves the pressed row, so a plain click stays a click.
+    pub agent_panel_drag: Option<AgentPanelDrag>,
     /// Top-anchored row offset for the Projects sidebar tab (and the pattern
     /// the future Files tab reuses). Clamped in `compute_view` because the
     /// projects list length changes underneath it via the session polls.
@@ -5366,6 +5389,8 @@ impl AppState {
             sidebar_tab: SidebarTab::Spaces,
             workspace_scroll: 0,
             agent_panel_scroll: 0,
+            agent_panel_order: Vec::new(),
+            agent_panel_drag: None,
             projects_scroll: 0,
             tab_scroll: 0,
             tab_scroll_follow_active: true,

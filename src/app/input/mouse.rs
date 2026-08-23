@@ -149,6 +149,11 @@ impl AppState {
             return None;
         }
 
+        // TP-AGDND-01: an armed agent-row candidate follows the pointer.
+        if self.handle_agent_panel_drag_mouse(&mouse) {
+            return None;
+        }
+
         let launcher_enabled = self.view.layout != ViewLayout::Mobile
             && !self.sidebar_collapsed
             && matches!(
@@ -1228,6 +1233,15 @@ impl AppState {
                     if let Some((ws_idx, _tab_idx, pane_id)) =
                         self.agent_detail_target_at(mouse.row)
                     {
+                        // TP-AGDND-01: the press is also a drag CANDIDATE —
+                        // it becomes a drag only when the pointer leaves this
+                        // row, so the focus below keeps being a plain click.
+                        self.agent_panel_drag = Some(crate::app::state::AgentPanelDrag {
+                            pane_id,
+                            pressed_row: mouse.row,
+                            current_row: mouse.row,
+                            dragging: false,
+                        });
                         self.mode = Mode::Terminal;
                         return Some(MouseAction::FocusPane { ws_idx, pane_id });
                     }
@@ -2510,6 +2524,55 @@ impl AppState {
         let total = u32::from(left).saturating_add(u32::from(right)).max(1);
         let ratio = ((u32::from(left) * 100) / total) as u8;
         ratio.clamp(20, 80)
+    }
+
+    /// The agent-panel row drag: a pressed row is only a CANDIDATE until the
+    /// pointer leaves it (a plain click stays a click); from then on Drag
+    /// moves the insertion target and Up commits the reorder into
+    /// `agent_panel_order`. Returns true when the event belongs to the drag.
+    fn handle_agent_panel_drag_mouse(&mut self, mouse: &MouseEvent) -> bool {
+        let Some(mut drag) = self.agent_panel_drag else {
+            return false;
+        };
+        match mouse.kind {
+            MouseEventKind::Drag(MouseButton::Left) => {
+                drag.current_row = mouse.row;
+                if mouse.row != drag.pressed_row {
+                    drag.dragging = true;
+                }
+                self.agent_panel_drag = Some(drag);
+                drag.dragging
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                self.agent_panel_drag = None;
+                if !drag.dragging {
+                    return false;
+                }
+                self.commit_agent_panel_reorder(drag);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Write the drag's outcome: the panel's current visible order with the
+    /// dragged pane moved to the drop row's position becomes the remembered
+    /// order. Seeding from the visible order means the first drag reorders
+    /// exactly what the user sees.
+    fn commit_agent_panel_reorder(&mut self, drag: crate::app::state::AgentPanelDrag) {
+        let entries = crate::ui::agent_panel_entries(self);
+        let mut order: Vec<crate::layout::PaneId> =
+            entries.iter().map(|entry| entry.pane_id).collect();
+        let Some(from) = order.iter().position(|id| *id == drag.pane_id) else {
+            return;
+        };
+        let to = self
+            .agent_detail_target_at(drag.current_row)
+            .and_then(|(_, _, target)| order.iter().position(|id| *id == target))
+            .unwrap_or(from);
+        let moved = order.remove(from);
+        order.insert(to.min(order.len()), moved);
+        self.agent_panel_order = order;
     }
 
     /// The side-by-side divider's whole gesture: arm on the named column,
@@ -4117,6 +4180,109 @@ mod tests {
             crate::app::state::AppState::sbs_ratio_from_tracks_impl(60, 60),
             50
         );
+    }
+
+    fn agent_dnd_app() -> (
+        crate::app::App,
+        crate::layout::PaneId,
+        crate::layout::PaneId,
+    ) {
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![
+            crate::workspace::Workspace::test_new("alpha"),
+            crate::workspace::Workspace::test_new("beta"),
+        ];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = crate::app::state::Mode::Terminal;
+        app.state.mobile_width_threshold = 0;
+        app.state.ensure_test_terminals();
+        let p0 = app.state.workspaces[0].tabs[0].root_pane;
+        let p1 = app.state.workspaces[1].tabs[0].root_pane;
+        // The panel lists detected agents — undetected shells own no row.
+        for ws in 0..2 {
+            let terminal_id = app.state.workspaces[ws].tabs[0]
+                .panes
+                .values()
+                .next()
+                .map(|pane| pane.attached_terminal_id.clone())
+                .expect("root pane has a terminal");
+            if let Some(terminal) = app.state.terminals.get_mut(&terminal_id) {
+                terminal.set_detected_state(
+                    Some(crate::detect::Agent::Pi),
+                    crate::detect::AgentState::Idle,
+                );
+            }
+        }
+        crate::ui::compute_view(&mut app.state, ratatui::layout::Rect::new(0, 0, 120, 40));
+        (app, p0, p1)
+    }
+
+    fn agent_row_of(app: &crate::app::App, pane: crate::layout::PaneId) -> u16 {
+        let panel = app.state.agent_panel_rect();
+        (panel.y..panel.y + panel.height)
+            .find(|row| {
+                app.state
+                    .agent_detail_target_at(*row)
+                    .is_some_and(|(_, _, id)| id == pane)
+            })
+            .expect("the pane owns a panel row")
+    }
+
+    // TP-AGDND-01: a press that never leaves its row is a click — it focuses
+    // the pane exactly as before and writes no order.
+    #[test]
+    fn a_plain_agent_row_click_stays_a_click() {
+        let (mut app, p0, _) = agent_dnd_app();
+        let row = agent_row_of(&app, p0);
+
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 3, row));
+        // A real press wobbles: the terminal reports a Drag on the SAME row.
+        // The one-row threshold is exactly what keeps this a click.
+        app.handle_mouse(mouse(MouseEventKind::Drag(MouseButton::Left), 5, row));
+        app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), 5, row));
+
+        assert!(
+            app.state.agent_panel_order.is_empty(),
+            "a wobbling click writes no hand-made order"
+        );
+        assert!(
+            app.state.agent_panel_drag.is_none(),
+            "the candidate is released"
+        );
+    }
+
+    // TP-AGDND-01: crossing a row boundary converts the press into a drag;
+    // Up commits the dragged pane into the drop row's position, and the next
+    // computed panel draws that order.
+    #[test]
+    fn dragging_an_agent_row_reorders_the_panel() {
+        let (mut app, p0, p1) = agent_dnd_app();
+        let row0 = agent_row_of(&app, p0);
+        let row1 = agent_row_of(&app, p1);
+        assert!(row0 < row1, "natural order draws alpha first");
+
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 3, row0));
+        app.handle_mouse(mouse(MouseEventKind::Drag(MouseButton::Left), 3, row1));
+        app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), 3, row1));
+
+        let order: Vec<_> = crate::ui::agent_panel_entries(&app.state)
+            .iter()
+            .map(|entry| entry.pane_id)
+            .collect();
+        assert_eq!(
+            order,
+            vec![p1, p0],
+            "the dragged row landed in the drop position"
+        );
+
+        // The order is remembered, not a one-frame illusion.
+        crate::ui::compute_view(&mut app.state, ratatui::layout::Rect::new(0, 0, 120, 40));
+        let again: Vec<_> = crate::ui::agent_panel_entries(&app.state)
+            .iter()
+            .map(|entry| entry.pane_id)
+            .collect();
+        assert_eq!(again, vec![p1, p0], "the order survives the next compute");
     }
 
     fn sbs_drag_app() -> crate::app::App {

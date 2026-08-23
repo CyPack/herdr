@@ -207,7 +207,26 @@ fn agent_panel_entries_with_runtimes(
 ) -> Vec<AgentPanelEntry> {
     let mut entries = collect_agent_panel_entries_with_runtimes(app, terminal_runtimes);
     crate::app::agent_view::apply_agent_view(app, &mut entries);
+    // TP-AGDND-01: the hand-made order applies only to the plain panel — an
+    // active view override asked for its own sort and owns the list.
+    if app.agent_view_override.is_none() {
+        apply_agent_panel_order(app, &mut entries);
+    }
     entries
+}
+
+/// Stable-sort the panel by the user's drag-made order: named panes take
+/// their remembered rank, unnamed ones keep their natural order after them.
+fn apply_agent_panel_order(app: &AppState, entries: &mut [AgentPanelEntry]) {
+    if app.agent_panel_order.is_empty() {
+        return;
+    }
+    entries.sort_by_key(|entry| {
+        app.agent_panel_order
+            .iter()
+            .position(|id| *id == entry.pane_id)
+            .unwrap_or(usize::MAX)
+    });
 }
 
 fn collect_agent_panel_entries_with_runtimes(
@@ -5075,7 +5094,25 @@ fn render_agent_detail(
     // what makes every ghost reachable by scrolling.
     let ghost_layouts = ghost_row_layouts(app);
     let ghost_records: Vec<_> = app.visible_closed_agents().collect();
-    for (kind, row_y, height) in agent_panel_placements(app, area) {
+    let placements = agent_panel_placements(app, area);
+    // TP-AGDND-01: while a row drag is live, the drop target shows as an
+    // insertion seam — one line over the target row's top edge, drawn after
+    // the rows so it wins the cells. No ghost, no animation: the seam exists
+    // only for the frames the pointer is actually dragging.
+    let drag_seam_y = app
+        .agent_panel_drag
+        .filter(|drag| drag.dragging)
+        .and_then(|drag| {
+            placements
+                .iter()
+                .find(|(kind, row_y, height)| {
+                    matches!(kind, AgentPanelRow::Live(_))
+                        && drag.current_row >= *row_y
+                        && drag.current_row < row_y.saturating_add(*height)
+                })
+                .map(|(_, row_y, _)| *row_y)
+        });
+    for (kind, row_y, height) in placements {
         let (index, detail) = match kind {
             AgentPanelRow::Live(index) => match details.get(index) {
                 Some(detail) => (index, detail),
@@ -5159,6 +5196,15 @@ fn render_agent_detail(
         let _ = index;
     }
 
+    if let Some(seam_y) = drag_seam_y {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                "─".repeat(usize::from(body.width)),
+                Style::default().fg(p.accent),
+            )),
+            Rect::new(body.x, seam_y, body.width, 1),
+        );
+    }
     if let Some(track) = scrollbar_rect {
         render_scrollbar(frame, metrics, track, p.surface_dim, p.overlay0, "▕");
     }
@@ -11918,6 +11964,119 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
     // TP-FOCUS-01: the accent marks the deepest visible focus object. With
     // the active tab's chat shown in the open drawer, the chat row wears the
     // accent and the card steps back to the quiet active tone.
+    // TP-AGDND-01: the hand-made order sorts the plain panel; an active view
+    // override owns its own list and the hand order stands aside.
+    #[test]
+    fn the_hand_made_order_yields_to_a_view_override() {
+        let mut app = AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("a"), Workspace::test_new("b")];
+        app.active = Some(0);
+        app.ensure_test_terminals();
+        for ws in 0..2 {
+            let terminal_id = app.workspaces[ws].tabs[0]
+                .panes
+                .values()
+                .next()
+                .map(|pane| pane.attached_terminal_id.clone())
+                .expect("root pane has a terminal");
+            if let Some(terminal) = app.terminals.get_mut(&terminal_id) {
+                terminal.set_detected_state(
+                    Some(crate::detect::Agent::Pi),
+                    crate::detect::AgentState::Idle,
+                );
+            }
+        }
+        let p0 = app.workspaces[0].tabs[0].root_pane;
+        let p1 = app.workspaces[1].tabs[0].root_pane;
+        app.agent_panel_order = vec![p1, p0];
+
+        let hand_made: Vec<_> = agent_panel_entries(&app)
+            .iter()
+            .map(|entry| entry.pane_id)
+            .collect();
+        assert_eq!(
+            hand_made,
+            vec![p1, p0],
+            "the plain panel obeys the hand order"
+        );
+
+        app.agent_view_override = Some(crate::api::schema::agents::AgentViewSetParams {
+            source: "agents".to_string(),
+            label: None,
+            filter: None,
+            sort: Vec::new(),
+        });
+        let overridden: Vec<_> = agent_panel_entries(&app)
+            .iter()
+            .map(|entry| entry.pane_id)
+            .collect();
+        assert_eq!(
+            overridden,
+            vec![p0, p1],
+            "a view override owns the list; the hand order stands aside"
+        );
+    }
+
+    // TP-AGDND-01: while a drag is live the drop row wears the insertion
+    // seam — proven on the cell layer, because a seam the painter skips is a
+    // feature the user cannot see.
+    #[test]
+    fn a_live_drag_paints_the_insertion_seam() {
+        let mut app = AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("a"), Workspace::test_new("b")];
+        app.active = Some(0);
+        app.ensure_test_terminals();
+        for ws in 0..2 {
+            let terminal_id = app.workspaces[ws].tabs[0]
+                .panes
+                .values()
+                .next()
+                .map(|pane| pane.attached_terminal_id.clone())
+                .expect("root pane has a terminal");
+            if let Some(terminal) = app.terminals.get_mut(&terminal_id) {
+                terminal.set_detected_state(
+                    Some(crate::detect::Agent::Pi),
+                    crate::detect::AgentState::Idle,
+                );
+            }
+        }
+        let p0 = app.workspaces[0].tabs[0].root_pane;
+        let area = Rect::new(0, 0, 100, 26);
+        crate::ui::compute_view(&mut app, area);
+        let panel = expanded_sidebar_sections(
+            app.view.sidebar_rect,
+            app.sidebar_section_split,
+            app.sidebar_chrome,
+        )
+        .1;
+        let placements = agent_panel_placements(&app, panel);
+        let (_, target_y, _) = placements
+            .iter()
+            .find(|(kind, _, _)| matches!(kind, AgentPanelRow::Live(1)))
+            .copied()
+            .expect("the second live row is placed");
+
+        app.agent_panel_drag = Some(crate::app::state::AgentPanelDrag {
+            pane_id: p0,
+            pressed_row: target_y.saturating_sub(1),
+            current_row: target_y,
+            dragging: true,
+        });
+
+        let backend = ratatui::backend::TestBackend::new(100, 26);
+        let mut terminal = ratatui::Terminal::new(backend).expect("test terminal");
+        let registry = TerminalRuntimeRegistry::new();
+        terminal
+            .draw(|frame| render_sidebar(&app, &registry, frame, app.view.sidebar_rect))
+            .expect("draw");
+        let buffer = terminal.backend().buffer();
+        let body = agent_panel_body_rect(panel, false);
+        assert!(
+            (body.x..body.x + body.width).any(|x| buffer[(x, target_y)].symbol() == "─"),
+            "the drop row's top edge wears the seam"
+        );
+    }
+
     #[test]
     fn the_accent_descends_to_the_visible_active_chat_row() {
         let (mut app, key) = app_with_chat_drawer(2);

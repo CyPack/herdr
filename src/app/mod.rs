@@ -1062,6 +1062,8 @@ impl App {
             sidebar_tab: state::SidebarTab::Spaces,
             workspace_scroll: 0,
             agent_panel_scroll: 0,
+            agent_panel_order: Vec::new(),
+            agent_panel_drag: None,
             projects_scroll: 0,
             tab_scroll: 0,
             tab_scroll_follow_active: true,
