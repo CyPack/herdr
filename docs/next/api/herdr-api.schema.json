@@ -1664,6 +1664,56 @@
           ],
           "type": "object"
         },
+        "ChatSeatEntry": {
+          "description": "One chat re-home in a bulk seat request: the ledger key is either a\ncheckout directory or a `module:<node-key>` seat — the same vocabulary\nthe TUI's \"Move to branch/module...\" menu writes.",
+          "properties": {
+            "session_id": {
+              "type": "string"
+            },
+            "target_key": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "session_id",
+            "target_key"
+          ],
+          "type": "object"
+        },
+        "ChatSeatParams": {
+          "description": "Bulk chat seating (`chat.seat`). `source` stamps who decided: a plan\napplier names itself (e.g. \"seat-plan\") so its moves can be told apart\nfrom — and never override — a person's own menu moves.",
+          "properties": {
+            "seats": {
+              "items": {
+                "$ref": "#/schemas/request/$defs/ChatSeatEntry"
+              },
+              "type": "array"
+            },
+            "source": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "seats"
+          ],
+          "type": "object"
+        },
+        "ChatUnseatParams": {
+          "description": "Withdraw every move a given source wrote (`chat.unseat`) — the undo gate\nfor automated seating. A person's moves are source \"user\" and can only be\nwithdrawn by naming that source explicitly.",
+          "properties": {
+            "source": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "source"
+          ],
+          "type": "object"
+        },
         "ClientWindowTitleSetParams": {
           "properties": {
             "title": {
@@ -4640,6 +4690,38 @@
             },
             "params": {
               "$ref": "#/schemas/request/$defs/WorkspaceTarget"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "chat.seat",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/ChatSeatParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "chat.unseat",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/ChatUnseatParams"
             }
           },
           "required": [
@@ -8705,6 +8787,54 @@
               "required": [
                 "type",
                 "workspaces"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "applied": {
+                  "format": "uint",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "refused": {
+                  "format": "uint",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "type": {
+                  "const": "chat_seat_report",
+                  "type": "string"
+                },
+                "unchanged": {
+                  "format": "uint",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "type",
+                "applied",
+                "unchanged",
+                "refused"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "cleared": {
+                  "format": "uint",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "type": {
+                  "const": "chat_unseat_report",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "cleared"
               ],
               "type": "object"
             },
