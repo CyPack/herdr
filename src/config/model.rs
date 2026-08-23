@@ -1125,6 +1125,11 @@ impl ShellBarConfig {
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 #[serde(default)]
 pub struct ShellBarSectionConfig {
+    /// A hand-chosen stable name for this section. Empty means unnamed. The
+    /// managed overlay's `section_overrides` bind by this id — never by
+    /// index — so reordering the hand-written file cannot re-aim an
+    /// override, and a section without an id simply cannot be overridden.
+    pub id: String,
     pub kind: String,
     pub cells: u16,
     pub weight: u16,

@@ -347,6 +347,9 @@ fn diff_edge(original: &ShellBarConfig, draft: &ShellBarConfig) -> ManagedBarOve
         border: (original.border != draft.border).then(|| border_word(draft.border).to_string()),
         color: (original.color != draft.color).then(|| draft.color.clone()),
         background: (original.background != draft.background).then(|| draft.background.clone()),
+        // The Configure face edits no section actions yet; the diff carries
+        // none so an Apply can never erase a hand-written override.
+        section_overrides: Vec::new(),
     }
 }
 
@@ -360,6 +363,10 @@ fn merge_fanout(explicit: ManagedBarOverride, focused: &ManagedBarOverride) -> M
         border: explicit.border.or_else(|| focused.border.clone()),
         color: explicit.color.or_else(|| focused.color.clone()),
         background: explicit.background.or_else(|| focused.background.clone()),
+        // Section rebindings never fan out: an id names ONE section on ONE
+        // edge, and copying it to edges that lack the id would only produce
+        // four diagnostics for one intent.
+        section_overrides: explicit.section_overrides,
     }
 }
 

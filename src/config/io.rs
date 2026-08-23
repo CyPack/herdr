@@ -173,7 +173,7 @@ pub fn managed_bars_path() -> PathBuf {
 /// overlay cannot carry is a field it can never silently pin. `border` is a
 /// word rather than a bool because the panel has three states to persist —
 /// auto / on / off — and TOML cannot write "explicitly none".
-#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, serde::Deserialize)]
 #[serde(default)]
 pub(crate) struct ManagedBarOverride {
     pub(crate) enabled: Option<bool>,
@@ -182,6 +182,20 @@ pub(crate) struct ManagedBarOverride {
     pub(crate) border: Option<String>,
     pub(crate) color: Option<String>,
     pub(crate) background: Option<String>,
+    /// Per-section action rebindings, addressed by the section's hand-given
+    /// `id` — never by index, so a reordered hand-written file cannot re-aim
+    /// an override. A section without an id cannot be overridden at all.
+    pub(crate) section_overrides: Vec<ManagedSectionOverride>,
+}
+
+/// One section's rebinding: which named section, and what a press on it
+/// should do instead. Only the action is carried — what the section SHOWS
+/// stays hand-written territory, the panel rebinds what it DOES.
+#[derive(Debug, Clone, PartialEq, Default, serde::Deserialize)]
+#[serde(default)]
+pub(crate) struct ManagedSectionOverride {
+    pub(crate) id: String,
+    pub(crate) action: Option<super::model::ShellBarSectionActionConfig>,
 }
 
 impl ManagedBarOverride {
@@ -194,6 +208,7 @@ impl ManagedBarOverride {
             border,
             color,
             background,
+            section_overrides,
         } = self;
         enabled.is_none()
             && size.is_none()
@@ -201,6 +216,7 @@ impl ManagedBarOverride {
             && border.is_none()
             && color.is_none()
             && background.is_none()
+            && section_overrides.is_empty()
     }
 }
 
@@ -249,6 +265,45 @@ pub(crate) fn merge_managed_bars_str(config: &mut Config, content: &str) -> Vec<
     }
 }
 
+/// Re-aim one named section's press. Binding is by `id`: an id no section
+/// carries is reported and skipped, and an id two sections carry is
+/// ambiguous — reported and left alone rather than guessed at.
+fn apply_managed_section_override(
+    target: &mut super::model::ShellBarConfig,
+    over: ManagedSectionOverride,
+    edge: &str,
+    diagnostics: &mut Vec<String>,
+) {
+    let ManagedSectionOverride { id, action } = over;
+    if id.is_empty() {
+        diagnostics.push(format!(
+            "bars.managed.toml: {edge} carries a section override without an id; ignoring it"
+        ));
+        return;
+    }
+    let mut matches = target
+        .sections
+        .iter_mut()
+        .filter(|section| section.id == id);
+    let Some(section) = matches.next() else {
+        diagnostics.push(format!(
+            "bars.managed.toml: {edge} names section id \"{id}\" but no section carries it; \
+             ignoring that override"
+        ));
+        return;
+    };
+    if matches.next().is_some() {
+        diagnostics.push(format!(
+            "bars.managed.toml: {edge} section id \"{id}\" names more than one section; \
+             ignoring that override rather than guessing"
+        ));
+        return;
+    }
+    if let Some(action) = action {
+        section.action = action;
+    }
+}
+
 /// Lay one edge's overrides over the loaded bar.
 ///
 /// The override is destructured without `..` on purpose: a field added to
@@ -268,7 +323,11 @@ fn apply_managed_bar_override(
         border,
         color,
         background,
+        section_overrides,
     } = over;
+    for over in section_overrides {
+        apply_managed_section_override(target, over, edge, diagnostics);
+    }
     if let Some(value) = enabled {
         target.enabled = value;
     }
@@ -351,6 +410,7 @@ pub(crate) fn upsert_managed_bars_doc(
             border,
             color,
             background,
+            section_overrides,
         } = over;
         if let Some(value) = enabled {
             entry.insert("enabled".into(), toml::Value::Boolean(*value));
@@ -369,6 +429,41 @@ pub(crate) fn upsert_managed_bars_doc(
         }
         if let Some(value) = background {
             entry.insert("background".into(), toml::Value::String(value.clone()));
+        }
+        if !section_overrides.is_empty() {
+            let mut rows = toml::value::Array::new();
+            for over in section_overrides {
+                let mut row = toml::map::Map::new();
+                row.insert("id".into(), toml::Value::String(over.id.clone()));
+                if let Some(action) = &over.action {
+                    let mut act = toml::map::Map::new();
+                    act.insert("kind".into(), toml::Value::String(action.kind.clone()));
+                    if !action.argv.is_empty() {
+                        act.insert(
+                            "argv".into(),
+                            toml::Value::Array(
+                                action
+                                    .argv
+                                    .iter()
+                                    .map(|a| toml::Value::String(a.clone()))
+                                    .collect(),
+                            ),
+                        );
+                    }
+                    if !action.name.is_empty() {
+                        act.insert("name".into(), toml::Value::String(action.name.clone()));
+                    }
+                    if !action.command.is_empty() {
+                        act.insert(
+                            "command".into(),
+                            toml::Value::String(action.command.clone()),
+                        );
+                    }
+                    row.insert("action".into(), toml::Value::Table(act));
+                }
+                rows.push(toml::Value::Table(row));
+            }
+            entry.insert("section_overrides".into(), toml::Value::Array(rows));
         }
     }
     let body = toml::to_string_pretty(&root)
@@ -1076,6 +1171,76 @@ fn upsert_section_raw(content: &str, section: &str, key: &str, value: &str) -> S
 
 #[cfg(test)]
 mod tests {
+    // C2a/TP-CHROME-165: section overrides bind by id, never by index —
+    // a reordered hand-written file cannot re-aim one; an unknown or
+    // ambiguous id is reported and left alone rather than guessed at.
+    #[test]
+    fn section_overrides_bind_by_id_and_refuse_ambiguity() {
+        let base = r#"
+[shell.bars.top]
+enabled = true
+[[shell.bars.top.sections]]
+kind = "content"
+id = "clock"
+widget = { kind = "clock" }
+[[shell.bars.top.sections]]
+kind = "content"
+id = "cpu"
+widget = { kind = "meter", metric = "cpu" }
+"#;
+        let overlay = r#"
+[[shell.bars.top.section_overrides]]
+id = "cpu"
+action = { kind = "popup", argv = ["btop"] }
+[[shell.bars.top.section_overrides]]
+id = "ghost"
+action = { kind = "run", argv = ["true"] }
+"#;
+        let mut loaded = load_live_config_from_str(base).unwrap();
+        let diagnostics = merge_managed_bars_str(&mut loaded.config, overlay);
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert!(
+            diagnostics[0].contains("\"ghost\""),
+            "the unknown id is named: {diagnostics:?}"
+        );
+        let sections = &loaded.config.shell.bars.top.sections;
+        assert_eq!(
+            sections[0].action.kind, "",
+            "the clock keeps its inert press"
+        );
+        assert_eq!(sections[1].action.kind, "popup");
+        assert_eq!(sections[1].action.argv, vec!["btop".to_string()]);
+
+        // Ambiguity: two sections sharing one id — reported, untouched.
+        let twins = r#"
+[shell.bars.top]
+enabled = true
+[[shell.bars.top.sections]]
+kind = "content"
+id = "dup"
+widget = { kind = "clock" }
+[[shell.bars.top.sections]]
+kind = "content"
+id = "dup"
+widget = { kind = "clock" }
+"#;
+        let mut loaded = load_live_config_from_str(twins).unwrap();
+        let diagnostics = merge_managed_bars_str(
+            &mut loaded.config,
+            "[[shell.bars.top.section_overrides]]\nid = \"dup\"\naction = { kind = \"run\", argv = [\"x\"] }\n",
+        );
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert!(diagnostics[0].contains("more than one"), "{diagnostics:?}");
+        assert!(loaded
+            .config
+            .shell
+            .bars
+            .top
+            .sections
+            .iter()
+            .all(|s| s.action.kind.is_empty()));
+    }
+
     use super::*;
 
     // The layer that added `[shell.bars]` tested the config MODEL and never a
@@ -1871,6 +2036,7 @@ style = "plain"
                     border: Some("auto".to_string()),
                     color: Some("teal".to_string()),
                     background: Some("bg".to_string()),
+                    section_overrides: Vec::new(),
                 },
             )],
         )
