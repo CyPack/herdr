@@ -738,7 +738,10 @@ impl WorkspaceChatRow {
 pub struct WorkspaceChatRowArea {
     pub rect: Rect,
     pub ws_idx: usize,
-    pub chat_idx: usize,
+    /// The chat this drawn row IS. A press resolves by this identity, never
+    /// by position: the ledger can gain a row between two frames, and a
+    /// stale index would open whichever chat shifted into the slot.
+    pub session_id: String,
 }
 
 /// One laid-out chat row of the daily section.
@@ -748,7 +751,9 @@ pub struct WorkspaceChatRowArea {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DailyChatRowArea {
     pub rect: Rect,
-    pub chat_idx: usize,
+    /// The chat this drawn row IS — identity, not position (see
+    /// [`WorkspaceChatRowArea::session_id`]).
+    pub session_id: String,
 }
 
 /// One laid-out chat row under a declared container.
@@ -761,7 +766,9 @@ pub struct DailyChatRowArea {
 pub struct ModuleChatRowArea {
     pub rect: Rect,
     pub node_key: String,
-    pub chat_idx: usize,
+    /// The chat this drawn row IS — identity, not position (see
+    /// [`WorkspaceChatRowArea::session_id`]).
+    pub session_id: String,
 }
 
 /// The laid-out "… N older" / "… fewer" row of one drawer.

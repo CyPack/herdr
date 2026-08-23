@@ -962,7 +962,7 @@ impl AppState {
                         })
                         .cloned()
                     {
-                        self.open_daily_chat(hit.chat_idx);
+                        self.open_daily_chat(&hit.session_id);
                         return None;
                     }
                     // TP-CHAT-MOVE-07: a container's chat row is pressable
@@ -979,7 +979,7 @@ impl AppState {
                         })
                         .cloned()
                     {
-                        self.open_module_chat(&hit.node_key, hit.chat_idx);
+                        self.open_module_chat(&hit.node_key, &hit.session_id);
                         return None;
                     }
                     // TP-DRAW-11: the "older chats" row opens the rest of
@@ -1014,7 +1014,7 @@ impl AppState {
                         })
                         .cloned()
                     {
-                        self.open_workspace_chat(hit.ws_idx, hit.chat_idx);
+                        self.open_workspace_chat(hit.ws_idx, &hit.session_id);
                         return None;
                     }
 
@@ -1710,10 +1710,9 @@ impl AppState {
                     })
                     .cloned()
                 {
-                    if let Some(session_id) = crate::ui::daily_chat_rows(self)
-                        .get(hit.chat_idx)
-                        .map(|row| row.session_id.clone())
                     {
+                        // The drawn row carries its identity now.
+                        let session_id = hit.session_id.clone();
                         let has_move = self.chat_move_overrides.contains_key(&session_id);
                         let has_live = self.find_resumed_chat_tab(&session_id).is_some();
                         // TP-CHAT-MOVE-11: resolved when the menu opens, like
@@ -1750,10 +1749,9 @@ impl AppState {
                     })
                     .cloned()
                 {
-                    if let Some(session_id) = crate::ui::workspace_chat_rows_for(self, hit.ws_idx)
-                        .get(hit.chat_idx)
-                        .map(|row| row.session_id.clone())
                     {
+                        // The drawn row carries its identity now.
+                        let session_id = hit.session_id.clone();
                         let has_move = self.chat_move_overrides.contains_key(&session_id);
                         // TP-AGPANEL-05: the close verb is offered only when
                         // this chat still has a tab running behind it.
@@ -2034,15 +2032,45 @@ impl AppState {
             }
             Some(crate::ui::MobileSwitcherTarget::Chat { ws_idx, chat_idx }) => {
                 self.close_mobile_drawer();
-                self.open_workspace_chat(ws_idx, chat_idx);
+                // Bridge until the mobile targets carry identity themselves:
+                // resolve the id at the press site. The drawer is modal, so
+                // the list rarely moves under it — the desktop rows, which do
+                // race the polls, already resolve by identity.
+                if let Some(session_id) = self
+                    .workspaces
+                    .get(ws_idx)
+                    .map(|ws| crate::persist::workspace_chats::ledger_key(&ws.identity_cwd))
+                    .and_then(|key| self.workspace_chat_rows.get(&key))
+                    .and_then(|rows| rows.get(chat_idx))
+                    .map(|row| row.session_id.clone())
+                {
+                    self.open_workspace_chat(ws_idx, &session_id);
+                }
             }
             Some(crate::ui::MobileSwitcherTarget::DailyChat { chat_idx }) => {
                 self.close_mobile_drawer();
-                self.open_daily_chat(chat_idx);
+                if let Some(session_id) = self
+                    .daily_chat_cwd
+                    .as_ref()
+                    .map(|cwd| crate::persist::workspace_chats::ledger_key(cwd))
+                    .and_then(|key| self.workspace_chat_rows.get(&key))
+                    .and_then(|rows| rows.get(chat_idx))
+                    .map(|row| row.session_id.clone())
+                {
+                    self.open_daily_chat(&session_id);
+                }
             }
             Some(crate::ui::MobileSwitcherTarget::ModuleChat { node_key, chat_idx }) => {
                 self.close_mobile_drawer();
-                self.open_module_chat(&node_key, chat_idx);
+                let key = crate::persist::workspace_chats::module_ledger_key(&node_key);
+                if let Some(session_id) = self
+                    .workspace_chat_rows
+                    .get(&key)
+                    .and_then(|rows| rows.get(chat_idx))
+                    .map(|row| row.session_id.clone())
+                {
+                    self.open_module_chat(&node_key, &session_id);
+                }
             }
             Some(crate::ui::MobileSwitcherTarget::ToggleBranchChats { ws_idx }) => {
                 self.toggle_mobile_branch_chats(ws_idx);
@@ -3892,7 +3920,7 @@ mod tests {
         // The row the press will land on — laid out the way render lays it out.
         app.state.view.daily_chat_row_areas = vec![crate::app::state::DailyChatRowArea {
             rect: ratatui::layout::Rect::new(0, 7, 20, 1),
-            chat_idx: 1,
+            session_id: "daily-b".to_string(),
         }];
 
         app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 3, 7));

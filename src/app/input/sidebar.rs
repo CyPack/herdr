@@ -358,20 +358,24 @@ impl AppState {
     /// both surfaces: a chat already wired to a live tab is FOCUSED, never
     /// resumed a second time — resuming it again would spawn a duplicate
     /// process against the same transcript.
-    pub(crate) fn open_workspace_chat(&mut self, ws_idx: usize, chat_idx: usize) {
+    pub(crate) fn open_workspace_chat(&mut self, ws_idx: usize, session_id: &str) {
         let Some(workspace) = self.workspaces.get(ws_idx) else {
             return;
         };
         let project_path = workspace.identity_cwd.clone();
         let key = crate::persist::workspace_chats::ledger_key(&project_path);
-        let Some(session_id) = self
+        // The row rects carry the chat's identity, never its position: the
+        // ledger can gain a row between two frames, and a stale index used to
+        // open whichever chat had shifted into the slot. A chat that left the
+        // ledger since the frame was drawn answers with nothing.
+        if !self
             .workspace_chat_rows
             .get(&key)
-            .and_then(|rows| rows.get(chat_idx))
-            .map(|row| row.session_id.clone())
-        else {
+            .is_some_and(|rows| rows.iter().any(|row| row.session_id == session_id))
+        {
             return;
-        };
+        }
+        let session_id = session_id.to_string();
 
         if let Some((live_ws, live_tab)) = self.find_resumed_chat_tab(&session_id) {
             self.switch_workspace_tab(live_ws, live_tab);
@@ -404,17 +408,18 @@ impl AppState {
     /// happened to be active, which is #46 with the roles reversed. Giving a
     /// container a directory is what unlocks the rest, and that is its own
     /// piece of work.
-    pub(crate) fn open_module_chat(&mut self, node_key: &str, chat_idx: usize) {
+    pub(crate) fn open_module_chat(&mut self, node_key: &str, session_id: &str) {
         let key = crate::persist::workspace_chats::module_ledger_key(node_key);
-        // A stale index is a race, not a bug — same contract as the daily row.
-        let Some(session_id) = self
+        // Identity, not position — the contract every chat row shares now. A
+        // chat that left this container since the frame was drawn is a no-op.
+        if !self
             .workspace_chat_rows
             .get(&key)
-            .and_then(|rows| rows.get(chat_idx))
-            .map(|row| row.session_id.clone())
-        else {
+            .is_some_and(|rows| rows.iter().any(|row| row.session_id == session_id))
+        {
             return;
-        };
+        }
+        let session_id = session_id.to_string();
         if let Some((live_ws, live_tab)) = self.find_resumed_chat_tab(&session_id) {
             self.switch_workspace_tab(live_ws, live_tab);
             self.mode = crate::app::Mode::Terminal;
@@ -452,22 +457,24 @@ impl AppState {
         });
     }
 
-    pub(crate) fn open_daily_chat(&mut self, chat_idx: usize) {
+    pub(crate) fn open_daily_chat(&mut self, session_id: &str) {
         let Some(project_path) = self.daily_chat_cwd.clone() else {
             return;
         };
         let key = crate::persist::workspace_chats::ledger_key(&project_path);
-        // A stale index is a race, not a bug: the list can refresh between the
-        // frame a person clicked and the click arriving. It answers with
-        // nothing rather than with the wrong chat.
-        let Some(session_id) = self
+        // Identity, not position: the list can refresh between the frame a
+        // person clicked and the click arriving, and an index resolved
+        // against the new list used to answer with the WRONG chat, not with
+        // nothing. The drawn row's own session id cannot mis-resolve; a chat
+        // that left the ledger answers with nothing.
+        if !self
             .workspace_chat_rows
             .get(&key)
-            .and_then(|rows| rows.get(chat_idx))
-            .map(|row| row.session_id.clone())
-        else {
+            .is_some_and(|rows| rows.iter().any(|row| row.session_id == session_id))
+        {
             return;
-        };
+        }
+        let session_id = session_id.to_string();
 
         if let Some((live_ws, live_tab)) = self.find_resumed_chat_tab(&session_id) {
             self.switch_workspace_tab(live_ws, live_tab);
@@ -4279,7 +4286,7 @@ mod tests {
     #[test]
     fn a_daily_chat_resumes_in_the_daily_directory() {
         let (mut state, daily) = state_with_daily_chats();
-        state.open_daily_chat(1);
+        state.open_daily_chat("daily-1");
         let request = state
             .request_project_chat_tab
             .as_ref()
@@ -4298,7 +4305,7 @@ mod tests {
         state.workspaces[0].tabs[second].resumed_session_id = Some("daily-2".into());
         state.workspaces[0].set_active_tab(0);
 
-        state.open_daily_chat(2);
+        state.open_daily_chat("daily-2");
 
         assert_eq!(
             state.request_project_chat_tab, None,
@@ -4371,7 +4378,7 @@ mod tests {
         let dir = std::env::temp_dir();
         let mut state = state_with_bucket_chat(dir.clone());
 
-        state.open_module_chat("bucket", 0);
+        state.open_module_chat("bucket", "filed-session");
 
         let request = state
             .request_project_chat_tab
@@ -4390,7 +4397,7 @@ mod tests {
         let dir = std::env::temp_dir();
         let mut state = state_with_module_chat(Some(dir.clone()));
 
-        state.open_module_chat("docs", 0);
+        state.open_module_chat("docs", "filed-session");
 
         let request = state
             .request_project_chat_tab
@@ -4408,7 +4415,7 @@ mod tests {
     fn a_filed_chat_in_a_module_without_a_directory_stays_put() {
         let mut state = state_with_module_chat(None);
 
-        state.open_module_chat("docs", 0);
+        state.open_module_chat("docs", "filed-session");
 
         assert_eq!(
             state.request_project_chat_tab, None,
@@ -4425,22 +4432,58 @@ mod tests {
         let gone = std::env::temp_dir().join("herdr-module-dir-that-never-existed");
         let mut state = state_with_module_chat(Some(gone));
 
-        state.open_module_chat("docs", 0);
+        state.open_module_chat("docs", "filed-session");
 
         assert_eq!(state.request_project_chat_tab, None);
     }
 
-    // TP-DAILY-07: a stale index is a race — the list can refresh between the
-    // frame a person clicked and the click arriving. It answers with nothing
-    // rather than with the wrong chat, and never panics.
+    // TP-CHATROW-ID-01: the drawn row IS the chat — a press resolves by the
+    // rect's own session id, so a ledger that gained a row between two
+    // frames cannot make the press open whichever chat shifted into the old
+    // position. The daily row is the surface the polls race hardest.
+    #[test]
+    fn a_stale_daily_row_press_opens_the_chat_the_user_saw() {
+        let (mut state, daily) = state_with_daily_chats();
+        // The frame drew "daily-1"; before the press arrives the ledger
+        // gains a new head row, shifting every position by one.
+        let key = crate::persist::workspace_chats::ledger_key(&daily);
+        let rows = state.workspace_chat_rows.get_mut(&key).expect("daily rows");
+        rows.insert(
+            0,
+            crate::app::state::WorkspaceChatRow {
+                session_id: "daily-new".to_string(),
+                agent: "claude".to_string(),
+                title: Some("fresh head".to_string()),
+                last_seen_ms: 99,
+                last_modified: None,
+                last_message_at: None,
+            },
+        );
+
+        state.open_daily_chat("daily-1");
+
+        let request = state
+            .request_project_chat_tab
+            .as_ref()
+            .expect("the press still opens a chat");
+        assert_eq!(
+            request.session_id.as_deref(),
+            Some("daily-1"),
+            "the chat the user saw opens — never the neighbour that shifted in"
+        );
+    }
+
+    // TP-DAILY-07: identity, not position — a chat that left the ledger
+    // between the frame and the press answers with nothing rather than with
+    // the wrong chat, and never panics.
     #[test]
     fn a_click_on_a_daily_row_that_no_longer_exists_does_nothing() {
         let (mut state, _) = state_with_daily_chats();
-        state.open_daily_chat(99);
+        state.open_daily_chat("no-such-session");
         assert_eq!(state.request_project_chat_tab, None);
 
         let mut homeless = crate::app::state::AppState::test_new();
-        homeless.open_daily_chat(0);
+        homeless.open_daily_chat("daily-0");
         assert_eq!(homeless.request_project_chat_tab, None);
     }
 

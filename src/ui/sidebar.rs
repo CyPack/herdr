@@ -3053,11 +3053,22 @@ pub(crate) fn compute_workspace_list_areas(app: &AppState, area: Rect) -> Worksp
                 });
             }
             WorkspaceListEntry::Chat { ws_idx, chat_idx } => {
-                chat_rows.push(crate::app::state::WorkspaceChatRowArea {
-                    rect,
-                    ws_idx: *ws_idx,
-                    chat_idx: *chat_idx,
-                });
+                // Resolve the row's identity NOW, while the rect and the list
+                // agree — a press resolves by this id, never by position.
+                if let Some(session_id) = app
+                    .workspaces
+                    .get(*ws_idx)
+                    .map(|ws| crate::persist::workspace_chats::ledger_key(&ws.identity_cwd))
+                    .and_then(|key| app.workspace_chat_rows.get(&key))
+                    .and_then(|rows| rows.get(*chat_idx))
+                    .map(|row| row.session_id.clone())
+                {
+                    chat_rows.push(crate::app::state::WorkspaceChatRowArea {
+                        rect,
+                        ws_idx: *ws_idx,
+                        session_id,
+                    });
+                }
             }
             // TP-DRAW-11: the "older" row is the way into the rest of the
             // drawer and back out again, so it earns a rect of its own — in
@@ -3077,10 +3088,18 @@ pub(crate) fn compute_workspace_list_areas(app: &AppState, area: Rect) -> Worksp
                 daily.header = Some(rect);
             }
             WorkspaceListEntry::DailyChat { chat_idx } => {
-                daily.chats.push(crate::app::state::DailyChatRowArea {
-                    rect,
-                    chat_idx: *chat_idx,
-                });
+                if let Some(session_id) = app
+                    .daily_chat_cwd
+                    .as_ref()
+                    .map(|cwd| crate::persist::workspace_chats::ledger_key(cwd))
+                    .and_then(|key| app.workspace_chat_rows.get(&key))
+                    .and_then(|rows| rows.get(*chat_idx))
+                    .map(|row| row.session_id.clone())
+                {
+                    daily
+                        .chats
+                        .push(crate::app::state::DailyChatRowArea { rect, session_id });
+                }
             }
             WorkspaceListEntry::DailyMore { .. } => {
                 daily.more = Some(rect);
@@ -3104,11 +3123,19 @@ pub(crate) fn compute_workspace_list_areas(app: &AppState, area: Rect) -> Worksp
             // paints chat rows from these areas, so skipping the arm would
             // leave the row emitted, measured, tested green, and invisible.
             WorkspaceListEntry::ModuleChat { node_key, chat_idx } => {
-                module_chats.push(crate::app::state::ModuleChatRowArea {
-                    rect,
-                    node_key: node_key.clone(),
-                    chat_idx: *chat_idx,
-                });
+                let key = crate::persist::workspace_chats::module_ledger_key(node_key);
+                if let Some(session_id) = app
+                    .workspace_chat_rows
+                    .get(&key)
+                    .and_then(|rows| rows.get(*chat_idx))
+                    .map(|row| row.session_id.clone())
+                {
+                    module_chats.push(crate::app::state::ModuleChatRowArea {
+                        rect,
+                        node_key: node_key.clone(),
+                        session_id,
+                    });
+                }
             }
             // The empty-drawer placeholder occupies a row but stays inert:
             // there is nothing behind it to open.
@@ -4257,7 +4284,10 @@ fn render_module_chat_rows(app: &AppState, frame: &mut Frame, list_bottom: u16) 
             continue;
         }
         let chats = module_chat_rows(app, &row.node_key);
-        let Some(chat) = chats.get(row.chat_idx) else {
+        // Identity, not position: the ledger can move between the layout and
+        // this draw, and an index would paint the WRONG chat's title on the
+        // row the press will resolve by identity.
+        let Some(chat) = chats.iter().find(|chat| chat.session_id == row.session_id) else {
             continue;
         };
         render_chat_row(app, frame, row.rect, chat, now, DISCLOSURE_WIDTH + 2);
@@ -4352,7 +4382,7 @@ fn render_daily_section(app: &AppState, frame: &mut Frame, list_bottom: u16) {
         if row.rect.width == 0 || row.rect.y >= list_bottom {
             continue;
         }
-        let Some(chat) = chats.get(row.chat_idx) else {
+        let Some(chat) = chats.iter().find(|chat| chat.session_id == row.session_id) else {
             continue;
         };
         // The section hangs off nothing, so its rows are indented by the
@@ -4434,7 +4464,8 @@ fn render_workspace_chat_rows(app: &AppState, frame: &mut Frame, list_bottom: u1
         if row.rect.width == 0 || row.rect.y >= list_bottom {
             continue;
         }
-        let Some(chat) = workspace_chat_rows_for(app, row.ws_idx).get(row.chat_idx) else {
+        let chats = workspace_chat_rows_for(app, row.ws_idx);
+        let Some(chat) = chats.iter().find(|chat| chat.session_id == row.session_id) else {
             continue;
         };
         // TP-TREE-08 resolves the old three-way overload of "▸": it now means
@@ -9495,8 +9526,8 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         assert_eq!(entries.len(), 3, "one workspace plus its two chats");
         assert_eq!(cards.len(), 1);
         assert_eq!(chat_rows.len(), 2, "chat rows are laid out separately");
-        assert_eq!(chat_rows[0].chat_idx, 0);
-        assert_eq!(chat_rows[1].chat_idx, 1);
+        assert_eq!(chat_rows[0].session_id, "session-0");
+        assert_eq!(chat_rows[1].session_id, "session-1");
         assert!(
             chat_rows[0].rect.y < chat_rows[1].rect.y,
             "drawer rows keep the ledger's newest-first order"
@@ -11918,7 +11949,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             .view
             .workspace_chat_row_areas
             .iter()
-            .find(|row| row.chat_idx == 0)
+            .find(|row| row.session_id == "session-0")
             .expect("the resumed chat row is laid out");
         assert!(
             (chat.rect.x..chat.rect.x + chat.rect.width)

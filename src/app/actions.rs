@@ -1788,21 +1788,50 @@ impl AppState {
             }
             crate::ui::MobileSwitcherTarget::Chat { ws_idx, chat_idx } => {
                 self.close_mobile_drawer();
-                self.open_workspace_chat(ws_idx, chat_idx);
+                // Bridge until the mobile targets carry identity: resolve at
+                // the press site (the drawer is modal; the desktop rows that
+                // race the polls already resolve by identity).
+                if let Some(session_id) = self
+                    .workspaces
+                    .get(ws_idx)
+                    .map(|ws| crate::persist::workspace_chats::ledger_key(&ws.identity_cwd))
+                    .and_then(|key| self.workspace_chat_rows.get(&key))
+                    .and_then(|rows| rows.get(chat_idx))
+                    .map(|row| row.session_id.clone())
+                {
+                    self.open_workspace_chat(ws_idx, &session_id);
+                }
             }
             // TP-DAILY-08: the daily chats travel the same road their desktop
             // rows do — the drawer closes and the resume happens rooted at the
             // daily directory, never at whatever workspace was active.
             crate::ui::MobileSwitcherTarget::DailyChat { chat_idx } => {
                 self.close_mobile_drawer();
-                self.open_daily_chat(chat_idx);
+                if let Some(session_id) = self
+                    .daily_chat_cwd
+                    .as_ref()
+                    .map(|cwd| crate::persist::workspace_chats::ledger_key(cwd))
+                    .and_then(|key| self.workspace_chat_rows.get(&key))
+                    .and_then(|rows| rows.get(chat_idx))
+                    .map(|row| row.session_id.clone())
+                {
+                    self.open_daily_chat(&session_id);
+                }
             }
             // TP-MOB-100: same contract as the daily row — the drawer closes
             // and the chat reopens rooted where it was filed, never at
             // whatever workspace happened to be active.
             crate::ui::MobileSwitcherTarget::ModuleChat { node_key, chat_idx } => {
                 self.close_mobile_drawer();
-                self.open_module_chat(&node_key, chat_idx);
+                let key = crate::persist::workspace_chats::module_ledger_key(&node_key);
+                if let Some(session_id) = self
+                    .workspace_chat_rows
+                    .get(&key)
+                    .and_then(|rows| rows.get(chat_idx))
+                    .map(|row| row.session_id.clone())
+                {
+                    self.open_module_chat(&node_key, &session_id);
+                }
             }
             crate::ui::MobileSwitcherTarget::ToggleBranchChats { ws_idx } => {
                 // Looking at a branch's history is not travelling to it, so
