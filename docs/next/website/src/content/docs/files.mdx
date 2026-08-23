@@ -75,6 +75,12 @@ exactly as the right-click entry does. The same verbs live
 on the row's **right-click context menu**, together with *Add Reference to
 Agent…* for handing the path to a running agent.
 
+**Compress** (on the context menu) writes a real zip archive next to its
+sources, named after the single selection's stem — and when `name.zip` already
+exists it steps around to `name (2).zip` instead of overwriting. Cancelling
+mid-write deletes the half-written archive rather than leaving a zip that
+looks finished but is not.
+
 Per-row action buttons (`>` send, `r` rename, `x` delete at the row's tail) are
 **off by default** — the context menu already carries them, and the row stays
 clean for the name and the date. Turn them on if you want them:
