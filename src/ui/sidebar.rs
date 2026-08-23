@@ -3074,12 +3074,13 @@ pub(crate) fn compute_workspace_list_areas(app: &AppState, area: Rect) -> Worksp
             WorkspaceListEntry::Chat { ws_idx, chat_idx } => {
                 // Resolve the row's identity NOW, while the rect and the list
                 // agree — a press resolves by this id, never by position.
-                if let Some(session_id) = app
-                    .workspaces
-                    .get(*ws_idx)
-                    .map(|ws| crate::persist::workspace_chats::ledger_key(&ws.identity_cwd))
-                    .and_then(|key| app.workspace_chat_rows.get(&key))
-                    .and_then(|rows| rows.get(*chat_idx))
+                // TP-CHATROW-ID-02: from the SAME ledger the entries were
+                // counted from — `workspace_chat_rows_for`, TP-WSID-03's
+                // checkout key. Reading the birthplace key here left a
+                // worktree-backed drawer measuring rows whose identities
+                // lived in another ledger: blank rows where chats should be.
+                if let Some(session_id) = workspace_chat_rows_for(app, *ws_idx)
+                    .get(*chat_idx)
                     .map(|row| row.session_id.clone())
                 {
                     chat_rows.push(crate::app::state::WorkspaceChatRowArea {
@@ -7500,6 +7501,88 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         assert_eq!(
             format_relative_time(now + Duration::from_secs(60), now),
             "now"
+        );
+    }
+
+    // TP-CHATROW-ID-02: the laid-out chat areas resolve their identity from
+    // the SAME ledger the drawer reads — TP-WSID-03's checkout key, never the
+    // birthplace. The live incident this locks: a worktree-backed workspace
+    // showed "14" chats, drew ONE, and left a region of blank rows where the
+    // rest should be — compute was resolving ids from the identity_cwd ledger
+    // while every other surface (entries, render, presses) read the
+    // effective_cwd one, so the measured rows existed and their identities
+    // could never be found.
+    #[test]
+    fn chat_row_areas_read_the_ledger_the_drawer_reads() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.mouse_capture = false;
+        app.mobile_width_threshold = 0;
+        let mut ws = Workspace::test_new("adopted");
+        ws.identity_cwd = std::path::PathBuf::from("/home/user");
+        ws.worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
+            key: "repo-key".into(),
+            label: "herdr".into(),
+            repo_root: std::path::PathBuf::from("/repo/herdr"),
+            checkout_path: std::path::PathBuf::from("/repo/herdr-main"),
+            is_linked_worktree: false,
+        });
+        app.workspaces = vec![ws];
+        app.ensure_test_terminals();
+        // the drawer's ledger lives under the CHECKOUT key…
+        let effective_key =
+            crate::persist::workspace_chats::ledger_key(std::path::Path::new("/repo/herdr-main"));
+        app.workspace_chat_rows.insert(
+            effective_key,
+            (0..2)
+                .map(|c| crate::app::state::WorkspaceChatRow {
+                    session_id: format!("eff-{c}"),
+                    agent: "claude".into(),
+                    title: None,
+                    last_seen_ms: 0,
+                    last_modified: None,
+                    last_message_at: None,
+                })
+                .collect(),
+        );
+        // …and a stale birthplace ledger must not be the one areas read.
+        let identity_key =
+            crate::persist::workspace_chats::ledger_key(std::path::Path::new("/home/user"));
+        app.workspace_chat_rows.insert(
+            identity_key,
+            vec![crate::app::state::WorkspaceChatRow {
+                session_id: "stale-birthplace".into(),
+                agent: "claude".into(),
+                title: None,
+                last_seen_ms: 0,
+                last_modified: None,
+                last_message_at: None,
+            }],
+        );
+        // the drawer opens by hand, keyed — like everything else — through
+        // the checkout (TP-WSID-03).
+        app.expanded_chat_workspaces
+            .insert(crate::persist::workspace_chats::ledger_key(
+                std::path::Path::new("/repo/herdr-main"),
+            ));
+        app.active = Some(0);
+        app.selected = 0;
+
+        let areas = compute_workspace_list_areas(&app, Rect::new(0, 0, 40, 20));
+        let chat_areas = &areas.1;
+        assert_eq!(
+            chat_areas.len(),
+            2,
+            "every measured chat row carries an identity — no ghost rows"
+        );
+        assert!(
+            chat_areas
+                .iter()
+                .all(|area| area.session_id.starts_with("eff-")),
+            "identities come from the checkout ledger: {:?}",
+            chat_areas
+                .iter()
+                .map(|area| area.session_id.clone())
+                .collect::<Vec<_>>()
         );
     }
 
