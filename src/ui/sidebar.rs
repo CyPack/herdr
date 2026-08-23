@@ -3982,9 +3982,10 @@ fn render_workspace_list(
 /// The label a worktree space is known by, or the key itself as a last resort.
 /// The ink a passive agent's name is drawn in (TP-AGPANEL-50).
 ///
-/// `auto` — the default — follows the theme's peach through the same warm
-/// default the bars use; anything else goes through the bars' own colour
-/// vocabulary, exactly like `ui.sidebar.divider_color` below it.
+/// `auto` — the default — is the panel's muted theme tone; anything else goes
+/// through the bars' own colour vocabulary, exactly like
+/// `ui.sidebar.divider_color` below it. A module's own `passive_color` still
+/// outranks both (TP-AGPANEL-51).
 fn passive_agent_ink(app: &AppState, ws_idx: usize) -> ratatui::style::Color {
     // Module first, global second, theme last (TP-AGPANEL-51). The rule
     // lookup is the same first-match walk the spaces tree already does per
@@ -4008,7 +4009,11 @@ fn passive_agent_ink(app: &AppState, ws_idx: usize) -> ratatui::style::Color {
     }
     let spec = app.sidebar_agents_passive_color.trim();
     if spec.eq_ignore_ascii_case("auto") {
-        return app.palette.peach;
+        // The panel's own muted tone — what a passive row has always worn.
+        // `auto` follows the THEME rather than picking a hue of its own; a
+        // colour nobody asked for reads as breakage, and the graveyard's DIM
+        // peach needs a plainly different living class beside it.
+        return app.palette.subtext0;
     }
     crate::ui::shell::bar_color(spec, &app.palette)
 }
@@ -9906,12 +9911,16 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         );
     }
 
-    // TP-AGPANEL-50: the passive card's NAME is drawn in the configured ink —
-    // `auto` follows the theme's peach. The grey it replaces is the same grey
-    // whose report recoloured the graveyard (TP-AGPANEL-49): at lowered
-    // brightness it was nearly invisible, and a living agent nobody can see
-    // is a click target nobody can find. Plain peach, no DIM, keeps the
-    // living row a different class from the DIM-peach ghost.
+    // TP-AGPANEL-50: the passive card's NAME is drawn in the configured ink.
+    // `auto` — the default — is the muted grey the panel has always worn.
+    //
+    // It briefly defaulted to peach, and the user asked for the grey back the
+    // same day: a recolour they did not choose reads as the panel breaking,
+    // and the graveyard's DIM peach (TP-AGPANEL-49) needs a plainly different
+    // living class next to it. The KEY stays: the ladder module > global >
+    // theme is what makes the colour a choice instead of a default nobody
+    // asked for — `passive_color = "peach"` brings it back for anyone who
+    // wants it.
     #[test]
     fn a_passive_agents_name_wears_the_configured_ink() {
         let mut app = crate::app::state::AppState::test_new();
@@ -9964,19 +9973,31 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
                 .collect::<Vec<_>>()
         };
 
-        // auto — the default — reads as the palette's peach, undimmed.
-        let peach = ink_cells(&passive_name_cells(&app), app.palette.peach);
+        // auto — the default — is the muted grey, undimmed.
+        let muted = ink_cells(&passive_name_cells(&app), app.palette.subtext0);
         assert!(
-            peach.len() >= 4,
-            "the four letters of \"beta\" wear the auto (peach) ink: {}",
-            peach.len()
+            muted.len() >= 4,
+            "the four letters of \"beta\" wear the auto (muted) ink: {}",
+            muted.len()
         );
         assert!(
-            peach
+            ink_cells(&passive_name_cells(&app), app.palette.peach).is_empty(),
+            "the default must not repaint a living row peach"
+        );
+        assert!(
+            muted
                 .iter()
                 .all(|style| !style.add_modifier.contains(Modifier::DIM)),
             "a living passive row must not collapse into the ghost class"
         );
+
+        // the key still works both ways: peach is one written word away
+        app.sidebar_agents_passive_color = "peach".to_string();
+        assert!(
+            ink_cells(&passive_name_cells(&app), app.palette.peach).len() >= 4,
+            "the infrastructure survives the changed default"
+        );
+        app.sidebar_agents_passive_color = "auto".to_string();
 
         // a written colour names an exact ink through the bars' vocabulary
         app.sidebar_agents_passive_color = "red".to_string();
@@ -10040,8 +10061,8 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         );
         let beta_y = row_of("beta");
         assert!(
-            count_ink(beta_y, app.palette.peach) >= 4,
-            "an unclaimed workspace inherits the global auto ink"
+            count_ink(beta_y, app.palette.subtext0) >= 4,
+            "an unclaimed workspace inherits the global auto ink (the muted tone)"
         );
     }
 
