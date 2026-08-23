@@ -1052,6 +1052,19 @@ the real bar; `Apply` keeps it, `Esc` or a click outside puts everything back.
 `Apply to: all bars` fans your changes out to every edge in one press — and a
 switch you pressed yourself on another edge wins over the fan-out.
 
+`e` on an Apps row opens a small editor for what that row's press does. The
+kind cycles the closed set — `popup`, `run`, `workspace`, `plugin`, `none` —
+one line holds the command (split on spaces), the workspace's name or the
+plugin action's id, and a popup's width and height are read the way the
+config reads them, so a size the parser refuses refuses the Save and says
+why. What Save writes is a `section_overrides` row for that section's `id`
+(see *Re-aiming one section by id* below): the override it edits is the one
+it names, and the ones it is not editing ride along untouched. A row whose
+sections carry no `id` wears a dim `·no id` badge and refuses the editor
+with the same hint — give the section an `id` in your own file to edit its
+press here. Saving takes the Apply road: the overlay is written, the config
+reloads, and the panel closes with the world it described.
+
 What you apply is written to `bars.managed.toml` next to your `config.toml`,
 never into your own file. Only the fields you actually changed are written,
 and a field written there overrides the same field in your config; delete a
