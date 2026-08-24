@@ -683,12 +683,6 @@
           "description": "Ask for confirmation before closing a workspace."
         },
         {
-          "key": "ui.copy_on_select",
-          "type": "boolean",
-          "default": "true",
-          "description": "Copy text selected with the mouse."
-        },
-        {
           "key": "ui.hidden_chat_labels",
           "type": "list of strings",
           "default": "[\"routine\"]",
@@ -728,17 +722,6 @@
           "type": "boolean",
           "default": "true",
           "description": "Automatically copy text selected by mouse drag or double-click. When disabled, Ctrl+C or a host-forwarded Cmd+C copies and clears the retained selection."
-        },
-        {
-          "key": "ui.host_cursor",
-          "type": "enum",
-          "default": "auto",
-          "description": "Host cursor policy.",
-          "values": [
-            "auto",
-            "native",
-            "drawn"
-          ]
         },
         {
           "key": "ui.right_click_passthrough_modifier",
@@ -804,18 +787,6 @@
           "type": "boolean",
           "default": "false",
           "description": "Ask for a workspace name before interactive TUI creation."
-        },
-        {
-          "key": "ui.redraw_on_focus_gained",
-          "type": "boolean",
-          "default": "true",
-          "description": "Force a full host-terminal redraw when the outer terminal regains focus."
-        },
-        {
-          "key": "ui.right_click_passthrough_modifier",
-          "type": "string",
-          "default": "\"\"",
-          "description": "Modifier that lets right-click gestures pass through to pane apps. Empty disables it. Accepts ctrl, alt, cmd, super, meta, hyper, or a + separated combination; shift is rejected because many terminals reserve Shift+mouse."
         },
         {
           "key": "ui.routine_chat_markers",
@@ -899,16 +870,6 @@
           "type": "string",
           "default": "\"{hostname}: {workspace}\"",
           "description": "Title Herdr writes to the terminal it runs in. Tokens: {hostname}, {workspace}, {tab}, {pane}, {terminal_title}. Empty leaves the outer title alone."
-        },
-        {
-          "key": "ui.agent_panel_sort",
-          "type": "enum",
-          "default": "\"spaces\"",
-          "description": "Agent sidebar ordering. Saved values are \"spaces\" or \"priority\"; \"workspaces\" is accepted as an alias for \"spaces\".",
-          "values": [
-            "spaces",
-            "priority"
-          ]
         },
         {
           "key": "ui.status_indicators",
