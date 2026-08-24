@@ -2250,7 +2250,7 @@ mod tests {
         ));
 
         assert_eq!(app.state.active, None);
-        assert!(app.state.workspace_press.is_none());
+        assert!(app.state.workspace_presses.is_empty());
         assert!(app.state.collapsed_space_keys.contains("repo-key"));
 
         app.handle_mouse(mouse(
@@ -2295,7 +2295,7 @@ mod tests {
         ));
 
         assert_eq!(app.state.active, None);
-        assert!(app.state.workspace_press.is_none());
+        assert!(app.state.workspace_presses.is_empty());
         // The fold lands in the per-display set now (TP-NODE-06/07): the
         // session-wide project set is read for legacy folds, never written.
         assert!(app.state.node_folded("project:herdr"));
@@ -2365,10 +2365,10 @@ mod tests {
 
         let source_row = app.state.view.workspace_card_areas[1].rect.y;
         let target_row = crate::ui::workspace_drop_indicator_row(
+            &app.state,
             &app.state.view.workspace_card_areas,
             app.state.workspace_list_rect(),
-            0,
-            app.state.sidebar_chrome,
+            crate::app::state::WorkspaceDropTarget::Before(0),
         )
         .unwrap();
 
@@ -2641,10 +2641,10 @@ mod tests {
 
         let cards = &app.state.view.workspace_card_areas;
         let bottom_slot = crate::ui::workspace_drop_indicator_row(
+            &app.state,
             cards,
             app.state.workspace_list_rect(),
-            cards.len(),
-            app.state.sidebar_chrome,
+            crate::app::state::WorkspaceDropTarget::End,
         )
         .unwrap();
 
@@ -2668,14 +2668,19 @@ mod tests {
         let cards = &app.state.view.workspace_card_areas;
         let order = cards.iter().map(|card| card.ws_idx).collect::<Vec<_>>();
         assert_eq!(order, vec![0, 2, 1]);
+        let issue = cards.iter().find(|card| card.ws_idx == 2).unwrap();
         let normal = cards.iter().find(|card| card.ws_idx == 1).unwrap();
 
         assert_eq!(
+            app.state.workspace_drop_target_at_row(issue.rect.y),
+            Some(crate::app::state::WorkspaceDropTarget::Before(1))
+        );
+        assert_eq!(
             crate::ui::workspace_drop_indicator_row(
+                &app.state,
                 cards,
                 app.state.workspace_list_rect(),
-                2,
-                app.state.sidebar_chrome,
+                crate::app::state::WorkspaceDropTarget::End,
             ),
             Some(normal.rect.y + normal.rect.height)
         );
@@ -2724,10 +2729,10 @@ mod tests {
             .unwrap()
             .rect;
         let target_row = crate::ui::workspace_drop_indicator_row(
+            &app.state,
             &app.state.view.workspace_card_areas,
             app.state.workspace_list_rect(),
-            app.state.workspaces.len(),
-            app.state.sidebar_chrome,
+            crate::app::state::WorkspaceDropTarget::End,
         )
         .unwrap();
         let active_id = app.state.workspaces[2].id.clone();
@@ -2783,10 +2788,10 @@ mod tests {
 
         let parent = app.state.view.workspace_card_areas[0].rect;
         let target_row = crate::ui::workspace_drop_indicator_row(
+            &app.state,
             &app.state.view.workspace_card_areas,
             app.state.workspace_list_rect(),
-            app.state.workspaces.len(),
-            app.state.sidebar_chrome,
+            crate::app::state::WorkspaceDropTarget::End,
         )
         .unwrap();
         app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 2, parent.y));
@@ -2833,10 +2838,10 @@ mod tests {
             .unwrap()
             .rect;
         let target_row = crate::ui::workspace_drop_indicator_row(
+            &app.state,
             &app.state.view.workspace_card_areas,
             app.state.workspace_list_rect(),
-            0,
-            app.state.sidebar_chrome,
+            crate::app::state::WorkspaceDropTarget::Before(0),
         )
         .unwrap();
 
@@ -3848,7 +3853,7 @@ mod tests {
         // Switching tabs must not begin a workspace drag/select gesture, and
         // must not change which workspace is active.
         assert_eq!(app.state.sidebar_tab, SidebarTab::Projects);
-        assert!(app.state.workspace_press.is_none());
+        assert!(app.state.workspace_presses.is_empty());
         assert_eq!(app.state.active, Some(0));
     }
 

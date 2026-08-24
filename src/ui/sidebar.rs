@@ -3405,35 +3405,14 @@ pub(crate) fn workspace_drop_slots(
 }
 
 pub(crate) fn workspace_drop_indicator_row(
+    app: &AppState,
     cards: &[crate::app::state::WorkspaceCardArea],
     area: Rect,
-    insert_idx: usize,
-    chrome: crate::ui::shell::SidebarChrome,
+    target: crate::app::state::WorkspaceDropTarget,
 ) -> Option<u16> {
-    if area.height == 0 {
-        return None;
-    }
-    let list_bottom = area.y + area.height.saturating_sub(chrome.footer_rows());
-
-    let first = cards.first()?;
-    if insert_idx == first.ws_idx {
-        return first.rect.y.checked_sub(1).filter(|y| *y < list_bottom);
-    }
-
-    if let Some(row) = cards
-        .last()
-        .filter(|card| insert_idx == card.ws_idx.saturating_add(1))
-        .map(|card| card.rect.y.saturating_add(card.rect.height))
-        .filter(|y| *y < list_bottom)
-    {
-        return Some(row);
-    }
-
-    if let Some(card) = cards.iter().find(|card| card.ws_idx == insert_idx) {
-        return card.rect.y.checked_sub(1).filter(|y| *y < list_bottom);
-    }
-
-    None
+    workspace_drop_slots(app, cards, area)
+        .into_iter()
+        .find_map(|(candidate, row)| (candidate == target).then_some(row))
 }
 
 pub(super) fn render_sidebar(
@@ -3733,18 +3712,7 @@ fn render_workspace_list(
         Some(crate::app::state::DragTarget::WorkspaceReorder {
             drop_target: Some(target),
             ..
-        }) => {
-            let insert_idx = match target {
-                crate::app::state::WorkspaceDropTarget::Before(ws_idx) => *ws_idx,
-                crate::app::state::WorkspaceDropTarget::End => app.workspaces.len(),
-            };
-            workspace_drop_indicator_row(
-                &app.view.workspace_card_areas,
-                area,
-                insert_idx,
-                app.sidebar_chrome,
-            )
-        }
+        }) => workspace_drop_indicator_row(app, &app.view.workspace_card_areas, area, *target),
         _ => None,
     };
 
@@ -12962,10 +12930,10 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         app.view.workspace_card_areas = compute_workspace_card_areas(&app, area);
         let list_area = workspace_list_rect(area, app.sidebar_section_split, app.sidebar_chrome);
         let indicator_row = workspace_drop_indicator_row(
+            &app,
             &app.view.workspace_card_areas,
             list_area,
-            2,
-            app.sidebar_chrome,
+            crate::app::state::WorkspaceDropTarget::Before(2),
         )
         .unwrap();
         assert_eq!(indicator_row, app.view.workspace_card_areas[1].rect.y);

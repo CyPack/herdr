@@ -5764,7 +5764,9 @@ mod tests {
             card.rect.y,
         ));
         assert!(
-            app.state.workspace_press.is_some(),
+            app.state
+                .workspace_presses
+                .contains_key(&crate::app::LOCAL_INPUT_SOURCE),
             "the rest of the row still selects the workspace"
         );
     }
