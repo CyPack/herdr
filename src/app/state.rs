@@ -2192,6 +2192,9 @@ pub(crate) enum NavigatorTarget {
         ws_idx: usize,
         tab_idx: usize,
         pane_id: PaneId,
+        source_pane_id: Option<PaneId>,
+        has_manual_label: bool,
+        right_click_passthrough: bool,
     },
 }
 

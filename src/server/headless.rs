@@ -4754,6 +4754,10 @@ impl HeadlessServer {
             // Filled inside the App arm, where the encode runs in this
             // client's viewer window; committed after a successful send.
             let mut encoded_graphics_cache: Option<crate::kitty_graphics::HostGraphicsCache> = None;
+            // Rides beside the cache: whether the app-frame encoding above
+            // left transactions for a later tick (upstream incomplete-loop),
+            // reset by the same take() rhythm the cache uses.
+            let mut frame_graphics_incomplete = false;
             let mut attach_wheel_routing: Option<crate::protocol::TerminalWheelRouting> = None;
             let mut frame = match mode {
                 ClientConnectionMode::App => {
@@ -4846,15 +4850,17 @@ impl HeadlessServer {
                                 frame.graphics = next_graphics_cache.clear_bytes();
                             }
                             let graphics_started = crate::render_prof::timer();
-                            frame.graphics.extend(
-                                crate::kitty_graphics::encode_local_pane_graphics(
-                                    &self.app.state,
-                                    &self.app.terminal_runtimes,
-                                    self.app.state.view.tab_surface(),
-                                    cell_size,
-                                    &mut next_graphics_cache,
-                                ),
+                            let encoded = crate::kitty_graphics::encode_local_pane_graphics(
+                                &self.app.state,
+                                &self.app.pane_graphics,
+                                &self.app.terminal_runtimes,
+                                self.app.state.view.tab_surface(),
+                                cell_size,
+                                Some(crate::kitty_graphics::HEADLESS_GRAPHICS_TRANSACTION_BUDGET),
+                                &mut next_graphics_cache,
                             );
+                            frame.graphics.extend(encoded.bytes);
+                            frame_graphics_incomplete = encoded.incomplete;
                             crate::render_prof::duration_since(
                                 "full_render.graphics_encode",
                                 graphics_started,
@@ -4940,6 +4946,7 @@ impl HeadlessServer {
                     cache
                 }
             };
+            let mut encoded_incomplete = std::mem::take(&mut frame_graphics_incomplete);
 
             let Some(writer) = client.writer.as_ref().cloned() else {
                 crate::render_prof::event("full_render.writer_missing");
@@ -4955,7 +4962,7 @@ impl HeadlessServer {
                 );
                 frame.graphics.clear();
                 commit_graphics_cache = false;
-                encoded.incomplete = false;
+                encoded_incomplete = false;
             }
             let has_graphics = !frame.graphics.is_empty();
             let Some(mut prepared) = client.render_state.prepare_frame(frame) else {
@@ -4963,7 +4970,7 @@ impl HeadlessServer {
                     client.graphics_cache = next_graphics_cache;
                     client.graphics_surface_reset_pending = false;
                 }
-                if encoded.incomplete {
+                if encoded_incomplete {
                     client.defer_full_render();
                     deferred_frame = true;
                 } else {
@@ -5007,7 +5014,7 @@ impl HeadlessServer {
                     };
                     prepared = text_only_prepared;
                     commit_graphics_cache = false;
-                    encoded.incomplete = false;
+                    encoded_incomplete = false;
                     framed
                 }
                 Err(protocol::FramingError::Oversized { claimed, max }) => {
@@ -5032,7 +5039,7 @@ impl HeadlessServer {
                         client.graphics_surface_reset_pending = false;
                     }
                     client.render_state.commit_sent_frame(prepared);
-                    if encoded.incomplete {
+                    if encoded_incomplete {
                         client.defer_full_render();
                         deferred_frame = true;
                     } else {

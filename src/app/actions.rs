@@ -4839,7 +4839,10 @@ impl AppState {
                 terminal.last_agent_state_change_seq = Some(self.next_agent_state_change_seq);
             }
         }
-        let seen = self.apply_pane_state_change(ws_idx, pane_id, &change)?;
+        // The fork road predates upstream's acquisition-completion
+        // suppression; upstream's own path (managed launches) carries the
+        // real signal through its caller above.
+        let seen = self.apply_pane_state_change(ws_idx, pane_id, &change, false)?;
         let update = PaneStateUpdate {
             pane_id,
             ws_idx,
@@ -5004,6 +5007,7 @@ impl AppState {
         ws_idx: usize,
         pane_id: PaneId,
         change: &EffectiveStateChange,
+        suppress_completion: bool,
     ) -> Option<bool> {
         let is_active_tab = self.pane_is_in_active_tab(ws_idx, pane_id);
         let suppress_active_tab_notifications =
@@ -5015,13 +5019,17 @@ impl AppState {
 
         if change.state != AgentState::Idle {
             pane.seen = true;
-        } else if is_completion_transition(change) {
+        } else if !suppress_completion && is_completion_transition(change) {
             pane.seen = suppress_active_tab_notifications;
         }
         let seen = pane.seen;
 
-        if let Some(delivery) = self.record_or_deliver_agent_notification(ws_idx, pane_id, change) {
-            self.apply_agent_notification_delivery(&delivery);
+        if !suppress_completion {
+            if let Some(delivery) =
+                self.record_or_deliver_agent_notification(ws_idx, pane_id, change)
+            {
+                self.apply_agent_notification_delivery(&delivery);
+            }
         }
 
         Some(seen)
