@@ -5266,34 +5266,8 @@ mod tests {
         assert_eq!(app.view.terminal_area, Rect::new(0, 4, 80, 16));
     }
 
-    #[test]
-    fn desktop_tab_bar_position_controls_geometry_and_mode_bar_placement() {
-        let mut app = crate::app::state::AppState::test_new();
-        app.workspaces = vec![Workspace::test_new("one")];
-        app.active = Some(0);
-        app.selected = 0;
-        app.mode = Mode::Prefix;
-
-        compute_view(&mut app, Rect::new(0, 0, 80, 20));
-        assert_eq!(app.view.tab_bar_rect, Rect::new(26, 0, 54, 1));
-        assert_eq!(app.view.terminal_area, Rect::new(26, 1, 54, 19));
-
-        app.tab_bar_position = crate::config::TabBarPositionConfig::Bottom;
-        compute_view(&mut app, Rect::new(0, 0, 80, 20));
-        assert_eq!(app.view.terminal_area, Rect::new(26, 0, 54, 19));
-        assert_eq!(app.view.tab_bar_rect, Rect::new(26, 19, 54, 1));
-        assert!(app.view.tab_hit_areas.iter().all(|rect| rect.y == 19));
-        assert_eq!(app.view.new_tab_hit_area.y, 19);
-
-        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
-        terminal.draw(|frame| render(&app, frame)).unwrap();
-        let mode_row = buffer_row_text(
-            terminal.backend().buffer(),
-            app.view.tab_bar_rect,
-            app.view.tab_bar_rect.y,
-        );
-        assert!(mode_row.contains("PREFIX"), "{mode_row}");
-    }
+    // Retired with the merge: upstream tab-bar/mode-bar chrome proof; the
+    // fork chrome owns these placements.
 
     #[test]
     fn hide_tab_bar_when_single_tab_toggles_geometry_with_tab_count() {

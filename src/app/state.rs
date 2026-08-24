@@ -3172,57 +3172,27 @@ impl ContextMenuState {
                 .map(|item| item.label())
                 .collect(),
             ContextMenuKind::Pane {
-                has_manual_label: true,
-                source_pane_id: Some(_),
+                source_pane_id,
+                has_manual_label,
+                right_click_passthrough,
                 ..
-            } => vec![
-                "Rename pane",
-                "Clear pane name",
-                "Swap with focused pane",
-                "Split right",
-                "Split down",
-                "Open Files beside",
-                "Zoom",
-                "Close pane",
-            ],
-            ContextMenuKind::Pane {
-                has_manual_label: false,
-                source_pane_id: Some(_),
-                ..
-            } => vec![
-                "Rename pane",
-                "Swap with focused pane",
-                "Split right",
-                "Split down",
-                "Open Files beside",
-                "Zoom",
-                "Close pane",
-            ],
-            ContextMenuKind::Pane {
-                has_manual_label: true,
-                source_pane_id: None,
-                ..
-            } => vec![
-                "Rename pane",
-                "Clear pane name",
-                "Split right",
-                "Split down",
-                "Open Files beside",
-                "Zoom",
-                "Close pane",
-            ],
-            ContextMenuKind::Pane {
-                has_manual_label: false,
-                source_pane_id: None,
-                ..
-            } => vec![
-                "Rename pane",
-                "Split right",
-                "Split down",
-                "Open Files beside",
-                "Zoom",
-                "Close pane",
-            ],
+            } => {
+                let mut items = vec!["Rename pane"];
+                if *has_manual_label {
+                    items.push("Clear pane name");
+                }
+                if source_pane_id.is_some() {
+                    items.push("Swap with focused pane");
+                }
+                items.extend(["Split right", "Split down", "Open Files beside", "Zoom"]);
+                items.push(if *right_click_passthrough {
+                    "Use Herdr right-click menu"
+                } else {
+                    "Send right-clicks to pane"
+                });
+                items.push("Close pane");
+                items
+            }
         }
     }
 

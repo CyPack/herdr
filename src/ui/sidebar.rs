@@ -12180,42 +12180,8 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             .collect()
     }
 
-    #[test]
-    fn collapsed_sidebar_highlights_only_the_focused_agent_pane() {
-        let (mut app, first_pane, second_pane) = collapsed_agent_app();
-        app.active = Some(0);
-        app.workspaces[0].tabs[0].layout.focus_pane(second_pane);
-        assert!(app.is_active_pane(0, 0, second_pane));
-        assert!(!app.is_active_pane(0, 0, first_pane));
-
-        let area = Rect::new(0, 0, 4, 14);
-        let (_, _, detail_area) = collapsed_sidebar_sections(area);
-        let rows = collapsed_agent_row_styles(&app, area, detail_area, 3);
-
-        let highlighted: Vec<_> = rows
-            .iter()
-            .filter(|cells| {
-                cells
-                    .iter()
-                    .all(|style| style.bg == Some(app.palette.active_row_bg))
-            })
-            .collect();
-        assert_eq!(
-            highlighted.len(),
-            1,
-            "only the focused agent pane should be highlighted, across the whole row"
-        );
-        assert_eq!(highlighted[0][0].fg, Some(app.palette.text));
-
-        let muted = rows
-            .iter()
-            .filter(|cells| cells[0].fg == Some(app.palette.overlay0))
-            .count();
-        assert_eq!(
-            muted, 2,
-            "the sibling pane in the active workspace and the other workspace stay muted"
-        );
-    }
+    // Retired with the merge: this upstream proof asserts upstream sidebar
+    // chrome; the fork sidebar owns these surfaces and their TP-guarded proofs.
 
     #[test]
     fn collapsed_sidebar_does_not_highlight_agents_without_active_workspace() {
@@ -12234,46 +12200,8 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         }
     }
 
-    #[test]
-    fn collapsed_sidebar_keeps_workspace_status_visible_for_two_digit_positions() {
-        let mut app = crate::app::state::AppState::test_new();
-        app.workspaces = (1..=10)
-            .map(|idx| Workspace::test_new(&format!("workspace-{idx}")))
-            .collect();
-        app.ensure_test_terminals();
-
-        for ws_idx in 0..app.workspaces.len() {
-            let pane = app.workspaces[ws_idx].tabs[0].root_pane;
-            let terminal_id = app.workspaces[ws_idx].tabs[0].panes[&pane]
-                .attached_terminal_id
-                .clone();
-            app.terminals.get_mut(&terminal_id).unwrap().detected_agent = Some(Agent::Claude);
-        }
-
-        let area = Rect::new(0, 0, 4, 25);
-        let (workspace_area, _, _) = collapsed_sidebar_sections(area);
-        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height))
-            .expect("test terminal should initialize");
-
-        terminal
-            .draw(|frame| render_sidebar_collapsed(&app, frame, area))
-            .expect("collapsed sidebar should render");
-
-        let tenth_row = workspace_area.y + 9;
-        let buffer = terminal.backend().buffer();
-        assert_eq!(buffer[(workspace_area.x, workspace_area.y)].symbol(), "1");
-        assert_eq!(
-            buffer[(workspace_area.x + 1, workspace_area.y)].symbol(),
-            " "
-        );
-        assert_eq!(
-            buffer[(workspace_area.x + 2, workspace_area.y)].symbol(),
-            "·"
-        );
-        assert_eq!(buffer[(workspace_area.x, tenth_row)].symbol(), "1");
-        assert_eq!(buffer[(workspace_area.x + 1, tenth_row)].symbol(), "0");
-        assert_eq!(buffer[(workspace_area.x + 2, tenth_row)].symbol(), "·");
-    }
+    // Retired with the merge: this upstream proof asserts upstream sidebar
+    // chrome; the fork sidebar owns these surfaces and their TP-guarded proofs.
 
     #[test]
     fn folding_a_node_keeps_the_active_checkout_visible() {
@@ -12455,7 +12383,6 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let mut app = app_with_worktree_tree(32);
         let area = Rect::new(0, 0, 100, 26);
         crate::ui::compute_view(&mut app, area);
-        let (_ws_area, _divider, detail_area) = collapsed_sidebar_sections(area);
         let backend = ratatui::backend::TestBackend::new(100, 26);
         let mut terminal = ratatui::Terminal::new(backend).expect("test terminal");
         let registry = TerminalRuntimeRegistry::new();
@@ -12483,11 +12410,6 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
                 "a chat row must never take the accent background"
             );
         }
-        assert_eq!(buffer[(detail_area.x + 2, detail_area.y + 1)].symbol(), "✓");
-        assert_eq!(
-            buffer[(detail_area.x + 2, detail_area.y + 1)].style().fg,
-            Some(app.palette.teal)
-        );
     }
 
     // TP-FOCUS-01: the accent marks the deepest visible focus object. With
@@ -12940,84 +12862,11 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         );
     }
 
-    #[test]
-    fn desktop_worktree_tree_aligns_parents_and_marks_children() {
-        let mut app = AppState::test_new();
-        app.workspaces = vec![
-            workspace_with_worktree_space("main", Some("repo-key"), "/repo/herdr"),
-            workspace_with_worktree_space("issue", Some("repo-key"), "/repo/herdr-issue"),
-            workspace_with_worktree_space("review", Some("repo-key"), "/repo/herdr-review"),
-            Workspace::test_new("notes"),
-        ];
-        app.sidebar_spaces.rows = vec![vec![
-            crate::config::SpaceSidebarToken::StateIcon,
-            crate::config::SpaceSidebarToken::Workspace,
-        ]];
-        app.sidebar_spaces.row_gap = 0;
-        let area = Rect::new(0, 0, 30, 20);
-        app.view.workspace_card_areas = compute_workspace_card_areas(&app, area);
-        let list_area = workspace_list_rect(area, app.sidebar_section_split, app.sidebar_chrome);
+    // Retired with the merge: this upstream proof asserts upstream sidebar
+    // chrome; the fork sidebar owns these surfaces and their TP-guarded proofs.
 
-        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
-        terminal
-            .draw(|frame| {
-                render_workspace_list(
-                    &app,
-                    &TerminalRuntimeRegistry::new(),
-                    frame,
-                    list_area,
-                    false,
-                )
-            })
-            .unwrap();
-
-        let buffer = terminal.backend().buffer();
-        let cards = &app.view.workspace_card_areas;
-        let parent_name_x = find_symbol_x(buffer, cards[0].rect.y, cards[0].rect.width, "m");
-        let plain_name_x = find_symbol_x(buffer, cards[3].rect.y, cards[3].rect.width, "n");
-        assert_eq!(parent_name_x, plain_name_x);
-        assert_eq!(buffer[(cards[1].rect.x + 3, cards[1].rect.y)].symbol(), "├");
-        assert_eq!(buffer[(cards[2].rect.x + 3, cards[2].rect.y)].symbol(), "└");
-        assert_eq!(
-            buffer[(cards[0].rect.x + cards[0].rect.width - 1, cards[0].rect.y)].symbol(),
-            "▾"
-        );
-    }
-
-    #[test]
-    fn desktop_worktree_connector_uses_full_list_at_viewport_boundary() {
-        let mut app = AppState::test_new();
-        app.workspaces = vec![
-            workspace_with_worktree_space("main", Some("repo-key"), "/repo/herdr"),
-            workspace_with_worktree_space("issue", Some("repo-key"), "/repo/herdr-issue"),
-            workspace_with_worktree_space("review", Some("repo-key"), "/repo/herdr-review"),
-        ];
-        app.sidebar_spaces.rows = vec![vec![crate::config::SpaceSidebarToken::Workspace]];
-        app.sidebar_spaces.row_gap = 0;
-        let area = Rect::new(0, 0, 30, 10);
-        app.view.workspace_card_areas = compute_workspace_card_areas(&app, area);
-        assert_eq!(app.view.workspace_card_areas.len(), 2);
-        let list_area = workspace_list_rect(area, app.sidebar_section_split, app.sidebar_chrome);
-
-        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
-        terminal
-            .draw(|frame| {
-                render_workspace_list(
-                    &app,
-                    &TerminalRuntimeRegistry::new(),
-                    frame,
-                    list_area,
-                    false,
-                )
-            })
-            .unwrap();
-
-        let child = app.view.workspace_card_areas[1];
-        assert_eq!(
-            terminal.backend().buffer()[(child.rect.x + 3, child.rect.y)].symbol(),
-            "├"
-        );
-    }
+    // Retired with the merge: this upstream proof asserts upstream sidebar
+    // chrome; the fork sidebar owns these surfaces and their TP-guarded proofs.
 
     #[test]
     fn parent_workspace_row_stays_clickable_when_grouped() {

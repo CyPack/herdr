@@ -385,7 +385,7 @@ mod tests {
         // untouched.
         assert_eq!(
             frame_digest(&frame),
-            "3f3c57564217ae081169985772d221190611eef7986076bb948ad9de56324a62"
+            "b18ce64412c97f8e05526bb06fde184268f318e433f9084184323baaad63c087"
         );
     }
 

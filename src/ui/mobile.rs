@@ -1,3 +1,4 @@
+use crate::config::StatusIndicatorStyle;
 use ratatui::{
     layout::{Alignment, Rect},
     style::{Modifier, Style},
@@ -9,7 +10,7 @@ use ratatui::{
 use super::sidebar::{
     agent_panel_entries, agent_panel_entries_from, grouped_child_display_label, AgentPanelEntry,
 };
-use super::status::{state_dot, state_icon};
+use super::status::{state_dot, state_icon, state_icon_symbol};
 use super::text::{display_width_u16, truncate_end};
 use crate::app::state::{Palette, ToastKind, ToastNotification};
 use crate::app::AppState;
@@ -2624,7 +2625,10 @@ enum SummaryTone {
 
 /// Ordered, non-zero breakdown for the header roll-up: attention states lead
 /// (blocked → done → working → idle). Pure so it can be unit-tested.
-fn agent_summary_segments(counts: GlobalAgentCounts) -> Vec<(String, SummaryTone)> {
+fn agent_summary_segments(
+    counts: GlobalAgentCounts,
+    indicator_style: StatusIndicatorStyle,
+) -> Vec<(String, SummaryTone)> {
     if counts.total() == 0 {
         return vec![("no agents".to_string(), SummaryTone::Muted)];
     }
@@ -2634,20 +2638,75 @@ fn agent_summary_segments(counts: GlobalAgentCounts) -> Vec<(String, SummaryTone
     let mut segments = Vec::new();
     if counts.blocked > 0 {
         segments.push((
-            format!("◉ {} blocked", counts.blocked),
+            agent_summary_text(
+                indicator_style,
+                AgentState::Blocked,
+                true,
+                Some("◉"),
+                counts.blocked,
+                "blocked",
+            ),
             SummaryTone::Blocked,
         ));
     }
     if counts.done > 0 {
-        segments.push((format!("● {} done", counts.done), SummaryTone::Done));
+        segments.push((
+            agent_summary_text(
+                indicator_style,
+                AgentState::Idle,
+                false,
+                Some("●"),
+                counts.done,
+                "done",
+            ),
+            SummaryTone::Done,
+        ));
     }
     if counts.working > 0 {
-        segments.push((format!("{} working", counts.working), SummaryTone::Working));
+        segments.push((
+            agent_summary_text(
+                indicator_style,
+                AgentState::Working,
+                true,
+                None,
+                counts.working,
+                "working",
+            ),
+            SummaryTone::Working,
+        ));
     }
     if counts.idle > 0 {
-        segments.push((format!("{} idle", counts.idle), SummaryTone::Idle));
+        segments.push((
+            agent_summary_text(
+                indicator_style,
+                AgentState::Idle,
+                true,
+                None,
+                counts.idle,
+                "idle",
+            ),
+            SummaryTone::Idle,
+        ));
     }
     segments
+}
+
+fn agent_summary_text(
+    indicator_style: StatusIndicatorStyle,
+    state: AgentState,
+    seen: bool,
+    dot_style_symbol: Option<&str>,
+    count: usize,
+    label: &str,
+) -> String {
+    let symbol = match indicator_style {
+        StatusIndicatorStyle::Dots => dot_style_symbol,
+        StatusIndicatorStyle::Symbols => Some(state_icon_symbol(state, seen, indicator_style)),
+    };
+    match symbol {
+        Some(symbol) => format!("{symbol} {count} {label}"),
+        None => format!("{count} {label}"),
+    }
 }
 
 /// Greedily keep the most-urgent segments that fit `max_width` (counting the
@@ -2674,7 +2733,7 @@ fn fit_summary_segments(
 }
 
 fn agent_summary_line(app: &AppState, p: &Palette, max_width: u16) -> Line<'static> {
-    let segments = agent_summary_segments(global_agent_counts(app));
+    let segments = agent_summary_segments(global_agent_counts(app), app.status_indicators);
     let (shown, truncated) = fit_summary_segments(segments, max_width as usize);
 
     let mut spans = vec![Span::styled(" ", Style::default().bg(p.panel_bg))];
@@ -4888,7 +4947,7 @@ mod tests {
             working: 2,
             idle: 1,
         };
-        let segments = agent_summary_segments(counts);
+        let segments = agent_summary_segments(counts, StatusIndicatorStyle::Dots);
         let labels: Vec<&str> = segments.iter().map(|(text, _)| text.as_str()).collect();
         assert_eq!(
             labels,
@@ -4905,7 +4964,7 @@ mod tests {
             working: 2,
             idle: 1,
         };
-        let labels: Vec<String> = agent_summary_segments(counts)
+        let labels: Vec<String> = agent_summary_segments(counts, StatusIndicatorStyle::Symbols)
             .into_iter()
             .map(|(text, _)| text)
             .collect();
@@ -4925,7 +4984,7 @@ mod tests {
             working: 2,
             ..Default::default()
         };
-        let labels: Vec<String> = agent_summary_segments(counts)
+        let labels: Vec<String> = agent_summary_segments(counts, StatusIndicatorStyle::Dots)
             .into_iter()
             .map(|(text, _)| text)
             .collect();
@@ -4942,7 +5001,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            agent_summary_segments(counts),
+            agent_summary_segments(counts, StatusIndicatorStyle::Dots),
             vec![("all idle".to_string(), SummaryTone::Muted)]
         );
     }
@@ -4955,7 +5014,10 @@ mod tests {
             working: 2,
             idle: 1,
         };
-        let (shown, truncated) = fit_summary_segments(agent_summary_segments(counts), 24);
+        let (shown, truncated) = fit_summary_segments(
+            agent_summary_segments(counts, StatusIndicatorStyle::Dots),
+            24,
+        );
         let labels: Vec<&str> = shown.iter().map(|(text, _)| text.as_str()).collect();
         assert_eq!(labels, vec!["◉ 2 blocked", "● 1 done"]);
         assert!(truncated);
@@ -4969,7 +5031,10 @@ mod tests {
             working: 2,
             idle: 1,
         };
-        let (shown, truncated) = fit_summary_segments(agent_summary_segments(counts), 60);
+        let (shown, truncated) = fit_summary_segments(
+            agent_summary_segments(counts, StatusIndicatorStyle::Dots),
+            60,
+        );
         assert_eq!(shown.len(), 4);
         assert!(!truncated);
     }
@@ -4977,7 +5042,7 @@ mod tests {
     #[test]
     fn agent_summary_reports_no_agents_when_empty() {
         assert_eq!(
-            agent_summary_segments(GlobalAgentCounts::default()),
+            agent_summary_segments(GlobalAgentCounts::default(), StatusIndicatorStyle::Dots),
             vec![("no agents".to_string(), SummaryTone::Muted)]
         );
     }

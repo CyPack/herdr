@@ -3460,6 +3460,10 @@ impl AppState {
                 crate::logging::workspace_closed(&workspace_id);
             }
         }
+        let active_workspace_id = self
+            .active
+            .and_then(|idx| self.workspaces.get(idx))
+            .map(|ws| ws.id.clone());
         self.remove_plugin_pane_records(pane_ids);
         for idx in close_indices.iter().rev() {
             self.workspaces.remove(*idx);
@@ -3472,6 +3476,12 @@ impl AppState {
             self.tab_scroll = 0;
             self.tab_scroll_follow_active = true;
         } else {
+            // Keep focus on the previously focused workspace
+            if let Some(id) = active_workspace_id {
+                if let Some(idx) = self.workspaces.iter().position(|ws| ws.id == id) {
+                    self.selected = idx;
+                }
+            }
             if self.selected >= self.workspaces.len() {
                 self.selected = self.workspaces.len() - 1;
             }
@@ -4061,7 +4071,7 @@ impl AppState {
             Some(sel) => sel,
             None => return,
         };
-        if !sel.finish() {
+        if !sel.is_finalized() && !sel.finish() {
             return;
         }
 
@@ -4562,11 +4572,21 @@ impl AppState {
             }
 
             let ws = &mut self.workspaces[ws_idx];
-            if ws.cached_git_branch != result.branch {
+            if ws.cached_identity_cwd != result.resolved_identity_cwd {
+                ws.cached_identity_cwd = result.resolved_identity_cwd;
+            }
+            if ws.cached_auto_label != result.auto_label {
+                ws.cached_auto_label = result.auto_label;
+                changed |= ws.custom_name.is_none();
+            }
+            if ws.cached_git_status_key != result.status_cache_key {
+                ws.cached_git_status_key = result.status_cache_key;
+            }
+            if result.demand.branch && ws.cached_git_branch != result.branch {
                 ws.cached_git_branch = result.branch;
                 changed = true;
             }
-            if ws.cached_git_ahead_behind != result.ahead_behind {
+            if result.demand.ahead_behind && ws.cached_git_ahead_behind != result.ahead_behind {
                 ws.cached_git_ahead_behind = result.ahead_behind;
                 changed = true;
             }
@@ -4829,11 +4849,20 @@ impl AppState {
             .clone();
         let previous_seen = self.workspaces[ws_idx].pane_state(pane_id)?.seen;
         let now = Instant::now();
-        let (mutation, managed_changed, agent_name_changed, unchanged_change) = {
+        let (
+            mutation,
+            managed_changed,
+            agent_name_changed,
+            unchanged_change,
+            managed_launch_pending,
+            suppress_acquisition_completion,
+        ) = {
             let terminal = self.terminals.get_mut(&terminal_id)?;
             let previous_agent_name = terminal.agent_name.clone();
+            let managed_launch_pending = terminal.managed_agent_launch_pending();
             let mutation = update(terminal)?;
             let managed_changed = terminal.reconcile_managed_agent_at(now, false);
+            let suppress_acquisition_completion = terminal.finish_agent_process_acquisition();
             let agent_name_changed = terminal.agent_name != previous_agent_name;
             let unchanged_change = (mutation.agent_released || agent_name_changed)
                 .then(|| terminal.unchanged_effective_state_change_at(now));
@@ -4842,6 +4871,8 @@ impl AppState {
                 managed_changed,
                 agent_name_changed,
                 unchanged_change,
+                managed_launch_pending,
+                suppress_acquisition_completion,
             )
         };
         if mutation.session_ref_changed || managed_changed || agent_name_changed {
@@ -4849,16 +4880,15 @@ impl AppState {
         }
         let agent_released = mutation.agent_released;
         let change = mutation.effective_state_change.or(unchanged_change)?;
+        let suppress_completion = change.state == AgentState::Idle
+            && (managed_launch_pending || suppress_acquisition_completion);
         if change.previous_state != change.state {
             self.next_agent_state_change_seq += 1;
             if let Some(terminal) = self.terminals.get_mut(&terminal_id) {
                 terminal.last_agent_state_change_seq = Some(self.next_agent_state_change_seq);
             }
         }
-        // The fork road predates upstream's acquisition-completion
-        // suppression; upstream's own path (managed launches) carries the
-        // real signal through its caller above.
-        let seen = self.apply_pane_state_change(ws_idx, pane_id, &change, false)?;
+        let seen = self.apply_pane_state_change(ws_idx, pane_id, &change, suppress_completion)?;
         let update = PaneStateUpdate {
             pane_id,
             ws_idx,
@@ -4883,7 +4913,7 @@ impl AppState {
             agent_name_changed,
             agent_released,
             agent_release_status: agent_released.then(|| pane_agent_status(change.state, seen)),
-            suppress_completion: false,
+            suppress_completion,
         };
         Some(update)
     }
@@ -5288,6 +5318,11 @@ impl AppState {
         self.mark_session_dirty();
 
         if should_close_workspace {
+            let active_workspace_id = self
+                .active
+                .and_then(|idx| self.workspaces.get(idx))
+                .map(|ws| ws.id.clone());
+            let selected_workspace_id = self.workspaces.get(self.selected).map(|ws| ws.id.clone());
             self.workspaces.remove(ws_idx);
             self.remove_unattached_terminal_ids(workspace_terminal_ids);
             if self.workspaces.is_empty() {
@@ -5297,14 +5332,29 @@ impl AppState {
                     self.mode = Mode::Navigate;
                 }
             } else {
+                // Keep focus on the previously focused workspace
+                if let Some(id) = active_workspace_id {
+                    if let Some(idx) = self.workspaces.iter().position(|ws| ws.id == id) {
+                        self.active = Some(idx);
+                    }
+                }
                 if let Some(active) = self.active {
                     if active >= self.workspaces.len() {
                         self.active = Some(self.workspaces.len() - 1);
                     }
                 }
+                if let Some(id) = selected_workspace_id {
+                    if let Some(idx) = self.workspaces.iter().position(|ws| ws.id == id) {
+                        self.selected = idx;
+                    }
+                }
                 if self.selected >= self.workspaces.len() {
                     self.selected = self.workspaces.len() - 1;
                 }
+                self.workspace_scroll = self
+                    .workspace_scroll
+                    .min(self.workspaces.len().saturating_sub(1));
+                self.ensure_workspace_visible(self.selected);
             }
         } else {
             self.remove_unattached_terminal_ids(pane_terminal_id);

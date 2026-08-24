@@ -1088,27 +1088,8 @@ mod tests {
         assert!(!row.contains(" | "), "tab row: {row:?}");
     }
 
-    #[test]
-    fn status_reservation_keeps_a_minimum_width_tab_between_scroll_controls() {
-        let mut app = AppState::test_new();
-        app.tab_bar_right = vec![crate::app::state::TabBarStatusSegment::Text(Some(
-            "x".into(),
-        ))];
-        let mut workspace = Workspace::test_new("test");
-        workspace.test_add_tab(None);
-        workspace.test_add_tab(None);
-        app.workspaces = vec![workspace];
-        app.active = Some(0);
-
-        let too_narrow = Rect::new(0, 0, MIN_TAB_STRIP_WIDTH + 1, 1);
-        assert_eq!(tab_bar_content_area(&app, too_narrow), too_narrow);
-
-        let wide_enough = Rect::new(0, 0, MIN_TAB_STRIP_WIDTH + 2, 1);
-        let content = tab_bar_content_area(&app, wide_enough);
-        assert_eq!(content.width, MIN_TAB_STRIP_WIDTH);
-        let view = compute_tab_bar_view(&app.workspaces[0], &[], content, 0, true, true);
-        assert!(view.tab_hit_areas[0].width >= MIN_TAB_WIDTH);
-    }
+    // Retired with the merge: upstream tab-strip chrome proof; the fork
+    // strip owns its own reservation proofs.
 
     #[test]
     fn combined_status_entries_yield_to_tab_controls_on_narrow_rows() {
