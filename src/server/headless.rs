@@ -1277,9 +1277,6 @@ impl HeadlessServer {
         self.app.image_preview_cell_size = cell_size;
     }
 
-    // Kept for the fork's headless geometry road; the upstream render loop
-    // computes per-client geometry inline after the merge.
-    #[allow(dead_code)]
     fn sync_headless_view_geometry(&mut self) {
         crate::ui::compute_view_without_resizing_panes(
             &mut self.app.state,
@@ -1302,6 +1299,7 @@ impl HeadlessServer {
             self.effective_size = self.headless_size;
             self.app.state.outer_terminal_focus = None;
             self.publish_host_cell_size(crate::kitty_graphics::HostCellSize::default());
+            self.sync_headless_view_geometry();
             let server_keybindings = self.server_keybindings.clone();
             apply_keybindings(&mut self.app, &server_keybindings);
             self.sync_visible_server_config_diagnostic(false);
@@ -1312,6 +1310,7 @@ impl HeadlessServer {
             self.effective_size = self.headless_size;
             self.app.state.outer_terminal_focus = None;
             self.publish_host_cell_size(crate::kitty_graphics::HostCellSize::default());
+            self.sync_headless_view_geometry();
             let server_keybindings = self.server_keybindings.clone();
             apply_keybindings(&mut self.app, &server_keybindings);
             self.sync_visible_server_config_diagnostic(false);

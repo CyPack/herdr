@@ -722,6 +722,18 @@ fn encode_terminal_graphics_update_legacy(
         encode_delete_placement(bytes, host_id, placement_id);
         cache.placements.remove(&(host_id, placement_id));
     }
+    // Fork close-out: a single stale placement keeps its image cached (a
+    // scrolled-away picture returns cheaply — the stale-placement proof pins
+    // that), but when the surface has NOTHING left on screen the uploads go
+    // with it, so closing Files leaves the host terminal and this cache
+    // holding nothing (the FM upload-reuse proof pins this side).
+    if view_changed && current_placements.is_empty() && cache.placements.is_empty() {
+        let stale_images = cache.images.keys().copied().collect::<Vec<_>>();
+        for host_id in stale_images {
+            encode_delete_image(bytes, host_id);
+            cache.images.remove(&host_id);
+        }
+    }
 }
 
 fn release_superseded_terminal_image_legacy(

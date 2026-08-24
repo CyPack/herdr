@@ -371,8 +371,8 @@ pub(super) fn update_settings_state(state: &mut AppState, key: KeyEvent) -> Opti
                 state.settings.list.selected = preview_placement_index(state.preview_placement);
             }
             KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => {
-                state.settings.section = SettingsSection::Theme;
-                state.settings.list.selected = current_theme_index(&state.theme_name);
+                state.settings.section = SettingsSection::Experiments;
+                state.settings.list.selected = 0;
             }
             _ => match super::modal::modal_action_from_key(&key, super::modal::SETTINGS_ACTIONS) {
                 Some(super::modal::ModalAction::Apply) => return apply_settings(state),
