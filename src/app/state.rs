@@ -3726,6 +3726,14 @@ client_surfaces! {
     /// comparing one on every park would mean walking a directory's worth of
     /// entries per display per frame. A display seen for the first time opens
     /// its own browser rather than joining someone else's position in theirs.
+    /// The side-by-side pairing on THIS display: which surface fills the
+    /// right half beside the terminal, if any. Owned, not shared — a beside
+    /// layout is one display's screen arrangement, exactly like the file
+    /// browser it usually hosts. Shared, the first display WITHOUT a file
+    /// manager to draw self-healed the pairing away on its next frame, so
+    /// "Open Files beside" died the instant a second client was attached
+    /// (TP-SBS-FILES-04).
+    side_by_side: Option<SideBySideView>,
     file_manager: Option<crate::fm::FmState>,
     /// Where the location rail on this display is pointed.
     file_manager_locations: crate::app::file_manager_locations::FileManagerLocationsState,
@@ -3827,6 +3835,16 @@ pub struct AppState {
     /// panes render as usual). Client-side presentation state (v1 TUI-only,
     /// per the runtime/client boundary), swapped in like `SidebarTab` content.
     pub file_manager: Option<crate::fm::FmState>,
+    /// The side-by-side pairing on THIS display (register; parked and
+    /// handed over with the owned surfaces): which surface fills the right
+    /// half beside the terminal, if any. Presentation only — focus, input
+    /// and the runtime stay exactly where they were. Owned, not shared: a
+    /// beside layout is one display's screen arrangement, exactly like the
+    /// file browser it usually hosts. Shared, the first display WITHOUT a
+    /// file manager to draw self-healed the pairing away on its next frame,
+    /// so "Open Files beside" died the instant a second client attached
+    /// (TP-SBS-FILES-04).
+    pub(crate) side_by_side: Option<SideBySideView>,
     /// Typed client-local owner of the active WorkspaceStage surface. It does
     /// not create or replace server, workspace, tab, pane, or terminal IDs.
     pub(crate) stage: crate::ui::surface_host::StageState,
@@ -3891,11 +3909,6 @@ pub struct AppState {
     /// The "Work with other agent..." popup (TP-AGPANEL-48), when open.
     pub(crate) agent_colleague_picker:
         Option<crate::app::agent_colleague_picker::AgentColleaguePickerState>,
-    /// Client-local side-by-side stage (TP-STAGE-SBS-01): the ACTIVE
-    /// workspace fills the left half and `right` fills the other, each under
-    /// its own strip. Presentation only — focus, input and the runtime stay
-    /// exactly where they were; the POC routes no input to the right half.
-    pub(crate) side_by_side: Option<SideBySideView>,
     /// The bar configuration panel (TP-CHROME-150), when open.
     pub(crate) bar_config_panel: Option<crate::app::bar_config_panel::BarConfigPanelState>,
     /// The bars exactly as the last config load left them — the panel's

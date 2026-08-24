@@ -3529,6 +3529,50 @@ mod tests {
         );
     }
 
+    // TP-SBS-FILES-04: the beside pairing belongs to the display that opened
+    // it. Another attached display without a file manager of its own renders
+    // a frame, its self-heal clears only ITS empty pairing, and the opening
+    // display comes back to Files still beside the terminal. Before the
+    // pairing was owned, that other display's very next frame healed the
+    // shared value away and the verb looked dead the moment a second client
+    // was attached.
+    #[test]
+    fn a_second_display_without_a_file_manager_leaves_the_beside_pairing_alone() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("solak")];
+        app.active = Some(0);
+        app.mode = Mode::Terminal;
+        app.ensure_test_terminals();
+
+        let previous = app.enter_viewer(Some(4));
+        app.enter_files_beside();
+        assert!(app.files_beside_active());
+        compute_view(&mut app, Rect::new(0, 0, 170, 40));
+        assert!(app.files_beside_active(), "the opener keeps its pairing");
+        app.restore_viewer(previous);
+
+        let previous = app.enter_viewer(Some(2));
+        assert!(
+            app.file_manager.is_none(),
+            "a display seen for the first time has not opened a file browser"
+        );
+        compute_view(&mut app, Rect::new(0, 0, 170, 40));
+        assert!(
+            app.side_by_side.is_none(),
+            "the second display's own pairing is empty, not healed-away shared state"
+        );
+        app.restore_viewer(previous);
+
+        let previous = app.enter_viewer(Some(4));
+        assert!(
+            app.files_beside_active(),
+            "the opening display's pairing survived the other display's frame"
+        );
+        compute_view(&mut app, Rect::new(0, 0, 170, 40));
+        assert!(app.files_beside_active());
+        app.restore_viewer(previous);
+    }
+
     // TP-STAGE-SBS-01: the paint is real — the divider column and the right
     // half's own strip land in the buffer, so the split is a thing the eye
     // gets, not only a geometry the tests read.
