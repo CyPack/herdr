@@ -78,9 +78,20 @@ fn chat_seat(args: &[String]) -> std::io::Result<i32> {
             eprintln!("plan row without session_id/target_key is skipped");
             continue;
         }
+        let extra_keys = row
+            .get("extra_keys")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
         seats.push(ChatSeatEntry {
             session_id: sid.to_string(),
             target_key: key.to_string(),
+            extra_keys,
         });
     }
     if seats.is_empty() {
@@ -130,6 +141,7 @@ fn chat_move(args: &[String]) -> std::io::Result<i32> {
         seats: vec![ChatSeatEntry {
             session_id,
             target_key: target,
+            extra_keys: Vec::new(),
         }],
         source: None,
     })

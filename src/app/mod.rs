@@ -593,6 +593,7 @@ impl App {
         crate::persist::workspace_chats::apply_chat_moves(
             &mut state.workspace_chat_rows,
             &ledger.moves,
+            &ledger.seat_extras,
         );
         // TP-CHAT-NAME-01: and the names after them, for the same reason.
         crate::persist::workspace_chats::apply_chat_names(

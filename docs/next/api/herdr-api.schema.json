@@ -1667,6 +1667,14 @@
         "ChatSeatEntry": {
           "description": "One chat re-home in a bulk seat request: the ledger key is either a\ncheckout directory or a `module:<node-key>` seat — the same vocabulary\nthe TUI's \"Move to branch/module...\" menu writes.",
           "properties": {
+            "extra_keys": {
+              "default": [],
+              "description": "Extra drawers the chat ALSO appears in (M12: one conversation that\ndid several jobs shows a row under each module it worked in; every\nrow is the same conversation). Additive: old clients omit it.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
             "session_id": {
               "type": "string"
             },

@@ -453,6 +453,46 @@ class PlanTest(unittest.TestCase):
         newest = sorted(sessions, key=lambda s: s["last_substantive_ts"], reverse=True)[:150]
         self.assertEqual(kept, {s["session_id"] for s in newest})
 
+    def test_a_multi_context_session_carries_extra_keys(self):
+        # M12: the second high-confidence seat rides the plan as an extra.
+        sessions = [
+            {
+                "session_id": "multi",
+                "seats": [
+                    {"key": "module:a", "dir": "/r", "conf": 0.9, "basis": "repo"},
+                    {"key": "module:b", "dir": "/r", "conf": 0.8, "basis": "repo"},
+                    {"key": "module:c", "dir": "/r", "conf": 0.3, "basis": "lexicon"},
+                ],
+                "last_substantive_ts": "2026-08-20T10:00:00.000Z",
+            }
+        ]
+        plan = cc.build_plan(sessions, min_conf=0.6)
+        seat = plan["seats"][0]
+        self.assertEqual(seat["target_key"], "module:a")
+        self.assertEqual(seat["extra_keys"], ["module:b"])  # c is under threshold
+
+    def test_a_dash_f_commit_takes_its_subject_from_the_result(self):
+        # The repo's own commit style (-F message-file) leaves no -m in the
+        # command; the subject lives in the commit's output line.
+        entries = [
+            _entry(
+                typ="assistant",
+                cwd="/home/u/projects/alpha",
+                content=_tool_use("git commit -F /tmp/msg.txt", "tu-9"),
+            ),
+            _tool_result("tu-9", "[feat/x 9f8e7d6] feat(seat): land the plan"),
+        ]
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "f.jsonl"
+            _write_jsonl(path, entries)
+            facts = cc.extract_session_facts(str(path))
+        commits = facts["commits"]
+        self.assertEqual(len(commits), 1)
+        self.assertEqual(commits[0]["sha"], "9f8e7d6")
+        self.assertEqual(commits[0]["type"], "feat")
+        self.assertEqual(commits[0]["scope"], "seat")
+        self.assertEqual(commits[0]["subject"], "land the plan")
+
     def test_min_conf_filters_seats(self):
         sessions = [
             {

@@ -7,6 +7,11 @@ use serde::{Deserialize, Serialize};
 pub struct ChatSeatEntry {
     pub session_id: String,
     pub target_key: String,
+    /// Extra drawers the chat ALSO appears in (M12: one conversation that
+    /// did several jobs shows a row under each module it worked in; every
+    /// row is the same conversation). Additive: old clients omit it.
+    #[serde(default)]
+    pub extra_keys: Vec<String>,
 }
 
 /// Bulk chat seating (`chat.seat`). `source` stamps who decided: a plan

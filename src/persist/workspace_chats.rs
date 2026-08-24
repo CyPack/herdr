@@ -120,6 +120,12 @@ pub struct WorkspaceChatLedger {
     /// person's decision by omission (TP-CHAT-MOVE-14).
     #[serde(default)]
     pub move_sources: BTreeMap<String, String>,
+    /// Extra drawers a re-homed chat ALSO appears in (TP-CHAT-MOVE-15):
+    /// one conversation that did several jobs earns a row under each seat,
+    /// every row the same session. Owned by the same source rules as the
+    /// move itself — a chat the user filed is entirely the user's.
+    #[serde(default)]
+    pub seat_extras: BTreeMap<String, Vec<String>>,
 }
 
 impl Default for WorkspaceChatLedger {
@@ -131,6 +137,7 @@ impl Default for WorkspaceChatLedger {
             names: BTreeMap::new(),
             labels: BTreeMap::new(),
             move_sources: BTreeMap::new(),
+            seat_extras: BTreeMap::new(),
         }
     }
 }
@@ -304,11 +311,60 @@ impl WorkspaceChatLedger {
         SeatOutcome::Applied
     }
 
+    /// Declare the extra drawers a re-homed chat also appears in
+    /// (TP-CHAT-MOVE-15). Same ownership rules as the move: an automated
+    /// source cannot touch a user-owned chat, and re-declaring the same set
+    /// schedules no write. The primary target is never duplicated into the
+    /// extras, and a chat with no primary move takes no extras — a copy
+    /// with no original is a ghost.
+    pub fn set_extra_seats(
+        &mut self,
+        session_id: &str,
+        extra_keys: &[String],
+        source: &str,
+    ) -> SeatOutcome {
+        if session_id.is_empty() || source.is_empty() {
+            return SeatOutcome::Refused;
+        }
+        let Some(primary) = self.moves.get(session_id).cloned() else {
+            return SeatOutcome::Refused;
+        };
+        let owner = self
+            .move_sources
+            .get(session_id)
+            .map(String::as_str)
+            .unwrap_or(USER_MOVE_SOURCE);
+        if owner == USER_MOVE_SOURCE && source != USER_MOVE_SOURCE {
+            return SeatOutcome::Refused;
+        }
+        let mut cleaned: Vec<String> = Vec::new();
+        for key in extra_keys {
+            if key.is_empty() || *key == primary || cleaned.contains(key) {
+                continue;
+            }
+            cleaned.push(key.clone());
+        }
+        let current = self.seat_extras.get(session_id);
+        if cleaned.is_empty() {
+            if current.is_none() {
+                return SeatOutcome::Unchanged;
+            }
+            self.seat_extras.remove(session_id);
+            return SeatOutcome::Applied;
+        }
+        if current == Some(&cleaned) {
+            return SeatOutcome::Unchanged;
+        }
+        self.seat_extras.insert(session_id.to_string(), cleaned);
+        SeatOutcome::Applied
+    }
+
     /// Withdraw a re-home: the chat returns to wherever it was observed
     /// (TP-CHAT-MOVE-03).
     pub fn clear_move(&mut self, session_id: &str) -> bool {
         let removed = self.moves.remove(session_id).is_some();
         self.move_sources.remove(session_id);
+        self.seat_extras.remove(session_id);
         removed
     }
 
@@ -335,6 +391,7 @@ impl WorkspaceChatLedger {
         for sid in &doomed {
             self.moves.remove(sid);
             self.move_sources.remove(sid);
+            self.seat_extras.remove(sid);
         }
         doomed.len()
     }
@@ -413,6 +470,7 @@ pub fn apply_chat_names(
 pub fn apply_chat_moves(
     rows: &mut std::collections::HashMap<String, Vec<crate::app::state::WorkspaceChatRow>>,
     moves: &BTreeMap<String, String>,
+    seat_extras: &BTreeMap<String, Vec<String>>,
 ) {
     for (session_id, target_key) in moves {
         // Pull the chat out of every drawer, keeping its freshest copy —
@@ -438,6 +496,23 @@ pub fn apply_chat_moves(
         let Some(moved) = best else {
             continue;
         };
+        // TP-CHAT-MOVE-15: the extra seats get CLONES of the same row —
+        // one conversation, several rooms. They ride the primary's find:
+        // a chat nobody shows grows no copies either.
+        for extra_key in seat_extras.get(session_id).into_iter().flatten() {
+            if extra_key == target_key {
+                continue;
+            }
+            let list = rows.entry(extra_key.clone()).or_default();
+            if list.iter().any(|row| row.session_id == *session_id) {
+                continue;
+            }
+            let position = list
+                .iter()
+                .position(|row| row.last_seen_ms < moved.last_seen_ms)
+                .unwrap_or(list.len());
+            list.insert(position, moved.clone());
+        }
         let list = rows.entry(target_key.clone()).or_default();
         let position = list
             .iter()
@@ -929,7 +1004,7 @@ mod tests {
         ]);
         let moves = BTreeMap::from([("s1".to_string(), "/repo/target".to_string())]);
 
-        apply_chat_moves(&mut rows, &moves);
+        apply_chat_moves(&mut rows, &moves, &BTreeMap::new());
 
         assert!(
             !rows["/repo/main"].iter().any(|r| r.session_id == "s1"),
@@ -963,7 +1038,7 @@ mod tests {
             std::collections::HashMap::from([("/repo/main".to_string(), vec![row("s1", 5_000)])]);
         let moves = BTreeMap::from([("s1".to_string(), "/repo/fresh".to_string())]);
 
-        apply_chat_moves(&mut rows, &moves);
+        apply_chat_moves(&mut rows, &moves, &BTreeMap::new());
 
         assert!(rows["/repo/main"].is_empty());
         assert_eq!(rows["/repo/fresh"], vec![row("s1", 5_000)]);
@@ -980,7 +1055,7 @@ mod tests {
             ("ghost".to_string(), "/repo/target".to_string()),
         ]);
 
-        apply_chat_moves(&mut rows, &moves);
+        apply_chat_moves(&mut rows, &moves, &BTreeMap::new());
 
         assert_eq!(
             rows["/repo/target"],
@@ -1169,6 +1244,81 @@ mod tests {
             ledger.clear_moves_by_source(""),
             0,
             "an empty source clears nothing"
+        );
+    }
+
+    // TP-CHAT-MOVE-15
+    #[test]
+    fn an_extra_seat_clones_the_row_into_a_second_drawer() {
+        let mut ledger = WorkspaceChatLedger::default();
+        assert_eq!(
+            ledger.set_move_from("s1", "module:a", "seat-plan"),
+            SeatOutcome::Applied
+        );
+        assert_eq!(
+            ledger.set_extra_seats(
+                "s1",
+                &[
+                    "module:b".to_string(),
+                    "module:a".to_string(),
+                    "".to_string()
+                ],
+                "seat-plan"
+            ),
+            SeatOutcome::Applied,
+            "the primary and the empty key are filtered, b remains"
+        );
+        assert_eq!(
+            ledger.set_extra_seats("s1", &["module:b".to_string()], "seat-plan"),
+            SeatOutcome::Unchanged,
+            "re-declaring the same set schedules no write"
+        );
+        let mut rows: std::collections::HashMap<String, Vec<crate::app::state::WorkspaceChatRow>> =
+            Default::default();
+        rows.entry("/somewhere".to_string()).or_default().push(
+            crate::app::state::WorkspaceChatRow {
+                session_id: "s1".to_string(),
+                agent: "claude".to_string(),
+                title: Some("t".to_string()),
+                last_seen_ms: 10,
+                last_modified: None,
+                last_message_at: None,
+            },
+        );
+        apply_chat_moves(&mut rows, &ledger.moves, &ledger.seat_extras);
+        let count = |key: &str| rows.get(key).map(|l| l.len()).unwrap_or(0);
+        assert_eq!(count("module:a"), 1, "the primary drawer holds the row");
+        assert_eq!(count("module:b"), 1, "the extra drawer holds a clone");
+        assert_eq!(count("/somewhere"), 0, "the source drawer lost it");
+    }
+
+    // TP-CHAT-MOVE-15
+    #[test]
+    fn extras_follow_the_moves_ownership_and_leave_with_it() {
+        let mut ledger = WorkspaceChatLedger::default();
+        assert!(ledger.set_move("owned", "/repo/manual"));
+        assert_eq!(
+            ledger.set_extra_seats("owned", &["module:x".to_string()], "seat-plan"),
+            SeatOutcome::Refused,
+            "a user-owned chat takes no automated extras"
+        );
+        assert_eq!(
+            ledger.set_extra_seats("ghost", &["module:x".to_string()], "seat-plan"),
+            SeatOutcome::Refused,
+            "a chat with no primary move takes no extras"
+        );
+        assert_eq!(
+            ledger.set_move_from("plan", "module:a", "seat-plan"),
+            SeatOutcome::Applied
+        );
+        assert_eq!(
+            ledger.set_extra_seats("plan", &["module:b".to_string()], "seat-plan"),
+            SeatOutcome::Applied
+        );
+        assert!(ledger.clear_move("plan"));
+        assert!(
+            ledger.seat_extras.is_empty(),
+            "withdrawing the move withdraws its copies"
         );
     }
 
@@ -1422,7 +1572,7 @@ mod move_semantics_tests {
 
         let mut moves = BTreeMap::new();
         moves.insert("s1".to_string(), module_ledger_key("docs"));
-        apply_chat_moves(&mut rows, &moves);
+        apply_chat_moves(&mut rows, &moves, &BTreeMap::new());
 
         let occurrences: usize = rows
             .values()

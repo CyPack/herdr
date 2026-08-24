@@ -289,9 +289,21 @@ def extract_session_facts(path: str) -> dict:
                 if tid and tid in pending and result_text:
                     m = _COMMIT_RESULT_RE.search(result_text)
                     if m:
-                        pending[tid]["branch"] = m.group(1)
-                        pending[tid]["sha"] = m.group(2)
-                        pending[tid]["status"] = "committed"
+                        entry_ = pending[tid]
+                        entry_["branch"] = m.group(1)
+                        entry_["sha"] = m.group(2)
+                        entry_["status"] = "committed"
+                        # a -F/--file commit carries no -m subject; the commit's
+                        # own output line does: "[branch sha] subject"
+                        if not entry_["subject"]:
+                            tail = result_text[m.end():].split("\n", 1)[0].strip()
+                            if tail:
+                                ctype, scope, subject = _classify_subject(tail)
+                                entry_["type"], entry_["scope"], entry_["subject"] = (
+                                    ctype,
+                                    scope,
+                                    subject,
+                                )
                     pending.pop(tid, None)
                 if tid and tid in pending_push and result_text:
                     push = pending_push.pop(tid)
@@ -310,7 +322,9 @@ def extract_session_facts(path: str) -> dict:
                     command = str((block.get("input") or {}).get("command") or "")
                     if "git" not in command:
                         continue
-                    if re.search(r"\bgit\b[^|;&]*\bcommit\b", command) and "-m" in command:
+                    if re.search(r"\bgit\b[^|;&]*\bcommit\b", command) and (
+                        "-m" in command or "-F" in command or "--file" in command
+                    ):
                         subject_raw = _commit_message(command)
                         ctype, scope, subject = _classify_subject(subject_raw)
                         commit = {
@@ -780,11 +794,17 @@ def build_plan(
         top = seats[0]
         if top["conf"] < min_conf:
             continue
+        extra_keys = [
+            seat["key"]
+            for seat in seats[1:3]
+            if seat["conf"] >= min_conf and seat["key"] != top["key"]
+        ]
         candidates.append(
             {
                 "session_id": s["session_id"],
                 "target_key": top["key"],
                 "target_dir": top["dir"],
+                "extra_keys": extra_keys,
                 "conf": top["conf"],
                 "basis": top["basis"],
                 "label": top.get("label") or "",

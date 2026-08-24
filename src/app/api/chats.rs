@@ -22,14 +22,27 @@ impl super::App {
             .unwrap_or(USER_MOVE_SOURCE);
         let (mut applied, mut unchanged, mut refused) = (0usize, 0usize, 0usize);
         for entry in &params.seats {
-            match self.workspace_chat_ledger.set_move_from(
+            let move_outcome = self.workspace_chat_ledger.set_move_from(
                 &entry.session_id,
                 &entry.target_key,
                 source,
-            ) {
-                SeatOutcome::Applied => applied += 1,
-                SeatOutcome::Unchanged => unchanged += 1,
-                SeatOutcome::Refused => refused += 1,
+            );
+            // Extras ride the move's own ownership rules; either half
+            // changing counts the entry as applied (TP-CHAT-MOVE-15).
+            let extras_outcome = if entry.extra_keys.is_empty() {
+                SeatOutcome::Unchanged
+            } else {
+                self.workspace_chat_ledger.set_extra_seats(
+                    &entry.session_id,
+                    &entry.extra_keys,
+                    source,
+                )
+            };
+            match (move_outcome, extras_outcome) {
+                (SeatOutcome::Applied, _) | (_, SeatOutcome::Applied) => applied += 1,
+                (SeatOutcome::Refused, SeatOutcome::Refused)
+                | (SeatOutcome::Refused, SeatOutcome::Unchanged) => refused += 1,
+                _ => unchanged += 1,
             }
         }
         if applied > 0 {
