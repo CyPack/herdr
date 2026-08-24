@@ -1018,6 +1018,8 @@ mod tests {
                 "stream-cancel".into(),
                 PaneGraphicsStreamParams {
                     pane_id: "pane_1".into(),
+                    layer_id: None,
+                    z_index: 0,
                     owner: String::new(),
                 },
                 &api_tx,

@@ -18,6 +18,16 @@ pub(super) fn frame_pane_graphics(bytes: Vec<u8>) -> Vec<u8> {
 }
 
 impl HeadlessServer {
+    pub(super) fn cancel_inactive_pane_graphics_streams(&self) {
+        api::cancel_inactive_pane_graphics_streams(|owner| {
+            self.app
+                .state
+                .pane_graphics_streams
+                .values()
+                .any(|active_owner| active_owner == owner)
+        });
+    }
+
     pub(super) fn pane_graphics_runtime_active(&self) -> bool {
         !self.app.pane_graphics.slots.is_empty()
     }

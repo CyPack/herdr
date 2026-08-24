@@ -4922,6 +4922,7 @@ mod tests {
                 pane_id,
                 source_pane_id: None,
                 has_manual_label: false,
+                right_click_passthrough: false,
             },
             x: 0,
             y: 0,

@@ -148,19 +148,6 @@ pub(super) fn compute_agent_worktree_action_area(
     })
 }
 
-fn stable_terminal_inner_rect(pane_inner: Rect) -> Rect {
-    if pane_inner.width <= 4 {
-        return pane_inner;
-    }
-
-    Rect::new(
-        pane_inner.x,
-        pane_inner.y,
-        pane_inner.width.saturating_sub(1),
-        pane_inner.height,
-    )
-}
-
 pub(crate) fn pane_inner_rect(area: Rect, borders: Borders) -> Rect {
     if borders.is_empty() {
         area
@@ -1394,7 +1381,7 @@ mod tests {
         app.workspaces[0].cached_git_space = Some(crate::workspace::GitSpaceMetadata {
             key: "repo".into(),
             checkout_key: "/repo".into(),
-            label: "repo".into(),
+            repo_name: "repo".into(),
             repo_root: "/repo".into(),
             is_linked_worktree: false,
         });
@@ -1424,7 +1411,7 @@ mod tests {
         app.workspaces[0].cached_git_space = Some(crate::workspace::GitSpaceMetadata {
             key: "repo".into(),
             checkout_key: "/repo/wt".into(),
-            label: "repo".into(),
+            repo_name: "repo".into(),
             repo_root: "/repo".into(),
             is_linked_worktree: true,
         });
@@ -1449,7 +1436,7 @@ mod tests {
         borderless.workspaces[0].cached_git_space = Some(crate::workspace::GitSpaceMetadata {
             key: "repo".into(),
             checkout_key: "/repo".into(),
-            label: "repo".into(),
+            repo_name: "repo".into(),
             repo_root: "/repo".into(),
             is_linked_worktree: false,
         });
@@ -1485,7 +1472,7 @@ mod tests {
         app.workspaces[0].cached_git_space = Some(crate::workspace::GitSpaceMetadata {
             key: "repo".into(),
             checkout_key: "/repo".into(),
-            label: "repo".into(),
+            repo_name: "repo".into(),
             repo_root: "/repo".into(),
             is_linked_worktree: false,
         });

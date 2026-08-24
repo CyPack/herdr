@@ -2,7 +2,7 @@ mod tokens;
 
 use ratatui::{
     layout::{Alignment, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::Paragraph,
     Frame,
@@ -10,7 +10,7 @@ use ratatui::{
 
 use self::tokens::{ResolvedToken, ResolvedTokenKind, SpaceTokenContext};
 use super::scrollbar::{render_scrollbar, should_show_scrollbar};
-use super::status::{agent_icon, state_dot, state_icon, state_label, state_label_color};
+use super::status::{agent_icon, state_dot, state_label, state_label_color};
 use super::text::{display_width, display_width_u16, truncate_end};
 use super::widgets::panel_contrast_fg;
 use crate::app::state::{AgentPanelSort, Palette, ProjectRowArea, ProjectRowKind};
@@ -3402,19 +3402,6 @@ pub(crate) fn workspace_drop_slots(
         slots.push((target, row));
     }
     slots
-}
-
-pub(crate) fn workspace_group_chevron_rect(card: &crate::app::state::WorkspaceCardArea) -> Rect {
-    if card.rect.width == 0 || card.rect.height == 0 {
-        return Rect::default();
-    }
-
-    Rect::new(
-        card.rect.x + card.rect.width.saturating_sub(1),
-        card.rect.y,
-        1,
-        1,
-    )
 }
 
 pub(crate) fn workspace_drop_indicator_row(
@@ -8233,11 +8220,12 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             live_cwd.clone(),
             0,
             crate::terminal_theme::TerminalTheme::default(),
+            None,
             crate::pane::PaneShellConfig::new("/bin/sh", crate::config::ShellModeConfig::NonLogin),
             &crate::pane::PaneLaunchEnv::default(),
             events,
             std::sync::Arc::new(tokio::sync::Notify::new()),
-            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            std::sync::Arc::new(crate::render_signal::RenderSignal::new()),
         )
         .unwrap();
 
@@ -11950,7 +11938,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         ws.cached_git_space = Some(crate::workspace::GitSpaceMetadata {
             key: key.into(),
             checkout_key: format!("/repo/{name}"),
-            label: "herdr".into(),
+            repo_name: "herdr".into(),
             repo_root: std::path::PathBuf::from(format!("/repo/{name}")),
             is_linked_worktree: false,
         });
@@ -12145,10 +12133,14 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
     // same promise a folded module and a folded project already make.
     /// Two agent panes in one workspace plus a second workspace, so the
     /// assertions can tell pane-level highlighting apart from workspace-level.
-    fn collapsed_agent_app() -> (crate::app::state::AppState, PaneId, PaneId) {
+    fn collapsed_agent_app() -> (
+        crate::app::state::AppState,
+        crate::layout::PaneId,
+        crate::layout::PaneId,
+    ) {
         let mut app = crate::app::state::AppState::test_new();
         let mut first = Workspace::test_new("one");
-        let second_pane = first.test_split(Direction::Horizontal);
+        let second_pane = first.test_split(ratatui::layout::Direction::Horizontal);
         let first_pane = first.tabs[0].root_pane;
         app.workspaces = vec![first, Workspace::test_new("two")];
         app.ensure_test_terminals();
@@ -12463,6 +12455,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let mut app = app_with_worktree_tree(32);
         let area = Rect::new(0, 0, 100, 26);
         crate::ui::compute_view(&mut app, area);
+        let (_ws_area, _divider, detail_area) = collapsed_sidebar_sections(area);
         let backend = ratatui::backend::TestBackend::new(100, 26);
         let mut terminal = ratatui::Terminal::new(backend).expect("test terminal");
         let registry = TerminalRuntimeRegistry::new();
@@ -12963,7 +12956,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         app.sidebar_spaces.row_gap = 0;
         let area = Rect::new(0, 0, 30, 20);
         app.view.workspace_card_areas = compute_workspace_card_areas(&app, area);
-        let list_area = workspace_list_rect(area, app.sidebar_section_split);
+        let list_area = workspace_list_rect(area, app.sidebar_section_split, app.sidebar_chrome);
 
         let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
         terminal
@@ -13004,7 +12997,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let area = Rect::new(0, 0, 30, 10);
         app.view.workspace_card_areas = compute_workspace_card_areas(&app, area);
         assert_eq!(app.view.workspace_card_areas.len(), 2);
-        let list_area = workspace_list_rect(area, app.sidebar_section_split);
+        let list_area = workspace_list_rect(area, app.sidebar_section_split, app.sidebar_chrome);
 
         let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
         terminal

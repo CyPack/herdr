@@ -796,7 +796,7 @@ mod tests {
 }
 
 #[cfg(all(test, unix))]
-mod tests {
+mod tests_unix {
     use super::*;
 
     fn empty_snapshot() -> crate::persist::SessionSnapshot {
@@ -808,6 +808,9 @@ mod tests {
             sidebar_width: None,
             sidebar_section_split: None,
             collapsed_space_keys: Default::default(),
+            collapsed_project_keys: Default::default(),
+            files_tab: Default::default(),
+            shell: Default::default(),
         }
     }
 

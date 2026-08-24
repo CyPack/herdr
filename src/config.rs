@@ -35,7 +35,7 @@ pub use self::{
     },
     sound::SoundConfig,
     tab_bar::TabBarRightEntryConfig,
-    theme::{parse_color, CustomThemeColors, ThemeConfig, THEME_NAMES},
+    theme::{parse_color, CustomThemeColors, ThemeConfig},
     window_title::{WindowTitlePart, WindowTitleTemplate, WindowTitleToken},
 };
 

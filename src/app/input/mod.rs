@@ -173,16 +173,6 @@ impl App {
         }
     }
 
-    /// Returns the terminal target the key reached, so the caller can track
-    /// press/release pairs. Only the terminal tier yields a target; every
-    /// other owner consumes the key inside herdr's own chrome.
-    pub(super) fn handle_key_headless(
-        &mut self,
-        key: TerminalKey,
-    ) -> Option<super::TerminalInputTarget> {
-        self.handle_key_headless_from(crate::app::LOCAL_INPUT_SOURCE, key)
-    }
-
     /// The same frozen router, carrying the input source so the terminal tier
     /// reaches the lease-aware forward path (TP-SBS-FOCUS + upstream leases).
     pub(super) fn handle_key_headless_from(
@@ -2197,6 +2187,7 @@ mod tests {
             80,
             app.state.pane_scrollback_limit_bytes,
             app.state.host_terminal_theme,
+            None,
             crate::pane::PaneShellConfig::new(&app.state.default_shell, app.state.shell_mode),
             app.event_tx.clone(),
             app.render_notify.clone(),
@@ -2290,6 +2281,7 @@ mod tests {
             80,
             app.state.pane_scrollback_limit_bytes,
             app.state.host_terminal_theme,
+            None,
             crate::pane::PaneShellConfig::new(&app.state.default_shell, app.state.shell_mode),
             app.event_tx.clone(),
             app.render_notify.clone(),

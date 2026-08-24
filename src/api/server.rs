@@ -1103,7 +1103,7 @@ mod tests {
         let response = handle_request(
             Request {
                 id: "priority_stop".into(),
-                method: Method::ServerStop(crate::api::schema::EmptyParams::default()),
+                method: Method::ServerStop(crate::api::schema::ServerStopParams::default()),
             },
             &tx,
             None,

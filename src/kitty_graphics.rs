@@ -403,9 +403,7 @@ pub(crate) fn paint_local_pane_graphics(
             return Ok(());
         }
         let mut stdout = io::stdout().lock();
-        stdout.write_all(b"\x1b7")?;
-        stdout.write_all(&encoded.bytes)?;
-        stdout.write_all(b"\x1b8")?;
+        stdout.write_all(&frame_graphics_bytes(&encoded.bytes))?;
         return stdout.flush();
     }
 
@@ -421,9 +419,7 @@ pub(crate) fn paint_local_pane_graphics(
             &mut cache,
         );
         if !encoded.bytes.is_empty() {
-            stdout.write_all(b"\x1b7")?;
-            stdout.write_all(&encoded.bytes)?;
-            stdout.write_all(b"\x1b8")?;
+            stdout.write_all(&frame_graphics_bytes(&encoded.bytes))?;
         }
         if !encoded.incomplete {
             break;
@@ -466,14 +462,32 @@ pub(crate) fn encode_local_pane_graphics(
                 incomplete: false,
             };
         }
-        let placements = collect_visible_placements(
+        // Fork placement priority: a floating popup owns the picture layer;
+        // otherwise the file manager's own preview owns the stage; only then
+        // do terminal pane placements paint (TP fork surface rules).
+        let placements = if let Some(popup) = collect_popup_pane_placements(
             app,
             graphics,
             terminal_runtimes,
-            surface,
             cell_size,
             &cache.images,
-        );
+            true,
+        ) {
+            popup
+        } else if files_on_stage {
+            collect_file_manager_image_placement(app, cell_size, &cache.images)
+                .into_iter()
+                .collect()
+        } else {
+            collect_visible_placements(
+                app,
+                graphics,
+                terminal_runtimes,
+                surface,
+                cell_size,
+                &cache.images,
+            )
+        };
         let view_changed = cache.update_view(active_view_key(app));
         cache.reset_incremental_state();
         encode_terminal_graphics_update_legacy(&mut bytes, &placements, view_changed, cache);
@@ -493,14 +507,29 @@ pub(crate) fn encode_local_pane_graphics(
         })
         .collect::<HashSet<_>>();
     let placements = if visible {
-        collect_visible_placements(
+        if let Some(popup) = collect_popup_pane_placements(
             app,
             graphics,
             terminal_runtimes,
-            surface,
             cell_size,
             &cache.images,
-        )
+            true,
+        ) {
+            popup
+        } else if files_on_stage {
+            collect_file_manager_image_placement(app, cell_size, &cache.images)
+                .into_iter()
+                .collect()
+        } else {
+            collect_visible_placements(
+                app,
+                graphics,
+                terminal_runtimes,
+                surface,
+                cell_size,
+                &cache.images,
+            )
+        }
     } else {
         Vec::new()
     };
@@ -1165,32 +1194,6 @@ impl HostGraphicsCache {
         self.reset_incremental_state();
         self.view = None;
         bytes
-    }
-
-    pub(crate) fn clear_next(&mut self) -> EncodedGraphics {
-        self.continuation = None;
-        let mut bytes = Vec::new();
-        if let Some(id) = self.images.keys().copied().min() {
-            encode_delete_image(&mut bytes, id);
-            self.images.remove(&id);
-            self.placements.retain(|(image, _), _| *image != id);
-            self.sources.retain(|_, image| *image != id);
-            self.replayed_placements.retain(|(image, _)| *image != id);
-        } else if let Some(key) = self.placements.keys().copied().min() {
-            encode_delete_placement(&mut bytes, key.0, key.1);
-            self.placements.remove(&key);
-            self.replayed_placements.remove(&key);
-        } else {
-            self.sources.clear();
-            self.oversized.clear();
-            self.view = None;
-            self.replay_placements = false;
-            self.replayed_placements.clear();
-        }
-        EncodedGraphics {
-            bytes,
-            incomplete: !self.is_empty(),
-        }
     }
 
     fn update_view(&mut self, view_key: Option<HostViewKey>) -> bool {
@@ -2026,6 +2029,7 @@ mod tests {
 
         HostPlacement {
             pane_id: PaneId::from_raw(0xB0),
+            host_image_id: None,
             area: Rect::new(2, 2, 8, 4),
             cell_size: HostCellSize {
                 width_px: 1,
@@ -2092,8 +2096,8 @@ mod tests {
             host_image_id(same.pane_id, &same.placement)
         );
         assert_eq!(
-            host_placement_id(first.source_key, &first.placement),
-            host_placement_id(same.source_key, &same.placement)
+            host_placement_id(&first.source_key, &first.placement),
+            host_placement_id(&same.source_key, &same.placement)
         );
     }
 
@@ -2452,6 +2456,7 @@ mod tests {
 
     #[test]
     fn file_manager_ready_image_reuses_upload_cache_and_cleans_up_on_close() {
+        let graphics = crate::app::pane_graphics::Runtime::default();
         let cells = HostCellSize {
             width_px: 8,
             height_px: 16,
@@ -2521,9 +2526,16 @@ mod tests {
         assert_eq!(uncached.area, content);
         assert!(!uncached.placement.data.is_empty());
 
-        let first_bytes =
-            encode_local_pane_graphics(&app, &runtimes, app.view.tab_surface(), cells, &mut cache);
-        let first_text = String::from_utf8_lossy(&first_bytes);
+        let first_bytes = encode_local_pane_graphics(
+            &app,
+            &graphics,
+            &runtimes,
+            app.view.tab_surface(),
+            cells,
+            None,
+            &mut cache,
+        );
+        let first_text = String::from_utf8_lossy(&first_bytes.bytes);
         assert!(first_text.contains("a=t,t=d,f=32,s=80,v=64"));
         assert!(first_text.contains("a=p"));
         assert!(first_text.contains(&format!(
@@ -2543,8 +2555,17 @@ mod tests {
             "cached frame must not clone the prepared RGBA allocation"
         );
         assert!(
-            encode_local_pane_graphics(&app, &runtimes, app.view.tab_surface(), cells, &mut cache)
-                .is_empty(),
+            encode_local_pane_graphics(
+                &app,
+                &graphics,
+                &runtimes,
+                app.view.tab_surface(),
+                cells,
+                None,
+                &mut cache,
+            )
+            .bytes
+            .is_empty(),
             "unchanged FM frame is fully deduplicated"
         );
 
@@ -2566,17 +2587,31 @@ mod tests {
                 rgba: vec![0x22; 80 * 64 * 4],
             },
         };
-        let replacement =
-            encode_local_pane_graphics(&app, &runtimes, app.view.tab_surface(), cells, &mut cache);
-        let replacement = String::from_utf8_lossy(&replacement);
+        let replacement = encode_local_pane_graphics(
+            &app,
+            &graphics,
+            &runtimes,
+            app.view.tab_surface(),
+            cells,
+            None,
+            &mut cache,
+        );
+        let replacement = String::from_utf8_lossy(&replacement.bytes);
         assert!(replacement.contains("a=d,d=I"));
         assert!(replacement.contains("a=t"));
         assert!(replacement.contains("a=p"));
 
         app.file_manager = None;
-        let cleanup =
-            encode_local_pane_graphics(&app, &runtimes, app.view.tab_surface(), cells, &mut cache);
-        let cleanup = String::from_utf8_lossy(&cleanup);
+        let cleanup = encode_local_pane_graphics(
+            &app,
+            &graphics,
+            &runtimes,
+            app.view.tab_surface(),
+            cells,
+            None,
+            &mut cache,
+        );
+        let cleanup = String::from_utf8_lossy(&cleanup.bytes);
         assert!(cleanup.contains("a=d,d=I"));
         assert!(cache.is_empty());
         assert!(cache.sources.is_empty());
@@ -2997,10 +3032,17 @@ mod tests {
         );
 
         let mut cache = HostGraphicsCache::default();
-        let bytes =
-            encode_local_pane_graphics(&app, &runtimes, app.view.tab_surface(), cells, &mut cache);
+        let bytes = encode_local_pane_graphics(
+            &app,
+            &graphics,
+            &runtimes,
+            app.view.tab_surface(),
+            cells,
+            None,
+            &mut cache,
+        );
         assert!(
-            !bytes.is_empty(),
+            !bytes.bytes.is_empty(),
             "the popup's picture reaches the host terminal"
         );
         assert!(
@@ -3012,7 +3054,7 @@ mod tests {
             "the file manager preview underneath is not painted across the popup"
         );
         assert!(
-            has_visible_pane_graphics(&app, &runtimes, app.view.tab_surface(), cells),
+            has_visible_pane_graphics(&app, &graphics, &runtimes, app.view.tab_surface(), cells),
             "the retained-frame fast path must know the popup has a picture on screen"
         );
     }

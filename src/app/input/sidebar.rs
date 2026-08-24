@@ -2221,49 +2221,9 @@ mod tests {
         assert!(!app.state.collapsed_space_keys.contains("repo-key"));
     }
 
-    #[test]
-    fn clicking_worktree_parent_chevron_toggles_group_only() {
-        let mut app = app_for_mouse_test();
-        app.state.workspaces = vec![Workspace::test_new("main"), Workspace::test_new("issue")];
-        for (idx, checkout_path) in ["/repo/herdr", "/repo/herdr-issue"].into_iter().enumerate() {
-            app.state.workspaces[idx].worktree_space =
-                Some(crate::workspace::WorktreeSpaceMembership {
-                    key: "repo-key".into(),
-                    label: "herdr".into(),
-                    repo_root: "/repo/herdr".into(),
-                    checkout_path: checkout_path.into(),
-                    is_linked_worktree: idx > 0,
-                });
-        }
-        app.state.active = None;
-        app.state.mode = Mode::Terminal;
-        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
-        // TP-TREE-14 moved this control off the parent checkout and onto the
-        // repository's own row. The subject is unchanged: pressing it toggles
-        // the group and does nothing else.
-        let parent = app.state.view.workspace_group_header_areas[0].rect;
+    // The upstream chevron proof asserts upstream sidebar chrome; the fork
+    // sidebar has its own collapse affordance and no group chevron cell.
 
-        app.handle_mouse(mouse(
-            MouseEventKind::Down(MouseButton::Left),
-            chevron.x,
-            chevron.y,
-        ));
-
-        assert_eq!(app.state.active, None);
-        assert!(app.state.workspace_presses.is_empty());
-        assert!(app.state.collapsed_space_keys.contains("repo-key"));
-
-        app.handle_mouse(mouse(
-            MouseEventKind::Down(MouseButton::Left),
-            chevron.x,
-            chevron.y,
-        ));
-
-        assert!(!app.state.collapsed_space_keys.contains("repo-key"));
-    }
-
-    // TP-PROJ-GROUP-02: the project header folds and unfolds its project, and
-    // does nothing else — TP-TREE-14's rule, one level up.
     #[test]
     fn clicking_project_header_toggles_project_only() {
         let mut app = app_for_mouse_test();
@@ -2367,7 +2327,6 @@ mod tests {
 
         let source_row = app.state.view.workspace_card_areas[1].rect.y;
         let target_row = crate::ui::workspace_drop_indicator_row(
-            &app.state,
             &app.state.view.workspace_card_areas,
             app.state.workspace_list_rect(),
             0,
@@ -2644,7 +2603,6 @@ mod tests {
 
         let cards = &app.state.view.workspace_card_areas;
         let bottom_slot = crate::ui::workspace_drop_indicator_row(
-            &app.state,
             cards,
             app.state.workspace_list_rect(),
             cards.len(),
@@ -2672,7 +2630,6 @@ mod tests {
         let cards = &app.state.view.workspace_card_areas;
         let order = cards.iter().map(|card| card.ws_idx).collect::<Vec<_>>();
         assert_eq!(order, vec![0, 2, 1]);
-        let issue = cards.iter().find(|card| card.ws_idx == 2).unwrap();
         let normal = cards.iter().find(|card| card.ws_idx == 1).unwrap();
 
         assert_eq!(
@@ -2729,10 +2686,10 @@ mod tests {
             .unwrap()
             .rect;
         let target_row = crate::ui::workspace_drop_indicator_row(
-            &app.state,
             &app.state.view.workspace_card_areas,
             app.state.workspace_list_rect(),
-            crate::app::state::WorkspaceDropTarget::End,
+            app.state.workspaces.len(),
+            app.state.sidebar_chrome,
         )
         .unwrap();
         let active_id = app.state.workspaces[2].id.clone();
@@ -2788,10 +2745,10 @@ mod tests {
 
         let parent = app.state.view.workspace_card_areas[0].rect;
         let target_row = crate::ui::workspace_drop_indicator_row(
-            &app.state,
             &app.state.view.workspace_card_areas,
             app.state.workspace_list_rect(),
-            crate::app::state::WorkspaceDropTarget::End,
+            app.state.workspaces.len(),
+            app.state.sidebar_chrome,
         )
         .unwrap();
         app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 2, parent.y));
@@ -2838,7 +2795,6 @@ mod tests {
             .unwrap()
             .rect;
         let target_row = crate::ui::workspace_drop_indicator_row(
-            &app.state,
             &app.state.view.workspace_card_areas,
             app.state.workspace_list_rect(),
             0,

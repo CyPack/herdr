@@ -64,7 +64,6 @@ pub(crate) struct ClientConnection {
     /// Whether an ordinary render was skipped because the render channel was full.
     pub(crate) render_pending: bool,
     /// Whether a pane-graphics-only render was skipped because the channel was full.
-    pane_graphics_render_pending: bool,
     /// Last wheel routing sent to this attach/observe client, so the mode
     /// line travels once on attach and once per change rather than per frame.
     pub(crate) terminal_wheel_routing_sent: Option<crate::protocol::TerminalWheelRouting>,
@@ -137,7 +136,6 @@ impl ClientConnection {
             pixel_mouse: false,
             graphics_surface_reset_pending: false,
             render_pending: false,
-            pane_graphics_render_pending: false,
             terminal_wheel_routing_sent: None,
             host_mouse_capture_active: None,
             host_sgr_pixels_active: None,

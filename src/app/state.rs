@@ -1,10 +1,7 @@
-use crate::config::{
-    Keybinds, NewTerminalCwdConfig, SoundConfig, TabBarPositionConfig, ToastConfig, ToastDelivery,
-};
+use crate::config::{Keybinds, NewTerminalCwdConfig, SoundConfig, ToastConfig, ToastDelivery};
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::{Direction, Rect};
 use ratatui::style::Color;
-use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 
 use crate::detect::AgentState;
@@ -4439,8 +4436,6 @@ pub struct AppState {
     /// Runtime image layers owned by API clients and composited over panes.
     /// Active streaming graphics owner token by pane id.
     pub(crate) pane_graphics_streams: std::collections::HashMap<PaneId, String>,
-    /// Monotonic marker for accepted pane graphics mutations.
-    pub(crate) pane_graphics_revision: u64,
     /// Session-modal terminal popup. This is intentionally outside workspace layouts.
     pub(crate) popup_pane: Option<PopupPaneState>,
     /// History files of closed dormant terminals, awaiting deletion by the
@@ -5349,7 +5344,7 @@ pub fn key_matches(
     expected_mods: KeyModifiers,
 ) -> bool {
     crate::config::terminal_key_matches_combo(
-        crate::input::TerminalKey::from(*key),
+        &crate::input::TerminalKey::from(*key),
         (expected_code, expected_mods),
     )
 }
@@ -5674,7 +5669,6 @@ impl AppState {
             installed_plugins: std::collections::HashMap::new(),
             plugin_panes: std::collections::HashMap::new(),
             pane_graphics_streams: std::collections::HashMap::new(),
-            pane_graphics_revision: 0,
             popup_pane: None,
             pending_dormant_history_removals: Vec::new(),
             plugin_command_logs: Vec::new(),
@@ -5944,10 +5938,11 @@ impl AppState {
             match &drag.target {
                 DragTarget::WorkspaceReorder {
                     source_ws_idx,
-                    insert_idx,
+                    drop_target,
+                    ..
                 } => {
                     assert_workspace_index(*source_ws_idx, "workspace drag source");
-                    if let Some(insert_idx) = insert_idx {
+                    if let Some(WorkspaceDropTarget::Before(insert_idx)) = drop_target {
                         assert!(
                             *insert_idx <= self.workspaces.len(),
                             "workspace drag insert index {} out of bounds for {} workspaces",
@@ -5960,6 +5955,7 @@ impl AppState {
                     ws_idx,
                     source_tab_idx,
                     insert_idx,
+                    ..
                 } => {
                     assert_tab_index(*ws_idx, *source_tab_idx, "tab drag source");
                     if let Some(insert_idx) = insert_idx {

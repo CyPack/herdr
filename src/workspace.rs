@@ -2087,7 +2087,7 @@ mod tests {
             None,
             events,
             Arc::new(Notify::new()),
-            Arc::new(AtomicBool::new(false)),
+            Arc::new(crate::render_signal::RenderSignal::new()),
         );
         assert!(ws.tabs[new_idx].spawned_at.is_none());
     }
@@ -2108,7 +2108,7 @@ mod tests {
             None,
             events,
             Arc::new(Notify::new()),
-            Arc::new(AtomicBool::new(false)),
+            Arc::new(crate::render_signal::RenderSignal::new()),
         );
         assert!(!ws.tabs[new_idx].unseen);
     }

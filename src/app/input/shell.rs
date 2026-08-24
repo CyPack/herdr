@@ -2145,6 +2145,7 @@ mod tests {
 
         let _ = state.handle_mouse(
             &mut terminal_runtimes,
+            crate::app::LOCAL_INPUT_SOURCE,
             mouse_event(MouseEventKind::Down(MouseButton::Left), 25, 5),
         );
         assert!(
@@ -2155,6 +2156,7 @@ mod tests {
         // Drag over the pane area, far outside the divider rect.
         let _ = state.handle_mouse(
             &mut terminal_runtimes,
+            crate::app::LOCAL_INPUT_SOURCE,
             mouse_event(MouseEventKind::Drag(MouseButton::Left), 30, 15),
         );
         assert_eq!(state.shell_resize_preview_width(), Some(31));
@@ -2164,6 +2166,7 @@ mod tests {
         // selection movement may start under the active capture.
         let _ = state.handle_mouse(
             &mut terminal_runtimes,
+            crate::app::LOCAL_INPUT_SOURCE,
             mouse_event(MouseEventKind::Drag(MouseButton::Left), 5, 3),
         );
         assert_eq!(
@@ -2174,6 +2177,7 @@ mod tests {
         // Drag to the far corner clamps at the bound and keeps ownership.
         let _ = state.handle_mouse(
             &mut terminal_runtimes,
+            crate::app::LOCAL_INPUT_SOURCE,
             mouse_event(MouseEventKind::Drag(MouseButton::Left), 100, 35),
         );
         assert_eq!(
@@ -2184,6 +2188,7 @@ mod tests {
         // Releasing outside the original rect commits exactly once.
         let _ = state.handle_mouse(
             &mut terminal_runtimes,
+            crate::app::LOCAL_INPUT_SOURCE,
             mouse_event(MouseEventKind::Up(MouseButton::Left), 100, 35),
         );
         assert_eq!(

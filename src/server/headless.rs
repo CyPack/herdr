@@ -726,6 +726,8 @@ impl HeadlessServer {
                 needs_graphics_render = true;
             }
 
+            self.cancel_inactive_pane_graphics_streams();
+
             self.drain_client_config_reload_request();
             self.sync_immediate_pty_sources();
             self.stream_host_mouse_capture_mode();
@@ -1275,6 +1277,9 @@ impl HeadlessServer {
         self.app.image_preview_cell_size = cell_size;
     }
 
+    // Kept for the fork's headless geometry road; the upstream render loop
+    // computes per-client geometry inline after the merge.
+    #[allow(dead_code)]
     fn sync_headless_view_geometry(&mut self) {
         crate::ui::compute_view_without_resizing_panes(
             &mut self.app.state,
@@ -10830,6 +10835,9 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
                 code: crate::protocol::ClientKeyCode::Esc,
                 modifiers: 0,
                 kind: crate::protocol::ClientKeyKind::Press,
+                repeat_count: 1,
+                generated_text: None,
+                source: crate::protocol::ClientKeySource::Synthesized,
             }],
         }));
 
@@ -10863,6 +10871,9 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
                 code: crate::protocol::ClientKeyCode::Down,
                 modifiers: 0,
                 kind: crate::protocol::ClientKeyKind::Press,
+                repeat_count: 1,
+                generated_text: None,
+                source: crate::protocol::ClientKeySource::Synthesized,
             }],
         }));
 

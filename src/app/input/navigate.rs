@@ -1997,7 +1997,7 @@ fn move_active_tab_relative(state: &mut AppState, delta: isize) {
     else {
         return;
     };
-    let source = ws.active_tab;
+    let source = ws.active_tab_index();
     if let Some(insert) = tab_move_insert_index(ws.tabs.len(), source, delta) {
         ws.move_tab(source, insert);
     }
@@ -3084,15 +3084,15 @@ resize_pane_left = "prefix+shift+left"
 
         execute_navigate_action(&mut state, NavigateAction::MoveTabNext);
         assert_eq!(tab_labels(&state), vec!["a", "c", "b"]);
-        assert_eq!(state.workspaces[0].active_tab, 2);
+        assert_eq!(state.workspaces[0].active_tab_index(), 2);
 
         execute_navigate_action(&mut state, NavigateAction::MoveTabNext);
         assert_eq!(tab_labels(&state), vec!["b", "a", "c"]);
-        assert_eq!(state.workspaces[0].active_tab, 0);
+        assert_eq!(state.workspaces[0].active_tab_index(), 0);
 
         execute_navigate_action(&mut state, NavigateAction::MoveTabPrevious);
         assert_eq!(tab_labels(&state), vec!["a", "c", "b"]);
-        assert_eq!(state.workspaces[0].active_tab, 2);
+        assert_eq!(state.workspaces[0].active_tab_index(), 2);
         state.workspaces[0].assert_invariants_for_test();
     }
 
@@ -3104,7 +3104,7 @@ resize_pane_left = "prefix+shift+left"
         execute_navigate_action(&mut state, NavigateAction::MoveTabNext);
 
         assert_eq!(tab_labels(&state), vec!["only"]);
-        assert_eq!(state.workspaces[0].active_tab, 0);
+        assert_eq!(state.workspaces[0].active_tab_index(), 0);
     }
 
     #[test]

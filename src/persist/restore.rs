@@ -1448,7 +1448,7 @@ mod tests {
             resume_enabled,
             events,
             Arc::new(Notify::new()),
-            Arc::new(AtomicBool::new(false)),
+            Arc::new(crate::render_signal::RenderSignal::new()),
         );
         workspaces
     }
@@ -2005,7 +2005,7 @@ mod tests {
             false,
             events,
             Arc::new(Notify::new()),
-            Arc::new(AtomicBool::new(false)),
+            Arc::new(crate::render_signal::RenderSignal::new()),
         );
         let runtime = runtimes.values().next().expect("restored runtime");
 

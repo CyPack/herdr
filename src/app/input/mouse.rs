@@ -3406,7 +3406,7 @@ mod tests {
         let mut app = app_for_mouse_test();
         let mut ws = Workspace::test_new("test");
         ws.test_add_tab(None);
-        ws.active_tab = 1;
+        ws.set_active_tab(1);
         app.state.workspaces = vec![ws];
         app.state.active = Some(0);
         app.state.selected = 0;
@@ -3433,7 +3433,7 @@ mod tests {
             stray_row,
         ));
 
-        assert_eq!(app.state.workspaces[0].active_tab, 0);
+        assert_eq!(app.state.workspaces[0].active_tab_index(), 0);
     }
 
     #[test]
@@ -3476,7 +3476,7 @@ mod tests {
         let mut ws = Workspace::test_new("test");
         ws.test_add_tab(None);
         ws.test_add_tab(None);
-        ws.active_tab = 2;
+        ws.set_active_tab(2);
         app.state.workspaces = vec![ws];
         app.state.active = Some(0);
         app.state.selected = 0;
@@ -3509,7 +3509,7 @@ mod tests {
                 first_tab.y,
             ),
         );
-        assert_eq!(app.state.workspaces[0].active_tab, 0);
+        assert_eq!(app.state.workspaces[0].active_tab_index(), 0);
 
         app.handle_mouse_from_input_source(
             42,
@@ -3519,7 +3519,7 @@ mod tests {
                 second_tab.y,
             ),
         );
-        assert_eq!(app.state.workspaces[0].active_tab, 1);
+        assert_eq!(app.state.workspaces[0].active_tab_index(), 1);
     }
 
     #[test]
@@ -3576,7 +3576,7 @@ mod tests {
         let mut ws = Workspace::test_new("test");
         ws.test_add_tab(None);
         ws.test_add_tab(None);
-        ws.active_tab = 2;
+        ws.set_active_tab(2);
         app.state.workspaces = vec![ws];
         app.state.active = Some(0);
         app.state.selected = 0;
@@ -3619,7 +3619,7 @@ mod tests {
                 second_tab.y,
             ),
         );
-        assert_eq!(app.state.workspaces[0].active_tab, 1);
+        assert_eq!(app.state.workspaces[0].active_tab_index(), 1);
         assert!(matches!(
             app.state.drag.as_ref().map(|drag| &drag.target),
             Some(DragTarget::TabReorder { source_id: 41, .. })
@@ -3769,7 +3769,7 @@ mod tests {
         let mut app = app_for_mouse_test();
         let mut ws = Workspace::test_new("test");
         ws.test_add_tab(None);
-        ws.active_tab = 1;
+        ws.set_active_tab(1);
         app.state.workspaces = vec![ws];
         app.state.active = Some(0);
         app.state.selected = 0;
@@ -3817,7 +3817,7 @@ mod tests {
             stray_row,
         ));
 
-        assert_eq!(app.state.workspaces[0].active_tab, 0);
+        assert_eq!(app.state.workspaces[0].active_tab_index(), 0);
     }
 
     fn mark_worktree_space_member(workspace: &mut Workspace, ws_idx: usize, key: &str) {
@@ -7742,7 +7742,7 @@ mod tests {
             second_tab.y,
         ));
 
-        assert_eq!(app.state.workspaces[0].active_tab, 0);
+        assert_eq!(app.state.workspaces[0].active_tab_index(), 0);
         assert_eq!(app.state.workspaces[0].tabs.len(), 2);
         assert!(app.state.context_menu.is_none());
         assert!(app.state.tab_presses.is_empty());
@@ -8588,6 +8588,7 @@ mod tests {
         let mut registry = TerminalRuntimeRegistry::new();
         let action = app.state.handle_mouse(
             &mut registry,
+            crate::app::LOCAL_INPUT_SOURCE,
             mouse(
                 MouseEventKind::Down(MouseButton::Left),
                 right_area.x + 1,
@@ -8606,6 +8607,7 @@ mod tests {
 
         let action = app.state.handle_mouse(
             &mut registry,
+            crate::app::LOCAL_INPUT_SOURCE,
             mouse(
                 MouseEventKind::Down(MouseButton::Left),
                 down_area.x + 1,

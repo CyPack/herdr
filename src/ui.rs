@@ -135,11 +135,11 @@ pub(crate) use self::{
         expanded_sidebar_toggle_rect, header_menu_cell, header_new_branch_cell,
         is_git_repository_root, module_branch_source, normalized_workspace_scroll,
         projects_scroll_metrics, projects_scrollbar_rect, sidebar_section_divider_rect,
-        space_owner_for_key, workspace_chat_toggle_cell, workspace_drop_indicator_row,
-        workspace_drop_slots, workspace_group_chevron_rect, workspace_list_entries,
-        workspace_list_entries_expanded, workspace_list_rect, workspace_list_scroll_metrics,
-        workspace_list_scrollbar_rect, workspace_menu_cell, workspace_new_chat_cell,
-        workspace_parent_group_state, AgentPanelEntry, ModuleBranchSource, WorkspaceListEntry,
+        space_owner_for_key, workspace_chat_toggle_cell, workspace_drop_slots,
+        workspace_list_entries, workspace_list_entries_expanded, workspace_list_rect,
+        workspace_list_scroll_metrics, workspace_list_scrollbar_rect, workspace_menu_cell,
+        workspace_new_chat_cell, workspace_parent_group_state, AgentPanelEntry, ModuleBranchSource,
+        WorkspaceListEntry,
     },
 };
 
@@ -1502,22 +1502,6 @@ impl compose::Component for OverlayLayer {
             Mode::Navigator => render_navigator_overlay(app, terminal_runtimes, frame),
             Mode::AttachFile => render_agent_attachment_picker(app, frame, terminal_area),
             Mode::Terminal => {}
-        }
-    }
-}
-
-fn render_navigation_chrome(
-    app: &AppState,
-    terminal_runtimes: &TerminalRuntimeRegistry,
-    frame: &mut Frame,
-) {
-    if app.view.layout == ViewLayout::Mobile {
-        render_mobile_header(app, terminal_runtimes, frame, app.view.mobile_header_rect);
-    } else if app.view.sidebar_rect.width > 0 {
-        if app.sidebar_collapsed {
-            render_sidebar_collapsed(app, frame, app.view.sidebar_rect);
-        } else {
-            render_sidebar(app, terminal_runtimes, frame, app.view.sidebar_rect);
         }
     }
 }

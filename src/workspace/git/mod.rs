@@ -21,5 +21,3 @@ pub use self::{
 
 #[cfg(test)]
 pub(super) use self::status::git_ahead_behind;
-#[cfg(test)]
-pub use self::status::git_status_snapshot_for_cwd;

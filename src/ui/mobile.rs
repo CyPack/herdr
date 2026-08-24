@@ -13,7 +13,6 @@ use super::status::{state_dot, state_icon};
 use super::text::{display_width_u16, truncate_end};
 use crate::app::state::{Palette, ToastKind, ToastNotification};
 use crate::app::AppState;
-use crate::config::StatusIndicatorStyle;
 use crate::detect::AgentState;
 use crate::layout::PaneId;
 use crate::terminal::TerminalRuntimeRegistry;
@@ -1482,8 +1481,8 @@ fn render_header_button(
         let bx = area.x + area.width.saturating_sub(1);
         let (symbol, style) = state_icon(AgentState::Blocked, true, app.status_indicators, p);
         frame.buffer_mut()[(bx, area.y)]
-            .set_symbol("\u{25cf}")
-            .set_style(Style::default().fg(p.red).bg(bg));
+            .set_symbol(symbol)
+            .set_style(style.bg(bg));
     }
 }
 
@@ -4889,7 +4888,7 @@ mod tests {
             working: 2,
             idle: 1,
         };
-        let segments = agent_summary_segments(counts, StatusIndicatorStyle::Dots);
+        let segments = agent_summary_segments(counts);
         let labels: Vec<&str> = segments.iter().map(|(text, _)| text.as_str()).collect();
         assert_eq!(
             labels,
@@ -4906,7 +4905,7 @@ mod tests {
             working: 2,
             idle: 1,
         };
-        let labels: Vec<String> = agent_summary_segments(counts, StatusIndicatorStyle::Symbols)
+        let labels: Vec<String> = agent_summary_segments(counts)
             .into_iter()
             .map(|(text, _)| text)
             .collect();
@@ -4916,33 +4915,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn distinct_status_style_updates_mobile_blocked_badge() {
-        let mut app = crate::app::state::AppState::test_new();
-        app.workspaces = vec![crate::workspace::Workspace::test_new("blocked")];
-        app.ensure_test_terminals();
-        app.status_indicators = StatusIndicatorStyle::Symbols;
-        let pane_id = app.workspaces[0].tabs[0].root_pane;
-        let terminal_id = app.workspaces[0].tabs[0].panes[&pane_id]
-            .attached_terminal_id
-            .clone();
-        let terminal_state = app.terminals.get_mut(&terminal_id).unwrap();
-        terminal_state.detected_agent = Some(crate::detect::Agent::Claude);
-        terminal_state.state = AgentState::Blocked;
-
-        let area = Rect::new(0, 0, 12, 2);
-        let mut terminal =
-            ratatui::Terminal::new(ratatui::backend::TestBackend::new(area.width, area.height))
-                .unwrap();
-        terminal
-            .draw(|frame| render_switch_button(&app, frame, area))
-            .unwrap();
-
-        assert_eq!(
-            terminal.backend().buffer()[(area.width - 1, 0)].symbol(),
-            "×"
-        );
-    }
+    // The upstream switch-button proof asserts upstream mobile chrome; the
+    // fork mobile surface has no switch button (fork rows own that road).
 
     #[test]
     fn agent_summary_hides_empty_categories() {
@@ -4951,7 +4925,7 @@ mod tests {
             working: 2,
             ..Default::default()
         };
-        let labels: Vec<String> = agent_summary_segments(counts, StatusIndicatorStyle::Dots)
+        let labels: Vec<String> = agent_summary_segments(counts)
             .into_iter()
             .map(|(text, _)| text)
             .collect();
@@ -4968,7 +4942,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            agent_summary_segments(counts, StatusIndicatorStyle::Dots),
+            agent_summary_segments(counts),
             vec![("all idle".to_string(), SummaryTone::Muted)]
         );
     }
@@ -4981,10 +4955,7 @@ mod tests {
             working: 2,
             idle: 1,
         };
-        let (shown, truncated) = fit_summary_segments(
-            agent_summary_segments(counts, StatusIndicatorStyle::Dots),
-            24,
-        );
+        let (shown, truncated) = fit_summary_segments(agent_summary_segments(counts), 24);
         let labels: Vec<&str> = shown.iter().map(|(text, _)| text.as_str()).collect();
         assert_eq!(labels, vec!["◉ 2 blocked", "● 1 done"]);
         assert!(truncated);
@@ -4998,10 +4969,7 @@ mod tests {
             working: 2,
             idle: 1,
         };
-        let (shown, truncated) = fit_summary_segments(
-            agent_summary_segments(counts, StatusIndicatorStyle::Dots),
-            60,
-        );
+        let (shown, truncated) = fit_summary_segments(agent_summary_segments(counts), 60);
         assert_eq!(shown.len(), 4);
         assert!(!truncated);
     }
@@ -5009,7 +4977,7 @@ mod tests {
     #[test]
     fn agent_summary_reports_no_agents_when_empty() {
         assert_eq!(
-            agent_summary_segments(GlobalAgentCounts::default(), StatusIndicatorStyle::Dots,),
+            agent_summary_segments(GlobalAgentCounts::default()),
             vec![("no agents".to_string(), SummaryTone::Muted)]
         );
     }

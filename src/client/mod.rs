@@ -3883,11 +3883,13 @@ mod tests {
 
     #[test]
     fn window_title_osc_strips_terminators_and_defaults_to_herdr() {
-        assert_eq!(
-            window_title_osc(Some("herdr\x1b api\u{7}\u{9c}")),
-            b"\x1b]0;herdr api\x07"
-        );
-        assert_eq!(window_title_osc(None), b"\x1b]0;herdr\x07");
+        let mut osc = Vec::new();
+        crate::terminal_effects::write_window_title(&mut osc, Some("herdr\x1b api\u{7}\u{9c}"))
+            .expect("write title");
+        assert_eq!(osc, b"\x1b]0;herdr api\x07");
+        let mut fallback = Vec::new();
+        crate::terminal_effects::write_window_title(&mut fallback, None).expect("write title");
+        assert_eq!(fallback, b"\x1b]0;herdr\x07");
     }
 
     fn fmp_semantic_frame(marker: u16) -> crate::protocol::FrameData {
