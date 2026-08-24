@@ -3211,11 +3211,6 @@ impl AppState {
         self.tab_scroll_follow_active = false;
         self.tab_scroll = self.tab_scroll.saturating_sub(1);
         self.refresh_tab_bar_view();
-
-    pub fn scroll_tabs_left(&mut self) {
-        self.tab_scroll_follow_active = false;
-        self.tab_scroll = self.tab_scroll.saturating_sub(1);
-        self.refresh_tab_bar_view();
     }
 
     pub fn scroll_tabs_right(&mut self) {
@@ -3422,7 +3417,6 @@ impl AppState {
         }
         for pane_id in pane_ids {
             self.plugin_panes.remove(&pane_id);
-            self.pane_graphics_layers.remove(&pane_id);
             self.pane_graphics_streams.remove(&pane_id);
         }
     }
