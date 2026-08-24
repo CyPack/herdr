@@ -223,10 +223,6 @@ impl TerminalState {
         mutation
     }
 
-    // The upstream managed-launch road computes suppress_acquisition_completion
-    // from this; the fork pane-change road passes `false` until that flow is
-    // ported (see apply_pane_state_change's fork caller).
-    #[allow(dead_code)]
     pub(crate) fn finish_agent_process_acquisition(&mut self) -> bool {
         let reached_idle = self.agent_process_acquisition_pending && self.state == AgentState::Idle;
         let suppress_completion = reached_idle && self.recent_agent_process_exit.is_none();
