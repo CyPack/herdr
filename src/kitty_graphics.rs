@@ -535,9 +535,14 @@ pub(crate) fn has_visible_pane_graphics(
 
     // While a popup is up it owns the picture layer, so it alone decides
     // whether anything is on screen — matching the placement pass exactly.
-    if let Some(popup) =
-        collect_popup_pane_placements(app, terminal_runtimes, cell_size, &HashMap::new(), false)
-    {
+    if let Some(popup) = collect_popup_pane_placements(
+        app,
+        graphics,
+        terminal_runtimes,
+        cell_size,
+        &HashMap::new(),
+        false,
+    ) {
         return popup
             .iter()
             .any(|placement| clipped_placement(placement).is_some());
@@ -1236,6 +1241,7 @@ fn active_view_key(app: &AppState) -> Option<HostViewKey> {
 /// across the popup it is supposed to be behind.
 fn collect_popup_pane_placements(
     app: &AppState,
+    graphics: &crate::app::pane_graphics::Runtime,
     terminal_runtimes: &TerminalRuntimeRegistry,
     cell_size: HostCellSize,
     uploaded_images: &HashMap<u32, ImageSignature>,
@@ -1246,10 +1252,26 @@ fn collect_popup_pane_placements(
     // picture cannot land anywhere other than inside its frame.
     let (_outer, inner) = crate::ui::popup_pane_rects(app, app.view.terminal_area)?;
     let mut placements = Vec::new();
-    if let Some(layer) = app.pane_graphics_layers.get(&popup.pane_id) {
+    let mut popup_layers = graphics
+        .slots
+        .iter()
+        .filter_map(|((pane_id, layer_id), slot)| {
+            (*pane_id == popup.pane_id)
+                .then(|| {
+                    slot.layer
+                        .as_ref()
+                        .map(|layer| (layer_id, slot.host_image_id, layer))
+                })
+                .flatten()
+        })
+        .collect::<Vec<_>>();
+    popup_layers.sort_by_key(|(layer_id, _, layer)| (layer.z_index, layer_id.as_str()));
+    for (layer_id, host_id, layer) in popup_layers {
         placements.push(pane_graphics_host_placement_at(
             popup.pane_id,
             inner,
+            layer_id,
+            host_id,
             cell_size,
             layer,
             uploaded_images,
@@ -1396,6 +1418,8 @@ fn pane_graphics_host_placement(
     pane_graphics_host_placement_at(
         info.id,
         info.inner_rect,
+        layer_id,
+        host_id,
         cell_size,
         layer,
         uploaded_images,
@@ -1411,8 +1435,10 @@ fn pane_graphics_host_placement(
 fn pane_graphics_host_placement_at(
     pane_id: PaneId,
     inner_rect: Rect,
+    layer_id: &str,
+    host_id: u32,
     cell_size: HostCellSize,
-    layer: &crate::app::state::PaneGraphicsLayer,
+    layer: &crate::app::pane_graphics::Layer,
     uploaded_images: &HashMap<u32, ImageSignature>,
     include_data: bool,
 ) -> HostPlacement {
@@ -1436,12 +1462,12 @@ fn pane_graphics_host_placement_at(
     };
 
     HostPlacement {
-        pane_id: info.id,
+        pane_id,
         host_image_id: Some(host_id),
-        area: info.inner_rect,
+        area: inner_rect,
         cell_size,
         source_key: HostSourceKey::PaneLayer {
-            pane_id: info.id,
+            pane_id,
             layer_id: layer_id.to_owned(),
         },
         scrollback_offset: 0,
@@ -2932,21 +2958,26 @@ mod tests {
             width: None,
             height: None,
         });
-        app.pane_graphics_layers.insert(
-            popup_pane,
-            crate::app::state::PaneGraphicsLayer::new(
-                crate::api::schema::PaneGraphicsFormat::Rgba,
-                40,
-                20,
-                vec![0x33; 40 * 20 * 4],
-                crate::api::schema::PaneGraphicsPlacementParams::default(),
+        let mut graphics = crate::app::pane_graphics::Runtime::default();
+        graphics.slots.insert(
+            (popup_pane, "popup-test".to_string()),
+            crate::app::pane_graphics::Slot::test(
+                (1 << 31) | 7,
+                Some(crate::app::pane_graphics::Layer::inline(
+                    crate::api::schema::PaneGraphicsFormat::Rgba,
+                    40,
+                    20,
+                    vec![0x33; 40 * 20 * 4],
+                    crate::api::schema::PaneGraphicsPlacementParams::default(),
+                    0,
+                )),
             ),
         );
         crate::ui::compute_view(&mut app, frame);
 
         let runtimes = TerminalRuntimeRegistry::new();
         let placements =
-            collect_popup_pane_placements(&app, &runtimes, cells, &HashMap::new(), true)
+            collect_popup_pane_placements(&app, &graphics, &runtimes, cells, &HashMap::new(), true)
                 .expect("a popup owns the placement pass");
         let placement = placements
             .iter()

@@ -4432,7 +4432,6 @@ pub struct AppState {
     /// Pane ids opened through the plugin pane API.
     pub(crate) plugin_panes: std::collections::HashMap<PaneId, PluginPaneRecord>,
     /// Runtime image layers owned by API clients and composited over panes.
-    pub(crate) pane_graphics_layers: std::collections::HashMap<PaneId, PaneGraphicsLayer>,
     /// Active streaming graphics owner token by pane id.
     pub(crate) pane_graphics_streams: std::collections::HashMap<PaneId, String>,
     /// Monotonic marker for accepted pane graphics mutations.
@@ -5670,7 +5669,6 @@ impl AppState {
             integration_install_messages: Vec::new(),
             installed_plugins: std::collections::HashMap::new(),
             plugin_panes: std::collections::HashMap::new(),
-            pane_graphics_layers: std::collections::HashMap::new(),
             pane_graphics_streams: std::collections::HashMap::new(),
             pane_graphics_revision: 0,
             popup_pane: None,
