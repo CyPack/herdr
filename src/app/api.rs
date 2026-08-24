@@ -2450,8 +2450,9 @@ mod stop_guard_tests {
 
     // TP-AGPANEL-25: the tab road births ghosts too — a tab close cascades
     // through its panes while the state their records freeze is still alive.
-    // A refused close (the last tab) births nothing: no living agent may
-    // haunt the list because an error path brushed past it.
+    // Upstream turned the last-tab refusal into a workspace close, so the
+    // last tab's agent becomes a ghost on that road as well instead of the
+    // close being refused; only a confirmation-gated close births nothing.
     #[test]
     fn closing_a_tab_leaves_its_agent_in_the_ledger() {
         let mut app = app_with_agent_pane();
@@ -2489,11 +2490,26 @@ mod stop_guard_tests {
             "t-last".into(),
             crate::api::schema::TabTarget { tab_id: last },
         );
-        assert!(response.contains("tab_close_failed"), "{response}");
+        assert!(
+            response.contains("\"type\":\"ok\""),
+            "closing the last tab closes the workspace: {response}"
+        );
+        assert!(
+            app.state.workspaces.is_empty(),
+            "the last tab's close takes its workspace with it"
+        );
+        let ghosts: Vec<_> = app.state.closed_agents.entries().collect();
         assert_eq!(
-            app.state.closed_agents.entries().count(),
-            1,
-            "a refused close births nothing"
+            ghosts.len(),
+            2,
+            "the workspace-closing road births the last agent's ghost too"
+        );
+        assert!(
+            ghosts
+                .iter()
+                .any(|g| g.label.to_lowercase().contains("claude")),
+            "the surviving agent became a ghost on the workspace-close road: {:?}",
+            ghosts.iter().map(|g| g.label.clone()).collect::<Vec<_>>()
         );
     }
 
