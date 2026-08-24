@@ -108,10 +108,7 @@ impl App {
         // history. The non-unix capture path still reads the active screen
         // only, where the loss is real — the refusal stays. TP-DORMANT-10
         #[cfg(not(unix))]
-        if runtime
-            .input_state()
-            .is_some_and(|input_state| input_state.alternate_screen)
-        {
+        if runtime.alternate_screen_active() {
             return Err(DormancyRefusal::HistoryUnavailable);
         }
 
