@@ -3315,6 +3315,50 @@ pub(super) fn render_sidebar_collapsed(app: &AppState, frame: &mut Frame, area: 
     render_sidebar_toggle(app, frame, area, true, p);
 }
 
+/// TP-TREE-19: which visible rows start a draggable worktree block.
+///
+/// Upstream models a group as a parent row (`indented: false`) with linked
+/// children, so "block root" and "not indented" coincide there. The fork's
+/// tree (TP-TREE-01/04) parks the group root on a `GroupHeader` row that
+/// carries no `ws_idx`, which makes every member — the main checkout
+/// included — an indented child. A block root on this list is therefore a
+/// flat row, or the first workspace row after a group or project header. On
+/// the folded tree (TP-TREE-03) that first row is the checkout the user is
+/// standing in: exactly the card a drag of the folded group starts from.
+fn entry_is_block_root(entries: &[WorkspaceListEntry], entry_idx: usize) -> bool {
+    match entries.get(entry_idx) {
+        Some(WorkspaceListEntry::Workspace {
+            indented: false, ..
+        }) => true,
+        Some(WorkspaceListEntry::Workspace { .. }) => matches!(
+            entry_idx.checked_sub(1).and_then(|idx| entries.get(idx)),
+            Some(WorkspaceListEntry::GroupHeader { .. })
+                | Some(WorkspaceListEntry::ProjectHeader { .. })
+        ),
+        _ => false,
+    }
+}
+
+/// The `ws_idx` of every block root on the visible list, in list order.
+/// Drag sources and reorder no-op checks read this, so a press on a group's
+/// second or third member never moves the block (the member is not a root),
+/// while the folded group's single visible card is one.
+pub(crate) fn workspace_block_roots(app: &AppState) -> Vec<usize> {
+    let entries = workspace_list_entries(app);
+    entries
+        .iter()
+        .enumerate()
+        .filter_map(|(entry_idx, entry)| match entry {
+            WorkspaceListEntry::Workspace { ws_idx, .. }
+                if entry_is_block_root(&entries, entry_idx) =>
+            {
+                Some(*ws_idx)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 pub(crate) fn workspace_drop_slots(
     app: &AppState,
     cards: &[crate::app::state::WorkspaceCardArea],
@@ -3337,15 +3381,14 @@ pub(crate) fn workspace_drop_slots(
         })
     };
     let block_root_at = |entry_idx: usize| {
-        entries[..=entry_idx]
-            .iter()
+        (0..=entry_idx)
             .rev()
-            .find_map(|entry| match entry {
-                WorkspaceListEntry::Workspace {
-                    ws_idx,
-                    indented: false,
-                } => Some(*ws_idx),
-                WorkspaceListEntry::Workspace { .. } => None,
+            .find_map(|idx| match entries.get(idx) {
+                Some(WorkspaceListEntry::Workspace { ws_idx, .. })
+                    if entry_is_block_root(&entries, idx) =>
+                {
+                    Some(*ws_idx)
+                }
                 _ => None,
             })
     };
@@ -3377,20 +3420,23 @@ pub(crate) fn workspace_drop_slots(
     let Some(last_entry_idx) = entry_position(last.ws_idx) else {
         return slots;
     };
-    let next_entry = entries.get(last_entry_idx.saturating_add(1));
-    if matches!(
-        next_entry,
-        Some(WorkspaceListEntry::Workspace { indented: true, .. })
-    ) {
-        return slots;
-    }
-    let target = match next_entry {
-        Some(WorkspaceListEntry::Workspace { ws_idx, .. }) => {
-            crate::app::state::WorkspaceDropTarget::Before(*ws_idx)
-        }
-        // The fork list carries headers, chats and buckets between the
-        // workspace rows; none of them is a drop seam of its own.
-        Some(_) => return slots,
+    // The fork list carries headers, chats and buckets between the workspace
+    // rows; none of them is a drop seam of its own, so the seam after the
+    // last card is decided by the NEXT WORKSPACE ROW, not the next entry —
+    // otherwise a trailing chat drawer silently swallows the End slot.
+    let next_ws = entries
+        .iter()
+        .enumerate()
+        .skip(last_entry_idx.saturating_add(1))
+        .find_map(|(entry_idx, entry)| match entry {
+            WorkspaceListEntry::Workspace { ws_idx, .. } => Some((entry_idx, *ws_idx)),
+            _ => None,
+        });
+    let target = match next_ws {
+        // The next workspace continues the last card's block (TP-TREE-19:
+        // not a block root), so the gap below the card is block interior.
+        Some((entry_idx, _)) if !entry_is_block_root(&entries, entry_idx) => return slots,
+        Some((_, ws_idx)) => crate::app::state::WorkspaceDropTarget::Before(ws_idx),
         None => crate::app::state::WorkspaceDropTarget::End,
     };
     let row = last.rect.y.saturating_add(last.rect.height);

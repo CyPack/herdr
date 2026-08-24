@@ -1330,10 +1330,11 @@ impl AppState {
                     if let Some(press) = self.workspace_presses.get(&source_id) {
                         let delta_col = mouse.column.abs_diff(press.start_col);
                         let delta_row = mouse.row.abs_diff(press.start_row);
-                        let can_reorder = self.workspaces.get(press.ws_idx).is_some_and(|ws| {
-                            ws.worktree_space()
-                                .is_none_or(|space| !space.is_linked_worktree)
-                        });
+                        // TP-TREE-19: only a visible block root opens a
+                        // reorder drag — the folded group's single card does,
+                        // a group's second expanded member does not.
+                        let can_reorder =
+                            crate::ui::workspace_block_roots(self).contains(&press.ws_idx);
                         if workspace_drop_target.is_some()
                             && can_reorder
                             && delta_col.max(delta_row) >= WORKSPACE_DRAG_THRESHOLD

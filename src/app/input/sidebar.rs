@@ -880,24 +880,13 @@ impl AppState {
         drop_target: crate::app::state::WorkspaceDropTarget,
     ) -> Option<crate::api::schema::WorkspaceMoveBlockParams> {
         let source = self.workspaces.get(source_ws_idx)?;
-        if source
-            .worktree_space()
-            .is_some_and(|space| space.is_linked_worktree)
-        {
-            return None;
-        }
-
-        let roots = crate::ui::workspace_list_entries_expanded(self)
-            .into_iter()
-            .filter_map(|entry| match entry {
-                crate::ui::WorkspaceListEntry::Workspace {
-                    ws_idx,
-                    indented: false,
-                } => Some(ws_idx),
-                crate::ui::WorkspaceListEntry::Workspace { .. } => None,
-                _ => None,
-            })
-            .collect::<Vec<_>>();
+        // TP-TREE-19: a drag moves a block only when it starts on a block
+        // root of the VISIBLE list. Upstream expressed the same rule as "not
+        // a linked worktree" because its roots are always the parent rows;
+        // on the fork's tree the folded group's one visible card can be a
+        // linked checkout (TP-TREE-03) and it IS the block's handle, while a
+        // group's second expanded member never is.
+        let roots = crate::ui::workspace_block_roots(self);
         let source_pos = roots.iter().position(|ws_idx| *ws_idx == source_ws_idx)?;
         let remaining_roots = roots
             .iter()
@@ -914,21 +903,34 @@ impl AppState {
             return None;
         }
 
-        let workspace_ids = match source.worktree_space() {
+        // The block travels main-checkout-first, the order the expanded tree
+        // draws it in, regardless of which member card the drag started on.
+        // Membership is decided by the EFFECTIVE space (the same grouping the
+        // list renders), so a repo split into sibling buckets never drags a
+        // sibling bucket's checkouts along (TP-SPLIT-GROUP-01).
+        let workspace_ids = match crate::ui::effective_space(self, source_ws_idx) {
             Some(source_space) => {
-                let mut ids = vec![source.id.clone()];
-                ids.extend(
-                    self.workspaces
-                        .iter()
-                        .filter(|workspace| workspace.id != source.id)
-                        .filter(|workspace| {
-                            workspace
-                                .worktree_space()
-                                .is_some_and(|space| space.key == source_space.key)
-                        })
-                        .map(|workspace| workspace.id.clone()),
-                );
-                ids
+                let members = (0..self.workspaces.len())
+                    .filter(|ws_idx| {
+                        crate::ui::effective_space(self, *ws_idx)
+                            .is_some_and(|space| space.key == source_space.key)
+                    })
+                    .collect::<Vec<_>>();
+                let parent_idx = members.iter().copied().find(|ws_idx| {
+                    crate::ui::effective_space(self, *ws_idx)
+                        .is_some_and(|space| space.is_parent_candidate)
+                });
+                let ordered = match parent_idx {
+                    Some(parent_idx) => std::iter::once(parent_idx)
+                        .chain(members.iter().copied().filter(|idx| *idx != parent_idx))
+                        .collect::<Vec<_>>(),
+                    None => members,
+                };
+                ordered
+                    .into_iter()
+                    .filter_map(|ws_idx| self.workspaces.get(ws_idx))
+                    .map(|workspace| workspace.id.clone())
+                    .collect()
             }
             None => vec![source.id.clone()],
         };
@@ -936,16 +938,14 @@ impl AppState {
             crate::app::state::WorkspaceDropTarget::Before(target_ws_idx) => {
                 let target = self.workspaces.get(target_ws_idx)?;
                 let anchor = match crate::ui::workspace_parent_group_state(self, target_ws_idx)
-                    .and_then(|_| target.worktree_space())
+                    .and_then(|_| crate::ui::effective_space(self, target_ws_idx))
                 {
-                    Some(target_space) => self
-                        .workspaces
-                        .iter()
-                        .find(|workspace| {
-                            workspace
-                                .worktree_space()
+                    Some(target_space) => (0..self.workspaces.len())
+                        .find(|ws_idx| {
+                            crate::ui::effective_space(self, *ws_idx)
                                 .is_some_and(|space| space.key == target_space.key)
                         })
+                        .and_then(|ws_idx| self.workspaces.get(ws_idx))
                         .unwrap_or(target),
                     None => target,
                 };
@@ -2769,6 +2769,7 @@ mod tests {
         assert_eq!(app.state.workspaces[app.state.selected].id, selected_id);
     }
 
+    // TP-TREE-19
     #[test]
     fn dragging_collapsed_worktree_parent_still_moves_hidden_children() {
         let mut app = app_for_mouse_test();
@@ -2784,7 +2785,12 @@ mod tests {
         let active_id = app.state.workspaces[0].id.clone();
         let selected_id = app.state.workspaces[1].id.clone();
         crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 40));
-        assert_eq!(app.state.view.workspace_card_areas.len(), 3);
+        // TP-TREE-19, rebased from upstream: upstream keeps the group's
+        // parent row visible while folded, so it saw three cards here. The
+        // fork's folded group shows only the checkout the user stands in
+        // (TP-TREE-03) next to the plain workspace — two cards — and that
+        // single visible card is the folded block's drag handle.
+        assert_eq!(app.state.view.workspace_card_areas.len(), 2);
 
         let parent = app.state.view.workspace_card_areas[0].rect;
         let target_row = crate::ui::workspace_drop_indicator_row(

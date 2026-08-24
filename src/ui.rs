@@ -135,11 +135,11 @@ pub(crate) use self::{
         expanded_sidebar_toggle_rect, header_menu_cell, header_new_branch_cell,
         is_git_repository_root, module_branch_source, normalized_workspace_scroll,
         projects_scroll_metrics, projects_scrollbar_rect, sidebar_section_divider_rect,
-        space_owner_for_key, workspace_chat_toggle_cell, workspace_drop_slots,
-        workspace_list_entries, workspace_list_entries_expanded, workspace_list_rect,
-        workspace_list_scroll_metrics, workspace_list_scrollbar_rect, workspace_menu_cell,
-        workspace_new_chat_cell, workspace_parent_group_state, AgentPanelEntry, ModuleBranchSource,
-        WorkspaceListEntry,
+        space_owner_for_key, workspace_block_roots, workspace_chat_toggle_cell,
+        workspace_drop_slots, workspace_list_entries, workspace_list_entries_expanded,
+        workspace_list_rect, workspace_list_scroll_metrics, workspace_list_scrollbar_rect,
+        workspace_menu_cell, workspace_new_chat_cell, workspace_parent_group_state,
+        AgentPanelEntry, ModuleBranchSource, WorkspaceListEntry,
     },
 };
 
