@@ -5248,7 +5248,7 @@ impl AppState {
             || self.focused_pane_requests_mouse_capture_from(terminal_runtimes)
     }
 
-    pub fn is_prefix_key(&self, key: crate::input::TerminalKey) -> bool {
+    pub fn is_prefix_key(&self, key: &crate::input::TerminalKey) -> bool {
         crate::config::terminal_key_matches_combo(key, (self.prefix_code, self.prefix_mods))
     }
 

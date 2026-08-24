@@ -885,13 +885,13 @@ impl App {
             let tab = workspace.active_tab()?;
             tab.cwd_for_pane(focused, &self.state.terminals, &self.terminal_runtimes)
         });
-        let mut command = crate::plugin_command::command_for_argv(program, args);
-        if let Some(cwd) = cwd {
-            // The same directory the popup and the tab presentations use. A
-            // section whose command ran somewhere else than its neighbours
-            // would be one control with two meanings.
-            command.current_dir(cwd);
-        }
+        // The same directory the popup and the tab presentations use. A
+        // section whose command ran somewhere else than its neighbours would
+        // be one control with two meanings. Upstream folded the directory
+        // into command_for_argv_in_dir; "." preserves the old fallback — the
+        // inherited working directory.
+        let cwd = cwd.unwrap_or_else(|| std::path::PathBuf::from("."));
+        let mut command = crate::plugin_command::command_for_argv_in_dir(program, args, &cwd);
         command
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())

@@ -1827,7 +1827,7 @@ impl App {
                 })?;
                 self.image_preview_cell_size = cell_size;
                 if self.sync_image_preview_worker() {
-                    self.render_dirty.store(true, Ordering::Release);
+                    self.render_dirty.request_generic();
                     self.render_notify.notify_one();
                 }
                 if kitty_graphics_enabled {

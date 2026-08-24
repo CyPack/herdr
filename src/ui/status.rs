@@ -193,6 +193,19 @@ pub(super) fn render_config_diagnostic(frame: &mut Frame, area: Rect, message: &
     }
 }
 
+/// TP-MOB dot language: the mobile surface speaks in dots, not glyph icons —
+/// the fork rows kept this compact vocabulary when upstream moved to
+/// state_icon styles.
+pub(super) fn state_dot(state: AgentState, seen: bool, p: &Palette) -> (&'static str, Style) {
+    match (state, seen) {
+        (AgentState::Blocked, _) => ("●", Style::default().fg(p.red)),
+        (AgentState::Working, _) => ("●", Style::default().fg(p.yellow)),
+        (AgentState::Idle, false) => ("●", Style::default().fg(p.teal)),
+        (AgentState::Idle, true) => ("○", Style::default().fg(p.green)),
+        (AgentState::Unknown, _) => ("·", Style::default().fg(p.overlay0)),
+    }
+}
+
 pub(super) fn state_icon_symbol(
     state: AgentState,
     seen: bool,
