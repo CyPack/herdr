@@ -580,6 +580,110 @@ pub(crate) fn space_node_shift_for_key(app: &AppState, space_key: &str) -> u16 {
 /// The owner a bucket header hangs under: the claiming rule's own parent
 /// first, the claiming project second — the single-key form of the walk the
 /// emitter does per space (TP-DOTS-12).
+/// Every space key (node or split rule) living in the subtree rooted at
+/// `key`, the root included when it is itself a node or rule. Each candidate
+/// climbs its parent chain through the ONE edge-reader `tree_parent_of`,
+/// bounded by the same guard every chain walker in this file keeps.
+pub(crate) fn subtree_space_keys(app: &AppState, key: &str) -> Vec<String> {
+    let guard = app.space_nodes.len() + app.space_split_rules.len();
+    let mut keys: Vec<String> = Vec::new();
+    let consider = |candidate: &str, keys: &mut Vec<String>| {
+        if keys.iter().any(|k| k == candidate) {
+            return;
+        }
+        let mut cursor = candidate.to_string();
+        let mut steps = 0;
+        loop {
+            if cursor == key {
+                keys.push(candidate.to_string());
+                return;
+            }
+            steps += 1;
+            if steps > guard {
+                return;
+            }
+            match crate::spaces::tree_parent_of(&app.space_nodes, &app.space_split_rules, &cursor) {
+                Some(parent) => cursor = parent.to_string(),
+                None => return,
+            }
+        }
+    };
+    for node in &app.space_nodes {
+        let candidate = node.key.clone();
+        consider(&candidate, &mut keys);
+    }
+    for rule in &app.space_split_rules {
+        let candidate = rule.key.clone();
+        consider(&candidate, &mut keys);
+    }
+    keys
+}
+
+/// The newest chat activity anywhere under a header — the chats moved onto
+/// the header's own seat and every seat below it, plus the drawers of every
+/// member checkout — read on the SAME clock the chat rows themselves wear
+/// (`last_activity_time`, TP-DRAW-15). Two clocks for one fact is how the
+/// "age resets on restart" family was born; this surface refuses to start a
+/// second one (TP-CHATAGE-02).
+pub(crate) fn header_latest_chat_activity(
+    app: &AppState,
+    key: &str,
+) -> Option<std::time::SystemTime> {
+    let mut newest: Option<std::time::SystemTime> = None;
+    let mut bump = |candidate: Option<std::time::SystemTime>| {
+        if let Some(time) = candidate {
+            if newest.is_none_or(|kept| time > kept) {
+                newest = Some(time);
+            }
+        }
+    };
+    let mut subtree = subtree_space_keys(app, key);
+    if !subtree.iter().any(|k| k == key) {
+        subtree.push(key.to_string());
+    }
+    for sub_key in &subtree {
+        let module_key = crate::persist::workspace_chats::module_ledger_key(sub_key);
+        bump(
+            app.workspace_chat_rows
+                .get(&module_key)
+                .and_then(|rows| rows.first())
+                .map(|row| row.last_activity_time()),
+        );
+    }
+    // A project claims unmatched checkouts through its repositories too —
+    // the "<repo> · main" rows that belong to no rule.
+    let project_roots = app
+        .space_projects
+        .iter()
+        .find(|project| project.key == key)
+        .map(|project| project.repo_roots.as_slice());
+    for ws_idx in 0..app.workspaces.len() {
+        let in_subtree =
+            effective_space(app, ws_idx).is_some_and(|space| subtree.contains(&space.key));
+        let in_project = project_roots.is_some_and(|roots| {
+            app.workspaces[ws_idx]
+                .worktree_space()
+                .is_some_and(|membership| roots.contains(&membership.repo_root))
+        });
+        if in_subtree || in_project {
+            bump(
+                workspace_chat_rows_for(app, ws_idx)
+                    .first()
+                    .map(|row| row.last_activity_time()),
+            );
+        }
+    }
+    newest
+}
+
+/// The header's age badge, already formatted — `None` when nothing under the
+/// header has ever chatted, because an absent fact must read as absent, not
+/// as "now" (TP-CHATAGE-03).
+fn header_age_badge(app: &AppState, key: &str) -> Option<String> {
+    header_latest_chat_activity(app, key)
+        .map(|time| format_relative_time(time, std::time::SystemTime::now()))
+}
+
 pub(crate) fn space_owner_for_key(app: &AppState, space_key: &str) -> Option<String> {
     let ws_idx = (0..app.workspaces.len())
         .find(|idx| effective_space(app, *idx).is_some_and(|space| space.key == space_key))?;
@@ -4116,9 +4220,14 @@ fn render_workspace_project_headers(app: &AppState, frame: &mut Frame, list_bott
             .iter()
             .map(|span| super::text::display_width(span.content.as_ref()))
             .sum::<usize>();
+        // TP-CHATAGE-01: the newest chat age under this header, right-aligned
+        // and dim — "when did I last talk here" without opening anything.
+        let age = header_age_badge(app, &head.project_key);
         // TP-DOTS-09: the manage chrome `[⋯] [+]` is reserved, so a long
-        // name truncates short of it instead of bleeding underneath.
-        let reserved = if app.mouse_capture { 4 } else { 0 };
+        // name truncates short of it instead of bleeding underneath — and the
+        // age badge joins the reservation for the same reason.
+        let chrome = if app.mouse_capture { 4 } else { 0 };
+        let reserved = chrome + age.as_ref().map(|a| a.len() + 1).unwrap_or(0);
         spans.push(Span::styled(
             super::text::truncate_end(
                 face.name,
@@ -4127,8 +4236,34 @@ fn render_workspace_project_headers(app: &AppState, frame: &mut Frame, list_bott
             Style::default().fg(p.text).add_modifier(Modifier::BOLD),
         ));
         frame.render_widget(Paragraph::new(Line::from(spans)), head.rect);
+        draw_header_age_badge(app, frame, head.rect, age.as_deref());
         draw_header_menu_dots(app, frame, head.rect);
     }
+}
+
+/// Paint the age badge right-aligned, short of the mouse chrome cells — the
+/// daily header's right-shifted count is the proven precedent for sharing
+/// this edge (TP-CHATAGE-01).
+fn draw_header_age_badge(app: &AppState, frame: &mut Frame, head_rect: Rect, age: Option<&str>) {
+    let Some(age) = age else {
+        return;
+    };
+    let chrome = if app.mouse_capture { 4 } else { 0 };
+    let width = head_rect.width.saturating_sub(chrome);
+    if width == 0 {
+        return;
+    }
+    let area = Rect { width, ..head_rect };
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            age.to_string(),
+            Style::default()
+                .fg(app.palette.overlay0)
+                .add_modifier(Modifier::DIM),
+        ))
+        .alignment(Alignment::Right),
+        area,
+    );
 }
 
 /// TP-DOTS-03: the "⋯" every header row wears while the mouse owns the
@@ -4198,8 +4333,12 @@ fn render_workspace_group_headers(app: &AppState, frame: &mut Frame, list_bottom
             .iter()
             .map(|span| super::text::display_width(span.content.as_ref()))
             .sum::<usize>();
-        // TP-DOTS-09: same reservation as the project header above.
-        let reserved = if app.mouse_capture { 4 } else { 0 };
+        // TP-CHATAGE-01: the bucket wears its newest chat age too.
+        let age = header_age_badge(app, &head.space_key);
+        // TP-DOTS-09: same reservation as the project header above, the age
+        // badge included.
+        let chrome = if app.mouse_capture { 4 } else { 0 };
+        let reserved = chrome + age.as_ref().map(|a| a.len() + 1).unwrap_or(0);
         spans.push(Span::styled(
             super::text::truncate_end(
                 &space_label_for_key(app, &head.space_key),
@@ -4208,6 +4347,7 @@ fn render_workspace_group_headers(app: &AppState, frame: &mut Frame, list_bottom
             Style::default().fg(p.text).add_modifier(Modifier::BOLD),
         ));
         frame.render_widget(Paragraph::new(Line::from(spans)), head.rect);
+        draw_header_age_badge(app, frame, head.rect, age.as_deref());
         draw_header_menu_dots(app, frame, head.rect);
     }
 }
@@ -12121,6 +12261,158 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             app.expanded_chat_workspaces.insert(key);
         }
         app
+    }
+
+    fn aged_row(session: &str, days_ago: u64) -> crate::app::state::WorkspaceChatRow {
+        crate::app::state::WorkspaceChatRow {
+            session_id: session.to_string(),
+            agent: "claude".to_string(),
+            title: Some("remembered chat".to_string()),
+            // the sighting clock says "now" on purpose: the badge must NOT
+            // read it (TP-CHATAGE-02)
+            last_seen_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0),
+            last_modified: None,
+            last_message_at: Some(
+                std::time::SystemTime::now() - std::time::Duration::from_secs(days_ago * 86_400),
+            ),
+        }
+    }
+
+    /// Two checkouts on t4f branches under one split rule, the rule hanging
+    /// under a project — the tree the age badge lives in.
+    fn app_with_aged_module_tree() -> AppState {
+        let mut app = AppState::test_new();
+        app.workspaces = vec![
+            worktree_on_branch("alpha", "feat/t4f-alpha"),
+            worktree_on_branch("beta", "feat/t4f-beta"),
+        ];
+        let mut rule = split_rule(&["feat/t4f-*"], "herdr:t4f", "T4F");
+        rule.parent = Some("project:demo".to_string());
+        app.space_split_rules = vec![rule];
+        app.space_projects = vec![crate::spaces::SpaceProject {
+            key: "project:demo".to_string(),
+            name: "demo".to_string(),
+            icon: None,
+            repo_roots: vec![std::path::PathBuf::from("/repo")],
+            space_keys: vec![],
+        }];
+        app.mobile_width_threshold = 0;
+        app.mouse_capture = false;
+        app.sidebar_width = 40;
+        app.sidebar_min_width = 10;
+        app
+    }
+
+    fn checkout_key_of(app: &AppState, ws_idx: usize) -> String {
+        crate::persist::workspace_chats::ledger_key(app.workspaces[ws_idx].effective_cwd())
+    }
+
+    // TP-CHATAGE-01
+    #[test]
+    fn a_module_header_wears_the_age_of_its_newest_chat() {
+        let mut app = app_with_aged_module_tree();
+        let key_a = checkout_key_of(&app, 0);
+        let key_b = checkout_key_of(&app, 1);
+        app.workspace_chat_rows
+            .insert(key_a, vec![aged_row("older", 5)]);
+        app.workspace_chat_rows
+            .insert(key_b, vec![aged_row("newer", 3)]);
+        let rows = drawn_sidebar_rows(&mut app, 20);
+        let header = rows
+            .iter()
+            .find(|row| row.contains("T4F"))
+            .expect("the module header is drawn");
+        assert!(
+            header
+                .trim_end_matches(|c: char| c == '\u{2503}' || c.is_whitespace())
+                .ends_with("3d"),
+            "the newest chat's age rides the right edge: {header:?}"
+        );
+    }
+
+    // TP-CHATAGE-03
+    #[test]
+    fn a_header_with_no_chats_wears_no_age() {
+        let mut app = app_with_aged_module_tree();
+        let rows = drawn_sidebar_rows(&mut app, 20);
+        let header = rows
+            .iter()
+            .find(|row| row.contains("T4F"))
+            .expect("the module header is drawn");
+        assert!(
+            header
+                .trim_end_matches(|c: char| c == '\u{2503}' || c.is_whitespace())
+                .ends_with("T4F"),
+            "an absent fact reads as absent, never as 'now': {header:?}"
+        );
+    }
+
+    // TP-CHATAGE-02
+    #[test]
+    fn the_header_age_reads_the_message_clock_not_the_sighting() {
+        let mut app = app_with_aged_module_tree();
+        let key_a = checkout_key_of(&app, 0);
+        // sighting says now, the transcript's own clock says three days ago
+        app.workspace_chat_rows
+            .insert(key_a, vec![aged_row("chat", 3)]);
+        let rows = drawn_sidebar_rows(&mut app, 20);
+        let header = rows
+            .iter()
+            .find(|row| row.contains("T4F"))
+            .expect("the module header is drawn");
+        assert!(
+            header
+                .trim_end_matches(|c: char| c == '\u{2503}' || c.is_whitespace())
+                .ends_with("3d")
+                && !header.contains("now"),
+            "a re-sighted chat must not reset the header to 'now': {header:?}"
+        );
+    }
+
+    // TP-CHATAGE-01 — the umbrella aggregates its subtree
+    #[test]
+    fn a_project_header_shows_the_newest_of_its_subtree() {
+        let mut app = app_with_aged_module_tree();
+        let key_a = checkout_key_of(&app, 0);
+        let key_b = checkout_key_of(&app, 1);
+        app.workspace_chat_rows
+            .insert(key_a, vec![aged_row("older", 6)]);
+        app.workspace_chat_rows
+            .insert(key_b, vec![aged_row("newer", 2)]);
+        let rows = drawn_sidebar_rows(&mut app, 20);
+        let header = rows
+            .iter()
+            .find(|row| row.contains("demo"))
+            .expect("the project header is drawn");
+        assert!(
+            header
+                .trim_end_matches(|c: char| c == '\u{2503}' || c.is_whitespace())
+                .ends_with("2d"),
+            "the umbrella wears the newest age under it: {header:?}"
+        );
+    }
+
+    // TP-CHATAGE-01 — a chat moved onto the module's own seat counts too
+    #[test]
+    fn a_moved_in_chat_ages_the_seat_it_sits_on() {
+        let mut app = app_with_aged_module_tree();
+        let module_key = crate::persist::workspace_chats::module_ledger_key("herdr:t4f");
+        app.workspace_chat_rows
+            .insert(module_key, vec![aged_row("filed", 4)]);
+        let rows = drawn_sidebar_rows(&mut app, 20);
+        let header = rows
+            .iter()
+            .find(|row| row.contains("T4F"))
+            .expect("the module header is drawn");
+        assert!(
+            header
+                .trim_end_matches(|c: char| c == '\u{2503}' || c.is_whitespace())
+                .ends_with("4d"),
+            "a filed chat ages the seat it was filed into: {header:?}"
+        );
     }
 
     /// Draw the sidebar and hand back its rows as plain strings.
