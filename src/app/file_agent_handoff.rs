@@ -105,6 +105,20 @@ impl crate::app::App {
         let Some(request) = self.state.request_file_manager_agent_handoff.take() else {
             return false;
         };
+        // TP-FIP-REF-20: the sweep runs outside any viewer window, but the
+        // currency check reads the raising display's browser. Enter that
+        // display's view for the whole delivery; the structural pairing rule
+        // for enter/restore is kept by the single wrapped call below.
+        let previous_viewer = self.state.enter_viewer(request.raised_by_client);
+        let handled = self.file_manager_agent_handoff_send_in_raising_view(request);
+        self.state.restore_viewer(previous_viewer);
+        handled
+    }
+
+    fn file_manager_agent_handoff_send_in_raising_view(
+        &mut self,
+        request: crate::app::agent_reference_picker::AgentReferenceRequest,
+    ) -> bool {
         if !self.file_manager_agent_handoff_is_current(&request) {
             self.show_file_manager_agent_handoff_failure("agent handoff authority changed");
             return true;
@@ -292,6 +306,7 @@ mod tests {
                 .focused_pane_id()
                 .expect("focused pane for reference request"),
             terminal_id,
+            raised_by_client: None,
         }
     }
 
@@ -552,6 +567,43 @@ mod tests {
         assert!(receiver.try_recv().is_err(), "no second payload");
     }
 
+    // TP-FIP-REF-20: the currency check reads the RAISING display's browser.
+    // The delivery sweep runs outside any viewer window; with a second
+    // display parked in the registers, validating against "whatever is
+    // installed" failed every send as "authority changed" the moment
+    // another client attached.
+    #[tokio::test]
+    async fn delivery_validates_against_the_raising_displays_browser() {
+        let fixture = HandoffFixture::new("raising-display");
+        let path = fixture.file("referenced.txt");
+        let (mut app, terminal_id, mut receiver) = app_with_agent_handoff(&fixture.root, 4);
+
+        // The request rises inside display 4's window: the session's file
+        // manager becomes that display's own surface.
+        let previous = app.state.enter_viewer(Some(4));
+        let mut request = reference_request_for(&app, path.clone(), terminal_id);
+        request.raised_by_client = app.state.viewer();
+        app.state.request_file_manager_agent_handoff = Some(request);
+        app.state.restore_viewer(previous);
+
+        // A second display attaches and renders once: it is born without a
+        // file manager, and display 4's browser is parked away.
+        let previous = app.state.enter_viewer(Some(2));
+        assert!(app.state.file_manager.is_none());
+        app.state.restore_viewer(previous);
+
+        // The sweep runs with no viewer installed, exactly as production
+        // schedules it — and must still deliver.
+        assert!(app.sync_file_manager_agent_handoff_send());
+        let sent = receiver.try_recv().expect("the reference payload lands");
+        assert_eq!(sent, Bytes::from(path.to_str().expect("utf8").to_owned()));
+        assert!(
+            app.state.toast.is_none(),
+            "no failure toast: {:?}",
+            app.state.toast
+        );
+    }
+
     // TP-FIP-REF-11: a path deleted between prepare and send fails closed at
     // the delivery seam — zero bytes and one visible failure.
     #[tokio::test]
@@ -752,6 +804,7 @@ mod tests {
             workspace_id: app.state.workspaces[0].id.clone(),
             pane_id: pane_a,
             terminal_id: terminal_b,
+            raised_by_client: None,
         });
 
         assert!(app.sync_file_manager_agent_handoff_send());

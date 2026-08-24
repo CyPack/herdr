@@ -37,6 +37,13 @@ pub(crate) struct AgentReferenceRequest {
     pub workspace_id: String,
     pub pane_id: crate::layout::PaneId,
     pub terminal_id: crate::terminal::TerminalId,
+    /// The display whose picker raised this request. The delivery sweep runs
+    /// outside any viewer window, but "is the chosen path still on screen"
+    /// is a question about the RAISING display's browser — validated against
+    /// whatever display happened to be parked in the registers, a second
+    /// attached client made every send fail as "authority changed"
+    /// (TP-FIP-REF-20).
+    pub raised_by_client: Option<crate::app::state::ClientId>,
 }
 
 impl crate::app::state::AppState {
@@ -241,6 +248,7 @@ impl crate::app::App {
             workspace_id: row.workspace_id,
             pane_id: row.pane_id,
             terminal_id: row.terminal_id,
+            raised_by_client: self.state.viewer(),
         });
         self.state.close_agent_reference_picker();
         true
@@ -409,6 +417,30 @@ mod tests {
                 paths: vec![path],
             });
         assert!(app.sync_file_manager_agent_handoff());
+    }
+
+    // TP-FIP-REF-20 (wiring): explicit activation stamps the raising
+    // display's identity onto the typed request. The delivery sweep later
+    // runs outside any viewer window; without this stamp it cannot re-enter
+    // the raising display's view, and with a second client attached every
+    // send died as "authority changed".
+    #[tokio::test]
+    async fn activation_stamps_the_raising_display_on_the_request() {
+        let fixture = PickerFixture::new("stamps-raising-display");
+        let path = fixture.file("stamped.txt");
+        let (mut app, _focused, _neighbor) = app_with_two_agents(&fixture.root);
+
+        let previous = app.state.enter_viewer(Some(7));
+        dispatch_reference_action(&mut app, path);
+        assert!(app.activate_agent_reference_picker_selection());
+        app.state.restore_viewer(previous);
+
+        let request = app
+            .state
+            .request_file_manager_agent_handoff
+            .as_ref()
+            .expect("activation prepares the typed request");
+        assert_eq!(request.raised_by_client, Some(7));
     }
 
     // Kullanıcı kanıtı (2026-07-18 canlı ekran): hiç canlı agent yokken
