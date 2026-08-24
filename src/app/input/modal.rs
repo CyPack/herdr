@@ -100,6 +100,14 @@ pub(super) fn open_global_menu(state: &mut AppState) {
     state.enter_overlay_mode(Mode::GlobalMenu);
 }
 
+pub(super) fn open_chat_worklog(state: &mut AppState, session_id: String) {
+    state.chat_worklog_modal = crate::app::state::ChatWorkLogState {
+        session_id,
+        scroll: 0,
+    };
+    state.enter_overlay_mode(Mode::ChatWorkLog);
+}
+
 pub(super) fn open_keybind_help(state: &mut AppState) {
     state.keybind_help.scroll = 0;
     state.keybind_help.query.clear();
@@ -305,6 +313,19 @@ pub(super) fn keybind_help_back(state: &mut AppState) {
         state.keybind_help.scroll = 0;
     } else {
         leave_modal(state);
+    }
+}
+
+pub(crate) fn handle_chat_worklog_key(state: &mut AppState, key: TerminalKey) {
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => state.scroll_chat_worklog(-1),
+        KeyCode::Down | KeyCode::Char('j') => state.scroll_chat_worklog(1),
+        KeyCode::PageUp => state.scroll_chat_worklog(-8),
+        KeyCode::PageDown => state.scroll_chat_worklog(8),
+        KeyCode::Home => state.chat_worklog_modal.scroll = 0,
+        KeyCode::End => state.chat_worklog_modal.scroll = state.chat_worklog_max_scroll(),
+        KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => leave_modal(state),
+        _ => {}
     }
 }
 
@@ -1379,6 +1400,9 @@ pub(super) fn apply_context_menu_action(
                 list: crate::app::state::MenuListState::new(0),
             });
         }
+        (ContextMenuKind::WorkspaceChat { session_id, .. }, Some("Work log...")) => {
+            open_chat_worklog(state, session_id);
+        }
         (ContextMenuKind::WorkspaceChat { session_id, .. }, Some("Label as...")) => {
             let labelled = state.manual_chat_labels.contains_key(&session_id);
             state.context_menu = Some(crate::app::state::ContextMenuState {
@@ -2293,6 +2317,9 @@ impl App {
                     y: menu_y,
                     list: crate::app::state::MenuListState::new(0),
                 });
+            }
+            (ContextMenuKind::WorkspaceChat { session_id, .. }, Some("Work log...")) => {
+                open_chat_worklog(&mut self.state, session_id);
             }
             (ContextMenuKind::WorkspaceChat { session_id, .. }, Some("Label as...")) => {
                 let labelled = self.state.manual_chat_labels.contains_key(&session_id);
@@ -3836,6 +3863,7 @@ mod tests {
                 has_move: false,
                 has_live: false,
                 has_modules: true,
+                has_worklog: false,
             },
             x: 0,
             y: 0,
@@ -3865,6 +3893,7 @@ mod tests {
                 has_move: false,
                 has_live: false,
                 has_modules: false,
+                has_worklog: false,
             },
             x: 0,
             y: 0,
@@ -3880,6 +3909,91 @@ mod tests {
     // M1.7 / TP-CHAT-MOVE-11 / constraint 31: BOTH bodies answer the module
     // verb, and both open the same target picker. #91 shipped a menu entry
     // wired into only the `#[cfg(test)]` body: green tests, dead affordance.
+    // TP-WORKLOG-01 — the D45 rule: a menu entry wired into only the
+    // #[cfg(test)] body is green tests and a dead affordance (#91's shape).
+    #[test]
+    fn both_context_menu_bodies_open_the_worklog_sheet() {
+        let mut app = app_with_test_workspaces(&["main"]);
+        app.state.chat_worklog.chats.insert(
+            "s".to_string(),
+            vec![crate::persist::chat_worklog::WorkLogEntry {
+                sha: Some("abc1234".into()),
+                kind: "feat".into(),
+                subject: "did a thing".into(),
+                ..Default::default()
+            }],
+        );
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::WorkspaceChat {
+                ws_idx: Some(0),
+                session_id: "s".to_string(),
+                has_move: false,
+                has_live: false,
+                has_modules: false,
+                has_worklog: true,
+            },
+            x: 0,
+            y: 0,
+            list: crate::app::state::MenuListState::new(0),
+        };
+        let idx = menu
+            .items()
+            .iter()
+            .position(|item| *item == "Work log...")
+            .expect("the verb is on the menu");
+
+        app.apply_context_menu_action_via_api(menu.clone(), idx);
+        assert_eq!(
+            app.state.mode,
+            Mode::ChatWorkLog,
+            "the production body must open the sheet"
+        );
+        assert_eq!(app.state.chat_worklog_modal.session_id, "s");
+
+        app.state.mode = Mode::Terminal;
+        app.state.chat_worklog_modal = crate::app::state::ChatWorkLogState::default();
+        let mut terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
+        apply_context_menu_action(&mut app.state, &mut terminal_runtimes, menu, idx);
+        assert_eq!(
+            app.state.mode,
+            Mode::ChatWorkLog,
+            "and so must the test body"
+        );
+        assert_eq!(app.state.chat_worklog_modal.session_id, "s");
+    }
+
+    // TP-WORKLOG-02
+    #[test]
+    fn the_worklog_verb_shows_only_for_a_chat_with_confirmed_commits() {
+        let with = ContextMenuKind::WorkspaceChat {
+            ws_idx: None,
+            session_id: "s".to_string(),
+            has_move: false,
+            has_live: false,
+            has_modules: false,
+            has_worklog: true,
+        };
+        let without = ContextMenuKind::WorkspaceChat {
+            ws_idx: None,
+            session_id: "s".to_string(),
+            has_move: false,
+            has_live: false,
+            has_modules: false,
+            has_worklog: false,
+        };
+        let offers = |kind: ContextMenuKind| {
+            let menu = ContextMenuState {
+                kind,
+                x: 0,
+                y: 0,
+                list: crate::app::state::MenuListState::new(0),
+            };
+            menu.items().contains(&"Work log...")
+        };
+        assert!(offers(with));
+        assert!(!offers(without));
+    }
+
     #[test]
     fn both_context_menu_bodies_open_the_module_picker() {
         let mut app = app_with_test_workspaces(&["main"]);
@@ -3897,6 +4011,7 @@ mod tests {
                 has_move: false,
                 has_live: false,
                 has_modules: true,
+                has_worklog: false,
             },
             x: 0,
             y: 0,
@@ -4188,6 +4303,7 @@ mod tests {
                 has_move: false,
                 has_live: false,
                 has_modules: false,
+                has_worklog: false,
             },
             x: 0,
             y: 0,
@@ -4622,6 +4738,7 @@ mod tests {
                 session_id: "s1".into(),
                 has_move: false,
                 has_live: false,
+                has_worklog: false,
             },
             x: 2,
             y: 5,
@@ -4671,6 +4788,7 @@ mod tests {
                 session_id: "s1".into(),
                 has_move: true,
                 has_live: false,
+                has_worklog: false,
             },
             x: 0,
             y: 0,
@@ -5158,6 +5276,7 @@ mod tests {
                 session_id: "s1".into(),
                 has_move: false,
                 has_live: false,
+                has_worklog: false,
             },
             x: 0,
             y: 0,
@@ -5753,6 +5872,7 @@ mod tests {
                 session_id: "daily-a".to_string(),
                 has_move: false,
                 has_live: false,
+                has_worklog: false,
             },
             x: 0,
             y: 0,
@@ -5910,6 +6030,7 @@ mod tests {
                 session_id: "s1".into(),
                 has_move: false,
                 has_live: true,
+                has_worklog: false,
             },
             x: 0,
             y: 0,
@@ -5935,6 +6056,7 @@ mod tests {
                 session_id: "s1".into(),
                 has_move: true,
                 has_live: false,
+                has_worklog: false,
             },
             x: 0,
             y: 0,
@@ -5972,6 +6094,7 @@ mod tests {
                 session_id: session.into(),
                 has_move: false,
                 has_live: true,
+                has_worklog: false,
             },
             x: 0,
             y: 0,
