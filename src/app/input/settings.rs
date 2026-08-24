@@ -201,7 +201,7 @@ pub(super) fn update_settings_state(state: &mut AppState, key: KeyEvent) -> Opti
                 state.settings.list.selected = status_indicator_index(state.status_indicators);
             }
             KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => {
-                state.settings.section = SettingsSection::Integrations;
+                state.settings.section = SettingsSection::Experiments;
                 state.settings.list.selected = 0;
             }
             _ => match super::modal::modal_action_from_key(&key, super::modal::SETTINGS_ACTIONS) {
