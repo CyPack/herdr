@@ -12801,7 +12801,14 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
         );
         assert!(client_rx.recv_timeout(Duration::from_millis(50)).is_err());
 
+        // Rebased for the fork's per-display tabs (TP-MCF-TAB-01): a bare
+        // switch_tab outside a viewer window only moves the default tab,
+        // while client 1 stays on the tab its ledger recorded at the first
+        // render. Standing in the client's viewer is what the real
+        // tab-switch path does, and it moves the ledger with it.
+        let viewer = server.app.state.enter_viewer(Some(1));
         server.app.state.workspaces[0].switch_tab(background_tab);
+        server.app.state.restore_viewer(viewer);
         server.render_and_stream();
         let visible_frame = read_server_frame(
             client_rx

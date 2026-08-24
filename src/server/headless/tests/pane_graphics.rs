@@ -792,7 +792,12 @@ async fn hidden_large_direct_frame_uploads_then_replays_placement_without_closin
     assert!(!control.contains("p="), "{control}");
     assert!(response_rx.try_recv().is_err());
 
+    // Rebased for the fork's per-display tabs (TP-MCF-TAB-01): switch the
+    // tab inside client 1's viewer window so the client's own tab ledger
+    // moves; a bare switch_tab would leave the client on its recorded tab.
+    let viewer = server.app.state.enter_viewer(Some(1));
     server.app.state.workspaces[0].switch_tab(background_tab);
+    server.app.state.restore_viewer(viewer);
     server.render_and_stream();
     let frame = read_server_frame(
         client_rx
@@ -801,7 +806,9 @@ async fn hidden_large_direct_frame_uploads_then_replays_placement_without_closin
     );
     assert!(!frame.graphics.windows(4).any(|bytes| bytes == b"a=p,"));
 
+    let viewer = server.app.state.enter_viewer(Some(1));
     server.app.state.workspaces[0].switch_tab(0);
+    server.app.state.restore_viewer(viewer);
     server.render_and_stream();
     let _hidden_again = read_server_frame(
         client_rx
@@ -818,7 +825,9 @@ async fn hidden_large_direct_frame_uploads_then_replays_placement_without_closin
     assert!(slot.stream_is_active());
     assert!(slot.layer.as_ref().unwrap().terminal_only());
 
+    let viewer = server.app.state.enter_viewer(Some(1));
     server.app.state.workspaces[0].switch_tab(background_tab);
+    server.app.state.restore_viewer(viewer);
     server.render_and_stream();
     let frame = read_server_frame(
         client_rx
