@@ -2221,8 +2221,46 @@ mod tests {
         assert!(!app.state.collapsed_space_keys.contains("repo-key"));
     }
 
-    // The upstream chevron proof asserts upstream sidebar chrome; the fork
-    // sidebar has its own collapse affordance and no group chevron cell.
+    #[test]
+    fn clicking_worktree_parent_chevron_toggles_group_only() {
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![Workspace::test_new("main"), Workspace::test_new("issue")];
+        for (idx, checkout_path) in ["/repo/herdr", "/repo/herdr-issue"].into_iter().enumerate() {
+            app.state.workspaces[idx].worktree_space =
+                Some(crate::workspace::WorktreeSpaceMembership {
+                    key: "repo-key".into(),
+                    label: "herdr".into(),
+                    repo_root: "/repo/herdr".into(),
+                    checkout_path: checkout_path.into(),
+                    is_linked_worktree: idx > 0,
+                });
+        }
+        app.state.active = None;
+        app.state.mode = Mode::Terminal;
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        // TP-TREE-14 moved this control off the parent checkout and onto the
+        // repository's own row. The subject is unchanged: pressing it toggles
+        // the group and does nothing else.
+        let parent = app.state.view.workspace_group_header_areas[0].rect;
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            parent.x,
+            parent.y,
+        ));
+
+        assert_eq!(app.state.active, None);
+        assert!(app.state.workspace_press.is_none());
+        assert!(app.state.collapsed_space_keys.contains("repo-key"));
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            parent.x,
+            parent.y,
+        ));
+
+        assert!(!app.state.collapsed_space_keys.contains("repo-key"));
+    }
 
     #[test]
     fn clicking_project_header_toggles_project_only() {
