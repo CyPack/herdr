@@ -10,6 +10,7 @@ pub(crate) mod app_dock;
 #[cfg(test)]
 pub(crate) use sidebar::closed_agent_row_slots;
 
+mod chat_worklog;
 mod compose;
 mod dialogs;
 mod file_manager;
@@ -36,6 +37,7 @@ mod text;
 pub(crate) mod visual_fixture;
 pub(crate) mod widgets;
 
+use self::chat_worklog::render_chat_worklog_overlay;
 use self::dialogs::{
     render_confirm_close_overlay, render_file_delete_confirmation_overlay,
     render_new_linked_worktree_overlay, render_open_existing_worktree_overlay,
@@ -111,6 +113,21 @@ pub(crate) use self::tailscale_send::{
 };
 pub(crate) use self::text::display_width_u16;
 pub(crate) use self::{
+    chat_worklog::chat_worklog_lines,
+    keybind_help::{keybind_help_layout_width, keybind_help_lines},
+    mobile::{
+        clamp_to_mobile_screen, mobile_drawer_areas, mobile_drawer_cursor_doc_range,
+        mobile_drawer_cursor_stops, mobile_drawer_cursor_target, mobile_drawer_default_cursor,
+        mobile_drawer_footer_band_height, mobile_drawer_max_scroll, mobile_drawer_pinned_start,
+        mobile_drawer_rows, mobile_drawer_target_at, mobile_drawer_workspace_doc_range,
+        mobile_screen_rect, DrawerRowContent, MobileHeaderHitAreas, MobileSwitcherTarget,
+    },
+    panes::{apply_pane_chrome, pane_inner_rect, pane_is_scrolled_back},
+    tab_surface::{tab_surface_cursor, tab_surface_hyperlinks, TabSurfaceView},
+    tabs::compute_tab_bar_view,
+    widgets::{centered_popup_rect, modal_stack_areas},
+};
+pub(crate) use self::{
     dialogs::{
         confirm_close_button_rects, confirm_close_popup_rect, delete_module_button_rects,
         delete_module_popup_rect, new_linked_worktree_button_rects, new_linked_worktree_inner_rect,
@@ -139,20 +156,6 @@ pub(crate) use self::{
         workspace_new_chat_cell, workspace_parent_group_state, AgentPanelEntry, ModuleBranchSource,
         WorkspaceListEntry,
     },
-};
-pub(crate) use self::{
-    keybind_help::{keybind_help_layout_width, keybind_help_lines},
-    mobile::{
-        clamp_to_mobile_screen, mobile_drawer_areas, mobile_drawer_cursor_doc_range,
-        mobile_drawer_cursor_stops, mobile_drawer_cursor_target, mobile_drawer_default_cursor,
-        mobile_drawer_footer_band_height, mobile_drawer_max_scroll, mobile_drawer_pinned_start,
-        mobile_drawer_rows, mobile_drawer_target_at, mobile_drawer_workspace_doc_range,
-        mobile_screen_rect, DrawerRowContent, MobileHeaderHitAreas, MobileSwitcherTarget,
-    },
-    panes::{apply_pane_chrome, pane_inner_rect, pane_is_scrolled_back},
-    tab_surface::{tab_surface_cursor, tab_surface_hyperlinks, TabSurfaceView},
-    tabs::compute_tab_bar_view,
-    widgets::{centered_popup_rect, modal_stack_areas},
 };
 use crate::app::state::ViewLayout;
 use crate::app::{AppState, Mode};
@@ -1487,6 +1490,7 @@ impl compose::Component for OverlayLayer {
             }
             Mode::GlobalMenu => render_global_launcher_menu(app, frame),
             Mode::KeybindHelp => render_keybind_help_overlay(app, frame),
+            Mode::ChatWorkLog => render_chat_worklog_overlay(app, frame),
             Mode::Navigator => render_navigator_overlay(app, terminal_runtimes, frame),
             Mode::AttachFile => render_agent_attachment_picker(app, frame, terminal_area),
             Mode::Terminal => {}
@@ -5066,6 +5070,7 @@ mod tests {
             Mode::ProductAnnouncement,
             Mode::Settings,
             Mode::KeybindHelp,
+            Mode::ChatWorkLog,
             Mode::RenameWorkspace,
             Mode::RenameTab,
             Mode::NewLinkedWorktree,

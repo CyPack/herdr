@@ -390,6 +390,7 @@ impl AppState {
             | Mode::Settings
             | Mode::GlobalMenu
             | Mode::KeybindHelp
+            | Mode::ChatWorkLog
             | Mode::Navigator
             | Mode::PreviewViewer
             | Mode::TailscaleSend
@@ -454,6 +455,7 @@ impl AppState {
             | Mode::Settings
             | Mode::GlobalMenu
             | Mode::KeybindHelp
+            | Mode::ChatWorkLog
             | Mode::Navigator
             | Mode::AgentReferencePicker
             | Mode::AgentColleaguePicker
