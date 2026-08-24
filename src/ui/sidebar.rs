@@ -12195,7 +12195,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
     }
 
     // Retired with the merge: this upstream proof asserts upstream sidebar
-    // chrome; the fork sidebar owns these surfaces and their TP-guarded proofs.
+    // chrome; the fork sidebar owns these surfaces and their registry-guarded proofs.
 
     #[test]
     fn collapsed_sidebar_does_not_highlight_agents_without_active_workspace() {
@@ -12215,7 +12215,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
     }
 
     // Retired with the merge: this upstream proof asserts upstream sidebar
-    // chrome; the fork sidebar owns these surfaces and their TP-guarded proofs.
+    // chrome; the fork sidebar owns these surfaces and their registry-guarded proofs.
 
     #[test]
     fn folding_a_node_keeps_the_active_checkout_visible() {
@@ -12877,10 +12877,10 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
     }
 
     // Retired with the merge: this upstream proof asserts upstream sidebar
-    // chrome; the fork sidebar owns these surfaces and their TP-guarded proofs.
+    // chrome; the fork sidebar owns these surfaces and their registry-guarded proofs.
 
     // Retired with the merge: this upstream proof asserts upstream sidebar
-    // chrome; the fork sidebar owns these surfaces and their TP-guarded proofs.
+    // chrome; the fork sidebar owns these surfaces and their registry-guarded proofs.
 
     #[test]
     fn parent_workspace_row_stays_clickable_when_grouped() {
