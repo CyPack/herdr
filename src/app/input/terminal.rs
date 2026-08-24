@@ -3,7 +3,7 @@ use crossterm::event::KeyCode;
 use tracing::{debug, warn};
 
 use crate::{
-    app::{App, Mode, TerminalInputTarget},
+    app::{App, InputSourceId, Mode, TerminalInputTarget},
     input::TerminalKey,
 };
 
@@ -28,11 +28,20 @@ fn is_modifier_only_key(code: &KeyCode) -> bool {
 }
 
 impl App {
+    #[cfg(test)]
     pub(crate) fn handle_terminal_key_headless(
         &mut self,
         key: TerminalKey,
     ) -> Option<TerminalInputTarget> {
-        match self.prepare_popup_key_forward(key) {
+        self.handle_terminal_key_headless_from(crate::app::LOCAL_INPUT_SOURCE, key)
+    }
+
+    pub(crate) fn handle_terminal_key_headless_from(
+        &mut self,
+        source_id: InputSourceId,
+        key: TerminalKey,
+    ) -> Option<TerminalInputTarget> {
+        match self.prepare_popup_key_forward(key.clone()) {
             PreparedPopupInput::NotOpen => {}
             PreparedPopupInput::Consumed => return None,
             PreparedPopupInput::Bytes { target, bytes } => {
@@ -44,21 +53,29 @@ impl App {
             }
         }
 
-        let input = self.prepare_terminal_key_forward(key)?;
+        let input = self.prepare_terminal_key_forward(source_id, key)?;
         let sent = self
             .lookup_runtime_sender(input.ws_idx, input.pane_id)
             .is_some_and(|runtime| runtime.try_send_bytes(input.bytes).is_ok());
         sent.then_some(input.target)
     }
 
-    fn prepare_terminal_key_forward(&mut self, key: TerminalKey) -> Option<PreparedPaneInput> {
+    fn prepare_terminal_key_forward(
+        &mut self,
+        source_id: InputSourceId,
+        key: TerminalKey,
+    ) -> Option<PreparedPaneInput> {
+        let key_event = key.as_key_event();
+        if self.try_copy_retained_selection(source_id, key.clone()) {
+            return None;
+        }
+
         self.state.clear_selection();
         self.selection_autoscroll_deadline = None;
         self.state.update_dismissed = true;
 
-        let key_event = key.as_key_event();
-
-        if let Some(action) = super::terminal_direct_non_indexed_navigation_action(&self.state, key)
+        if let Some(action) =
+            super::terminal_direct_non_indexed_navigation_action(&self.state, &key)
         {
             debug!(
                 code = ?key_event.code,
@@ -77,7 +94,7 @@ impl App {
 
         if let Some(binding) = super::navigate::command_for_key(
             &self.state,
-            key,
+            &key,
             super::navigate::BindingDispatch::Direct,
         ) {
             debug!(
@@ -91,7 +108,7 @@ impl App {
             return None;
         }
 
-        if let Some(action) = super::terminal_direct_indexed_navigation_action(&self.state, key) {
+        if let Some(action) = super::terminal_direct_indexed_navigation_action(&self.state, &key) {
             debug!(
                 code = ?key_event.code,
                 modifiers = ?key_event.modifiers,
@@ -103,7 +120,7 @@ impl App {
             return None;
         }
 
-        if self.state.is_prefix_key(key) {
+        if self.state.is_prefix_key(&key) {
             self.state.mode = Mode::Prefix;
             return None;
         }
@@ -137,8 +154,8 @@ impl App {
         if matches!(key_event.code, KeyCode::PageUp | KeyCode::PageDown)
             && key_event.modifiers.is_empty()
         {
-            if let Some(input_state) = rt.input_state() {
-                if input_state.plain_page_keys_use_host_scrollback() {
+            if let Some(host_scroll) = rt.plain_page_keys_use_host_scrollback() {
+                if host_scroll {
                     if key_event.kind == crossterm::event::KeyEventKind::Release {
                         return None;
                     }
@@ -173,7 +190,7 @@ impl App {
 
         rt.scroll_reset();
         let protocol = rt.keyboard_protocol();
-        let bytes = rt.encode_terminal_key(key);
+        let bytes = rt.encode_terminal_key(key.clone());
 
         if matches!(key_event.code, KeyCode::Esc)
             || key_event
@@ -235,7 +252,7 @@ impl App {
             return PreparedPopupInput::Consumed;
         };
         rt.scroll_reset();
-        let bytes = rt.encode_terminal_key(key);
+        let bytes = rt.encode_terminal_key(key.clone());
         self.state.mode = Mode::Terminal;
         if bytes.is_empty() {
             PreparedPopupInput::Consumed
@@ -248,6 +265,12 @@ impl App {
     }
 
     pub(crate) fn host_keyboard_report_all_requested(&self) -> bool {
+        if self.state.popup_pane.is_none()
+            && matches!(self.state.mode, Mode::Prefix | Mode::Navigate)
+        {
+            return true;
+        }
+
         let runtime = if self.state.popup_pane.is_some() {
             self.popup_runtime()
         } else if self.state.mode == Mode::Terminal {
@@ -259,7 +282,7 @@ impl App {
             None
         };
 
-        runtime.is_some_and(|runtime| runtime.keyboard_protocol().reports_all_keys())
+        runtime.is_some_and(crate::terminal::TerminalRuntime::keyboard_report_all_requested)
     }
 
     fn terminal_input_runtime(
@@ -294,7 +317,7 @@ impl App {
         let Some(runtime) = self.terminal_input_runtime(target) else {
             return false;
         };
-        let bytes = runtime.encode_terminal_key(key);
+        let bytes = runtime.encode_terminal_key(key.clone());
         bytes.is_empty() || runtime.try_send_bytes(Bytes::from(bytes)).is_ok()
     }
 
@@ -306,29 +329,29 @@ impl App {
         let Some(runtime) = self.terminal_input_runtime(target) else {
             return false;
         };
-        let bytes = runtime.encode_terminal_key(key);
+        let bytes = runtime.encode_terminal_key(key.clone());
         bytes.is_empty() || runtime.send_bytes(Bytes::from(bytes)).await.is_ok()
     }
 
     fn take_pressed_keys_for_source(
         &mut self,
         source_id: crate::app::InputSourceId,
-    ) -> Vec<crate::app::PressedTerminalKey> {
-        let pressed = self
-            .pressed_terminal_keys
-            .iter()
-            .filter(|((id, _), _)| *id == source_id)
-            .map(|(_, pressed)| pressed.clone())
-            .collect();
-        self.pressed_terminal_keys
-            .retain(|(id, _), _| *id != source_id);
-        self.suppressed_repeat_keys
-            .retain(|(id, _)| *id != source_id);
-        pressed
+    ) -> Vec<super::ForwardedInputLease> {
+        self.input_leases.remove_source(source_id)
+    }
+
+    pub(crate) fn release_input_target_headless(&mut self, target: &TerminalInputTarget) {
+        for pressed in self.input_leases.remove_target(target) {
+            let release = pressed
+                .key
+                .with_kind(crossterm::event::KeyEventKind::Release);
+            let _ = self.forward_terminal_key_to_target_headless(&pressed.target, release);
+        }
     }
 
     pub(crate) fn release_input_source_headless(&mut self, source_id: crate::app::InputSourceId) {
-        self.pending_url_click_sources.remove(&source_id);
+        // Pending URL clicks survive this call; see clear_input_source.
+        self.state.clear_chrome_gesture(source_id);
         for pressed in self.take_pressed_keys_for_source(source_id) {
             let release = pressed
                 .key
@@ -338,7 +361,8 @@ impl App {
     }
 
     pub(crate) async fn release_input_source(&mut self, source_id: crate::app::InputSourceId) {
-        self.pending_url_click_sources.remove(&source_id);
+        // Pending URL clicks survive this call; see clear_input_source.
+        self.state.clear_chrome_gesture(source_id);
         for pressed in self.take_pressed_keys_for_source(source_id) {
             let release = pressed
                 .key
@@ -353,7 +377,7 @@ impl App {
         &mut self,
         key: TerminalKey,
     ) -> Option<TerminalInputTarget> {
-        match self.prepare_popup_key_forward(key) {
+        match self.prepare_popup_key_forward(key.clone()) {
             PreparedPopupInput::NotOpen => {}
             PreparedPopupInput::Consumed => return None,
             PreparedPopupInput::Bytes { target, bytes } => {
@@ -365,7 +389,7 @@ impl App {
             }
         }
 
-        let input = self.prepare_terminal_key_forward(key)?;
+        let input = self.prepare_terminal_key_forward(crate::app::LOCAL_INPUT_SOURCE, key)?;
         let sent = if let Some(runtime) = self.lookup_runtime_sender(input.ws_idx, input.pane_id) {
             runtime.send_bytes(input.bytes).await.is_ok()
         } else {
@@ -381,6 +405,8 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
     use ratatui::layout::Rect;
 
+    #[cfg(target_os = "linux")]
+    use super::super::wait_for_detached_process_reap;
     use super::super::{app_for_mouse_test, mouse, numbered_lines_bytes};
     #[cfg(unix)]
     use super::super::{unique_temp_path, wait_for_file};
@@ -404,6 +430,7 @@ mod tests {
             80,
             app.state.pane_scrollback_limit_bytes,
             app.state.host_terminal_theme,
+            app.state.host_terminal_appearance,
             crate::pane::PaneShellConfig::new(&app.state.default_shell, app.state.shell_mode),
             app.event_tx.clone(),
             app.render_notify.clone(),
@@ -716,7 +743,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn copy_on_select_disabled_keeps_explicit_double_click_copy() {
+    async fn copy_on_select_disabled_retains_double_clicked_word_until_shortcut() {
         let (mut app, info) = app_with_screen_bytes(b"alpha beta");
         app.state.copy_on_select = false;
         let col = info.inner_rect.x + 2;
@@ -724,16 +751,22 @@ mod tests {
 
         double_click(&mut app, col, row);
 
-        assert_eq!(clipboard_write_content(&mut app), b"alpha");
         assert_visible_selection(&app);
-        assert!(app.selection_highlight_clear_deadline.is_some());
+        assert!(app.selection_highlight_clear_deadline.is_none());
         assert!(app.event_rx.try_recv().is_err());
+
+        app.handle_terminal_key_headless(TerminalKey::new(
+            KeyCode::Char('c'),
+            KeyModifiers::CONTROL,
+        ));
+
+        assert_eq!(clipboard_write_content(&mut app), b"alpha");
+        assert!(app.state.selection.is_none());
     }
 
     #[tokio::test]
     async fn new_drag_cancels_stale_double_click_highlight_deadline() {
         let (mut app, info) = app_with_screen_bytes(b"alpha beta");
-        app.state.copy_on_select = false;
         let row = info.inner_rect.y;
         let word_col = info.inner_rect.x + 2;
 
@@ -742,6 +775,7 @@ mod tests {
         let stale_deadline = app
             .selection_highlight_clear_deadline
             .expect("double-click highlight deadline");
+        app.state.copy_on_select = false;
 
         let start_col = info.inner_rect.x + 6;
         let end_col = info.inner_rect.x + 9;
@@ -848,10 +882,69 @@ mod tests {
         assert!(app.selection_highlight_clear_deadline.is_none());
     }
 
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn ctrl_click_url_reaps_failed_opener() {
+        let opener_dir = unique_temp_path("url-opener");
+        let record_path = opener_dir.join("record");
+        let opener_path = opener_dir.join("xdg-open");
+        std::fs::create_dir_all(&opener_dir).expect("fake opener directory");
+        std::fs::write(
+            &opener_path,
+            "#!/bin/sh\nprintf '%s\\n%s\\n' \"$$\" \"$1\" > \"$2\"\nexit 3\n",
+        )
+        .expect("fake opener script");
+
+        let url = "https://example.com/akbash-2903";
+        let line = format!("see {url}");
+        let (mut app, info) = app_with_screen_bytes(line.as_bytes());
+        let col = info.inner_rect.x + line.find("example").expect("url host") as u16;
+        let handled = app.handle_modified_url_click_with(
+            41,
+            modified_mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                col,
+                info.inner_rect.y,
+                KeyModifiers::CONTROL,
+            ),
+            |clicked_url| {
+                std::process::Command::new("/bin/sh")
+                    .arg(&opener_path)
+                    .arg(clicked_url)
+                    .arg(&record_path)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                    .map(Some)
+            },
+        );
+        assert!(handled);
+
+        let record = wait_for_file(&record_path);
+        let mut lines = record.lines();
+        let pid = lines
+            .next()
+            .expect("opener pid")
+            .parse::<u32>()
+            .expect("numeric opener pid");
+        assert_eq!(lines.next(), Some(url));
+
+        let reaped = wait_for_detached_process_reap(&mut app, pid).await;
+        if !reaped {
+            unsafe {
+                libc::waitpid(pid as libc::pid_t, std::ptr::null_mut(), 0);
+            }
+        }
+
+        let _ = std::fs::remove_dir_all(&opener_dir);
+        assert!(reaped, "failed URL opener child {pid} was not reaped");
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn ctrl_click_url_does_not_forward_release_to_mouse_reporting_pane() {
-        let line = "see https://github.com/ogulcancelik/herdr/issues/1761";
+        let line = "see https://github.com/herdrdev/herdr/issues/1761";
         let col = line.find("github").expect("url host") as u16;
         let (mut app, info) = app_with_screen_bytes(b"");
         let pane_id = app.state.workspaces[0].tabs[0].root_pane;
@@ -970,8 +1063,63 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn outer_focus_loss_does_not_forward_pending_url_click_release_to_pane() {
+        let line = "see https://github.com/herdrdev/herdr/issues/1761";
+        let col = line.find("github").expect("url host") as u16;
+        let (mut app, info) = app_with_screen_bytes(b"");
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        let screen = format!("\x1b[?1049h\x1b[?1000h\x1b[?1006h{line}");
+        let (runtime, mut input_rx) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                info.inner_rect.width,
+                info.inner_rect.height,
+                0,
+                screen.as_bytes(),
+                4,
+            );
+        app.state.insert_test_runtime(pane_id, runtime);
+        install_test_link_handler(&mut app);
+        let url_x = info.inner_rect.x + col;
+
+        app.handle_mouse_from_input_source(
+            41,
+            modified_mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                url_x,
+                info.inner_rect.y,
+                KeyModifiers::CONTROL,
+            ),
+        );
+        assert_eq!(app.state.plugin_command_logs.len(), 1);
+
+        // Opening the URL raises the browser, so the host terminal loses focus
+        // while the button is still down.
+        app.route_client_events_from(
+            41,
+            vec![crate::raw_input::RawInputEvent::OuterFocusLost],
+            false,
+        );
+
+        app.handle_mouse_from_input_source(
+            41,
+            modified_mouse(
+                MouseEventKind::Up(MouseButton::Left),
+                url_x,
+                info.inner_rect.y,
+                KeyModifiers::empty(),
+            ),
+        );
+
+        assert!(
+            input_rx.try_recv().is_err(),
+            "focus loss must not clear a pending URL click, so its release must stay out of the pane"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn ctrl_click_url_invokes_plugin_link_handler_but_super_click_does_not() {
-        let line = "see https://github.com/ogulcancelik/herdr/issues/398";
+        let line = "see https://github.com/herdrdev/herdr/issues/398";
         let col = line.find("github").expect("url host") as u16;
 
         let (mut ctrl_app, ctrl_info) = app_with_screen_bytes(line.as_bytes());
@@ -1628,65 +1776,155 @@ mod tests {
         assert!(rx.try_recv().is_err());
     }
 
-    #[tokio::test]
-    async fn page_up_scrolls_plain_shell_pane() {
+    fn app_with_plain_scrollback(
+        line_count: usize,
+    ) -> (App, crate::layout::PaneId, crate::layout::PaneInfo) {
         let mut app = app_for_mouse_test();
-        let mut ws = Workspace::test_new("test");
-        let pane_id = ws.tabs[0].root_pane;
-        let pane_infos = ws.tabs[0].layout.panes(Rect::new(26, 2, 80, 18));
-        let info = pane_infos[0].clone();
-        ws.tabs[0].runtimes.insert(
+        let mut workspace = Workspace::test_new("test");
+        let pane_id = workspace.tabs[0].root_pane;
+        let pane_infos = workspace.tabs[0].layout.panes(Rect::new(26, 2, 80, 18));
+        let pane_info = pane_infos[0].clone();
+        workspace.tabs[0].runtimes.insert(
             pane_id,
             crate::terminal::TerminalRuntime::test_with_scrollback_bytes(
-                info.inner_rect.width,
-                info.inner_rect.height,
+                pane_info.inner_rect.width,
+                pane_info.inner_rect.height,
                 16 * 1024,
-                &numbered_lines_bytes(64),
+                &numbered_lines_bytes(line_count),
             ),
         );
-
-        app.state.workspaces = vec![ws];
+        app.state.workspaces = vec![workspace];
         app.state.active = Some(0);
         app.state.selected = 0;
         app.state.mode = Mode::Terminal;
         app.state.view.pane_infos = pane_infos;
+        (app, pane_id, pane_info)
+    }
 
-        let start_metrics = app
-            .state
+    fn pane_scroll_offset(app: &App, pane_id: crate::layout::PaneId) -> usize {
+        app.state
             .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
             .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
-            .expect("initial scroll metrics");
-        assert_eq!(start_metrics.offset_from_bottom, 0);
+            .expect("pane scroll metrics")
+            .offset_from_bottom
+    }
+
+    fn physical_page_up(repeat_count: u16) -> TerminalKey {
+        TerminalKey::new(KeyCode::PageUp, KeyModifiers::empty()).with_windows_record(
+            crate::input::WindowsKeyRecord {
+                key_down: true,
+                repeat_count,
+                virtual_key_code: 0x21,
+                virtual_scan_code: 0x49,
+                unicode: 0,
+                control_key_state: 0x0100,
+            },
+        )
+    }
+
+    #[tokio::test]
+    async fn page_up_scrolls_plain_shell_pane() {
+        let (mut app, pane_id, pane_info) = app_with_plain_scrollback(64);
+        assert_eq!(pane_scroll_offset(&app, pane_id), 0);
 
         app.handle_terminal_key_headless(TerminalKey::new(KeyCode::PageUp, KeyModifiers::empty()));
 
-        let end_metrics = app
-            .state
-            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
-            .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
-            .expect("scroll metrics after PageUp");
         assert_eq!(
-            end_metrics.offset_from_bottom,
-            info.inner_rect.height as usize
+            pane_scroll_offset(&app, pane_id),
+            pane_info.inner_rect.height as usize
         );
     }
 
     #[tokio::test]
-    async fn page_down_returns_to_bottom_after_page_up() {
+    async fn consumed_page_up_preserves_separate_and_grouped_repeats() {
+        let (mut app, pane_id, pane_info) = app_with_plain_scrollback(256);
+        let page_up = physical_page_up(1);
+        app.route_client_events(
+            vec![
+                crate::raw_input::RawInputEvent::Key(page_up.clone()),
+                crate::raw_input::RawInputEvent::Key(
+                    page_up.clone().with_kind(KeyEventKind::Repeat),
+                ),
+                crate::raw_input::RawInputEvent::Key(
+                    page_up.clone().with_kind(KeyEventKind::Release),
+                ),
+            ],
+            false,
+        );
+
+        assert_eq!(
+            pane_scroll_offset(&app, pane_id),
+            pane_info.inner_rect.height as usize * 2
+        );
+
+        app.route_client_events(
+            vec![crate::raw_input::RawInputEvent::Key(physical_page_up(3))],
+            false,
+        );
+
+        assert_eq!(
+            pane_scroll_offset(&app, pane_id),
+            pane_info.inner_rect.height as usize * 5
+        );
+    }
+
+    #[tokio::test]
+    async fn runtime_consumed_page_up_preserves_separate_and_grouped_repeats() {
+        let (mut app, pane_id, pane_info) = app_with_plain_scrollback(256);
+        let page_up = physical_page_up(1);
+        for key in [
+            page_up.clone(),
+            page_up.clone().with_kind(KeyEventKind::Repeat),
+            page_up.clone().with_kind(KeyEventKind::Release),
+        ] {
+            app.handle_raw_input_event(crate::raw_input::RawInputEvent::Key(key))
+                .await;
+        }
+
+        assert_eq!(
+            pane_scroll_offset(&app, pane_id),
+            pane_info.inner_rect.height as usize * 2
+        );
+
+        app.handle_raw_input_event(crate::raw_input::RawInputEvent::Key(physical_page_up(3)))
+            .await;
+
+        assert_eq!(
+            pane_scroll_offset(&app, pane_id),
+            pane_info.inner_rect.height as usize * 5
+        );
+    }
+
+    #[tokio::test]
+    async fn consumed_repeat_that_becomes_forwarded_acquires_pane_ownership() {
         let mut app = app_for_mouse_test();
         let mut ws = Workspace::test_new("test");
-        let pane_id = ws.tabs[0].root_pane;
+        let first_pane = ws.tabs[0].root_pane;
+        let second_pane = ws.test_split(ratatui::layout::Direction::Horizontal);
         let pane_infos = ws.tabs[0].layout.panes(Rect::new(26, 2, 80, 18));
-        let info = pane_infos[0].clone();
+        let first_info = pane_infos
+            .iter()
+            .find(|info| info.id == first_pane)
+            .expect("first pane info");
         ws.tabs[0].runtimes.insert(
-            pane_id,
+            first_pane,
             crate::terminal::TerminalRuntime::test_with_scrollback_bytes(
-                info.inner_rect.width,
-                info.inner_rect.height,
+                first_info.inner_rect.width,
+                first_info.inner_rect.height,
                 16 * 1024,
-                &numbered_lines_bytes(64),
+                &numbered_lines_bytes(128),
             ),
         );
+        let (second_runtime, mut second_rx) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                80,
+                24,
+                0,
+                b"\x1b[?1h\x1b[>15u",
+                3,
+            );
+        ws.tabs[0].runtimes.insert(second_pane, second_runtime);
+        ws.tabs[0].layout.focus_pane(first_pane);
 
         app.state.workspaces = vec![ws];
         app.state.active = Some(0);
@@ -1694,107 +1932,153 @@ mod tests {
         app.state.mode = Mode::Terminal;
         app.state.view.pane_infos = pane_infos;
 
-        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::PageUp, KeyModifiers::empty()));
-        let after_up = app
+        let page_up = physical_page_up(1);
+        app.route_client_events(
+            vec![crate::raw_input::RawInputEvent::Key(page_up.clone())],
+            false,
+        );
+        assert!(app.state.focus_pane_in_workspace(0, second_pane));
+        app.route_client_events(
+            vec![crate::raw_input::RawInputEvent::Key(
+                page_up.clone().with_kind(KeyEventKind::Repeat),
+            )],
+            false,
+        );
+        assert!(app.state.focus_pane_in_workspace(0, first_pane));
+        app.route_client_events(
+            vec![
+                crate::raw_input::RawInputEvent::Key(
+                    page_up.clone().with_kind(KeyEventKind::Repeat),
+                ),
+                crate::raw_input::RawInputEvent::Key(page_up.with_kind(KeyEventKind::Release)),
+            ],
+            false,
+        );
+
+        let first_repeat = second_rx.try_recv().expect("first forwarded repeat");
+        let second_repeat = second_rx.try_recv().expect("owned repeat");
+        let release = second_rx.try_recv().expect("owned release");
+        assert_eq!(first_repeat, second_repeat);
+        assert_ne!(second_repeat, release);
+        assert!(second_rx.try_recv().is_err());
+        assert!(app.input_leases.is_empty());
+    }
+
+    #[tokio::test]
+    async fn missing_popup_runtime_suppresses_grouped_and_later_repeats() {
+        let mut app = app_for_mouse_test();
+        let mut ws = Workspace::test_new("test");
+        let pane_id = ws.tabs[0].root_pane;
+        let (runtime, mut input_rx) = crate::terminal::TerminalRuntime::test_with_channel(80, 24);
+        ws.tabs[0].runtimes.insert(pane_id, runtime);
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        let (popup_runtime, _popup_rx) =
+            crate::terminal::TerminalRuntime::test_with_channel(40, 12);
+        app.install_test_popup_runtime(popup_runtime);
+        let popup_terminal_id = app
             .state
-            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
-            .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
-            .expect("scroll metrics after PageUp");
-        assert!(after_up.offset_from_bottom > 0);
+            .popup_pane
+            .as_ref()
+            .expect("popup installed")
+            .terminal_id
+            .clone();
+        app.terminal_runtimes.remove(&popup_terminal_id);
+
+        let key = TerminalKey::new(KeyCode::Char('x'), KeyModifiers::empty()).with_repeat_count(3);
+        app.route_client_events(
+            vec![
+                crate::raw_input::RawInputEvent::Key(key.clone()),
+                crate::raw_input::RawInputEvent::Key(
+                    key.clone()
+                        .with_kind(KeyEventKind::Repeat)
+                        .with_repeat_count(1),
+                ),
+                crate::raw_input::RawInputEvent::Key(key.with_kind(KeyEventKind::Release)),
+            ],
+            false,
+        );
+
+        assert!(app.state.popup_pane.is_none());
+        assert!(input_rx.try_recv().is_err());
+        assert!(app.input_leases.is_empty());
+    }
+
+    #[tokio::test]
+    async fn consumed_repeat_stays_suppressed_after_context_returns() {
+        let (mut app, pane_id, _pane_info) = app_with_plain_scrollback(128);
+        let page_up = physical_page_up(1);
+        app.route_client_events(
+            vec![crate::raw_input::RawInputEvent::Key(page_up.clone())],
+            false,
+        );
+        let after_press = pane_scroll_offset(&app, pane_id);
+
+        let (popup_runtime, mut popup_rx) =
+            crate::terminal::TerminalRuntime::test_with_channel(40, 12);
+        app.install_test_popup_runtime(popup_runtime);
+        app.route_client_events(
+            vec![crate::raw_input::RawInputEvent::Key(
+                page_up.clone().with_kind(KeyEventKind::Repeat),
+            )],
+            false,
+        );
+        app.close_popup_pane();
+        app.route_client_events(
+            vec![
+                crate::raw_input::RawInputEvent::Key(
+                    page_up.clone().with_kind(KeyEventKind::Repeat),
+                ),
+                crate::raw_input::RawInputEvent::Key(page_up.with_kind(KeyEventKind::Release)),
+            ],
+            false,
+        );
+
+        assert_eq!(pane_scroll_offset(&app, pane_id), after_press);
+        assert!(popup_rx.try_recv().is_err());
+        assert!(app.input_leases.is_empty());
+    }
+
+    #[tokio::test]
+    async fn page_down_returns_to_bottom_after_page_up() {
+        let (mut app, pane_id, _pane_info) = app_with_plain_scrollback(64);
+
+        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::PageUp, KeyModifiers::empty()));
+        assert!(pane_scroll_offset(&app, pane_id) > 0);
 
         app.handle_terminal_key_headless(TerminalKey::new(
             KeyCode::PageDown,
             KeyModifiers::empty(),
         ));
-        let after_down = app
-            .state
-            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
-            .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
-            .expect("scroll metrics after PageDown");
-        assert_eq!(after_down.offset_from_bottom, 0);
+        assert_eq!(pane_scroll_offset(&app, pane_id), 0);
     }
 
     #[tokio::test]
     async fn page_up_release_does_not_scroll_plain_shell_pane_again() {
-        let mut app = app_for_mouse_test();
-        let mut ws = Workspace::test_new("test");
-        let pane_id = ws.tabs[0].root_pane;
-        let pane_infos = ws.tabs[0].layout.panes(Rect::new(26, 2, 80, 18));
-        let info = pane_infos[0].clone();
-        ws.tabs[0].runtimes.insert(
-            pane_id,
-            crate::terminal::TerminalRuntime::test_with_scrollback_bytes(
-                info.inner_rect.width,
-                info.inner_rect.height,
-                16 * 1024,
-                &numbered_lines_bytes(64),
-            ),
-        );
-
-        app.state.workspaces = vec![ws];
-        app.state.active = Some(0);
-        app.state.selected = 0;
-        app.state.mode = Mode::Terminal;
-        app.state.view.pane_infos = pane_infos;
+        let (mut app, pane_id, pane_info) = app_with_plain_scrollback(64);
 
         app.handle_terminal_key_headless(TerminalKey::new(KeyCode::PageUp, KeyModifiers::empty()));
-        let after_press = app
-            .state
-            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
-            .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
-            .expect("scroll metrics after PageUp press");
-        assert_eq!(
-            after_press.offset_from_bottom,
-            info.inner_rect.height as usize
-        );
+        let after_press = pane_scroll_offset(&app, pane_id);
+        assert_eq!(after_press, pane_info.inner_rect.height as usize);
 
         app.handle_terminal_key_headless(
             TerminalKey::new(KeyCode::PageUp, KeyModifiers::empty())
                 .with_kind(KeyEventKind::Release),
         );
 
-        let after_release = app
-            .state
-            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
-            .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
-            .expect("scroll metrics after PageUp release");
-        assert_eq!(
-            after_release.offset_from_bottom,
-            after_press.offset_from_bottom
-        );
+        assert_eq!(pane_scroll_offset(&app, pane_id), after_press);
     }
 
     #[tokio::test]
     async fn modified_page_up_does_not_host_scroll_plain_shell_pane() {
-        let mut app = app_for_mouse_test();
-        let mut ws = Workspace::test_new("test");
-        let pane_id = ws.tabs[0].root_pane;
-        let pane_infos = ws.tabs[0].layout.panes(Rect::new(26, 2, 80, 18));
-        let info = pane_infos[0].clone();
-        ws.tabs[0].runtimes.insert(
-            pane_id,
-            crate::terminal::TerminalRuntime::test_with_scrollback_bytes(
-                info.inner_rect.width,
-                info.inner_rect.height,
-                16 * 1024,
-                &numbered_lines_bytes(64),
-            ),
-        );
-
-        app.state.workspaces = vec![ws];
-        app.state.active = Some(0);
-        app.state.selected = 0;
-        app.state.mode = Mode::Terminal;
-        app.state.view.pane_infos = pane_infos;
+        let (mut app, pane_id, _pane_info) = app_with_plain_scrollback(64);
 
         app.handle_terminal_key_headless(TerminalKey::new(KeyCode::PageUp, KeyModifiers::CONTROL));
 
-        let metrics = app
-            .state
-            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
-            .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
-            .expect("scroll metrics after modified PageUp");
-        assert_eq!(metrics.offset_from_bottom, 0);
+        assert_eq!(pane_scroll_offset(&app, pane_id), 0);
     }
 
     #[tokio::test]
@@ -1882,5 +2166,43 @@ mod tests {
             .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
             .expect("scroll metrics after PageUp");
         assert_eq!(end_metrics.offset_from_bottom, 0);
+    }
+
+    #[tokio::test]
+    async fn page_up_scrolls_shell_like_decckm_with_bracketed_paste() {
+        let mut app = app_for_mouse_test();
+        let mut ws = Workspace::test_new("test");
+        let pane_id = ws.tabs[0].root_pane;
+        let pane_infos = ws.tabs[0].layout.panes(Rect::new(26, 2, 80, 18));
+        let info = pane_infos[0].clone();
+        // zsh enables DECCKM via smkx and bracketed paste together; bash/fish do not.
+        let mut bytes = b"\x1b[?1h\x1b[?2004h".to_vec();
+        bytes.extend_from_slice(&numbered_lines_bytes(64));
+        let (runtime, mut input_rx) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                info.inner_rect.width,
+                info.inner_rect.height,
+                16 * 1024,
+                &bytes,
+                4,
+            );
+        ws.tabs[0].runtimes.insert(pane_id, runtime);
+
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.view.pane_infos = pane_infos;
+
+        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::PageUp, KeyModifiers::empty()));
+
+        assert!(
+            input_rx.try_recv().is_err(),
+            "PageUp should not reach the shell"
+        );
+        assert_eq!(
+            pane_scroll_offset(&app, pane_id),
+            info.inner_rect.height as usize
+        );
     }
 }

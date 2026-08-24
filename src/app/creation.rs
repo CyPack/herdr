@@ -317,6 +317,7 @@ impl App {
             initial_cwd,
             self.state.pane_scrollback_limit_bytes,
             self.state.host_terminal_theme,
+            self.state.host_terminal_appearance,
             crate::pane::PaneShellConfig::new(&self.state.default_shell, self.state.shell_mode),
             Vec::new(),
         )?;
@@ -370,6 +371,7 @@ impl App {
             cols,
             self.state.pane_scrollback_limit_bytes,
             self.state.host_terminal_theme,
+            self.state.host_terminal_appearance,
             crate::pane::PaneShellConfig::new(&self.state.default_shell, self.state.shell_mode),
             self.event_tx.clone(),
             self.render_notify.clone(),
@@ -562,9 +564,8 @@ impl App {
                 max_offset_from_bottom: metrics.max_offset_from_bottom as u64,
                 viewport_rows: metrics.viewport_rows as u64,
             });
-        let alternate_screen = runtime
-            .and_then(|runtime| runtime.input_state())
-            .is_some_and(|input_state| input_state.alternate_screen);
+        let alternate_screen =
+            runtime.is_some_and(crate::terminal::TerminalRuntime::alternate_screen_active);
         let focused = self.state.active == Some(ws_idx)
             && ws.active_tab_index() == tab_idx
             && ws

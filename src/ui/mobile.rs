@@ -13,6 +13,7 @@ use super::status::state_dot;
 use super::text::{display_width_u16, truncate_end};
 use crate::app::state::{Palette, ToastKind, ToastNotification};
 use crate::app::AppState;
+use crate::config::StatusIndicatorStyle;
 use crate::detect::AgentState;
 use crate::layout::PaneId;
 use crate::terminal::TerminalRuntimeRegistry;
@@ -1479,6 +1480,7 @@ fn render_header_button(
     // without the reader parsing the summary row first.
     if badge && area.height > 0 {
         let bx = area.x + area.width.saturating_sub(1);
+        let (symbol, style) = state_icon(AgentState::Blocked, true, app.status_indicators, p);
         frame.buffer_mut()[(bx, area.y)]
             .set_symbol("\u{25cf}")
             .set_style(Style::default().fg(p.red).bg(bg));
@@ -4887,7 +4889,7 @@ mod tests {
             working: 2,
             idle: 1,
         };
-        let segments = agent_summary_segments(counts);
+        let segments = agent_summary_segments(counts, StatusIndicatorStyle::Dots);
         let labels: Vec<&str> = segments.iter().map(|(text, _)| text.as_str()).collect();
         assert_eq!(
             labels,
@@ -4897,13 +4899,59 @@ mod tests {
     }
 
     #[test]
+    fn distinct_agent_summary_uses_configured_symbols_for_every_state() {
+        let counts = GlobalAgentCounts {
+            blocked: 2,
+            done: 1,
+            working: 2,
+            idle: 1,
+        };
+        let labels: Vec<String> = agent_summary_segments(counts, StatusIndicatorStyle::Symbols)
+            .into_iter()
+            .map(|(text, _)| text)
+            .collect();
+        assert_eq!(
+            labels,
+            ["× 2 blocked", "✓ 1 done", "◐ 2 working", "○ 1 idle"]
+        );
+    }
+
+    #[test]
+    fn distinct_status_style_updates_mobile_blocked_badge() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![crate::workspace::Workspace::test_new("blocked")];
+        app.ensure_test_terminals();
+        app.status_indicators = StatusIndicatorStyle::Symbols;
+        let pane_id = app.workspaces[0].tabs[0].root_pane;
+        let terminal_id = app.workspaces[0].tabs[0].panes[&pane_id]
+            .attached_terminal_id
+            .clone();
+        let terminal_state = app.terminals.get_mut(&terminal_id).unwrap();
+        terminal_state.detected_agent = Some(crate::detect::Agent::Claude);
+        terminal_state.state = AgentState::Blocked;
+
+        let area = Rect::new(0, 0, 12, 2);
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(area.width, area.height))
+                .unwrap();
+        terminal
+            .draw(|frame| render_switch_button(&app, frame, area))
+            .unwrap();
+
+        assert_eq!(
+            terminal.backend().buffer()[(area.width - 1, 0)].symbol(),
+            "×"
+        );
+    }
+
+    #[test]
     fn agent_summary_hides_empty_categories() {
         let counts = GlobalAgentCounts {
             done: 1,
             working: 2,
             ..Default::default()
         };
-        let labels: Vec<String> = agent_summary_segments(counts)
+        let labels: Vec<String> = agent_summary_segments(counts, StatusIndicatorStyle::Dots)
             .into_iter()
             .map(|(text, _)| text)
             .collect();
@@ -4920,7 +4968,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            agent_summary_segments(counts),
+            agent_summary_segments(counts, StatusIndicatorStyle::Dots),
             vec![("all idle".to_string(), SummaryTone::Muted)]
         );
     }
@@ -4933,7 +4981,10 @@ mod tests {
             working: 2,
             idle: 1,
         };
-        let (shown, truncated) = fit_summary_segments(agent_summary_segments(counts), 24);
+        let (shown, truncated) = fit_summary_segments(
+            agent_summary_segments(counts, StatusIndicatorStyle::Dots),
+            24,
+        );
         let labels: Vec<&str> = shown.iter().map(|(text, _)| text.as_str()).collect();
         assert_eq!(labels, vec!["◉ 2 blocked", "● 1 done"]);
         assert!(truncated);
@@ -4947,7 +4998,10 @@ mod tests {
             working: 2,
             idle: 1,
         };
-        let (shown, truncated) = fit_summary_segments(agent_summary_segments(counts), 60);
+        let (shown, truncated) = fit_summary_segments(
+            agent_summary_segments(counts, StatusIndicatorStyle::Dots),
+            60,
+        );
         assert_eq!(shown.len(), 4);
         assert!(!truncated);
     }
@@ -4955,7 +5009,7 @@ mod tests {
     #[test]
     fn agent_summary_reports_no_agents_when_empty() {
         assert_eq!(
-            agent_summary_segments(GlobalAgentCounts::default()),
+            agent_summary_segments(GlobalAgentCounts::default(), StatusIndicatorStyle::Dots,),
             vec![("no agents".to_string(), SummaryTone::Muted)]
         );
     }
@@ -5244,11 +5298,12 @@ mod tests {
             live_cwd.clone(),
             0,
             crate::terminal_theme::TerminalTheme::default(),
+            None,
             crate::pane::PaneShellConfig::new("/bin/sh", crate::config::ShellModeConfig::NonLogin),
             &crate::pane::PaneLaunchEnv::default(),
             events,
             std::sync::Arc::new(tokio::sync::Notify::new()),
-            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            std::sync::Arc::new(crate::render_signal::RenderSignal::new()),
         )
         .unwrap();
 

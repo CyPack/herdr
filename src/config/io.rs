@@ -21,6 +21,7 @@ const KNOWN_TOP_LEVEL_CONFIG_KEYS: &[&str] = &[
     "preview",
     "projects",
     "remote",
+    "server",
     "session",
     "shell",
     "spaces",
@@ -784,6 +785,14 @@ fn load_live_config_from_str(content: &str) -> Result<LoadedConfig, Vec<String>>
     );
     load_live_section(
         table,
+        "server",
+        "server config",
+        &mut diagnostics,
+        &mut invalid_sections,
+        |section| config.server = section,
+    );
+    load_live_section(
+        table,
         "update",
         "update config",
         &mut diagnostics,
@@ -863,6 +872,8 @@ fn load_live_config_from_str(content: &str) -> Result<LoadedConfig, Vec<String>>
         &mut invalid_sections,
         |section| config.shell = section,
     );
+
+    diagnostics.extend(config.theme.diagnostics());
 
     Ok(LoadedConfig {
         config,
@@ -1600,6 +1611,20 @@ resume_agents_on_restore = true
     }
 
     #[test]
+    fn load_live_config_warns_about_unknown_theme_names() {
+        let loaded = load_live_config_from_str(
+            r#"
+[theme]
+name = "catppucin"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(loaded.diagnostics.len(), 1);
+        assert!(loaded.diagnostics[0].contains("theme.name = \"catppucin\""));
+    }
+
+    #[test]
     fn load_live_config_warns_about_unknown_top_level_sections() {
         let loaded = load_live_config_from_str(
             r#"
@@ -1690,6 +1715,25 @@ claude = [["terminal_title"]]
     }
 
     #[test]
+    fn load_live_config_accepts_legacy_agent_panel_scope_without_warning() {
+        let loaded = load_live_config_from_str(
+            r#"
+[ui]
+agent_panel_scope = "current"
+agent_panel_sort = "priority"
+"#,
+        )
+        .unwrap();
+
+        assert!(loaded.diagnostics.is_empty());
+        assert!(loaded.invalid_sections.is_empty());
+        assert_eq!(
+            loaded.config.ui.agent_panel_sort,
+            super::super::AgentPanelSortConfig::Priority
+        );
+    }
+
+    #[test]
     fn load_live_config_discards_ignored_keys_from_an_invalid_section() {
         let loaded = load_live_config_from_str(
             r#"
@@ -1704,6 +1748,24 @@ mouse_captur = true
         assert!(loaded.diagnostics[0].contains("invalid ui config"));
         assert!(!loaded.diagnostics[0].starts_with("unknown config key"));
         assert_eq!(loaded.invalid_sections, vec!["ui"]);
+    }
+
+    #[test]
+    fn startup_config_accepts_legacy_agent_panel_scope_without_warning() {
+        let _guard = crate::config::test_config_env_lock().lock().unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "herdr-config-legacy-agent-panel-scope-{}.toml",
+            std::process::id()
+        ));
+        std::fs::write(&path, "[ui]\nagent_panel_scope = \"all\"\n").unwrap();
+        std::env::set_var(CONFIG_PATH_ENV_VAR, &path);
+
+        let loaded = Config::load();
+
+        std::env::remove_var(CONFIG_PATH_ENV_VAR);
+        let _ = std::fs::remove_file(path);
+
+        assert!(loaded.diagnostics.is_empty(), "{:?}", loaded.diagnostics);
     }
 
     #[test]

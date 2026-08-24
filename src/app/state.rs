@@ -1,4 +1,6 @@
-use crate::config::{Keybinds, NewTerminalCwdConfig, SoundConfig, ToastConfig, ToastDelivery};
+use crate::config::{
+    Keybinds, NewTerminalCwdConfig, SoundConfig, TabBarPositionConfig, ToastConfig, ToastDelivery,
+};
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::{Direction, Rect};
 use ratatui::style::Color;
@@ -11,47 +13,10 @@ use crate::selection::Selection;
 
 pub(crate) type InstalledPluginRegistry =
     std::collections::HashMap<String, crate::api::schema::InstalledPluginInfo>;
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PluginPaneRecord {
     pub plugin_id: String,
     pub entrypoint: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct PaneGraphicsLayer {
-    pub format: crate::api::schema::PaneGraphicsFormat,
-    pub image_width: u32,
-    pub image_height: u32,
-    pub data: Vec<u8>,
-    pub data_fingerprint: u64,
-    pub render: crate::api::schema::PaneGraphicsPlacementParams,
-}
-
-impl PaneGraphicsLayer {
-    pub(crate) fn new(
-        format: crate::api::schema::PaneGraphicsFormat,
-        image_width: u32,
-        image_height: u32,
-        data: Vec<u8>,
-        render: crate::api::schema::PaneGraphicsPlacementParams,
-    ) -> Self {
-        let data_fingerprint = pane_graphics_data_fingerprint(&data);
-        Self {
-            format,
-            image_width,
-            image_height,
-            data,
-            data_fingerprint,
-            render,
-        }
-    }
-}
-
-fn pane_graphics_data_fingerprint(data: &[u8]) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    data.hash(&mut hasher);
-    hasher.finish()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -113,6 +78,12 @@ pub struct Palette {
     pub bg: Color,
     /// Background for floating panels, overlays, and modals.
     pub panel_bg: Color,
+    /// Optional desktop sidebar background. Reset preserves the terminal background.
+    pub sidebar_bg: Color,
+    /// Background for the active workspace and focused agent rows.
+    pub active_row_bg: Color,
+    /// Background for the Navigate-mode cursor row in the sidebar.
+    pub selection_bg: Color,
     /// Subtle surface background for selected/focused items.
     pub surface0: Color,
     /// Slightly lighter surface for hover/active states.
@@ -150,6 +121,9 @@ impl Palette {
             accent: Color::Rgb(137, 180, 250), // blue
             bg: Color::Rgb(30, 30, 46),        // base
             panel_bg: Color::Rgb(24, 24, 37),
+            sidebar_bg: Color::Reset,
+            active_row_bg: Color::Rgb(30, 30, 46),
+            selection_bg: Color::Rgb(49, 50, 68),
             surface0: Color::Rgb(49, 50, 68),
             surface1: Color::Rgb(69, 71, 90),
             surface_dim: Color::Rgb(30, 30, 46),
@@ -173,6 +147,9 @@ impl Palette {
             accent: Color::Rgb(30, 102, 245),
             bg: Color::Rgb(239, 241, 245), // base
             panel_bg: Color::Rgb(239, 241, 245),
+            sidebar_bg: Color::Reset,
+            active_row_bg: Color::Rgb(230, 233, 239),
+            selection_bg: Color::Rgb(189, 208, 245),
             surface0: Color::Rgb(204, 208, 218),
             surface1: Color::Rgb(188, 192, 204),
             surface_dim: Color::Rgb(230, 233, 239),
@@ -196,6 +173,9 @@ impl Palette {
             accent: Color::Blue,
             bg: Color::Reset,
             panel_bg: Color::Reset,
+            sidebar_bg: Color::Reset,
+            active_row_bg: Color::DarkGray,
+            selection_bg: Color::Reset,
             surface0: Color::Reset,
             surface1: Color::DarkGray,
             surface_dim: Color::DarkGray,
@@ -219,6 +199,9 @@ impl Palette {
             accent: Color::Rgb(122, 162, 247), // blue
             bg: Color::Rgb(26, 27, 38),
             panel_bg: Color::Rgb(26, 27, 38),
+            sidebar_bg: Color::Reset,
+            active_row_bg: Color::Rgb(35, 38, 54),
+            selection_bg: Color::Rgb(45, 54, 80),
             surface0: Color::Rgb(36, 40, 59),
             surface1: Color::Rgb(65, 72, 104),
             surface_dim: Color::Rgb(26, 27, 38),
@@ -242,6 +225,9 @@ impl Palette {
             accent: Color::Rgb(46, 125, 233),
             bg: Color::Rgb(225, 226, 231),
             panel_bg: Color::Rgb(225, 226, 231),
+            sidebar_bg: Color::Reset,
+            active_row_bg: Color::Rgb(210, 211, 218),
+            selection_bg: Color::Rgb(182, 202, 231),
             surface0: Color::Rgb(196, 200, 218),
             surface1: Color::Rgb(168, 174, 203),
             surface_dim: Color::Rgb(210, 211, 218),
@@ -265,6 +251,9 @@ impl Palette {
             accent: Color::Rgb(189, 147, 249), // purple
             bg: Color::Rgb(40, 42, 54),
             panel_bg: Color::Rgb(40, 42, 54),
+            sidebar_bg: Color::Reset,
+            active_row_bg: Color::Rgb(55, 60, 82),
+            selection_bg: Color::Rgb(70, 63, 93),
             surface0: Color::Rgb(68, 71, 90),
             surface1: Color::Rgb(98, 114, 164),
             surface_dim: Color::Rgb(40, 42, 54),
@@ -288,6 +277,9 @@ impl Palette {
             accent: Color::Rgb(136, 192, 208), // frost
             bg: Color::Rgb(46, 52, 64),
             panel_bg: Color::Rgb(46, 52, 64),
+            sidebar_bg: Color::Reset,
+            active_row_bg: Color::Rgb(67, 76, 94),
+            selection_bg: Color::Rgb(64, 80, 93),
             surface0: Color::Rgb(59, 66, 82),
             surface1: Color::Rgb(67, 76, 94),
             surface_dim: Color::Rgb(46, 52, 64),
@@ -311,6 +303,9 @@ impl Palette {
             accent: Color::Rgb(215, 153, 33), // yellow
             bg: Color::Rgb(40, 40, 40),
             panel_bg: Color::Rgb(40, 40, 40),
+            sidebar_bg: Color::Reset,
+            active_row_bg: Color::Rgb(50, 49, 48),
+            selection_bg: Color::Rgb(75, 63, 39),
             surface0: Color::Rgb(60, 56, 54),
             surface1: Color::Rgb(80, 73, 69),
             surface_dim: Color::Rgb(40, 40, 40),
@@ -334,6 +329,9 @@ impl Palette {
             accent: Color::Rgb(7, 102, 120),
             bg: Color::Rgb(251, 241, 199),
             panel_bg: Color::Rgb(251, 241, 199),
+            sidebar_bg: Color::Reset,
+            active_row_bg: Color::Rgb(242, 229, 188),
+            selection_bg: Color::Rgb(235, 219, 178),
             surface0: Color::Rgb(235, 219, 178),
             surface1: Color::Rgb(213, 196, 161),
             surface_dim: Color::Rgb(242, 229, 188),
@@ -357,6 +355,9 @@ impl Palette {
             accent: Color::Rgb(97, 175, 239), // blue
             bg: Color::Rgb(40, 44, 52),
             panel_bg: Color::Rgb(40, 44, 52),
+            sidebar_bg: Color::Reset,
+            active_row_bg: Color::Rgb(49, 54, 64),
+            selection_bg: Color::Rgb(51, 70, 89),
             surface0: Color::Rgb(44, 49, 58),
             surface1: Color::Rgb(62, 68, 81),
             surface_dim: Color::Rgb(40, 44, 52),
@@ -380,6 +381,9 @@ impl Palette {
             accent: Color::Rgb(64, 120, 242),
             bg: Color::Rgb(250, 250, 250),
             panel_bg: Color::Rgb(250, 250, 250),
+            sidebar_bg: Color::Reset,
+            active_row_bg: Color::Rgb(216, 219, 226),
+            selection_bg: Color::Rgb(205, 219, 248),
             surface0: Color::Rgb(240, 240, 241),
             surface1: Color::Rgb(229, 229, 230),
             surface_dim: Color::Rgb(245, 245, 246),
@@ -403,6 +407,9 @@ impl Palette {
             accent: Color::Rgb(38, 139, 210), // blue
             bg: Color::Rgb(0, 43, 54),
             panel_bg: Color::Rgb(0, 43, 54),
+            sidebar_bg: Color::Reset,
+            active_row_bg: Color::Rgb(22, 75, 87),
+            selection_bg: Color::Rgb(8, 62, 85),
             surface0: Color::Rgb(7, 54, 66),
             surface1: Color::Rgb(88, 110, 117),
             surface_dim: Color::Rgb(0, 43, 54),
@@ -426,6 +433,9 @@ impl Palette {
             accent: Color::Rgb(38, 139, 210),
             bg: Color::Rgb(253, 246, 227),
             panel_bg: Color::Rgb(253, 246, 227),
+            sidebar_bg: Color::Reset,
+            active_row_bg: Color::Rgb(238, 232, 213),
+            selection_bg: Color::Rgb(201, 220, 223),
             surface0: Color::Rgb(238, 232, 213),
             surface1: Color::Rgb(147, 161, 161),
             surface_dim: Color::Rgb(238, 232, 213),
@@ -449,6 +459,9 @@ impl Palette {
             accent: Color::Rgb(126, 156, 216), // blue
             bg: Color::Rgb(31, 31, 40),
             panel_bg: Color::Rgb(31, 31, 40),
+            sidebar_bg: Color::Reset,
+            active_row_bg: Color::Rgb(54, 54, 70),
+            selection_bg: Color::Rgb(50, 56, 75),
             surface0: Color::Rgb(42, 42, 55),
             surface1: Color::Rgb(54, 54, 70),
             surface_dim: Color::Rgb(31, 31, 40),
@@ -472,6 +485,9 @@ impl Palette {
             accent: Color::Rgb(77, 105, 155),
             bg: Color::Rgb(242, 236, 188),
             panel_bg: Color::Rgb(242, 236, 188),
+            sidebar_bg: Color::Reset,
+            active_row_bg: Color::Rgb(213, 206, 163),
+            selection_bg: Color::Rgb(220, 213, 172),
             surface0: Color::Rgb(220, 213, 172),
             surface1: Color::Rgb(201, 203, 209),
             surface_dim: Color::Rgb(213, 206, 163),
@@ -495,9 +511,12 @@ impl Palette {
             accent: Color::Rgb(196, 167, 231), // iris
             bg: Color::Rgb(25, 23, 36),
             panel_bg: Color::Rgb(25, 23, 36),
+            sidebar_bg: Color::Reset,
+            active_row_bg: Color::Rgb(38, 35, 58),
+            selection_bg: Color::Rgb(59, 52, 75),
             surface0: Color::Rgb(31, 29, 46),
             surface1: Color::Rgb(38, 35, 58),
-            surface_dim: Color::Rgb(25, 23, 36),
+            surface_dim: Color::Rgb(38, 35, 58),
             overlay0: Color::Rgb(110, 106, 134),
             overlay1: Color::Rgb(144, 140, 170),
             text: Color::Rgb(224, 222, 244),
@@ -518,6 +537,9 @@ impl Palette {
             accent: Color::Rgb(144, 122, 169),
             bg: Color::Rgb(250, 244, 237),
             panel_bg: Color::Rgb(250, 244, 237),
+            sidebar_bg: Color::Reset,
+            active_row_bg: Color::Rgb(227, 217, 207),
+            selection_bg: Color::Rgb(242, 233, 225),
             surface0: Color::Rgb(242, 233, 225),
             surface1: Color::Rgb(255, 250, 243),
             surface_dim: Color::Rgb(242, 233, 225),
@@ -541,6 +563,9 @@ impl Palette {
             accent: Color::Rgb(255, 199, 153),
             bg: Color::Rgb(26, 26, 26),
             panel_bg: Color::Rgb(26, 26, 26),
+            sidebar_bg: Color::Reset,
+            active_row_bg: Color::Rgb(16, 16, 16),
+            selection_bg: Color::Rgb(35, 35, 35),
             surface0: Color::Rgb(35, 35, 35),
             surface1: Color::Rgb(40, 40, 40),
             surface_dim: Color::Rgb(16, 16, 16),
@@ -560,24 +585,24 @@ impl Palette {
 
     /// Resolve a theme by name. Returns None for unknown names.
     pub fn from_name(name: &str) -> Option<Self> {
-        match name.to_lowercase().replace([' ', '_'], "-").as_str() {
-            "catppuccin" | "catppuccin-mocha" => Some(Self::catppuccin()),
-            "catppuccin-latte" | "latte" | "light" => Some(Self::catppuccin_latte()),
+        match crate::config::canonical_theme_name(name)? {
+            "catppuccin" => Some(Self::catppuccin()),
+            "catppuccin-latte" => Some(Self::catppuccin_latte()),
             "terminal" => Some(Self::terminal()),
-            "tokyo-night" | "tokyonight" => Some(Self::tokyo_night()),
-            "tokyo-night-day" | "tokyo-day" | "tokyonight-day" => Some(Self::tokyo_night_day()),
+            "tokyo-night" => Some(Self::tokyo_night()),
+            "tokyo-night-day" => Some(Self::tokyo_night_day()),
             "dracula" => Some(Self::dracula()),
             "nord" => Some(Self::nord()),
-            "gruvbox" | "gruvbox-dark" => Some(Self::gruvbox()),
+            "gruvbox" => Some(Self::gruvbox()),
             "gruvbox-light" => Some(Self::gruvbox_light()),
-            "one-dark" | "onedark" => Some(Self::one_dark()),
-            "one-light" | "onelight" => Some(Self::one_light()),
-            "solarized" | "solarized-dark" => Some(Self::solarized()),
+            "one-dark" => Some(Self::one_dark()),
+            "one-light" => Some(Self::one_light()),
+            "solarized" => Some(Self::solarized()),
             "solarized-light" => Some(Self::solarized_light()),
             "kanagawa" => Some(Self::kanagawa()),
-            "kanagawa-lotus" | "lotus" => Some(Self::kanagawa_lotus()),
-            "rose-pine" | "rosepine" => Some(Self::rose_pine()),
-            "rose-pine-dawn" | "rosepine-dawn" | "dawn" => Some(Self::rose_pine_dawn()),
+            "kanagawa-lotus" => Some(Self::kanagawa_lotus()),
+            "rose-pine" => Some(Self::rose_pine()),
+            "rose-pine-dawn" => Some(Self::rose_pine_dawn()),
             "vesper" => Some(Self::vesper()),
             _ => None,
         }
@@ -594,6 +619,15 @@ impl Palette {
         }
         if let Some(c) = &custom.panel_bg {
             self.panel_bg = parse_color(c);
+        }
+        if let Some(c) = &custom.sidebar_bg {
+            self.sidebar_bg = parse_color(c);
+        }
+        if let Some(c) = &custom.active_row_bg {
+            self.active_row_bg = parse_color(c);
+        }
+        if let Some(c) = &custom.selection_bg {
+            self.selection_bg = parse_color(c);
         }
         if let Some(c) = &custom.surface0 {
             self.surface0 = parse_color(c);
@@ -2111,6 +2145,10 @@ pub enum Mode {
 }
 
 impl Mode {
+    pub(crate) fn mouse_motion_changes_view(self) -> bool {
+        matches!(self, Self::GlobalMenu | Self::ContextMenu | Self::Navigator)
+    }
+
     /// Whether keys in this mode are commands/navigation (an ASCII input source is wanted) rather
     /// than free text. This is an explicit **allowlist** of the prefix command/navigation realm:
     /// any mode NOT listed defaults to leaving the user's IME alone (the safe default), so adding a
@@ -2296,6 +2334,7 @@ pub enum ChatDrawerMode {
 pub enum SettingsSection {
     #[default]
     Theme,
+    Indicators,
     Sound,
     Toast,
     PaneLabels,
@@ -2307,6 +2346,7 @@ pub enum SettingsSection {
 impl SettingsSection {
     pub const ALL: &[Self] = &[
         Self::Theme,
+        Self::Indicators,
         Self::Sound,
         Self::Toast,
         Self::PaneLabels,
@@ -2318,6 +2358,7 @@ impl SettingsSection {
     pub fn label(self) -> &'static str {
         match self {
             Self::Theme => "theme",
+            Self::Indicators => "indicators",
             Self::Sound => "sound",
             Self::Toast => "toasts",
             Self::PaneLabels => "pane labels",
@@ -2483,13 +2524,20 @@ pub struct SettingsState {
     pub original_theme: Option<String>,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WorkspaceDropTarget {
+    Before(usize),
+    End,
+}
+
 pub(crate) enum DragTarget {
     WorkspaceReorder {
+        source_id: crate::app::InputSourceId,
         source_ws_idx: usize,
-        insert_idx: Option<usize>,
+        drop_target: Option<WorkspaceDropTarget>,
     },
     TabReorder {
+        source_id: crate::app::InputSourceId,
         ws_idx: usize,
         source_tab_idx: usize,
         insert_idx: Option<usize>,
@@ -2524,6 +2572,12 @@ pub(crate) enum DragTarget {
     },
     SidebarDivider,
     SidebarSectionDivider,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TabBarStatusSegment {
+    Zoom,
+    Text(Option<String>),
 }
 
 /// Active mouse drag on a split border or sidebar divider.
@@ -4237,6 +4291,18 @@ pub struct AppState {
     /// country's time with nothing about it looking wrong.
     pub(crate) clock_now: Option<time::OffsetDateTime>,
     pub(crate) drag: Option<DragState>,
+    pub(crate) workspace_presses:
+        std::collections::HashMap<crate::app::InputSourceId, WorkspacePressState>,
+    pub(crate) tab_presses: std::collections::HashMap<crate::app::InputSourceId, TabPressState>,
+    pub(crate) status_indicators: crate::config::StatusIndicatorStyle,
+    pub pane_outer_borders: bool,
+    pub pane_scrollbars: bool,
+    pub tab_bar_position: crate::config::TabBarPositionConfig,
+    pub tab_bar_right: Vec<TabBarStatusSegment>,
+    pub tab_bar_right_separator: String,
+    /// Exact pixel provenance only while one confirmed SGR report is dispatched.
+    pub(crate) host_mouse_pixels: Option<crate::input::mouse::HostPixels>,
+    pub(crate) headless_size: (u16, u16),
     pub(crate) workspace_press: Option<WorkspacePressState>,
     pub(crate) tab_press: Option<TabPressState>,
     pub selection: Option<Selection>,
@@ -4731,6 +4797,26 @@ impl AppState {
 
     pub fn switch_ascii_input_source_in_prefix_enabled(&self) -> bool {
         self.switch_ascii_input_source_in_prefix
+    }
+
+    pub(crate) fn app_surface_pane_ids(&self) -> std::collections::HashSet<PaneId> {
+        let mut pane_ids = std::collections::HashSet::new();
+        if let Some(popup) = &self.popup_pane {
+            pane_ids.insert(popup.pane_id);
+        }
+        let Some(tab) = self
+            .active
+            .and_then(|ws_idx| self.workspaces.get(ws_idx))
+            .and_then(crate::workspace::Workspace::active_tab)
+        else {
+            return pane_ids;
+        };
+        if tab.zoomed {
+            pane_ids.insert(tab.layout.focused());
+        } else {
+            pane_ids.extend(tab.panes.keys().copied());
+        }
+        pane_ids
     }
 
     pub(crate) fn pane_exposes_host_cursor(
@@ -5475,6 +5561,19 @@ impl AppState {
             resource_history: crate::resource::ResourceHistory::default(),
             clock_now: None,
             drag: None,
+            workspace_presses: std::collections::HashMap::new(),
+            tab_presses: std::collections::HashMap::new(),
+            status_indicators: crate::config::StatusIndicatorStyle::Dots,
+            pane_outer_borders: true,
+            pane_scrollbars: true,
+            tab_bar_position: crate::config::TabBarPositionConfig::Top,
+            tab_bar_right: Vec::new(),
+            tab_bar_right_separator: " ".into(),
+            host_mouse_pixels: None,
+            headless_size: (
+                crate::config::DEFAULT_HEADLESS_COLS,
+                crate::config::DEFAULT_HEADLESS_ROWS,
+            ),
             workspace_press: None,
             tab_press: None,
             selection: None,

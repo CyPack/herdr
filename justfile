@@ -3,7 +3,8 @@
 # Run tests
 test:
     cargo nextest run --locked --status-level fail --final-status-level fail --failure-output final --success-output never
-    python3 -m unittest scripts.test_agent_detection_manifest_check scripts.test_behavior_registry_check scripts.test_changelog scripts.test_license_guard_check scripts.test_personal_identifier_check scripts.test_conventional_commits scripts.test_config_reference_check scripts.test_managed_overlay_check scripts.test_docs_translation_parity scripts.test_per_display_scheduling scripts.test_hermes_integration_asset scripts.test_preview scripts.test_trail_t7_teardown scripts.test_vendor_libghostty_vt scripts.test_vendor_portable_pty scripts.test_python_suite_is_complete scripts.test_headful_bar scripts.test_headful_files_rail scripts.test_headful_files_beside scripts.test_headful_bar_focus scripts.test_headful_focus_toggle scripts.test_headful_bar_island scripts.test_headful_bar_toggle scripts.test_headful_bar_style
+    python3 -m unittest scripts.test_agent_detection_manifest_check scripts.test_behavior_registry_check scripts.test_changelog scripts.test_license_guard_check scripts.test_personal_identifier_check scripts.test_conventional_commits scripts.test_config_reference_check scripts.test_managed_overlay_check scripts.test_docs_translation_parity scripts.test_per_display_scheduling scripts.test_hermes_integration_asset scripts.test_preview scripts.test_trail_t7_teardown scripts.test_vendor_libghostty_vt scripts.test_vendor_portable_pty scripts.test_python_suite_is_complete scripts.test_headful_bar scripts.test_headful_files_rail scripts.test_headful_files_beside scripts.test_headful_bar_focus scripts.test_headful_focus_toggle scripts.test_headful_bar_island scripts.test_headful_bar_toggle scripts.test_headful_bar_style scripts.test_package_windows_conpty scripts.test_unix_installer
+    just ui-hot-path-architecture-test
     just integration-assets-test
     just plugin-marketplace-test
 
@@ -11,26 +12,45 @@ test:
 test-one filter:
     cargo nextest run --locked "{{filter}}" --status-level fail --final-status-level fail --failure-output final --success-output never
 
+# Enforce deterministic UI hot-path architecture boundaries
+ui-hot-path-architecture-test:
+    python3 -m unittest scripts.test_ui_hot_path_architecture
+
 # Run fast local lint checks
+[unix]
 lint:
     cargo fmt --check
     cargo clippy --all-targets --locked -- -D warnings
 
+[script("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File")]
+[windows]
+lint:
+    & .\scripts\windows_check.ps1 -Mode lint
+
 # Run PR CI checks
+[unix]
 ci filter='all()': lint
     cargo nextest run --locked -E "{{filter}}" --status-level fail --final-status-level slow --failure-output final --success-output never
+    just ui-hot-path-architecture-test
     just integration-assets-test
     just plugin-marketplace-test
 
 # Run Windows target lint from Unix/macOS to catch cfg(windows) compile and clippy failures before CI
+[unix]
 windows-lint:
     rustup target add x86_64-pc-windows-msvc
     LIBGHOSTTY_VT_SIMD=false cargo clippy --bin herdr --locked --target x86_64-pc-windows-msvc -- -D warnings
 
 # Check formatting + run unit tests + Windows target lint + maintenance script tests
+[unix]
 check: ci windows-lint
-    python3 -m unittest scripts.test_agent_detection_manifest_check scripts.test_behavior_registry_check scripts.test_changelog scripts.test_license_guard_check scripts.test_personal_identifier_check scripts.test_conventional_commits scripts.test_config_reference_check scripts.test_managed_overlay_check scripts.test_docs_translation_parity scripts.test_per_display_scheduling scripts.test_hermes_integration_asset scripts.test_preview scripts.test_trail_t7_teardown scripts.test_vendor_libghostty_vt scripts.test_vendor_portable_pty scripts.test_python_suite_is_complete scripts.test_headful_bar scripts.test_headful_files_rail scripts.test_headful_files_beside scripts.test_headful_bar_focus scripts.test_headful_focus_toggle scripts.test_headful_bar_island scripts.test_headful_bar_toggle scripts.test_headful_bar_style
+    python3 -m unittest scripts.test_agent_detection_manifest_check scripts.test_behavior_registry_check scripts.test_changelog scripts.test_license_guard_check scripts.test_personal_identifier_check scripts.test_conventional_commits scripts.test_config_reference_check scripts.test_managed_overlay_check scripts.test_docs_translation_parity scripts.test_per_display_scheduling scripts.test_hermes_integration_asset scripts.test_preview scripts.test_trail_t7_teardown scripts.test_vendor_libghostty_vt scripts.test_vendor_portable_pty scripts.test_python_suite_is_complete scripts.test_headful_bar scripts.test_headful_files_rail scripts.test_headful_files_beside scripts.test_headful_bar_focus scripts.test_headful_focus_toggle scripts.test_headful_bar_island scripts.test_headful_bar_toggle scripts.test_headful_bar_style scripts.test_package_windows_conpty scripts.test_unix_installer
     @echo "docs reminder: if this changes user-facing behavior, make sure the relevant release docs are updated or called out before release."
+
+[script("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File")]
+[windows]
+check:
+    & .\scripts\windows_check.ps1 -Mode check
 
 # Install repo-local git hooks
 install-hooks:
@@ -40,8 +60,23 @@ install-hooks:
     @echo "installed git hooks from .githooks"
 
 # Build release binary
+[unix]
 build:
     cargo build --release --locked
+
+[script("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File")]
+[windows]
+build:
+    cargo build --release --locked
+
+# Non-gating full-render scaling profile for background workspaces and active panes
+bench-render-scale:
+    cargo test --release --locked --bin herdr render_scale_profile -- --ignored --nocapture --test-threads=1
+
+# ~3-5 minute CPU comparison; downloads stable unless HERDR_PERF_BASELINE_BIN is set
+bench-release-smoke:
+    cargo build --release --locked
+    scripts/release_perf_smoke.sh "${CARGO_TARGET_DIR:-target}/release/herdr"
 
 # Build the website and documentation
 website-build:
@@ -51,10 +86,11 @@ website-build:
 integration-assets-test:
     bun test src/integration/assets/herdr-agent-state.test.ts
     bun test src/integration/assets/opencode/herdr-agent-state.test.ts
+    bun test src/integration/assets/opencode/herdr-tui-session.test.ts
 
 # Run plugin marketplace Worker tests
 plugin-marketplace-test:
-    cd workers/plugin-marketplace && bun test
+    cd workers/plugin-marketplace && bun install --frozen-lockfile && bun test
 
 # Build the vendored libghostty-vt source dist
 build-libghostty-vt:
@@ -65,7 +101,9 @@ release-docs-check:
     python3 scripts/agent_detection_manifest_check.py --require-website
     python3 scripts/config_reference_check.py
     node website/scripts/docs-versions.mjs check
+    node website/scripts/docs-preview.mjs check
     @test -f docs/next/README.md
+    @test -f docs/next/README.zh-CN.md
     @if ! diff -u CHANGELOG.md docs/next/CHANGELOG.md; then \
         echo "error: CHANGELOG.md differs from docs/next/CHANGELOG.md; finalize release notes before releasing"; \
         exit 1; \
@@ -94,8 +132,17 @@ release-docs-check:
         fi; \
     done
     python3 scripts/docs_translation_parity.py --docs-root docs/next/website/src/content/docs
-    python3 scripts/docs_translation_parity.py --docs-root website/src/content/docs
     just website-build
+    cd website && bun run build:draft
+
+# Validate release docs, render scaling, and end-to-end CPU before release preparation
+pre-release-check:
+    just release-docs-check
+    just bench-render-scale
+    just bench-release-smoke
+    @echo "release review required: investigate material render-scaling regressions before publishing."
+    @echo "release review required: update skills/herdr/SKILL.md for this stable release so it matches the current CLI, IDs, agent lifecycle semantics, and safety guidance."
+    @echo "release policy: do not update skills/herdr/SKILL.md between stable releases; preview builds keep the latest stable skill."
 
 # Prepare the release commit without tagging or pushing (usage: just release-prepare 0.1.1)
 release-prepare version:
@@ -103,8 +150,10 @@ release-prepare version:
         echo "error: version must look like 0.6.6 without a v prefix"; \
         exit 1; \
     }
-    @if [ -n "$(git status --porcelain)" ]; then \
-        echo "error: commit your changes first"; \
+    @if ! git diff --quiet -- . ':(exclude)skills/herdr/SKILL.md' || \
+        ! git diff --cached --quiet -- . ':(exclude)skills/herdr/SKILL.md' || \
+        [ -n "$(git ls-files --others --exclude-standard)" ]; then \
+        echo "error: commit all changes except skills/herdr/SKILL.md first"; \
         exit 1; \
     fi
     @git fetch origin master --tags
@@ -112,13 +161,13 @@ release-prepare version:
         echo "error: tag v{{version}} already exists"; \
         exit 1; \
     fi
-    just release-docs-check
+    just pre-release-check
     python3 scripts/changelog.py prepare --version {{version}}
     cp CHANGELOG.md docs/next/CHANGELOG.md
     sed -i.bak 's/^version = ".*"/version = "{{version}}"/' Cargo.toml && rm -f Cargo.toml.bak
     cargo update -p herdr --offline
     just check
-    git add CHANGELOG.md docs/next/CHANGELOG.md Cargo.toml Cargo.lock
+    git add CHANGELOG.md docs/next/CHANGELOG.md Cargo.toml Cargo.lock skills/herdr/SKILL.md
     git diff --cached --quiet || git commit -m "release: v{{version}}"
     @echo "v{{version}} release commit prepared. Review it, then run: just release-publish {{version}}"
 

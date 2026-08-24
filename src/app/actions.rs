@@ -183,7 +183,10 @@ pub fn notification_toast_for_pane_state_update(
     suppress_active_tab_notifications: bool,
     update: &PaneStateUpdate,
 ) -> Option<ToastKind> {
-    if suppress_active_tab_notifications || update.state == update.previous_state {
+    if update.suppress_completion
+        || suppress_active_tab_notifications
+        || update.state == update.previous_state
+    {
         return None;
     }
 
@@ -255,6 +258,7 @@ pub struct PaneStateUpdate {
     pub agent_name_changed: bool,
     pub agent_released: bool,
     pub agent_release_status: Option<crate::api::schema::AgentStatus>,
+    pub suppress_completion: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -894,18 +898,25 @@ impl AppState {
         let multi_tab = ws.tabs.len() > 1;
         let mut rows = Vec::new();
         for tab_idx in 0..ws.tabs.len() {
-            let mut tab_row = multi_tab.then(|| self.navigator_tab_row(ws_idx, tab_idx));
-            let tab_matches = tab_row.as_ref().is_some_and(|row| match query_kind {
+            let mut tab_row = self.navigator_tab_row(ws_idx, tab_idx);
+            let tab_matches = match query_kind {
                 NavigatorQueryKind::Empty => true,
                 NavigatorQueryKind::State(filter) => {
-                    navigator_state_filter_matches(filter, row.status, row.seen)
+                    navigator_state_filter_matches(filter, tab_row.status, tab_row.seen)
                 }
-                NavigatorQueryKind::Text => navigator_matches(query, &row.search_text),
-            });
-            if let Some(tab_row) = tab_row.as_mut() {
-                tab_row.matched = tab_matches;
-            }
-            let mut pane_rows = self.navigator_pane_rows_for_tab(ws_idx, tab_idx, multi_tab);
+                NavigatorQueryKind::Text => navigator_matches(
+                    query,
+                    if multi_tab {
+                        &tab_row.search_text
+                    } else {
+                        &tab_row.label
+                    },
+                ),
+            };
+            tab_row.matched = tab_matches;
+            let show_tab_row =
+                multi_tab || (matches!(query_kind, NavigatorQueryKind::Text) && tab_matches);
+            let mut pane_rows = self.navigator_pane_rows_for_tab(ws_idx, tab_idx, show_tab_row);
             let filtered_panes = match query_kind {
                 NavigatorQueryKind::Empty => pane_rows,
                 NavigatorQueryKind::State(filter) => pane_rows
@@ -926,10 +937,8 @@ impl AppState {
                     .collect::<Vec<_>>(),
             };
 
-            if let Some(tab_row) = tab_row {
-                if tab_matches || !filtered_panes.is_empty() {
-                    rows.push(tab_row);
-                }
+            if show_tab_row && (tab_matches || !filtered_panes.is_empty()) {
+                rows.push(tab_row);
             }
             rows.extend(filtered_panes);
         }
@@ -971,7 +980,7 @@ impl AppState {
         &self,
         ws_idx: usize,
         tab_idx: usize,
-        multi_tab: bool,
+        show_tab_row: bool,
     ) -> Vec<NavigatorRow> {
         let Some(ws) = self.workspaces.get(ws_idx) else {
             return Vec::new();
@@ -1030,7 +1039,7 @@ impl AppState {
                     tab_idx,
                     pane_id,
                 },
-                depth: if multi_tab { 2 } else { 1 },
+                depth: if show_tab_row { 2 } else { 1 },
                 label,
                 meta,
                 status: state,
@@ -1483,7 +1492,7 @@ impl AppState {
                     .get_mut(&terminal_id)?
                     .expire_agent_metadata_at(scheduled_deadline, now)?;
                 let change = mutation.effective_state_change?;
-                let seen = self.apply_pane_state_change(ws_idx, pane_id, &change)?;
+                let seen = self.apply_pane_state_change(ws_idx, pane_id, &change, false)?;
                 let update = PaneStateUpdate {
                     pane_id,
                     ws_idx,
@@ -1500,6 +1509,7 @@ impl AppState {
                     agent_name_changed: false,
                     agent_released: false,
                     agent_release_status: None,
+                    suppress_completion: false,
                 };
                 Some(update)
             })
@@ -3130,6 +3140,78 @@ impl AppState {
         true
     }
 
+    pub fn move_workspace_block(
+        &mut self,
+        workspace_ids: &[String],
+        before_workspace_id: Option<&str>,
+    ) -> bool {
+        let moved_ids = workspace_ids
+            .iter()
+            .map(String::as_str)
+            .collect::<std::collections::HashSet<_>>();
+        if moved_ids.is_empty()
+            || moved_ids.len() != workspace_ids.len()
+            || !workspace_ids
+                .iter()
+                .all(|id| self.workspaces.iter().any(|workspace| workspace.id == *id))
+            || before_workspace_id.is_some_and(|id| {
+                moved_ids.contains(id)
+                    || !self.workspaces.iter().any(|workspace| workspace.id == id)
+            })
+        {
+            return false;
+        }
+
+        let mut desired_ids = self
+            .workspaces
+            .iter()
+            .filter(|workspace| !moved_ids.contains(workspace.id.as_str()))
+            .map(|workspace| workspace.id.clone())
+            .collect::<Vec<_>>();
+        let insert_idx = before_workspace_id
+            .and_then(|id| desired_ids.iter().position(|candidate| candidate == id))
+            .unwrap_or(desired_ids.len());
+        desired_ids.splice(insert_idx..insert_idx, workspace_ids.iter().cloned());
+        if self
+            .workspaces
+            .iter()
+            .map(|workspace| workspace.id.as_str())
+            .eq(desired_ids.iter().map(String::as_str))
+        {
+            return false;
+        }
+
+        let active_id = self.active.map(|idx| self.workspaces[idx].id.clone());
+        let selected_id = self
+            .workspaces
+            .get(self.selected)
+            .map(|workspace| workspace.id.clone());
+        let desired_positions = desired_ids
+            .iter()
+            .enumerate()
+            .map(|(index, id)| (id.clone(), index))
+            .collect::<std::collections::HashMap<_, _>>();
+
+        self.mark_session_dirty();
+        self.workspaces.sort_by_key(|workspace| {
+            desired_positions
+                .get(&workspace.id)
+                .copied()
+                .unwrap_or(usize::MAX)
+        });
+        self.active = active_id.and_then(|id| self.workspaces.iter().position(|ws| ws.id == id));
+        self.selected = selected_id
+            .and_then(|id| self.workspaces.iter().position(|ws| ws.id == id))
+            .unwrap_or(0);
+        self.ensure_workspace_visible(self.selected);
+        true
+    }
+
+    pub fn scroll_tabs_left(&mut self) {
+        self.tab_scroll_follow_active = false;
+        self.tab_scroll = self.tab_scroll.saturating_sub(1);
+        self.refresh_tab_bar_view();
+
     pub fn scroll_tabs_left(&mut self) {
         self.tab_scroll_follow_active = false;
         self.tab_scroll = self.tab_scroll.saturating_sub(1);
@@ -3817,7 +3899,7 @@ impl AppState {
         self.selection_autoscroll = None;
     }
 
-    pub(crate) fn copy_word_at_pane_cell(
+    pub(crate) fn select_word_at_pane_cell(
         &mut self,
         terminal_runtimes: &crate::terminal::TerminalRuntimeRegistry,
         pane_id: crate::layout::PaneId,
@@ -3844,10 +3926,7 @@ impl AppState {
         else {
             return false;
         };
-        if rt
-            .input_state()
-            .is_some_and(crate::pane::InputState::mouse_reporting_enabled)
-        {
+        if rt.mouse_reporting_enabled() {
             return false;
         }
 
@@ -3867,23 +3946,30 @@ impl AppState {
             return false;
         };
 
-        // Copy the token and keep its selection visible as short-lived feedback.
         let mut selection = Selection::range(pane_id, viewport_row, start_col, end_col, metrics);
         if !selection.finish() {
             return false;
         }
 
-        let Some(text) = rt
-            .extract_selection(&selection)
-            .filter(|text| !text.is_empty())
-        else {
-            self.clear_selection();
-            return false;
+        let text = if self.copy_on_select {
+            let Some(text) = rt
+                .extract_selection(&selection)
+                .filter(|text| !text.is_empty())
+            else {
+                self.clear_selection();
+                return false;
+            };
+            Some(text)
+        } else {
+            None
         };
-        self.request_clipboard_write = Some(text.into_bytes());
+
         self.selection = Some(selection);
         self.selection_autoscroll = None;
-        info!("copied double-clicked token to clipboard");
+        if let Some(text) = text {
+            self.request_clipboard_write = Some(text.into_bytes());
+            info!("copied double-clicked token to clipboard");
+        }
         true
     }
 
@@ -6003,26 +6089,6 @@ mod tests {
         );
     }
 
-    fn insert_test_pane_graphics_layer(state: &mut AppState, pane_id: PaneId) {
-        state.pane_graphics_layers.insert(
-            pane_id,
-            crate::app::state::PaneGraphicsLayer::new(
-                crate::api::schema::PaneGraphicsFormat::Rgba,
-                1,
-                1,
-                vec![1, 2, 3, 4],
-                crate::api::schema::PaneGraphicsPlacementParams::default(),
-            ),
-        );
-    }
-
-    fn insert_test_pane_graphics_state(state: &mut AppState, pane_id: PaneId) {
-        insert_test_pane_graphics_layer(state, pane_id);
-        state
-            .pane_graphics_streams
-            .insert(pane_id, "test-stream".into());
-    }
-
     fn mark_linked_worktree(state: &mut AppState, ws_idx: usize) {
         state.workspaces[ws_idx].worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
             key: "repo-key".into(),
@@ -6438,6 +6504,52 @@ mod tests {
         )));
     }
 
+    #[test]
+    fn navigator_search_matches_named_tabs_in_single_tab_workspaces() {
+        let mut state = app_with_workspaces(&["multi", "single"]);
+        state.workspaces[0].tabs[0].custom_name = Some("Foo".into());
+        state.workspaces[0].test_add_tab(Some("Bar"));
+        state.workspaces[1].tabs[0].custom_name = Some("Baz".into());
+        state.ensure_test_terminals();
+
+        state.open_navigator();
+        state.navigator.query = "foo".into();
+        assert!(state.navigator_rows().iter().any(|row| {
+            row.matched
+                && matches!(
+                    row.target,
+                    crate::app::state::NavigatorTarget::Tab {
+                        ws_idx: 0,
+                        tab_idx: 0
+                    }
+                )
+        }));
+
+        state.navigator.query = "baz".into();
+        state.select_first_navigator_match_from(&crate::terminal::TerminalRuntimeRegistry::new());
+        let rows = state.navigator_rows();
+        assert!(rows
+            .get(state.navigator.selected)
+            .is_some_and(|row| matches!(
+                row.target,
+                crate::app::state::NavigatorTarget::Tab {
+                    ws_idx: 1,
+                    tab_idx: 0
+                }
+            )));
+        assert!(!rows.iter().any(|row| matches!(
+            row.target,
+            crate::app::state::NavigatorTarget::Workspace { ws_idx: 0 }
+                | crate::app::state::NavigatorTarget::Tab { ws_idx: 0, .. }
+                | crate::app::state::NavigatorTarget::Pane { ws_idx: 0, .. }
+        )));
+
+        assert!(state.accept_navigator_selection());
+        assert_eq!(state.active, Some(1));
+        assert_eq!(state.workspaces[1].active_tab_index(), 0);
+        assert_eq!(state.mode, Mode::Terminal);
+    }
+
     #[tokio::test]
     async fn navigator_rows_match_live_root_runtime_cwd_workspace_label() {
         let unique = format!(
@@ -6479,11 +6591,12 @@ mod tests {
             live_cwd.clone(),
             0,
             crate::terminal_theme::TerminalTheme::default(),
+            None,
             crate::pane::PaneShellConfig::new("/bin/sh", crate::config::ShellModeConfig::NonLogin),
             &crate::pane::PaneLaunchEnv::default(),
             events,
             std::sync::Arc::new(tokio::sync::Notify::new()),
-            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            std::sync::Arc::new(crate::render_signal::RenderSignal::new()),
         )
         .unwrap();
 
@@ -6793,7 +6906,10 @@ mod tests {
             &terminal_runtimes,
             vec![WorkspaceGitStatus {
                 workspace_id: first_id,
-                resolved_identity_cwd: first_cwd,
+                resolved_identity_cwd: first_cwd.clone(),
+                status_cache_key: first_cwd,
+                demand: crate::workspace::GitStatusRefreshDemand::ALL,
+                auto_label: "one".into(),
                 branch: Some("main".into()),
                 ahead_behind: Some((2, 1)),
                 space: None,
@@ -6820,6 +6936,9 @@ mod tests {
             vec![WorkspaceGitStatus {
                 workspace_id,
                 resolved_identity_cwd: std::path::PathBuf::from("/definitely/not/current"),
+                status_cache_key: std::path::PathBuf::from("/definitely/not/current"),
+                demand: crate::workspace::GitStatusRefreshDemand::ALL,
+                auto_label: "stale".into(),
                 branch: Some("main".into()),
                 ahead_behind: Some((0, 1)),
                 space: None,
@@ -6829,6 +6948,36 @@ mod tests {
         assert!(!changed);
         assert_eq!(state.workspaces[0].branch().as_deref(), Some("old"));
         assert_eq!(state.workspaces[0].git_ahead_behind(), Some((1, 0)));
+    }
+
+    #[test]
+    fn apply_workspace_git_statuses_ignores_unrequested_branch_changes() {
+        let mut state = app_with_workspaces(&["one"]);
+        let workspace_id = state.workspaces[0].id.clone();
+        let cwd = state.workspaces[0].resolved_identity_cwd().unwrap();
+        state.workspaces[0].cached_auto_label = "one".into();
+        state.workspaces[0].cached_git_branch = Some("old".into());
+
+        let terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
+        let changed = state.apply_workspace_git_statuses(
+            &terminal_runtimes,
+            vec![WorkspaceGitStatus {
+                workspace_id,
+                resolved_identity_cwd: cwd.clone(),
+                status_cache_key: cwd,
+                demand: crate::workspace::GitStatusRefreshDemand {
+                    branch: false,
+                    ahead_behind: true,
+                },
+                auto_label: "one".into(),
+                branch: Some("new".into()),
+                ahead_behind: None,
+                space: None,
+            }],
+        );
+
+        assert!(!changed);
+        assert_eq!(state.workspaces[0].branch().as_deref(), Some("old"));
     }
 
     #[test]
@@ -6844,7 +6993,10 @@ mod tests {
             &terminal_runtimes,
             vec![WorkspaceGitStatus {
                 workspace_id,
-                resolved_identity_cwd: cwd,
+                resolved_identity_cwd: cwd.clone(),
+                status_cache_key: cwd,
+                demand: crate::workspace::GitStatusRefreshDemand::ALL,
+                auto_label: "one".into(),
                 branch: None,
                 ahead_behind: None,
                 space: None,
@@ -6869,13 +7021,16 @@ mod tests {
             &terminal_runtimes,
             vec![WorkspaceGitStatus {
                 workspace_id,
-                resolved_identity_cwd: cwd,
+                resolved_identity_cwd: cwd.clone(),
+                status_cache_key: cwd,
+                demand: crate::workspace::GitStatusRefreshDemand::ALL,
+                auto_label: "other".into(),
                 branch: Some("scratch".into()),
                 ahead_behind: None,
                 space: Some(crate::workspace::GitSpaceMetadata {
                     key: "other-repo-key".into(),
                     checkout_key: "/other/checkout".into(),
-                    label: "other".into(),
+                    repo_name: "other".into(),
                     repo_root: "/other/repo".into(),
                     is_linked_worktree: false,
                 }),
@@ -7270,6 +7425,59 @@ mod tests {
     }
 
     #[test]
+    fn move_workspace_block_collects_non_contiguous_members() {
+        let mut state =
+            app_with_workspaces(&["child-one", "normal", "parent", "child-two", "tail"]);
+        let parent_id = state.workspaces[2].id.clone();
+        let child_one_id = state.workspaces[0].id.clone();
+        let child_two_id = state.workspaces[3].id.clone();
+        let tail_id = state.workspaces[4].id.clone();
+        state.active = Some(0);
+        state.selected = 4;
+
+        assert!(state.move_workspace_block(
+            &[parent_id, child_one_id.clone(), child_two_id],
+            Some(&tail_id),
+        ));
+
+        let names = state
+            .workspaces
+            .iter()
+            .map(|workspace| workspace.display_name())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            ["normal", "parent", "child-one", "child-two", "tail"]
+        );
+        assert_eq!(state.workspaces[state.active.unwrap()].id, child_one_id);
+        assert_eq!(state.workspaces[state.selected].id, tail_id);
+    }
+
+    #[test]
+    fn move_workspace_block_rejects_invalid_and_noop_orders() {
+        let mut state = app_with_workspaces(&["a", "b", "c"]);
+        let ids = state
+            .workspaces
+            .iter()
+            .map(|workspace| workspace.id.clone())
+            .collect::<Vec<_>>();
+
+        assert!(!state.move_workspace_block(&[], None));
+        assert!(!state.move_workspace_block(&[ids[0].clone(), ids[0].clone()], None));
+        assert!(!state.move_workspace_block(&["missing".into()], None));
+        assert!(!state.move_workspace_block(&[ids[0].clone()], Some(&ids[0])));
+        assert!(!state.move_workspace_block(&[ids[0].clone()], Some(&ids[1])));
+        assert_eq!(
+            state
+                .workspaces
+                .iter()
+                .map(|workspace| workspace.display_name())
+                .collect::<Vec<_>>(),
+            ["a", "b", "c"]
+        );
+    }
+
+    #[test]
     fn close_workspace_adjusts_indices() {
         let mut state = app_with_workspaces(&["a", "b", "c"]);
         state.selected = 1;
@@ -7333,6 +7541,50 @@ mod tests {
         assert_eq!(state.workspaces.len(), 1);
         assert_eq!(state.selected, 0);
         assert_eq!(state.active, Some(0));
+    }
+
+    #[test]
+    fn close_non_focused_workspace_keeps_focus() {
+        let mut state = app_with_workspaces(&["a", "b", "c"]);
+        state.selected = 1;
+        state.active = Some(0);
+
+        state.close_selected_workspace();
+
+        assert_eq!(state.workspaces.len(), 2);
+        assert_eq!(state.workspaces[0].display_name(), "a");
+        assert_eq!(state.workspaces[1].display_name(), "c");
+        assert_eq!(state.selected, 0);
+        assert_eq!(state.active, Some(0));
+        state.assert_invariants_for_test();
+    }
+
+    #[test]
+    fn pane_died_self_closing_earlier_workspace_keeps_focus() {
+        let names = (0..20).map(|i| format!("ws{i:02}")).collect::<Vec<_>>();
+        let name_refs = names.iter().map(String::as_str).collect::<Vec<_>>();
+        let mut state = app_with_workspaces(&name_refs);
+        state.selected = 1;
+        state.active = Some(1);
+        // Constrain the sidebar viewport so the focused workspace starts
+        // off-screen: 20 workspaces cannot all fit in 12 rows, so index 1 is
+        // hidden at maximum scroll regardless of individual card height.
+        state.view.sidebar_rect = ratatui::layout::Rect::new(0, 0, 30, 12);
+        state.workspace_scroll =
+            crate::ui::normalized_workspace_scroll(&state, state.view.sidebar_rect, usize::MAX / 2);
+        let cards = crate::ui::compute_workspace_card_areas(&state, state.view.sidebar_rect);
+        assert!(cards.iter().all(|card| card.ws_idx != 1));
+
+        let pane_id = *state.workspaces[0].panes.keys().next().unwrap();
+        state.handle_pane_died(pane_id);
+
+        assert_eq!(state.workspaces.len(), 19);
+        assert_eq!(state.workspaces[0].display_name(), "ws01");
+        assert_eq!(state.selected, 0);
+        assert_eq!(state.active, Some(0));
+        let cards = crate::ui::compute_workspace_card_areas(&state, state.view.sidebar_rect);
+        assert!(cards.iter().any(|card| card.ws_idx == 0));
+        state.assert_invariants_for_test();
     }
 
     #[test]
@@ -7572,6 +7824,97 @@ mod tests {
 
         let pane = state.workspaces[1].panes.get(&bg_pane_id).unwrap();
         assert!(!pane.seen);
+    }
+
+    #[test]
+    fn first_idle_after_process_detection_is_not_completion() {
+        let mut state = app_with_workspaces(&["active", "background"]);
+        state.toast_config.delivery = crate::config::ToastDelivery::Herdr;
+        state.active = Some(0);
+        let pane_id = *state.workspaces[1].panes.keys().next().unwrap();
+
+        state.handle_app_event(AppEvent::AgentProcessDetected {
+            pane_id,
+            agent: Agent::Pi,
+            observed_at: Instant::now(),
+        });
+        let direct_idle = state
+            .handle_app_event(AppEvent::StateChanged {
+                pane_id,
+                agent: Some(Agent::Pi),
+                state: AgentState::Idle,
+                visible_blocker: false,
+                visible_working: false,
+                process_exited: false,
+                observed_at: Instant::now(),
+            })
+            .pop()
+            .expect("direct idle state update");
+        assert!(direct_idle.suppress_completion);
+
+        state.handle_app_event(AppEvent::AgentProcessDetected {
+            pane_id,
+            agent: Agent::Pi,
+            observed_at: Instant::now(),
+        });
+        for agent_state in [AgentState::Working, AgentState::Blocked] {
+            state.handle_app_event(AppEvent::StateChanged {
+                pane_id,
+                agent: Some(Agent::Pi),
+                state: agent_state,
+                visible_blocker: agent_state == AgentState::Blocked,
+                visible_working: agent_state == AgentState::Working,
+                process_exited: false,
+                observed_at: Instant::now(),
+            });
+        }
+        let update = state
+            .handle_app_event(AppEvent::StateChanged {
+                pane_id,
+                agent: Some(Agent::Pi),
+                state: AgentState::Idle,
+                visible_blocker: false,
+                visible_working: false,
+                process_exited: false,
+                observed_at: Instant::now(),
+            })
+            .pop()
+            .expect("idle state update");
+
+        assert!(update.suppress_completion);
+        assert!(state.workspaces[1].panes[&pane_id].seen);
+        assert!(!matches!(
+            state.toast.as_ref().map(|toast| toast.kind),
+            Some(ToastKind::Finished)
+        ));
+
+        state.handle_app_event(AppEvent::AgentProcessDetected {
+            pane_id,
+            agent: Agent::Codex,
+            observed_at: Instant::now(),
+        });
+        state.handle_app_event(AppEvent::StateChanged {
+            pane_id,
+            agent: Some(Agent::Codex),
+            state: AgentState::Working,
+            visible_blocker: false,
+            visible_working: true,
+            process_exited: false,
+            observed_at: Instant::now(),
+        });
+        let exit_update = state
+            .handle_app_event(AppEvent::StateChanged {
+                pane_id,
+                agent: Some(Agent::Codex),
+                state: AgentState::Idle,
+                visible_blocker: false,
+                visible_working: false,
+                process_exited: true,
+                observed_at: Instant::now(),
+            })
+            .pop()
+            .expect("process exit update");
+        assert!(!exit_update.suppress_completion);
     }
 
     #[test]
@@ -8423,13 +8766,9 @@ mod tests {
                 entrypoint: "board".into(),
             },
         );
-        insert_test_pane_graphics_state(&mut state, closed);
-
         state.close_pane();
         assert_eq!(state.workspaces[0].panes.len(), 1);
         assert!(!state.plugin_panes.contains_key(&closed));
-        assert!(!state.pane_graphics_layers.contains_key(&closed));
-        assert!(!state.pane_graphics_streams.contains_key(&closed));
         state.assert_invariants_for_test();
     }
 
@@ -8499,14 +8838,10 @@ mod tests {
                 entrypoint: "board".into(),
             },
         );
-        insert_test_pane_graphics_state(&mut state, pane_id);
-
         state.close_tab();
 
         assert!(!state.terminals.contains_key(&terminal_id));
         assert!(!state.plugin_panes.contains_key(&pane_id));
-        assert!(!state.pane_graphics_layers.contains_key(&pane_id));
-        assert!(!state.pane_graphics_streams.contains_key(&pane_id));
         state.assert_invariants_for_test();
     }
 
@@ -8522,14 +8857,10 @@ mod tests {
                 entrypoint: "board".into(),
             },
         );
-        insert_test_pane_graphics_state(&mut state, pane_id);
-
         state.close_selected_workspace();
 
         assert!(!state.terminals.contains_key(&terminal_id));
         assert!(!state.plugin_panes.contains_key(&pane_id));
-        assert!(!state.pane_graphics_layers.contains_key(&pane_id));
-        assert!(!state.pane_graphics_streams.contains_key(&pane_id));
         state.assert_invariants_for_test();
     }
 
