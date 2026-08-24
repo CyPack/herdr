@@ -92,6 +92,14 @@ Two ideas run through the family:
 | TP-FOCUS-NODE-01 | Focused, a container whose whole subtree has no visible checkout and no chat open in a tab is not drawn — header, chat rows and "empty module" line alike. | A module you are not working in keeps its header, its moved chats and its empty-module line in a tree whose whole job is to show what you *are* working in; the filter stops meaning anything and the surface reads as broken. | `focus_hides_a_module_whose_moved_chats_are_all_idle`, `a_filtered_module_does_not_claim_to_be_empty` |
 | TP-FOCUS-NODE-02 | A container holding a chat that is open in a tab stays drawn under focus, whatever happened to its checkouts. The two kinds of member are judged separately and one live member is enough. | A filter that hides where you actually are is worse than no filter: the chat is on screen in a tab while the tree claims its container does not exist. This is TP-DAILY-06's rule on its second surface. | `focus_keeps_a_module_whose_moved_chat_is_running`, `a_filtered_checkout_does_not_silence_a_module_with_a_running_chat` |
 
+## Header age badges
+
+| ID | Behavior | Breaks if lost | Verified by |
+|---|---|---|---|
+| TP-CHATAGE-01 | Every project, node and bucket header wears the age of the newest chat anywhere under it — moved-in seat chats and member drawers alike, subtree-aggregated through the one edge-reader `tree_parent_of` — right-aligned, dim, short of the mouse chrome, and the name's truncation reserves room for it. | "En son hangisinde chat olmuş" was the request: without the badge the only way to know when a module was last worked in is opening every drawer under it. Aggregate through a second membership definition and the badge and the tree silently disagree about what is under a header — the #88 class. Skip the reservation and a long name paints under the badge (TP-DOTS-09's lesson on a new tenant). | `a_module_header_wears_the_age_of_its_newest_chat`, `a_project_header_shows_the_newest_of_its_subtree`, `a_moved_in_chat_ages_the_seat_it_sits_on` |
+| TP-CHATAGE-02 | The badge reads the SAME clock the chat rows wear — `last_activity_time` (message > mtime > sighting, TP-DRAW-15) — never the sighting alone. | A restart re-sights every open chat; a badge on the sighting clock resets every header to "now" on every delivery — the exact defect family TP-DRAW-15 was built to end, reborn on a new surface. | `the_header_age_reads_the_message_clock_not_the_sighting` |
+| TP-CHATAGE-03 | A header with no chat anywhere under it wears no badge at all. | An absent fact rendered as "now" claims work that never happened; rendered as a dash it is noise on every quiet module. Absence reads as absence. | `a_header_with_no_chats_wears_no_age` |
+
 ## Cost
 
 The sidebar renders server-side and reaches a remote session as the client's

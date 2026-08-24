@@ -1,9 +1,9 @@
 use crate::api::schema::{
-    EmptyParams, Method, PaneFocusDirectionParams, PaneInputSetParams, PaneMoveParams,
-    PaneRenameParams, PaneResizeParams, PaneSplitParams, PaneSwapParams, PaneTarget,
-    PaneZoomParams, Request, TabCreateParams, TabListParams, TabRenameParams, TabTarget,
-    WorkspaceCreateParams, WorkspaceRenameParams, WorkspaceTarget, WorktreeCreateParams,
-    WorktreeListParams, WorktreeOpenParams, WorktreeRemoveParams,
+    ChatSeatParams, ChatUnseatParams, EmptyParams, Method, PaneFocusDirectionParams,
+    PaneInputSetParams, PaneMoveParams, PaneRenameParams, PaneResizeParams, PaneSplitParams,
+    PaneSwapParams, PaneTarget, PaneZoomParams, Request, TabCreateParams, TabListParams,
+    TabRenameParams, TabTarget, WorkspaceCreateParams, WorkspaceRenameParams, WorkspaceTarget,
+    WorktreeCreateParams, WorktreeListParams, WorktreeOpenParams, WorktreeRemoveParams,
 };
 
 fn print_method_response(id: &'static str, method: Method) -> std::io::Result<i32> {
@@ -47,6 +47,14 @@ pub(super) fn workspace_close(workspace_id: String) -> std::io::Result<i32> {
         "cli:workspace:close",
         Method::WorkspaceClose(WorkspaceTarget { workspace_id }),
     )
+}
+
+pub(super) fn chat_seat(params: ChatSeatParams) -> std::io::Result<i32> {
+    print_method_response("cli:chat:seat", Method::ChatSeat(params))
+}
+
+pub(super) fn chat_unseat(params: ChatUnseatParams) -> std::io::Result<i32> {
+    print_method_response("cli:chat:unseat", Method::ChatUnseat(params))
 }
 
 pub(super) fn tab_list(params: TabListParams) -> std::io::Result<i32> {

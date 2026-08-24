@@ -2133,6 +2133,7 @@ pub enum Mode {
     Settings,
     GlobalMenu,
     KeybindHelp,
+    ChatWorkLog,
     Navigator,
     AgentReferencePicker,
     AgentColleaguePicker,
@@ -2571,6 +2572,9 @@ pub(crate) enum DragTarget {
     KeybindHelpScrollbar {
         grab_row_offset: u16,
     },
+    ChatWorkLogScrollbar {
+        grab_row_offset: u16,
+    },
     SidebarDivider,
     SidebarSectionDivider,
 }
@@ -2663,6 +2667,11 @@ pub enum ContextMenuKind {
         /// Whether the tree declares any module at all, which is the whole
         /// condition for offering "Move to module..." (TP-CHAT-MOVE-11).
         has_modules: bool,
+        /// Whether the analyzer recorded confirmed commits for this chat —
+        /// the whole condition for offering "Work log..." (TP-WORKLOG-02):
+        /// an empty sheet is noise on every conversational chat. Resolved
+        /// at menu-open like its siblings, never at pick time.
+        has_worklog: bool,
     },
     /// An agents-panel row's own menu. The row already stands for one pane,
     /// so the target rides in the menu rather than being re-derived from
@@ -2947,6 +2956,7 @@ impl ContextMenuState {
                 has_move,
                 has_live,
                 has_modules,
+                has_worklog,
                 ..
             } => {
                 // TP-CHAT-NAME-01: naming comes first. A chat's row is the one
@@ -2959,7 +2969,15 @@ impl ContextMenuState {
                 // the person telling the sidebar what this conversation is —
                 // one in words, one in kind. It comes before the move verbs:
                 // those are about where a chat lives, this is about what it is.
-                let mut items = vec!["Rename chat...", "Label as...", "Move to branch..."];
+                let mut items = vec!["Rename chat...", "Label as..."];
+                // TP-WORKLOG-01/02: the work log sits with naming and
+                // labelling — all three are about what this conversation IS,
+                // not where it lives — and only a chat with confirmed commits
+                // offers it.
+                if *has_worklog {
+                    items.push("Work log...");
+                }
+                items.push("Move to branch...");
                 // TP-CHAT-MOVE-11: modules are a second kind of destination and
                 // they get their own verb. They were already reachable through
                 // "Move to branch...", which is exactly the problem: on the
@@ -3316,6 +3334,14 @@ pub struct KeybindHelpState {
     pub search_focused: bool,
 }
 
+/// The work-log sheet one display opened from a chat row — which chat it
+/// shows and how far it is scrolled (TP-WORKLOG-01).
+#[derive(Clone, Default, PartialEq)]
+pub struct ChatWorkLogState {
+    pub session_id: String,
+    pub scroll: u16,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SidebarWidthSource {
     #[default]
@@ -3529,6 +3555,7 @@ impl AppState {
         adopted.settings = SettingsState::default();
         adopted.navigator = NavigatorState::default();
         adopted.keybind_help = KeybindHelpState::default();
+        adopted.chat_worklog_modal = ChatWorkLogState::default();
         adopted.worktree_create = None;
         adopted.worktree_open = None;
         adopted.worktree_remove = None;
@@ -3645,6 +3672,8 @@ client_surfaces! {
     settings: SettingsState,
     navigator: NavigatorState,
     keybind_help: KeybindHelpState,
+    /// The work-log sheet, which belongs to whoever opened it.
+    chat_worklog_modal: ChatWorkLogState,
     /// The worktree dialogs, each a multi-step form.
     worktree_create: Option<WorktreeCreateState>,
     worktree_open: Option<WorktreeOpenState>,
@@ -4059,6 +4088,9 @@ pub struct AppState {
     /// Presentation cache filled from the ledger outside render, mirroring
     /// `projects_sessions` — the render path never reads a file.
     pub workspace_chat_rows: std::collections::HashMap<String, Vec<WorkspaceChatRow>>,
+    /// The analyzer's per-chat commit log (chat-worklog.json), loaded by the
+    /// constructors beside the ledger — a session fact every display shares.
+    pub chat_worklog: crate::persist::chat_worklog::ChatWorkLog,
     /// The normalised opening of every chat this pass parsed, keyed by session
     /// id rather than by row.
     ///
@@ -4174,6 +4206,7 @@ pub struct AppState {
     pub release_notes: Option<ReleaseNotesState>,
     pub product_announcement: Option<ProductAnnouncementState>,
     pub keybind_help: KeybindHelpState,
+    pub chat_worklog_modal: ChatWorkLogState,
     pub navigator: NavigatorState,
     pub copy_mode: Option<CopyModeState>,
     /// Which content the sidebar's top section shows (Spaces/Projects/Files).
@@ -5331,6 +5364,7 @@ impl AppState {
             sidebar_chrome: crate::ui::shell::SidebarChrome::NONE,
             terminals: std::collections::HashMap::new(),
             closed_agents: Default::default(),
+            chat_worklog_modal: ChatWorkLogState::default(),
             direct_attach_resize_locks: std::collections::HashSet::new(),
             pane_id_aliases: std::collections::HashMap::new(),
             public_pane_id_aliases: std::collections::HashMap::new(),
@@ -5424,6 +5458,7 @@ impl AppState {
             preview_placement: crate::config::PreviewPlacement::default(),
             collapsed_project_paths: std::collections::HashSet::new(),
             workspace_chat_rows: std::collections::HashMap::new(),
+            chat_worklog: crate::persist::chat_worklog::ChatWorkLog::default(),
             chat_openings: std::collections::HashMap::new(),
             derived_chat_labels: std::collections::HashMap::new(),
             manual_chat_labels: std::collections::HashMap::new(),
@@ -7568,6 +7603,7 @@ mod tests {
                 session_id: "s1".into(),
                 has_move: false,
                 has_live: false,
+                has_worklog: false,
             },
             x: 0,
             y: 0,
@@ -7587,6 +7623,7 @@ mod tests {
                 session_id: "s1".into(),
                 has_move: true,
                 has_live: false,
+                has_worklog: false,
             },
             x: 0,
             y: 0,

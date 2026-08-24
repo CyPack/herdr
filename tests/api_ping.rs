@@ -2578,3 +2578,67 @@ fn metadata_status_subscription_filter_and_ttl_expiry_are_observable() {
 
     cleanup_spawned_herdr(child, base);
 }
+
+// TP-CHAT-MOVE-13 / TP-CHAT-MOVE-14
+#[test]
+fn chat_seat_and_unseat_round_trip_over_socket() {
+    let _lock = test_lock();
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    let socket_path = runtime_dir.join("herdr.sock");
+
+    let child = spawn_herdr(&config_home, &runtime_dir, &socket_path);
+    wait_for_socket(&socket_path, Duration::from_secs(5));
+
+    // A person files one chat first — the menu road's stamp.
+    let user_move = send_request(
+        &socket_path,
+        r#"{"id":"cs_0","method":"chat.seat","params":{"seats":[{"session_id":"user-chat","target_key":"/repo/manual"}]}}"#,
+    );
+    assert_eq!(user_move["result"]["type"], "chat_seat_report");
+    assert_eq!(user_move["result"]["applied"], 1);
+
+    // The plan seats two fresh chats, repeats itself once, and tries to take
+    // the user's chat: honest counts, not one collapsed number.
+    let seated = send_request(
+        &socket_path,
+        r#"{"id":"cs_1","method":"chat.seat","params":{"source":"seat-plan","seats":[{"session_id":"plan-a","target_key":"module:demo:one"},{"session_id":"plan-b","target_key":"module:demo:two"},{"session_id":"plan-a","target_key":"module:demo:one"},{"session_id":"user-chat","target_key":"module:demo:steal"},{"session_id":"","target_key":"module:demo:none"}]}}"#,
+    );
+    assert_eq!(seated["id"], "cs_1");
+    assert_eq!(seated["result"]["type"], "chat_seat_report");
+    assert_eq!(seated["result"]["applied"], 2);
+    assert_eq!(seated["result"]["unchanged"], 1);
+    assert_eq!(seated["result"]["refused"], 2);
+
+    // An identical re-run applies nothing.
+    let rerun = send_request(
+        &socket_path,
+        r#"{"id":"cs_2","method":"chat.seat","params":{"source":"seat-plan","seats":[{"session_id":"plan-a","target_key":"module:demo:one"},{"session_id":"plan-b","target_key":"module:demo:two"}]}}"#,
+    );
+    assert_eq!(rerun["result"]["applied"], 0);
+    assert_eq!(rerun["result"]["unchanged"], 2);
+
+    // Unseat by source clears only the plan's moves — the user's survives.
+    let unseat = send_request(
+        &socket_path,
+        r#"{"id":"cs_3","method":"chat.unseat","params":{"source":"seat-plan"}}"#,
+    );
+    assert_eq!(unseat["result"]["type"], "chat_unseat_report");
+    assert_eq!(unseat["result"]["cleared"], 2);
+
+    let again = send_request(
+        &socket_path,
+        r#"{"id":"cs_4","method":"chat.unseat","params":{"source":"seat-plan"}}"#,
+    );
+    assert_eq!(again["result"]["cleared"], 0);
+
+    // The user's move is still in force: the plan is still refused.
+    let steal = send_request(
+        &socket_path,
+        r#"{"id":"cs_5","method":"chat.seat","params":{"source":"seat-plan","seats":[{"session_id":"user-chat","target_key":"module:demo:steal"}]}}"#,
+    );
+    assert_eq!(steal["result"]["refused"], 1);
+
+    cleanup_spawned_herdr(child, base);
+}

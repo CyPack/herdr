@@ -32,6 +32,12 @@ impl MillerPathSegment {
 pub(crate) struct MillerHorizontalViewport {
     pub offset_cells: u32,
     pub follow_active: bool,
+    /// TP-TRAIL-REVEAL-01: armed by an EXPLICIT open-this-directory request
+    /// (a press or Enter on a directory row); the follow window then keeps
+    /// the freshly opened child on screen. Cleared by the reader's own
+    /// navigation away — Left, a manual horizontal scroll, or activating a
+    /// column — so backing out never snaps the window forward again.
+    pub reveal_child: bool,
 }
 
 impl Default for MillerHorizontalViewport {
@@ -39,6 +45,7 @@ impl Default for MillerHorizontalViewport {
         Self {
             offset_cells: 0,
             follow_active: true,
+            reveal_child: false,
         }
     }
 }
@@ -133,6 +140,7 @@ impl MillerState {
         }
         self.clamp_horizontal_offset_to_content();
         self.horizontal.follow_active = true;
+        self.horizontal.reveal_child = false;
         // A branch redraws the chain; a window the reader scrolled in the old
         // chain would hide the new selection.
         self.vertical.follow_selection_everywhere();
@@ -169,6 +177,7 @@ impl MillerState {
         self.focused_directory = focused_directory;
         self.clamp_horizontal_offset_to_content();
         self.horizontal.follow_active = true;
+        self.horizontal.reveal_child = false;
         self.revision = self.revision.saturating_add(1);
     }
 

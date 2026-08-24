@@ -2,6 +2,7 @@ use std::time::{Duration, Instant};
 
 mod agent_view;
 mod agents;
+mod chats;
 mod env;
 mod integrations;
 mod layouts;
@@ -1076,6 +1077,8 @@ impl App {
             Method::WorkspaceClose(target) => {
                 return self.handle_workspace_close(request.id, target)
             }
+            Method::ChatSeat(params) => return self.handle_chat_seat(request.id, params),
+            Method::ChatUnseat(params) => return self.handle_chat_unseat(request.id, params),
             Method::WorktreeList(params) => return self.handle_worktree_list(request.id, params),
             Method::WorktreeCreate(params) => {
                 let _ = params;

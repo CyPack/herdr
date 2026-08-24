@@ -34,6 +34,7 @@ pub(super) fn command() -> Command {
         .subcommand(server_command())
         .subcommand(api_command())
         .subcommand(workspace_command())
+        .subcommand(chat_command())
         .subcommand(shell_command())
         .subcommand(space_command())
         .subcommand(worktree_command())
@@ -233,6 +234,28 @@ fn workspace_command() -> Command {
                 .arg(option("ttl-ms", "N")),
         )
         .subcommand(id_command("close", "workspace_id", "Close a workspace"))
+}
+
+fn chat_command() -> Command {
+    Command::new("chat")
+        .about("Seat agent chats under branch drawers or module seats")
+        .subcommand(
+            Command::new("seat")
+                .about("Apply a bulk seat plan (JSON with a \"seats\" array)")
+                .arg(path_option("plan", "FILE").required(true))
+                .arg(option("source", "NAME")),
+        )
+        .subcommand(
+            Command::new("move")
+                .about("Move one chat to a checkout dir or module:<key>")
+                .arg(required("session_id", "SESSION_ID"))
+                .arg(option("to", "LEDGER_KEY").required(true)),
+        )
+        .subcommand(
+            Command::new("unseat")
+                .about("Withdraw every move a given source wrote")
+                .arg(option("source", "NAME").required(true)),
+        )
 }
 
 fn space_command() -> Command {

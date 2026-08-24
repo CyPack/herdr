@@ -604,6 +604,7 @@ impl App {
         crate::persist::workspace_chats::apply_chat_moves(
             &mut state.workspace_chat_rows,
             &ledger.moves,
+            &ledger.seat_extras,
         );
         // TP-CHAT-NAME-01: and the names after them, for the same reason.
         crate::persist::workspace_chats::apply_chat_names(
@@ -923,6 +924,8 @@ impl App {
                 &theme_palette,
             ),
             resources: crate::resource::ResourceSample::default(),
+            chat_worklog: crate::persist::chat_worklog::ChatWorkLog::default(),
+            chat_worklog_modal: crate::app::state::ChatWorkLogState::default(),
             resource_history: crate::resource::ResourceHistory::default(),
             clock_now: None,
             terminals: std::collections::HashMap::new(),
@@ -1323,6 +1326,13 @@ impl App {
             )
         };
         state.workspace_chat_rows = crate::persist::workspace_chats::project_rows(&ledger);
+        state.chat_worklog = if no_session {
+            crate::persist::chat_worklog::ChatWorkLog::default()
+        } else {
+            crate::persist::chat_worklog::load_from_path(
+                &crate::persist::chat_worklog::default_worklog_path(),
+            )
+        };
         if !no_session {
             Self::load_chat_history(&mut state, &ledger);
             Self::seed_closed_agents(&mut state);
@@ -1525,6 +1535,9 @@ impl App {
             &crate::persist::workspace_chats::default_ledger_path(),
         );
         app.state.workspace_chat_rows = crate::persist::workspace_chats::project_rows(&ledger);
+        app.state.chat_worklog = crate::persist::chat_worklog::load_from_path(
+            &crate::persist::chat_worklog::default_worklog_path(),
+        );
         Self::load_chat_history(&mut app.state, &ledger);
         Self::seed_closed_agents(&mut app.state);
         Ok(app)
@@ -2758,6 +2771,9 @@ impl App {
             }
             Mode::KeybindHelp => {
                 input::handle_keybind_help_key(&mut self.state, key);
+            }
+            Mode::ChatWorkLog => {
+                input::handle_chat_worklog_key(&mut self.state, key);
             }
             Mode::GlobalMenu => {
                 input::handle_global_menu_key(&mut self.state, key_event);

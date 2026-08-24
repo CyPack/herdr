@@ -62,6 +62,14 @@ pub enum ResponseResult {
     WorkspaceList {
         workspaces: Vec<WorkspaceInfo>,
     },
+    ChatSeatReport {
+        applied: usize,
+        unchanged: usize,
+        refused: usize,
+    },
+    ChatUnseatReport {
+        cleared: usize,
+    },
     WorktreeList {
         source: WorktreeSourceInfo,
         worktrees: Vec<WorktreeInfo>,

@@ -401,6 +401,8 @@ fn api_method_name(method: &Method) -> &'static str {
         Method::WorkspaceMoveBlock(_) => "workspace.move_block",
         Method::WorkspaceReportMetadata(_) => "workspace.report_metadata",
         Method::WorkspaceClose(_) => "workspace.close",
+        Method::ChatSeat(_) => "chat.seat",
+        Method::ChatUnseat(_) => "chat.unseat",
         Method::WorktreeList(_) => "worktree.list",
         Method::WorktreeCreate(_) => "worktree.create",
         Method::WorktreeOpen(_) => "worktree.open",

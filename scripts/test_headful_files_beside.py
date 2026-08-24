@@ -19,6 +19,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -161,6 +162,80 @@ class FilesBesideProductProof(unittest.TestCase):
                 session.find_regex(r"\[copy\].*\[paste\]"),
                 "a press on the terminal half must leave the split standing",
             )
+
+
+    def test_depth_descent_stays_visible_and_the_wheel_pans_back(self) -> None:
+        """TP-TRAIL-REVEAL-01 product proof — the user's live report, verbatim:
+        "2. 3. dereceden klasor iclerine girmedeim ... millers columlarda
+        gozukmuyorlar". Every press on a directory must produce a VISIBLE
+        column, however deep the chain already is; and the horizontal wheel
+        must pan back to the columns the reveal slid away."""
+        depth_stage = Path(tempfile.gettempdir()) / f"hbd{os.getpid()}"
+        shutil.rmtree(depth_stage, ignore_errors=True)
+        deep = depth_stage / "kat-bir" / "kat-iki" / "kat-uc"
+        deep.mkdir(parents=True)
+        (deep / "derin-kanit.txt").write_text("DEEPMARKER\n", encoding="utf-8")
+        (depth_stage / "kok-kanit.txt").write_text("ROOT\n", encoding="utf-8")
+        try:
+            with HeadfulSession(
+                CONFIG,
+                binary=DEBUG_BINARY,
+                root=self.root,
+                cwd=depth_stage,
+                cols=200,
+                rows=44,
+            ) as session:
+                session.settle(12.0)
+                session.right_click(10, 60, settle=6.0)
+                where = session.find(VERB)
+                self.assertIsNotNone(where, "the verb's row must be locatable")
+                session.click(where[0], where[1] + 2, settle=8.0)
+
+                # Level 1 — the chain still fits, so this press worked before
+                # the reveal too. It anchors the regression.
+                at = session.find("kat-bir")
+                self.assertIsNotNone(at, f"root listing must show kat-bir:\n{session.text()}")
+                session.click(at[0], at[1] + 2, settle=6.0)
+                self.assertIsNotNone(
+                    session.find("kat-iki"),
+                    f"pressing kat-bir must show its listing:\n{session.text()}",
+                )
+
+                # Level 2 — the chain has outgrown the beside half. Without the
+                # reveal the freshly opened column right of the parent is
+                # clipped off the viewport forever: the user's dead press.
+                at = session.find("kat-iki")
+                session.click(at[0], at[1] + 2, settle=6.0)
+                self.assertIsNotNone(
+                    session.find("kat-uc"),
+                    "pressing a 2nd-level directory must keep its listing "
+                    f"on screen (TP-TRAIL-REVEAL-01):\n{session.text()}",
+                )
+
+                # Level 3 — depth generalizes.
+                at = session.find("kat-uc")
+                session.click(at[0], at[1] + 2, settle=6.0)
+                self.assertIsNotNone(
+                    session.find("derin-kanit"),
+                    f"pressing a 3rd-level directory must show its file:\n{session.text()}",
+                )
+
+                # The wheel road back: the reveal slid the root column away;
+                # wheel-left over the trail must bring it back into view.
+                anchor = session.find("derin-kanit") or session.find("kat-uc")
+                self.assertIsNotNone(anchor, "an anchor row inside the trail")
+                row, col = anchor
+                for _ in range(24):
+                    session.send(f"\x1b[<66;{col + 1};{row + 1}M".encode())
+                    time.sleep(0.08)
+                session.settle(3.0)
+                self.assertIsNotNone(
+                    session.find("kok-kanit"),
+                    "wheel-left must pan the root column back into the "
+                    f"viewport:\n{session.text()}",
+                )
+        finally:
+            shutil.rmtree(depth_stage, ignore_errors=True)
 
 
 if __name__ == "__main__":

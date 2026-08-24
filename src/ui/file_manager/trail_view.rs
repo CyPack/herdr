@@ -12,7 +12,9 @@ use ratatui::layout::Rect;
 use ratatui::widgets::{Block, BorderType, Borders};
 use ratatui::Frame;
 
-use super::miller::{miller_auto_follow_offset, miller_viewport_geometry_at_offset};
+use super::miller::{
+    miller_auto_follow_offset, miller_follow_target, miller_viewport_geometry_at_offset,
+};
 use crate::app::state::AppState;
 use crate::app::FileManagerLocationsFocus;
 use crate::fm::entry_time::{
@@ -141,6 +143,7 @@ pub(crate) fn project_trail_view(
     snaps: &TrailSnapshots,
     preferred_widths: &[u16],
     show_row_actions: bool,
+    reveal_child: bool,
 ) -> TrailViewSnapshot {
     project_trail_view_inner(
         stage,
@@ -149,6 +152,7 @@ pub(crate) fn project_trail_view(
         preferred_widths,
         TRAIL_DETAIL_PANEL_DEFAULT_WIDTH,
         None,
+        reveal_child,
         LocalCalendarAnchor::now(),
         &crate::fm::miller::MillerVerticalViewport::default(),
         show_row_actions,
@@ -171,6 +175,7 @@ pub(crate) fn project_trail_view_with_origin(
         preferred_widths,
         detail_preferred_width,
         Some(requested_offset_cells),
+        false,
         &crate::fm::miller::MillerVerticalViewport::default(),
         true,
     )
@@ -187,6 +192,7 @@ pub(crate) fn project_trail_view_both_axes(
     preferred_widths: &[u16],
     detail_preferred_width: u16,
     requested_offset_cells: Option<u32>,
+    reveal_child: bool,
     vertical: &crate::fm::miller::MillerVerticalViewport,
     show_row_actions: bool,
 ) -> TrailViewSnapshot {
@@ -197,6 +203,7 @@ pub(crate) fn project_trail_view_both_axes(
         preferred_widths,
         detail_preferred_width,
         requested_offset_cells,
+        reveal_child,
         LocalCalendarAnchor::now(),
         vertical,
         show_row_actions,
@@ -218,6 +225,7 @@ pub(crate) fn project_trail_view_with_vertical(
         preferred_widths,
         TRAIL_DETAIL_PANEL_DEFAULT_WIDTH,
         None,
+        false,
         LocalCalendarAnchor::now(),
         vertical,
         true,
@@ -239,6 +247,7 @@ pub(crate) fn project_trail_view_at(
         preferred_widths,
         TRAIL_DETAIL_PANEL_DEFAULT_WIDTH,
         None,
+        false,
         anchor,
         &crate::fm::miller::MillerVerticalViewport::default(),
         true,
@@ -261,6 +270,7 @@ pub(crate) fn project_trail_view_at_with_origin(
         preferred_widths,
         TRAIL_DETAIL_PANEL_DEFAULT_WIDTH,
         Some(requested_offset_cells),
+        false,
         anchor,
         &crate::fm::miller::MillerVerticalViewport::default(),
         true,
@@ -358,6 +368,7 @@ fn project_trail_view_inner(
     preferred_widths: &[u16],
     detail_preferred_width: u16,
     requested_offset_cells: Option<u32>,
+    reveal_child: bool,
     anchor: LocalCalendarAnchor,
     vertical: &crate::fm::miller::MillerVerticalViewport,
     show_row_actions: bool,
@@ -436,7 +447,12 @@ fn project_trail_view_inner(
         .collect();
     let requested_offset_cells = requested_offset_cells.unwrap_or_else(|| {
         let focused_column = trail.active_col().min(trail_cols.len().saturating_sub(1));
-        miller_auto_follow_offset(stage.width, &widths, focused_column)
+        // TP-TRAIL-REVEAL-01: same reveal as the miller projection.
+        miller_auto_follow_offset(
+            stage.width,
+            &widths,
+            miller_follow_target(focused_column, widths.len(), reveal_child),
+        )
     });
     let geometry = miller_viewport_geometry_at_offset(stage, &widths, requested_offset_cells);
 
@@ -1060,7 +1076,7 @@ mod tests {
         let td = TempDir::new("deepest");
         let (trail, snaps) = deep_loaded_trail(&td.root, 6, 1);
         let stage = Rect::new(0, 0, 70, 12);
-        let view = project_trail_view(stage, &trail, &snaps, &[], true);
+        let view = project_trail_view(stage, &trail, &snaps, &[], true, false);
         assert!(
             !view.columns.is_empty(),
             "a loaded trail projects visible columns"
@@ -1099,7 +1115,7 @@ mod tests {
         assert!(trail.move_active_left(), "preview owner becomes active");
 
         let stage = Rect::new(0, 0, 30, 8);
-        let owner_view = project_trail_view(stage, &trail, &snaps, &[28, 28], true);
+        let owner_view = project_trail_view(stage, &trail, &snaps, &[28, 28], true, false);
         assert_eq!(owner_view.offset_cells, 0, "owner starts unscrolled");
         let owner = owner_view
             .columns
@@ -1110,7 +1126,7 @@ mod tests {
         assert_eq!(owner.rect.x, stage.x);
 
         assert!(trail.move_active_right(), "explicit Right focuses child");
-        let child_view = project_trail_view(stage, &trail, &snaps, &[28, 28], true);
+        let child_view = project_trail_view(stage, &trail, &snaps, &[28, 28], true, false);
         assert!(child_view.offset_cells > 0, "child focus advances viewport");
         assert!(
             child_view
@@ -1118,6 +1134,33 @@ mod tests {
                 .iter()
                 .any(|column| column.trail_index == 1),
             "focused child remains visible"
+        );
+    }
+
+    // TP-TRAIL-REVEAL-01: with the reveal armed (an explicit press on the
+    // directory), the same owner-focused state keeps the freshly opened
+    // child on screen — the window pans instead of clipping it forever.
+    #[test]
+    fn armed_reveal_keeps_the_preview_child_on_screen() {
+        let td = TempDir::new("armed-reveal");
+        let child = td.root.join("child");
+        fs::create_dir(&child).expect("create child preview fixture");
+
+        let mut trail = TrailState::new(&td.root);
+        let mut snaps = TrailSnapshots::new(false);
+        snaps.sync(&trail);
+        assert_eq!(
+            snaps.select_dir(&mut trail, 0, &child),
+            FmDirectoryStatus::Available
+        );
+        assert!(trail.move_active_left(), "preview owner becomes active");
+
+        let stage = Rect::new(0, 0, 30, 8);
+        let view = project_trail_view(stage, &trail, &snaps, &[28, 28], true, true);
+        assert!(view.offset_cells > 0, "the armed reveal pans the window");
+        assert!(
+            view.columns.iter().any(|column| column.trail_index == 1),
+            "the freshly opened child column stays visible"
         );
     }
 
@@ -1129,7 +1172,7 @@ mod tests {
         let (trail, snaps) = deep_loaded_trail(&td.root, 2, 1);
         let stage = Rect::new(0, 0, 120, 12);
         let preferred = [20u16, 34, 25];
-        let view = project_trail_view(stage, &trail, &snaps, &preferred, true);
+        let view = project_trail_view(stage, &trail, &snaps, &preferred, true, false);
         assert_eq!(view.columns.len(), 3, "all three columns fit");
         for column in &view.columns {
             assert_eq!(
@@ -1163,7 +1206,7 @@ mod tests {
         assert!(trail.select_file(0, &target));
 
         let stage = Rect::new(0, 0, 40, 10);
-        let view = project_trail_view(stage, &trail, &snaps, &[], true);
+        let view = project_trail_view(stage, &trail, &snaps, &[], true, false);
         let column = &view.columns[0];
         assert_eq!(column.selected_entry, Some(25));
         assert!(
@@ -1495,7 +1538,7 @@ mod tests {
         let td = TempDir::new("rows");
         let (trail, snaps) = deep_loaded_trail(&td.root, 2, 4);
         let stage = Rect::new(2, 1, 100, 8);
-        let view = project_trail_view(stage, &trail, &snaps, &[], true);
+        let view = project_trail_view(stage, &trail, &snaps, &[], true, false);
         assert!(!view.columns.is_empty());
         for column in &view.columns {
             assert!(
@@ -1534,7 +1577,7 @@ mod tests {
         let z = td.root.join("d0");
         assert!(trail.select_dir(0, &z));
         let stage = Rect::new(0, 0, 120, 12);
-        let view = project_trail_view(stage, &trail, &snaps, &[], true);
+        let view = project_trail_view(stage, &trail, &snaps, &[], true, false);
         assert_eq!(
             view,
             TrailViewSnapshot::default(),
@@ -1549,7 +1592,7 @@ mod tests {
         let td = TempDir::new("highlight");
         let (trail, snaps) = deep_loaded_trail(&td.root, 2, 2);
         let stage = Rect::new(0, 0, 100, 8);
-        let view = project_trail_view(stage, &trail, &snaps, &[], true);
+        let view = project_trail_view(stage, &trail, &snaps, &[], true, false);
         assert!(view.columns.len() >= 2);
 
         let app = crate::app::state::AppState::test_new();
@@ -1604,7 +1647,7 @@ mod tests {
         );
 
         let stage = Rect::new(0, 0, 40, 8);
-        let view = project_trail_view(stage, &trail, &snaps, &[], true);
+        let view = project_trail_view(stage, &trail, &snaps, &[], true, false);
         let app = crate::app::state::AppState::test_new();
         let backend = TestBackend::new(stage.width, stage.height);
         let mut terminal = Terminal::new(backend).expect("test terminal");
@@ -1635,7 +1678,7 @@ mod tests {
         snaps.sync(&trail);
 
         let stage = Rect::new(0, 0, 40, 8);
-        let view = project_trail_view(stage, &trail, &snaps, &[], true);
+        let view = project_trail_view(stage, &trail, &snaps, &[], true, false);
         let app = crate::app::state::AppState::test_new();
         let backend = TestBackend::new(stage.width, stage.height);
         let mut terminal = Terminal::new(backend).expect("test terminal");
@@ -1680,7 +1723,7 @@ mod tests {
         );
 
         let stage = Rect::new(0, 0, 40, 8);
-        let view = project_trail_view(stage, &trail, &snaps, &[], true);
+        let view = project_trail_view(stage, &trail, &snaps, &[], true, false);
         let app = crate::app::state::AppState::test_new();
         let backend = TestBackend::new(stage.width, stage.height);
         let mut terminal = Terminal::new(backend).expect("test terminal");
@@ -1708,7 +1751,7 @@ mod tests {
         let td = TempDir::new("hit");
         let (trail, snaps) = deep_loaded_trail(&td.root, 2, 3);
         let stage = Rect::new(3, 2, 100, 8);
-        let view = project_trail_view(stage, &trail, &snaps, &[], true);
+        let view = project_trail_view(stage, &trail, &snaps, &[], true, false);
         for column in &view.columns {
             for row in &column.rows {
                 let hit = trail_row_at(&view, row.rect.x, row.rect.y)
@@ -1729,7 +1772,7 @@ mod tests {
         let td = TempDir::new("hit-none");
         let (trail, snaps) = deep_loaded_trail(&td.root, 1, 1);
         let stage = Rect::new(0, 0, 100, 10);
-        let view = project_trail_view(stage, &trail, &snaps, &[], true);
+        let view = project_trail_view(stage, &trail, &snaps, &[], true, false);
         assert!(!view.columns.is_empty());
         for divider in &view.dividers {
             assert!(
@@ -1778,7 +1821,7 @@ mod tests {
         );
 
         let stage = Rect::new(0, 0, 100, 12);
-        let view = project_trail_view(stage, &trail, &snaps, &[], true);
+        let view = project_trail_view(stage, &trail, &snaps, &[], true, false);
         let panel = view
             .detail_panel
             .as_ref()
@@ -1810,7 +1853,7 @@ mod tests {
         snaps.sync(&trail);
         let stage = Rect::new(0, 0, 120, 10);
 
-        let off = project_trail_view(stage, &trail, &snaps, &[], false);
+        let off = project_trail_view(stage, &trail, &snaps, &[], false, false);
         let off_row = off.columns[0].rows.first().expect("row projected");
         assert!(off_row.actions.is_empty(), "no invisible hit targets");
         assert!(
@@ -1818,7 +1861,7 @@ mod tests {
             "the timestamp block survives the buttons"
         );
 
-        let on = project_trail_view(stage, &trail, &snaps, &[], true);
+        let on = project_trail_view(stage, &trail, &snaps, &[], true, false);
         let on_row = on.columns[0].rows.first().expect("row projected");
         assert_eq!(
             on_row.actions.len(),
@@ -1848,7 +1891,7 @@ mod tests {
         snaps.sync(&trail);
         let stage = Rect::new(0, 0, 38, 10);
         let app = crate::app::state::AppState::test_new();
-        let view = project_trail_view(stage, &trail, &snaps, &[], false);
+        let view = project_trail_view(stage, &trail, &snaps, &[], false, false);
         let row = view.columns[0].rows.first().expect("row").clone();
         assert!(
             usize::from(row.name_logical_width)
@@ -1902,8 +1945,8 @@ mod tests {
                 .to_string()
         };
 
-        let off = project_trail_view(stage, &trail, &snaps, &[], false);
-        let on = project_trail_view(stage, &trail, &snaps, &[], true);
+        let off = project_trail_view(stage, &trail, &snaps, &[], false, false);
+        let on = project_trail_view(stage, &trail, &snaps, &[], true, false);
         assert!(
             render_tail(&on).ends_with(">rx"),
             "control: buttons visible"
@@ -1930,7 +1973,7 @@ mod tests {
             crate::fm::trail_snapshots::TrailActivateOutcome::SelectedFile
         );
 
-        let view = project_trail_view(Rect::new(0, 0, 30, 8), &trail, &snaps, &[], true);
+        let view = project_trail_view(Rect::new(0, 0, 30, 8), &trail, &snaps, &[], true, false);
 
         assert!(view.detail_panel.is_none());
         assert_eq!(view.columns.len(), 1);
@@ -1943,7 +1986,7 @@ mod tests {
         let td = TempDir::new("panel-none");
         let (trail, snaps) = deep_loaded_trail(&td.root, 1, 1);
         let stage = Rect::new(0, 0, 100, 12);
-        let view = project_trail_view(stage, &trail, &snaps, &[], true);
+        let view = project_trail_view(stage, &trail, &snaps, &[], true, false);
         assert!(view.detail_panel.is_none());
     }
 
@@ -1968,7 +2011,7 @@ mod tests {
         );
 
         let stage = Rect::new(0, 0, 100, 12);
-        let view = project_trail_view(stage, &trail, &snaps, &[], true);
+        let view = project_trail_view(stage, &trail, &snaps, &[], true, false);
         let panel = view.detail_panel.clone().expect("panel is open");
 
         let app = crate::app::state::AppState::test_new();
@@ -2015,7 +2058,7 @@ mod tests {
             crate::fm::trail_snapshots::TrailActivateOutcome::SelectedFile
         );
 
-        let view = project_trail_view(Rect::new(0, 0, 100, 12), &trail, &snaps, &[], true);
+        let view = project_trail_view(Rect::new(0, 0, 100, 12), &trail, &snaps, &[], true, false);
         let panel = view.detail_panel.clone().expect("panel is open");
         let app = crate::app::state::AppState::test_new();
         let backend = TestBackend::new(100, 12);
@@ -2078,7 +2121,7 @@ mod tests {
         let td = TempDir::new("bounds");
         let (trail, snaps) = deep_loaded_trail(&td.root, MAX_TRAIL_DEPTH - 1, 1);
         let stage = Rect::new(4, 2, 90, 10);
-        let view = project_trail_view(stage, &trail, &snaps, &[], true);
+        let view = project_trail_view(stage, &trail, &snaps, &[], true, false);
         for column in &view.columns {
             assert!(column.rect.x >= stage.x);
             assert!(column.rect.right() <= stage.right());
@@ -2113,7 +2156,7 @@ mod tests {
         let trail = crate::fm::trail::TrailState::new(&td.root);
         let mut snaps = crate::fm::trail_snapshots::TrailSnapshots::new(false);
         snaps.sync(&trail);
-        let all = project_trail_view(Rect::new(0, 0, 120, 20), &trail, &snaps, &[], true);
+        let all = project_trail_view(Rect::new(0, 0, 120, 20), &trail, &snaps, &[], true, false);
         let all_rows: Vec<usize> = all
             .columns
             .iter()
@@ -2122,7 +2165,7 @@ mod tests {
         assert_eq!(all_rows.len(), 3, "control: unfiltered offers everything");
 
         snaps.set_filter(td.root.clone(), "ap".to_string());
-        let view = project_trail_view(Rect::new(0, 0, 120, 20), &trail, &snaps, &[], true);
+        let view = project_trail_view(Rect::new(0, 0, 120, 20), &trail, &snaps, &[], true, false);
         let names: Vec<&str> = view
             .columns
             .iter()

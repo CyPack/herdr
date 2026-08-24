@@ -33,6 +33,8 @@ pub(crate) fn request_changes_ui(request: &Request) -> bool {
             | Method::WorkspaceMoveBlock(_)
             | Method::WorkspaceReportMetadata(_)
             | Method::WorkspaceClose(_)
+            | Method::ChatSeat(_)
+            | Method::ChatUnseat(_)
             | Method::WorktreeCreate(_)
             | Method::WorktreeOpen(_)
             | Method::WorktreeRemove(_)

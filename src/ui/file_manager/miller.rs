@@ -165,7 +165,18 @@ pub(crate) fn project_miller_view_with_resize_preview(
     let first_visible_min = 0;
     let first_visible_max = focused_index;
     let requested_offset = if file_manager.miller.horizontal.follow_active {
-        miller_auto_follow_offset(column_stage.width, &preferred_widths, focused_index)
+        // TP-TRAIL-REVEAL-01: follow the preview child, not the focused
+        // column — right-aligning at the parent clips the freshly opened
+        // listing off the viewport forever on a narrow surface.
+        miller_auto_follow_offset(
+            column_stage.width,
+            &preferred_widths,
+            miller_follow_target(
+                focused_index,
+                preferred_widths.len(),
+                file_manager.miller.horizontal.reveal_child,
+            ),
+        )
     } else {
         file_manager.miller.horizontal.offset_cells
     };
@@ -541,6 +552,30 @@ pub(crate) fn miller_auto_follow_offset(
     requested.min(total_width.saturating_sub(u32::from(stage_width)))
 }
 
+/// TP-TRAIL-REVEAL-01: which column the auto-follow window right-aligns.
+///
+/// The follow window right-aligns at the END of its target column. Aligning at
+/// the FOCUSED column mathematically banishes the preview child (focused+1)
+/// whenever the chain outgrows the viewport — a press on a directory then
+/// opens a column the reader can never see, which reads as a dead press on a
+/// narrow surface such as the beside half. Following the freshly opened child
+/// keeps that listing on screen at any width; when the focused column is the
+/// last one, this is the old window unchanged.
+pub(crate) fn miller_follow_target(
+    focused_index: usize,
+    column_count: usize,
+    reveal_child: bool,
+) -> usize {
+    if column_count == 0 {
+        return 0;
+    }
+    if reveal_child {
+        focused_index.saturating_add(1).min(column_count - 1)
+    } else {
+        focused_index.min(column_count - 1)
+    }
+}
+
 #[cfg(test)]
 pub(crate) fn first_visible_floor(stage_width: u16, widths: &[u16], focused_index: usize) -> usize {
     const MAX_COMPLETE_COLUMNS: usize = 5;
@@ -645,5 +680,57 @@ mod tests {
         );
         assert!(view.columns.is_empty());
         assert!(view.dividers.is_empty());
+    }
+
+    // TP-TRAIL-REVEAL-01: the user's live report — "I press into a 2nd/3rd
+    // level folder and nothing appears; the miller columns don't show". The
+    // press DID open a chain column; the follow window right-aligned at the
+    // parent and clipped it off the right edge forever.
+    #[test]
+    fn auto_follow_reveals_the_preview_child_in_a_tight_viewport() {
+        let widths = vec![28; 4];
+        let area = Rect::new(0, 0, 40, 12);
+        let offset = miller_auto_follow_offset(
+            area.width,
+            &widths,
+            miller_follow_target(2, widths.len(), true),
+        );
+        let view = miller_viewport_geometry_at_offset(area, &widths, offset);
+        let child = view.columns.iter().find(|column| column.chain_index == 3);
+        assert!(
+            child.is_some(),
+            "the freshly opened preview column must be inside the viewport: {:?}",
+            view.columns
+                .iter()
+                .map(|column| column.chain_index)
+                .collect::<Vec<_>>()
+        );
+        let child = child.expect("checked above");
+        assert_eq!(
+            child.rect.right(),
+            area.right(),
+            "the revealed column right-aligns so its parent keeps what room is left"
+        );
+        assert_eq!(child.rect.width, 28, "the revealed column is complete");
+    }
+
+    // TP-TRAIL-REVEAL-01 (guard): with no child to reveal the window is the
+    // old one — the focused column right-aligned and complete.
+    #[test]
+    fn the_follow_window_still_right_aligns_the_last_focused_column() {
+        let widths = vec![28; 4];
+        assert_eq!(miller_follow_target(3, widths.len(), true), 3);
+        assert_eq!(
+            miller_follow_target(2, widths.len(), false),
+            2,
+            "an unarmed window still follows the focused column"
+        );
+        let offset =
+            miller_auto_follow_offset(40, &widths, miller_follow_target(3, widths.len(), true));
+        let view = miller_viewport_geometry_at_offset(Rect::new(0, 0, 40, 12), &widths, offset);
+        assert_eq!(
+            view.columns.last().map(|column| column.chain_index),
+            Some(3)
+        );
     }
 }

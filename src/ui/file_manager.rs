@@ -816,6 +816,7 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
             &fm.trail_snapshots,
             &[],
             app.files_show_row_actions,
+            fm.miller.horizontal.reveal_child,
         );
         &fallback_trail
     };
@@ -1805,7 +1806,7 @@ mod tests {
         }
         let fm = app.file_manager.as_ref().expect("open FM");
         app.view.file_manager_trail =
-            trail_view::project_trail_view(body, &fm.trail, &fm.trail_snapshots, &[], false);
+            trail_view::project_trail_view(body, &fm.trail, &fm.trail_snapshots, &[], false, false);
         let divider = app
             .view
             .file_manager_trail
@@ -2214,7 +2215,7 @@ mod tests {
         app.view.terminal_area = frame;
         let fm = app.file_manager.as_ref().expect("open FM");
         app.view.file_manager_trail =
-            trail_view::project_trail_view(body, &fm.trail, &fm.trail_snapshots, &[], false);
+            trail_view::project_trail_view(body, &fm.trail, &fm.trail_snapshots, &[], false, false);
 
         let rendered = render_rows(&app, frame.width, frame.height).join("\n");
 
@@ -2239,7 +2240,7 @@ mod tests {
         app.view.terminal_area = frame;
         let fm = app.file_manager.as_ref().expect("open FM");
         app.view.file_manager_trail =
-            trail_view::project_trail_view(body, &fm.trail, &fm.trail_snapshots, &[], false);
+            trail_view::project_trail_view(body, &fm.trail, &fm.trail_snapshots, &[], false, false);
         let before_fm = {
             let fm = app.file_manager.as_ref().expect("open FM");
             (
@@ -2320,6 +2321,40 @@ mod tests {
                 "degenerate body must expose no divider-like paint target"
             );
         }
+    }
+
+    // TP-TRAIL-REVEAL-01: the interaction projection (file_manager_miller)
+    // must reveal the freshly opened preview column exactly as the painted
+    // trail does — a diverging offset would land presses on the wrong column.
+    #[test]
+    fn miller_projection_reveals_the_preview_child_in_a_tight_viewport() {
+        let td = TempDir::new("miller-reveal");
+        td.dir("cocuk");
+        let mut fm = FmState::new(&td.root);
+        let parent = fm.trail.active_col();
+        assert!(fm.trail.select_dir(parent, &td.root.join("cocuk")));
+        assert!(fm.trail.move_active_left());
+        assert_eq!(
+            fm.trail.active_col(),
+            parent,
+            "the fixture keeps focus on the parent"
+        );
+        // The press road arms the reveal before it queues the preview.
+        fm.miller.horizontal.reveal_child = true;
+
+        let snapshot = miller::project_miller_view(Rect::new(0, 0, 24, 8), &fm, 1);
+        assert!(
+            snapshot.columns.iter().any(|column| matches!(
+                column.kind,
+                miller::MillerColumnKind::Trail { trail_index, .. } if trail_index == parent + 1
+            )),
+            "the preview child column must be inside the tight viewport: {:?}",
+            snapshot
+                .columns
+                .iter()
+                .map(|column| column.projection_index)
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]

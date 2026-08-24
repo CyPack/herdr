@@ -350,6 +350,66 @@ impl App {
             return true;
         }
 
+        if self.state.mode == Mode::ChatWorkLog {
+            match mouse.kind {
+                MouseEventKind::Down(MouseButton::Left)
+                    if self
+                        .state
+                        .chat_worklog_close_button_at(mouse.column, mouse.row) =>
+                {
+                    leave_modal(&mut self.state);
+                }
+                MouseEventKind::Down(MouseButton::Left) => {
+                    if let Some(target) = self
+                        .state
+                        .chat_worklog_scrollbar_target_at(mouse.column, mouse.row)
+                    {
+                        match target {
+                            ScrollbarClickTarget::Thumb { grab_row_offset } => {
+                                self.state.drag = Some(DragState {
+                                    target: DragTarget::ChatWorkLogScrollbar { grab_row_offset },
+                                });
+                            }
+                            ScrollbarClickTarget::Track { offset_from_bottom } => {
+                                self.state
+                                    .set_chat_worklog_offset_from_bottom(offset_from_bottom);
+                            }
+                        }
+                    } else {
+                        let rect = self.state.chat_worklog_popup_rect();
+                        let inside = mouse.column >= rect.x
+                            && mouse.column < rect.x + rect.width
+                            && mouse.row >= rect.y
+                            && mouse.row < rect.y + rect.height;
+                        if !inside {
+                            leave_modal(&mut self.state);
+                        }
+                    }
+                }
+                MouseEventKind::Drag(MouseButton::Left) => {
+                    if let Some(DragState {
+                        target: DragTarget::ChatWorkLogScrollbar { grab_row_offset },
+                    }) = &self.state.drag
+                    {
+                        if let Some(offset_from_bottom) = self
+                            .state
+                            .chat_worklog_offset_for_drag_row(mouse.row, *grab_row_offset)
+                        {
+                            self.state
+                                .set_chat_worklog_offset_from_bottom(offset_from_bottom);
+                        }
+                    }
+                }
+                MouseEventKind::Up(MouseButton::Left) => {
+                    self.state.drag = None;
+                }
+                MouseEventKind::ScrollUp => self.state.scroll_chat_worklog(-3),
+                MouseEventKind::ScrollDown => self.state.scroll_chat_worklog(3),
+                _ => {}
+            }
+            return true;
+        }
+
         false
     }
 }
@@ -803,6 +863,110 @@ impl AppState {
         let max_scroll = self.keybind_help_max_scroll();
         let current = self.keybind_help.scroll as i16;
         self.keybind_help.scroll = current.saturating_add(delta).clamp(0, max_scroll as i16) as u16;
+    }
+
+    // ── chat work-log sheet: the keybind sheet's scroll contract, mirrored
+    // (TP-WORKLOG-01) — one modal language, not two.
+    pub(super) fn chat_worklog_popup_rect(&self) -> Rect {
+        crate::ui::centered_popup_rect(self.screen_rect(), 76, 22).unwrap_or_default()
+    }
+
+    fn chat_worklog_modal_inner(&self) -> Option<Rect> {
+        self.onboarding_modal_inner(76, 22)
+    }
+
+    pub(super) fn chat_worklog_close_button_at(&self, col: u16, row: u16) -> bool {
+        let Some(inner) = self.chat_worklog_modal_inner() else {
+            return false;
+        };
+        if inner.height < 4 || inner.width < 12 {
+            return false;
+        }
+        let button =
+            crate::ui::release_notes_close_button_rect(Rect::new(inner.x, inner.y, inner.width, 1));
+        col >= button.x
+            && col < button.x + button.width
+            && row >= button.y
+            && row < button.y + button.height
+    }
+
+    fn chat_worklog_body_rect(&self) -> Option<Rect> {
+        let inner = self.chat_worklog_modal_inner()?;
+        if inner.height < 6 || inner.width < 4 {
+            return None;
+        }
+        Some(crate::ui::modal_stack_areas(inner, 2, 1, 0, 1).content)
+    }
+
+    fn chat_worklog_scroll_metrics(&self) -> Option<crate::pane::ScrollMetrics> {
+        let body = self.chat_worklog_body_rect()?;
+        let viewport_rows = body.height.max(1) as usize;
+        let total_rows = crate::ui::chat_worklog_lines(self).len();
+        let max_offset_from_bottom = total_rows.saturating_sub(viewport_rows);
+        Some(crate::pane::ScrollMetrics {
+            offset_from_bottom: max_offset_from_bottom
+                .saturating_sub(self.chat_worklog_modal.scroll as usize),
+            max_offset_from_bottom,
+            viewport_rows,
+        })
+    }
+
+    pub(super) fn chat_worklog_scrollbar_target_at(
+        &self,
+        col: u16,
+        row: u16,
+    ) -> Option<ScrollbarClickTarget> {
+        let body = self.chat_worklog_body_rect()?;
+        let metrics = self.chat_worklog_scroll_metrics()?;
+        let track = crate::ui::release_notes_scrollbar_rect(body, metrics)?;
+        if !(col >= track.x
+            && col < track.x + track.width
+            && row >= track.y
+            && row < track.y + track.height)
+        {
+            return None;
+        }
+        if let Some(grab_row_offset) = crate::ui::scrollbar_thumb_grab_offset(metrics, track, row) {
+            Some(ScrollbarClickTarget::Thumb { grab_row_offset })
+        } else {
+            Some(ScrollbarClickTarget::Track {
+                offset_from_bottom: crate::ui::scrollbar_offset_from_row(metrics, track, row),
+            })
+        }
+    }
+
+    pub(super) fn chat_worklog_offset_for_drag_row(
+        &self,
+        row: u16,
+        grab_row_offset: u16,
+    ) -> Option<usize> {
+        let body = self.chat_worklog_body_rect()?;
+        let metrics = self.chat_worklog_scroll_metrics()?;
+        let track = crate::ui::release_notes_scrollbar_rect(body, metrics)?;
+        Some(crate::ui::scrollbar_offset_from_drag_row(
+            metrics,
+            track,
+            row,
+            grab_row_offset,
+        ))
+    }
+
+    pub(crate) fn chat_worklog_max_scroll(&self) -> u16 {
+        self.chat_worklog_scroll_metrics()
+            .map(|metrics| metrics.max_offset_from_bottom as u16)
+            .unwrap_or(0)
+    }
+
+    pub(super) fn set_chat_worklog_offset_from_bottom(&mut self, offset_from_bottom: usize) {
+        let max_scroll = self.chat_worklog_max_scroll() as usize;
+        self.chat_worklog_modal.scroll = max_scroll.saturating_sub(offset_from_bottom) as u16;
+    }
+
+    pub(super) fn scroll_chat_worklog(&mut self, delta: i16) {
+        let max_scroll = self.chat_worklog_max_scroll();
+        let current = self.chat_worklog_modal.scroll as i16;
+        self.chat_worklog_modal.scroll =
+            current.saturating_add(delta).clamp(0, max_scroll as i16) as u16;
     }
 }
 

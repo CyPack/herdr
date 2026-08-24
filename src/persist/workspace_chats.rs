@@ -30,6 +30,20 @@ pub const LEDGER_VERSION: u32 = 1;
 /// the least useful, so they go first.
 pub(crate) const MAX_CHATS_PER_WORKSPACE: usize = 200;
 
+/// The source stamped on a move made by a person through the TUI menus — and
+/// the owner assumed for any move recorded before sources existed.
+pub const USER_MOVE_SOURCE: &str = "user";
+
+/// What a stamped re-home request actually did — a bulk applier must be able
+/// to report honestly instead of collapsing "done", "already so" and "not
+/// yours to move" into one number (TP-CHAT-MOVE-13).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SeatOutcome {
+    Applied,
+    Unchanged,
+    Refused,
+}
+
 /// One observation of an agent chat running inside a workspace.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChatRecord {
@@ -98,6 +112,20 @@ pub struct WorkspaceChatLedger {
     /// written down.
     #[serde(default)]
     pub labels: BTreeMap<String, String>,
+    /// Who decided each move: session id → source ("user" for the TUI menus,
+    /// a plan name like "seat-plan" for automated seating). Additive on the
+    /// version-1 schema like its siblings. A move with no recorded source is
+    /// treated as the USER's — every move written before this field existed
+    /// came from a menu, and automation must never be able to override a
+    /// person's decision by omission (TP-CHAT-MOVE-14).
+    #[serde(default)]
+    pub move_sources: BTreeMap<String, String>,
+    /// Extra drawers a re-homed chat ALSO appears in (TP-CHAT-MOVE-15):
+    /// one conversation that did several jobs earns a row under each seat,
+    /// every row the same session. Owned by the same source rules as the
+    /// move itself — a chat the user filed is entirely the user's.
+    #[serde(default)]
+    pub seat_extras: BTreeMap<String, Vec<String>>,
 }
 
 impl Default for WorkspaceChatLedger {
@@ -108,6 +136,8 @@ impl Default for WorkspaceChatLedger {
             moves: BTreeMap::new(),
             names: BTreeMap::new(),
             labels: BTreeMap::new(),
+            move_sources: BTreeMap::new(),
+            seat_extras: BTreeMap::new(),
         }
     }
 }
@@ -233,22 +263,137 @@ impl WorkspaceChatLedger {
     /// Re-home a chat: from now on it belongs to `target_key`'s drawer, no
     /// matter where it was observed (TP-CHAT-MOVE-01). Returns whether the
     /// ledger changed, so an identical decision never schedules a write.
+    ///
+    /// The TUI menus come through here, so their moves are stamped as the
+    /// user's own (TP-CHAT-MOVE-14).
     pub fn set_move(&mut self, session_id: &str, target_key: &str) -> bool {
-        if session_id.is_empty() || target_key.is_empty() {
-            return false;
+        matches!(
+            self.set_move_from(session_id, target_key, USER_MOVE_SOURCE),
+            SeatOutcome::Applied
+        )
+    }
+
+    /// Re-home a chat on behalf of `source`, honestly reporting what happened.
+    ///
+    /// TP-CHAT-MOVE-14: a move the user made (or one from before sources were
+    /// recorded) is the user's decision — an automated source is REFUSED and
+    /// must report so, never silently skip. The user's own re-decision always
+    /// wins and takes the ownership back.
+    pub fn set_move_from(
+        &mut self,
+        session_id: &str,
+        target_key: &str,
+        source: &str,
+    ) -> SeatOutcome {
+        if session_id.is_empty() || target_key.is_empty() || source.is_empty() {
+            return SeatOutcome::Refused;
         }
-        if self.moves.get(session_id).map(String::as_str) == Some(target_key) {
-            return false;
+        let owner = self
+            .move_sources
+            .get(session_id)
+            .map(String::as_str)
+            .unwrap_or(USER_MOVE_SOURCE);
+        if self.moves.contains_key(session_id)
+            && owner == USER_MOVE_SOURCE
+            && source != USER_MOVE_SOURCE
+        {
+            return SeatOutcome::Refused;
+        }
+        let same_target = self.moves.get(session_id).map(String::as_str) == Some(target_key);
+        let same_source = self.moves.contains_key(session_id) && owner == source;
+        if same_target && same_source {
+            return SeatOutcome::Unchanged;
         }
         self.moves
             .insert(session_id.to_string(), target_key.to_string());
-        true
+        self.move_sources
+            .insert(session_id.to_string(), source.to_string());
+        SeatOutcome::Applied
+    }
+
+    /// Declare the extra drawers a re-homed chat also appears in
+    /// (TP-CHAT-MOVE-15). Same ownership rules as the move: an automated
+    /// source cannot touch a user-owned chat, and re-declaring the same set
+    /// schedules no write. The primary target is never duplicated into the
+    /// extras, and a chat with no primary move takes no extras — a copy
+    /// with no original is a ghost.
+    pub fn set_extra_seats(
+        &mut self,
+        session_id: &str,
+        extra_keys: &[String],
+        source: &str,
+    ) -> SeatOutcome {
+        if session_id.is_empty() || source.is_empty() {
+            return SeatOutcome::Refused;
+        }
+        let Some(primary) = self.moves.get(session_id).cloned() else {
+            return SeatOutcome::Refused;
+        };
+        let owner = self
+            .move_sources
+            .get(session_id)
+            .map(String::as_str)
+            .unwrap_or(USER_MOVE_SOURCE);
+        if owner == USER_MOVE_SOURCE && source != USER_MOVE_SOURCE {
+            return SeatOutcome::Refused;
+        }
+        let mut cleaned: Vec<String> = Vec::new();
+        for key in extra_keys {
+            if key.is_empty() || *key == primary || cleaned.contains(key) {
+                continue;
+            }
+            cleaned.push(key.clone());
+        }
+        let current = self.seat_extras.get(session_id);
+        if cleaned.is_empty() {
+            if current.is_none() {
+                return SeatOutcome::Unchanged;
+            }
+            self.seat_extras.remove(session_id);
+            return SeatOutcome::Applied;
+        }
+        if current == Some(&cleaned) {
+            return SeatOutcome::Unchanged;
+        }
+        self.seat_extras.insert(session_id.to_string(), cleaned);
+        SeatOutcome::Applied
     }
 
     /// Withdraw a re-home: the chat returns to wherever it was observed
     /// (TP-CHAT-MOVE-03).
     pub fn clear_move(&mut self, session_id: &str) -> bool {
-        self.moves.remove(session_id).is_some()
+        let removed = self.moves.remove(session_id).is_some();
+        self.move_sources.remove(session_id);
+        self.seat_extras.remove(session_id);
+        removed
+    }
+
+    /// Withdraw every move a given source wrote — the undo gate for automated
+    /// seating (TP-CHAT-MOVE-14). A missing stamp means "user", so an old
+    /// file's moves can only be withdrawn by naming the user source
+    /// explicitly.
+    pub fn clear_moves_by_source(&mut self, source: &str) -> usize {
+        if source.is_empty() {
+            return 0;
+        }
+        let doomed: Vec<String> = self
+            .moves
+            .keys()
+            .filter(|sid| {
+                self.move_sources
+                    .get(*sid)
+                    .map(String::as_str)
+                    .unwrap_or(USER_MOVE_SOURCE)
+                    == source
+            })
+            .cloned()
+            .collect();
+        for sid in &doomed {
+            self.moves.remove(sid);
+            self.move_sources.remove(sid);
+            self.seat_extras.remove(sid);
+        }
+        doomed.len()
     }
 
     /// Name a chat. Returns whether the ledger changed, so re-submitting the
@@ -325,6 +470,7 @@ pub fn apply_chat_names(
 pub fn apply_chat_moves(
     rows: &mut std::collections::HashMap<String, Vec<crate::app::state::WorkspaceChatRow>>,
     moves: &BTreeMap<String, String>,
+    seat_extras: &BTreeMap<String, Vec<String>>,
 ) {
     for (session_id, target_key) in moves {
         // Pull the chat out of every drawer, keeping its freshest copy —
@@ -350,6 +496,23 @@ pub fn apply_chat_moves(
         let Some(moved) = best else {
             continue;
         };
+        // TP-CHAT-MOVE-15: the extra seats get CLONES of the same row —
+        // one conversation, several rooms. They ride the primary's find:
+        // a chat nobody shows grows no copies either.
+        for extra_key in seat_extras.get(session_id).into_iter().flatten() {
+            if extra_key == target_key {
+                continue;
+            }
+            let list = rows.entry(extra_key.clone()).or_default();
+            if list.iter().any(|row| row.session_id == *session_id) {
+                continue;
+            }
+            let position = list
+                .iter()
+                .position(|row| row.last_seen_ms < moved.last_seen_ms)
+                .unwrap_or(list.len());
+            list.insert(position, moved.clone());
+        }
         let list = rows.entry(target_key.clone()).or_default();
         let position = list
             .iter()
@@ -841,7 +1004,7 @@ mod tests {
         ]);
         let moves = BTreeMap::from([("s1".to_string(), "/repo/target".to_string())]);
 
-        apply_chat_moves(&mut rows, &moves);
+        apply_chat_moves(&mut rows, &moves, &BTreeMap::new());
 
         assert!(
             !rows["/repo/main"].iter().any(|r| r.session_id == "s1"),
@@ -875,7 +1038,7 @@ mod tests {
             std::collections::HashMap::from([("/repo/main".to_string(), vec![row("s1", 5_000)])]);
         let moves = BTreeMap::from([("s1".to_string(), "/repo/fresh".to_string())]);
 
-        apply_chat_moves(&mut rows, &moves);
+        apply_chat_moves(&mut rows, &moves, &BTreeMap::new());
 
         assert!(rows["/repo/main"].is_empty());
         assert_eq!(rows["/repo/fresh"], vec![row("s1", 5_000)]);
@@ -892,7 +1055,7 @@ mod tests {
             ("ghost".to_string(), "/repo/target".to_string()),
         ]);
 
-        apply_chat_moves(&mut rows, &moves);
+        apply_chat_moves(&mut rows, &moves, &BTreeMap::new());
 
         assert_eq!(
             rows["/repo/target"],
@@ -993,6 +1156,194 @@ mod tests {
         assert!(!ledger.clear_move("s1"), "withdrawing nothing");
         assert!(!ledger.set_move("", "/repo/x"), "an empty session id");
         assert!(!ledger.set_move("s1", ""), "an empty target");
+    }
+
+    // TP-CHAT-MOVE-14
+    #[test]
+    fn a_plan_seat_cannot_override_a_user_move() {
+        let mut ledger = WorkspaceChatLedger::default();
+        assert!(ledger.set_move("s1", "/repo/user-choice"));
+        assert_eq!(
+            ledger.set_move_from("s1", "module:other", "seat-plan"),
+            SeatOutcome::Refused,
+            "automation must not override a person's decision"
+        );
+        assert_eq!(
+            ledger.moves.get("s1").map(String::as_str),
+            Some("/repo/user-choice")
+        );
+        // the user's own re-decision always wins and takes ownership back
+        assert!(ledger.set_move("s1", "/repo/elsewhere"));
+        // and a plan CAN seat a chat nobody decided about
+        assert_eq!(
+            ledger.set_move_from("s2", "module:x", "seat-plan"),
+            SeatOutcome::Applied
+        );
+        assert_eq!(
+            ledger.set_move_from("s2", "module:x", "seat-plan"),
+            SeatOutcome::Unchanged,
+            "an identical plan re-run schedules no write"
+        );
+        // the user can re-seat a plan-seated chat; ownership transfers
+        assert_eq!(
+            ledger.set_move_from("s2", "module:x", USER_MOVE_SOURCE),
+            SeatOutcome::Applied,
+            "same target but new owner is a change worth recording"
+        );
+        assert_eq!(
+            ledger.set_move_from("s2", "module:y", "seat-plan"),
+            SeatOutcome::Refused,
+            "after the user took it over the plan is locked out"
+        );
+    }
+
+    // TP-CHAT-MOVE-14
+    #[test]
+    fn an_unstamped_move_is_user_owned_when_loaded_from_an_old_file() {
+        let path = TempPath(temp_ledger_path("unstamped-move"));
+        // a file written before move_sources existed: moves without stamps
+        std::fs::write(
+            &path.0,
+            r#"{"version":1,"workspaces":{},"moves":{"s1":"/repo/old-decision"}}"#,
+        )
+        .unwrap();
+        let mut ledger = load_from_path(&path.0);
+        assert_eq!(
+            ledger.moves.get("s1").map(String::as_str),
+            Some("/repo/old-decision")
+        );
+        assert_eq!(
+            ledger.set_move_from("s1", "module:plan-target", "seat-plan"),
+            SeatOutcome::Refused,
+            "a pre-source move is the user's and stays theirs"
+        );
+    }
+
+    // TP-CHAT-MOVE-14
+    #[test]
+    fn unseat_by_source_clears_only_its_own_moves() {
+        let mut ledger = WorkspaceChatLedger::default();
+        assert!(ledger.set_move("user-chat", "/repo/manual"));
+        assert_eq!(
+            ledger.set_move_from("plan-chat-1", "module:a", "seat-plan"),
+            SeatOutcome::Applied
+        );
+        assert_eq!(
+            ledger.set_move_from("plan-chat-2", "module:b", "seat-plan"),
+            SeatOutcome::Applied
+        );
+        assert_eq!(ledger.clear_moves_by_source("seat-plan"), 2);
+        assert!(
+            ledger.moves.contains_key("user-chat"),
+            "the user's survives"
+        );
+        assert!(!ledger.moves.contains_key("plan-chat-1"));
+        assert!(!ledger.moves.contains_key("plan-chat-2"));
+        assert!(ledger.move_sources.is_empty() || !ledger.move_sources.contains_key("plan-chat-1"));
+        assert_eq!(
+            ledger.clear_moves_by_source(""),
+            0,
+            "an empty source clears nothing"
+        );
+    }
+
+    // TP-CHAT-MOVE-15
+    #[test]
+    fn an_extra_seat_clones_the_row_into_a_second_drawer() {
+        let mut ledger = WorkspaceChatLedger::default();
+        assert_eq!(
+            ledger.set_move_from("s1", "module:a", "seat-plan"),
+            SeatOutcome::Applied
+        );
+        assert_eq!(
+            ledger.set_extra_seats(
+                "s1",
+                &[
+                    "module:b".to_string(),
+                    "module:a".to_string(),
+                    "".to_string()
+                ],
+                "seat-plan"
+            ),
+            SeatOutcome::Applied,
+            "the primary and the empty key are filtered, b remains"
+        );
+        assert_eq!(
+            ledger.set_extra_seats("s1", &["module:b".to_string()], "seat-plan"),
+            SeatOutcome::Unchanged,
+            "re-declaring the same set schedules no write"
+        );
+        let mut rows: std::collections::HashMap<String, Vec<crate::app::state::WorkspaceChatRow>> =
+            Default::default();
+        rows.entry("/somewhere".to_string()).or_default().push(
+            crate::app::state::WorkspaceChatRow {
+                session_id: "s1".to_string(),
+                agent: "claude".to_string(),
+                title: Some("t".to_string()),
+                last_seen_ms: 10,
+                last_modified: None,
+                last_message_at: None,
+            },
+        );
+        apply_chat_moves(&mut rows, &ledger.moves, &ledger.seat_extras);
+        let count = |key: &str| rows.get(key).map(|l| l.len()).unwrap_or(0);
+        assert_eq!(count("module:a"), 1, "the primary drawer holds the row");
+        assert_eq!(count("module:b"), 1, "the extra drawer holds a clone");
+        assert_eq!(count("/somewhere"), 0, "the source drawer lost it");
+    }
+
+    // TP-CHAT-MOVE-15
+    #[test]
+    fn extras_follow_the_moves_ownership_and_leave_with_it() {
+        let mut ledger = WorkspaceChatLedger::default();
+        assert!(ledger.set_move("owned", "/repo/manual"));
+        assert_eq!(
+            ledger.set_extra_seats("owned", &["module:x".to_string()], "seat-plan"),
+            SeatOutcome::Refused,
+            "a user-owned chat takes no automated extras"
+        );
+        assert_eq!(
+            ledger.set_extra_seats("ghost", &["module:x".to_string()], "seat-plan"),
+            SeatOutcome::Refused,
+            "a chat with no primary move takes no extras"
+        );
+        assert_eq!(
+            ledger.set_move_from("plan", "module:a", "seat-plan"),
+            SeatOutcome::Applied
+        );
+        assert_eq!(
+            ledger.set_extra_seats("plan", &["module:b".to_string()], "seat-plan"),
+            SeatOutcome::Applied
+        );
+        assert!(ledger.clear_move("plan"));
+        assert!(
+            ledger.seat_extras.is_empty(),
+            "withdrawing the move withdraws its copies"
+        );
+    }
+
+    // TP-CHAT-MOVE-13
+    #[test]
+    fn a_bulk_seat_reports_applied_unchanged_refused_honestly() {
+        let mut ledger = WorkspaceChatLedger::default();
+        assert!(ledger.set_move("owned", "/repo/manual"));
+        let entries = [
+            ("fresh", "module:a"),
+            ("fresh", "module:a"), // duplicate row in one plan: second is Unchanged
+            ("owned", "module:b"), // user-owned: Refused
+            ("", "module:c"),      // empty identity: Refused
+        ];
+        let mut applied = 0;
+        let mut unchanged = 0;
+        let mut refused = 0;
+        for (sid, key) in entries {
+            match ledger.set_move_from(sid, key, "seat-plan") {
+                SeatOutcome::Applied => applied += 1,
+                SeatOutcome::Unchanged => unchanged += 1,
+                SeatOutcome::Refused => refused += 1,
+            }
+        }
+        assert_eq!((applied, unchanged, refused), (1, 1, 2));
     }
 
     fn snapshot_pane(session: Option<&str>) -> crate::persist::snapshot::PaneSnapshot {
@@ -1221,7 +1572,7 @@ mod move_semantics_tests {
 
         let mut moves = BTreeMap::new();
         moves.insert("s1".to_string(), module_ledger_key("docs"));
-        apply_chat_moves(&mut rows, &moves);
+        apply_chat_moves(&mut rows, &moves, &BTreeMap::new());
 
         let occurrences: usize = rows
             .values()

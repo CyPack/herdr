@@ -1470,7 +1470,8 @@ impl AppState {
                         }
                         DragTarget::ReleaseNotesScrollbar { .. }
                         | DragTarget::ProductAnnouncementScrollbar { .. }
-                        | DragTarget::KeybindHelpScrollbar { .. } => {}
+                        | DragTarget::KeybindHelpScrollbar { .. }
+                        | DragTarget::ChatWorkLogScrollbar { .. } => {}
                     }
                 }
             }
@@ -1795,6 +1796,8 @@ impl AppState {
                         // its siblings, so a config reload underneath an open
                         // menu cannot turn the offer into a no-op.
                         let has_modules = !self.module_move_target_entries().is_empty();
+                        // TP-WORKLOG-02: resolved at menu-open like its siblings.
+                        let has_worklog = self.chat_worklog.has_confirmed(&session_id);
                         self.context_menu = Some(ContextMenuState {
                             kind: ContextMenuKind::WorkspaceChat {
                                 ws_idx: None,
@@ -1802,6 +1805,7 @@ impl AppState {
                                 has_move,
                                 has_live,
                                 has_modules,
+                                has_worklog,
                             },
                             x: mouse.column,
                             y: mouse.row,
@@ -1834,6 +1838,8 @@ impl AppState {
                         let has_live = self.find_resumed_chat_tab(&session_id).is_some();
                         // TP-CHAT-MOVE-11
                         let has_modules = !self.module_move_target_entries().is_empty();
+                        // TP-WORKLOG-02: resolved at menu-open like its siblings.
+                        let has_worklog = self.chat_worklog.has_confirmed(&session_id);
                         self.context_menu = Some(ContextMenuState {
                             kind: ContextMenuKind::WorkspaceChat {
                                 ws_idx: Some(hit.ws_idx),
@@ -1841,6 +1847,7 @@ impl AppState {
                                 has_move,
                                 has_live,
                                 has_modules,
+                                has_worklog,
                             },
                             x: mouse.column,
                             y: mouse.row,
