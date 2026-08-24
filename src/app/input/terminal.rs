@@ -1937,14 +1937,24 @@ mod tests {
             vec![crate::raw_input::RawInputEvent::Key(page_up.clone())],
             false,
         );
+        // Rebased for the fork's per-display focus (TP-MCF ailesi): the
+        // local client keeps its own focus ledger, so a focus change made
+        // outside any viewer window would only move the default focus and
+        // the next routed event would snap back to the pane the client was
+        // on. Standing in the local viewer while switching focus is what a
+        // real display does — its ledger entry moves with it.
+        let viewer = app.state.enter_viewer(Some(0));
         assert!(app.state.focus_pane_in_workspace(0, second_pane));
+        app.state.restore_viewer(viewer);
         app.route_client_events(
             vec![crate::raw_input::RawInputEvent::Key(
                 page_up.clone().with_kind(KeyEventKind::Repeat),
             )],
             false,
         );
+        let viewer = app.state.enter_viewer(Some(0));
         assert!(app.state.focus_pane_in_workspace(0, first_pane));
+        app.state.restore_viewer(viewer);
         app.route_client_events(
             vec![
                 crate::raw_input::RawInputEvent::Key(
