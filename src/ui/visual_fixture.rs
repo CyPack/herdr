@@ -1103,6 +1103,7 @@ mod tests {
                     snaps,
                     &[],
                     true,
+                    false,
                 );
                 assert!(!view.columns.is_empty(), "trail fixture must project");
                 terminal

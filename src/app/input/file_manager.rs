@@ -813,11 +813,12 @@ pub(super) fn handle_file_manager_key(
             }
         }
         (KeyCode::Backspace | KeyCode::Left | KeyCode::Char('h'), KeyModifiers::NONE) => {
-            let Some(moved) = state
-                .file_manager
-                .as_mut()
-                .map(|fm| fm.trail.move_active_left())
-            else {
+            let Some(moved) = state.file_manager.as_mut().map(|fm| {
+                // TP-TRAIL-REVEAL-01: backing out is the reader leaving the
+                // child — the window must not snap forward to it again.
+                fm.miller.horizontal.reveal_child = false;
+                fm.trail.move_active_left()
+            }) else {
                 return FileManagerKeyDispatch::Inert;
             };
             if !moved && !focus_locations_from_trail_root(state) {
@@ -5519,6 +5520,7 @@ command = ["inspect"]
                 .trail_snapshots,
             &[20],
             true,
+            false,
         );
         trail.files_generation = Some(files_generation);
         app.state.view.file_manager_trail = trail;
@@ -5912,6 +5914,7 @@ command = ["view"]
                 .trail_snapshots,
             &[20],
             true,
+            false,
         );
         trail.files_generation = Some(files_generation);
         app.state.view.file_manager_trail = trail;
@@ -6217,6 +6220,61 @@ command = ["view"]
     }
 
     // TP-A3.6 / TP-TRAIL-T7-INPUT-03: Enter opens the selected Trail branch;
+    // TP-TRAIL-REVEAL-01: the reader's own navigation away disarms the
+    // reveal — Left/Backspace and a manual horizontal pan both put the
+    // window back under the reader's control.
+    #[test]
+    fn backing_out_and_a_manual_pan_disarm_the_reveal() {
+        let td = TempDir::new("reveal-disarm");
+        td.dir("sub");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        app.state
+            .file_manager
+            .as_mut()
+            .expect("open FM")
+            .miller
+            .horizontal
+            .reveal_child = true;
+        app.handle_focused_file_manager_key(key(KeyCode::Left));
+        assert!(
+            !app.state
+                .file_manager
+                .as_ref()
+                .expect("open FM")
+                .miller
+                .horizontal
+                .reveal_child,
+            "Left disarms the reveal"
+        );
+
+        app.state
+            .file_manager
+            .as_mut()
+            .expect("open FM")
+            .miller
+            .horizontal
+            .reveal_child = true;
+        let _ =
+            app.handle_miller_horizontal_scroll(MouseEventKind::ScrollRight, KeyModifiers::NONE);
+        let horizontal = &app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("open FM")
+            .miller
+            .horizontal;
+        if !horizontal.follow_active {
+            assert!(
+                !horizontal.reveal_child,
+                "a manual pan that landed disarms the reveal"
+            );
+        } else {
+            // Nothing to pan in this fixture is a fixture problem, not a
+            // pass: the disarm must have something to measure.
+            panic!("the fixture must give the wheel something to pan");
+        }
+    }
+
     // Backspace moves focus to its exact parent column without filesystem I/O.
     #[test]
     fn enter_and_backspace_navigate_directories() {
@@ -9284,7 +9342,7 @@ command = ["view"]
     // Reactivating the real directory there preserves the loaded Trail branch
     // and rearms active-end following so its child column is visible again.
     #[test]
-    fn rightmost_visible_directory_click_waits_for_right_to_reveal_hidden_child_column() {
+    fn rightmost_visible_directory_click_preserves_branch_and_reveals_child() {
         let td = TempDir::new("trail-rightmost-visible-branch");
         let root = td.root.join("root");
         let mut current = root.clone();
@@ -9398,14 +9456,18 @@ command = ["view"]
             after.miller.horizontal.follow_active,
             "same-branch preview rearms following around the focused owner"
         );
+        // TP-TRAIL-REVEAL-01 rebase: the click used to leave the child
+        // clipped off-screen until Right revealed it — the exact dead press
+        // the reveal removed. The branch-preservation core of this proof is
+        // untouched: depth, the focus owner, and rearmed following above.
         assert!(
-            !app.state
+            app.state
                 .view
                 .file_manager_trail
                 .columns
                 .iter()
                 .any(|column| column.directory == current),
-            "click alone cannot reveal or focus the hidden child"
+            "the reactivated branch's child column is revealed by the click itself"
         );
 
         assert_eq!(

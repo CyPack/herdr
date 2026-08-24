@@ -1071,6 +1071,7 @@ fn sync_trail_view(app: &mut AppState, viewport_area: Rect) -> TrailViewSnapshot
         &preferred_widths,
         detail_preferred_width,
         (!horizontal.follow_active).then_some(horizontal.offset_cells),
+        horizontal.reveal_child,
         &vertical,
         show_row_actions,
     );

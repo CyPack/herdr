@@ -11,6 +11,13 @@ impl crate::app::App {
         entry_index: usize,
         expected_path: &std::path::Path,
     ) -> bool {
+        // TP-TRAIL-REVEAL-01: an explicit open-this-directory request arms
+        // the reveal, so the follow window keeps the freshly opened child on
+        // screen however narrow the surface is. The flag rides the state
+        // snapshot the worker clones, so the prepared result carries it home.
+        if let Some(file_manager) = self.state.file_manager.as_mut() {
+            file_manager.miller.horizontal.reveal_child = true;
+        }
         self.queue_file_manager_trail_directory_request(
             trail_col,
             entry_index,
@@ -313,6 +320,9 @@ impl crate::app::App {
         if let (Some(file_manager), Some(target)) = (self.state.file_manager.as_mut(), target) {
             file_manager.miller.horizontal.offset_cells = target;
             file_manager.miller.horizontal.follow_active = false;
+            // TP-TRAIL-REVEAL-01: a manual pan takes the wheel's word for
+            // where the window belongs.
+            file_manager.miller.horizontal.reveal_child = false;
         }
         true
     }
