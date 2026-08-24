@@ -10,7 +10,7 @@ use ratatui::{
 
 use self::tokens::{ResolvedToken, ResolvedTokenKind, SpaceTokenContext};
 use super::scrollbar::{render_scrollbar, should_show_scrollbar};
-use super::status::{state_icon, state_label, state_label_color};
+use super::status::{agent_icon, state_dot, state_icon, state_label, state_label_color};
 use super::text::{display_width, display_width_u16, truncate_end};
 use super::widgets::panel_contrast_fg;
 use crate::app::state::{AgentPanelSort, Palette, ProjectRowArea, ProjectRowKind};
@@ -3346,6 +3346,7 @@ pub(crate) fn workspace_drop_slots(
                     indented: false,
                 } => Some(*ws_idx),
                 WorkspaceListEntry::Workspace { .. } => None,
+                _ => None,
             })
     };
 
@@ -3387,6 +3388,9 @@ pub(crate) fn workspace_drop_slots(
         Some(WorkspaceListEntry::Workspace { ws_idx, .. }) => {
             crate::app::state::WorkspaceDropTarget::Before(*ws_idx)
         }
+        // The fork list carries headers, chats and buckets between the
+        // workspace rows; none of them is a drop seam of its own.
+        Some(_) => return slots,
         None => crate::app::state::WorkspaceDropTarget::End,
     };
     let row = last.rect.y.saturating_add(last.rect.height);
@@ -3740,14 +3744,20 @@ fn render_workspace_list(
     };
     let insertion_row = match app.drag.as_ref().map(|drag| &drag.target) {
         Some(crate::app::state::DragTarget::WorkspaceReorder {
-            insert_idx: Some(insert_idx),
+            drop_target: Some(target),
             ..
-        }) => workspace_drop_indicator_row(
-            &app.view.workspace_card_areas,
-            area,
-            *insert_idx,
-            app.sidebar_chrome,
-        ),
+        }) => {
+            let insert_idx = match target {
+                crate::app::state::WorkspaceDropTarget::Before(ws_idx) => *ws_idx,
+                crate::app::state::WorkspaceDropTarget::End => app.workspaces.len(),
+            };
+            workspace_drop_indicator_row(
+                &app.view.workspace_card_areas,
+                area,
+                insert_idx,
+                app.sidebar_chrome,
+            )
+        }
         _ => None,
     };
 

@@ -789,7 +789,7 @@ impl App {
     fn active_tab_move(&self, delta: isize) -> Option<(usize, usize, usize)> {
         let ws_idx = self.state.active?;
         let ws = self.state.workspaces.get(ws_idx)?;
-        let source = ws.active_tab;
+        let source = ws.active_tab_index();
         let insert = tab_move_insert_index(ws.tabs.len(), source, delta)?;
         Some((ws_idx, source, insert))
     }

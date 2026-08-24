@@ -253,6 +253,7 @@ impl super::App {
             extra_env,
             self.state.pane_scrollback_limit_bytes,
             self.state.host_terminal_theme,
+            self.state.host_terminal_appearance,
         );
         let (tab_idx, terminal, runtime) = match created {
             Ok(result) => result,

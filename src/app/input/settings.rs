@@ -338,6 +338,30 @@ pub(super) fn update_settings_state(state: &mut AppState, key: KeyEvent) -> Opti
                 }
             }
         },
+        SettingsSection::Experiments => match key.code {
+            KeyCode::Up | KeyCode::Char('k') => state.settings.list.move_prev(),
+            KeyCode::Down | KeyCode::Char('j') => {
+                state.settings.list.move_next(ExperimentSetting::ALL.len())
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                return experiment_toggle_action(state, state.settings.list.selected);
+            }
+            KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => {
+                state.settings.section = SettingsSection::Integrations;
+                state.settings.list.selected = 0;
+            }
+            KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => {
+                state.settings.section = SettingsSection::Theme;
+                state.settings.list.selected = current_theme_index(&state.theme_name);
+            }
+            _ => {
+                if let Some(super::modal::ModalAction::Close) =
+                    super::modal::modal_action_from_key(&key, super::modal::SETTINGS_ACTIONS)
+                {
+                    cancel_settings(state);
+                }
+            }
+        },
         SettingsSection::Integrations => match key.code {
             KeyCode::Enter | KeyCode::Char(' ') if integrations_need_install(state) => {
                 return Some(SettingsAction::InstallRecommendedIntegrations);

@@ -383,6 +383,7 @@ fn selected_detail(app: &AppState, terminal_runtimes: &TerminalRuntimeRegistry) 
             ws_idx,
             tab_idx,
             pane_id,
+            ..
         } => pane_detail(app, terminal_runtimes, ws_idx, tab_idx, pane_id),
     }
 }

@@ -2533,6 +2533,7 @@ pub(crate) enum WorkspaceDropTarget {
     End,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum DragTarget {
     WorkspaceReorder {
         source_id: crate::app::InputSourceId,
@@ -2744,6 +2745,7 @@ pub enum ContextMenuKind {
         pane_id: PaneId,
         source_pane_id: Option<PaneId>,
         has_manual_label: bool,
+        right_click_passthrough: bool,
     },
     /// The tree's empty space: the one place a container can be made without
     /// already standing in one (TP-MOD-31). Carries nothing — the blank is
@@ -5238,8 +5240,7 @@ impl AppState {
             && self
                 .active
                 .and_then(|idx| self.focused_runtime_in_workspace(terminal_runtimes, idx))
-                .and_then(crate::terminal::TerminalRuntime::input_state)
-                .is_some_and(crate::pane::InputState::mouse_reporting_enabled)
+                .is_some_and(crate::terminal::TerminalRuntime::mouse_reporting_enabled)
     }
 
     pub(crate) fn should_capture_host_mouse_from(

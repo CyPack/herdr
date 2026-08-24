@@ -243,6 +243,21 @@ pub(super) fn state_icon(
 /// GPU-less phone terminal eight times a second for as long as any agent
 /// works; the colour already carries the state — red blocked, yellow working,
 /// teal done, green idle — so holding still loses nothing (TP-MOB-83).
+pub(super) fn agent_icon(
+    state: AgentState,
+    seen: bool,
+    tick: u32,
+    p: &Palette,
+) -> (&'static str, Style) {
+    match (state, seen) {
+        (AgentState::Blocked, _) => ("\u{25c9}", Style::default().fg(p.red)),
+        (AgentState::Working, _) => (super::spinner_frame(tick), Style::default().fg(p.yellow)),
+        (AgentState::Idle, false) => ("\u{25cf}", Style::default().fg(p.teal)),
+        (AgentState::Idle, true) => ("\u{2713}", Style::default().fg(p.green)),
+        (AgentState::Unknown, _) => ("\u{25cb}", Style::default().fg(p.overlay0)),
+    }
+}
+
 pub(super) fn agent_icon_still(
     state: AgentState,
     seen: bool,

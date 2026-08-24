@@ -1250,6 +1250,11 @@ impl App {
             host_mouse_pixels: None,
             session_dirty: false,
             terminal_runtime_shutdowns: Vec::new(),
+            workspace_press: Default::default(),
+            tab_press: Default::default(),
+            spinner_tick: 0,
+            pane_graphics_streams: std::collections::HashMap::new(),
+            pane_graphics_revision: 0,
         };
 
         state.terminals = restored_terminals;

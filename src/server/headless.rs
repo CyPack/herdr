@@ -4749,7 +4749,7 @@ impl HeadlessServer {
         let mut deferred_frame = false;
         // Pane size no longer follows the foreground client: it follows the
         // set of displays watching each tab. TP-MCF-SIZE-01
-        for (client_id, (cols, rows), cell_size, _is_foreground, mode) in render_targets {
+        for (client_id, (cols, rows), cell_size, is_foreground, mode) in render_targets {
             let area = Rect::new(0, 0, cols, rows);
             // Filled inside the App arm, where the encode runs in this
             // client's viewer window; committed after a successful send.

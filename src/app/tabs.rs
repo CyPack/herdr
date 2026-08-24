@@ -130,6 +130,7 @@ impl App {
             Vec::new(),
             self.state.pane_scrollback_limit_bytes,
             self.state.host_terminal_theme,
+            self.state.host_terminal_appearance,
         )?;
 
         let Some(root_pane) = self.register_new_tab_pane(ws_idx, tab_idx, terminal, runtime) else {
@@ -197,6 +198,7 @@ impl App {
             Vec::new(),
             scrollback_limit_bytes,
             host_terminal_theme,
+            self.state.host_terminal_appearance,
             true,
         );
         let (tab_idx, new_pane) = match split {

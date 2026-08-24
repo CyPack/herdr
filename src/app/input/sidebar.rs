@@ -895,6 +895,7 @@ impl AppState {
                     indented: false,
                 } => Some(ws_idx),
                 crate::ui::WorkspaceListEntry::Workspace { .. } => None,
+                _ => None,
             })
             .collect::<Vec<_>>();
         let source_pos = roots.iter().position(|ws_idx| *ws_idx == source_ws_idx)?;

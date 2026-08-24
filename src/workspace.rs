@@ -73,7 +73,9 @@ fn derive_initial_worktree_membership_against_home(
     }
     Some(WorktreeSpaceMembership {
         key: space.key,
-        label: space.label,
+        // Upstream renamed the display field label -> repo_name; the
+        // membership keeps the fork's name for its own consumers.
+        label: space.repo_name,
         repo_root: repo_root.clone(),
         checkout_path: repo_root,
         is_linked_worktree: false,

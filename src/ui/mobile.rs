@@ -9,7 +9,7 @@ use ratatui::{
 use super::sidebar::{
     agent_panel_entries, agent_panel_entries_from, grouped_child_display_label, AgentPanelEntry,
 };
-use super::status::state_dot;
+use super::status::{state_dot, state_icon};
 use super::text::{display_width_u16, truncate_end};
 use crate::app::state::{Palette, ToastKind, ToastNotification};
 use crate::app::AppState;

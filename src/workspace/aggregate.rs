@@ -31,6 +31,14 @@ pub struct PaneDetail {
 }
 
 impl Tab {
+    pub fn has_working_pane(&self, terminals: &HashMap<TerminalId, TerminalState>) -> bool {
+        self.panes.values().any(|pane| {
+            terminals
+                .get(&pane.attached_terminal_id)
+                .is_some_and(|terminal| terminal.state == AgentState::Working)
+        })
+    }
+
     fn pane_details(
         &self,
         terminals: &HashMap<TerminalId, TerminalState>,
@@ -91,6 +99,10 @@ fn pane_attention_priority(state: AgentState, seen: bool) -> u8 {
 }
 
 impl Workspace {
+    pub fn has_working_pane(&self, terminals: &HashMap<TerminalId, TerminalState>) -> bool {
+        self.tabs.iter().any(|tab| tab.has_working_pane(terminals))
+    }
+
     pub fn aggregate_state(
         &self,
         terminals: &HashMap<TerminalId, TerminalState>,

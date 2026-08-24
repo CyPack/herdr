@@ -1038,6 +1038,9 @@ impl AppState {
                     ws_idx,
                     tab_idx,
                     pane_id,
+                    source_pane_id: None,
+                    has_manual_label: false,
+                    right_click_passthrough: false,
                 },
                 depth: if show_tab_row { 2 } else { 1 },
                 label,
@@ -1276,6 +1279,7 @@ impl AppState {
                 ws_idx,
                 tab_idx,
                 pane_id,
+                ..
             } => {
                 if ws_idx >= self.workspaces.len() {
                     return false;
@@ -4764,6 +4768,18 @@ impl AppState {
             // Both intercepted before this dispatch — in App::handle_internal_event (monolithic)
             // or via HeadlessServer forwarding to the foreground client (server); never touch
             // AppState. Kept for AppEvent exhaustiveness.
+            AppEvent::AgentProcessDetected {
+                pane_id,
+                agent,
+                observed_at,
+            } => self
+                .update_terminal_state(pane_id, |terminal| {
+                    Some(terminal.set_detected_agent_process_at(agent, observed_at))
+                })
+                .into_iter()
+                .collect(),
+            AppEvent::TerminalBell { .. } => Vec::new(),
+            AppEvent::TabBarCommandFinished { .. } => Vec::new(),
             AppEvent::ClipboardWrite { .. } => Vec::new(),
             AppEvent::PrefixInputSource { .. } => Vec::new(),
             AppEvent::TerminalCwdReported { pane_id, cwd } => {
@@ -4867,6 +4883,7 @@ impl AppState {
             agent_name_changed,
             agent_released,
             agent_release_status: agent_released.then(|| pane_agent_status(change.state, seen)),
+            suppress_completion: false,
         };
         Some(update)
     }

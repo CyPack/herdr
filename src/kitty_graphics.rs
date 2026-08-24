@@ -218,6 +218,7 @@ fn file_manager_image_placement_in_content_area(
     let viewport_row = i32::try_from((u32::from(area.height) - grid_rows) / 2).ok()?;
 
     Some(HostPlacement {
+        host_image_id: None,
         pane_id: PaneId::from_raw(FILE_MANAGER_PREVIEW_PANE_RAW),
         area,
         cell_size,
@@ -1295,6 +1296,7 @@ fn collect_popup_pane_placements(
         uploaded_images.get(&host_id).copied() != Some(signature)
     }) {
         placements.push(HostPlacement {
+            host_image_id: None,
             pane_id: popup.pane_id,
             area: inner,
             cell_size,
