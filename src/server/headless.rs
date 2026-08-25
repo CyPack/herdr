@@ -276,6 +276,14 @@ const SHUTDOWN_API_TIMEOUT: Duration = Duration::from_secs(5);
 /// avoid reintroducing the idle CPU spin.
 const CLIENT_ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
+/// Floor between two housekeeping passes (scheduled tasks + deferred
+/// requests). The loop wakes once per PTY output batch, and the pass swaps
+/// every display's surface registers each time it runs; unbounded, that
+/// multiplication was measured saturating one core under busy panes while
+/// rendering stayed cadence-capped. 10ms sits under `MIN_RENDER_INTERVAL`,
+/// so interaction never perceives the batching. TP-SRV-HK-01
+const HEADLESS_HOUSEKEEPING_MIN_INTERVAL: Duration = Duration::from_millis(10);
+
 // ---------------------------------------------------------------------------
 // Headless server
 // ---------------------------------------------------------------------------
@@ -311,6 +319,10 @@ pub struct HeadlessServer {
     next_client_id: u64,
     /// The client currently driving the shared pane runtime size, theme, and input keybindings.
     foreground_client_id: Option<u64>,
+    /// When the housekeeping pass (scheduled tasks + deferred requests) last
+    /// ran; `None` before the first pass. Rate-limits the pass to
+    /// `HEADLESS_HOUSEKEEPING_MIN_INTERVAL`. TP-SRV-HK-01
+    last_housekeeping_pass: Option<Instant>,
     /// Which client the shared `view` currently describes, and at what size.
     ///
     /// Hit geometry has to belong to the client whose pointer event is being
@@ -538,6 +550,7 @@ impl HeadlessServer {
             #[cfg(unix)]
             next_client_id: 1,
             foreground_client_id: None,
+            last_housekeeping_pass: None,
             view_owner: None,
             #[cfg(test)]
             view_recomputes_for_input: 0,
@@ -688,19 +701,28 @@ impl HeadlessServer {
                 continue;
             }
 
-            // 6. Handle scheduled tasks.
+            // 6. Handle scheduled tasks and deferred requests — the
+            // housekeeping pass. Rate-limited: the loop wakes once per PTY
+            // output batch, and paying the per-display surface swap on every
+            // wake was measured saturating one core under busy panes. A
+            // skipped pass is retried within the interval via the loop
+            // deadline below. TP-SRV-HK-01 / TP-SRV-HK-02
             let now = Instant::now();
-            if self.handle_scheduled_tasks_headless(now, needs_render) {
-                needs_render = true;
-                needs_full_render = true;
-                needs_graphics_render = false;
-                crate::render_prof::event("full_render_cause.scheduled_tasks");
-            }
+            let housekeeping_ran = self.housekeeping_pass_due(now);
+            if housekeeping_ran {
+                crate::render_prof::event("housekeeping.pass");
+                if self.handle_scheduled_tasks_headless(now, needs_render) {
+                    needs_render = true;
+                    needs_full_render = true;
+                    needs_graphics_render = false;
+                    crate::render_prof::event("full_render_cause.scheduled_tasks");
+                }
 
-            if self.handle_deferred_requests_headless() {
-                needs_render = true;
-                needs_full_render = true;
-                needs_graphics_render = false;
+                if self.handle_deferred_requests_headless() {
+                    needs_render = true;
+                    needs_full_render = true;
+                    needs_graphics_render = false;
+                }
             }
 
             self.poll_pending_alt_screen_reads(now);
@@ -845,6 +867,13 @@ impl HeadlessServer {
                 .fold(next_deadline, |deadline, pending| {
                     Some(deadline.map_or(pending, |current| current.min(pending)))
                 });
+            // A skipped housekeeping pass must be retried within the
+            // interval; a pass that ran adds no wake, so an idle server
+            // still sleeps on its event sources alone. TP-SRV-HK-02
+            let next_deadline = match self.housekeeping_wake_after(housekeeping_ran) {
+                Some(wake) => Some(next_deadline.map_or(wake, |current| current.min(wake))),
+                None => next_deadline,
+            };
             let event = {
                 tokio::select! {
                     maybe_api = self.app.api_rx.recv() => match maybe_api {
@@ -5079,6 +5108,34 @@ impl HeadlessServer {
     ///
     /// Similar to `App::handle_scheduled_tasks` but without resize polling
     /// (the server doesn't have a terminal to resize).
+    /// Whether the housekeeping pass (scheduled tasks + deferred requests)
+    /// may run now; records the pass time when it may. The pass polls
+    /// bounded queues and deadline fields, so batching it moves when work is
+    /// noticed by at most the interval — while unbatched it multiplies with
+    /// the PTY wake rate. TP-SRV-HK-01
+    fn housekeeping_pass_due(&mut self, now: Instant) -> bool {
+        if self
+            .last_housekeeping_pass
+            .is_some_and(|last| now.duration_since(last) < HEADLESS_HOUSEKEEPING_MIN_INTERVAL)
+        {
+            return false;
+        }
+        self.last_housekeeping_pass = Some(now);
+        true
+    }
+
+    /// The wake that keeps a skipped pass from starving: due within the
+    /// interval after the last pass. A pass that ran schedules nothing, so
+    /// an idle server keeps sleeping on its event sources alone.
+    /// TP-SRV-HK-02
+    fn housekeeping_wake_after(&self, ran: bool) -> Option<Instant> {
+        if ran {
+            return None;
+        }
+        self.last_housekeeping_pass
+            .map(|last| last + HEADLESS_HOUSEKEEPING_MIN_INTERVAL)
+    }
+
     fn handle_scheduled_tasks_headless(&mut self, now: Instant, geometry_dirty: bool) -> bool {
         let mut changed = false;
 
@@ -5794,6 +5851,49 @@ mod tests {
         );
     }
 
+    // TP-SRV-HK-01: the housekeeping pass (scheduled tasks + deferred
+    // requests) runs at most once per HEADLESS_HOUSEKEEPING_MIN_INTERVAL.
+    // Without the gate, every PTY wake pays the full per-display surface
+    // swap, which was measured saturating one core under busy panes.
+    #[test]
+    fn housekeeping_pass_is_rate_limited_within_the_min_interval() {
+        let mut server = test_headless_server();
+        let t0 = Instant::now();
+        assert!(
+            server.housekeeping_pass_due(t0),
+            "the first pass must always run"
+        );
+        assert!(
+            !server.housekeeping_pass_due(t0 + Duration::from_millis(2)),
+            "a second pass inside the interval must be skipped"
+        );
+        assert!(
+            server.housekeeping_pass_due(t0 + HEADLESS_HOUSEKEEPING_MIN_INTERVAL),
+            "the pass must run again once the interval has elapsed"
+        );
+    }
+
+    // TP-SRV-HK-02: a skipped pass schedules a wake within the interval, so
+    // deferred work is never starved; a pass that ran schedules nothing, so
+    // an idle server still sleeps indefinitely.
+    #[test]
+    fn a_skipped_housekeeping_pass_schedules_a_wake_within_the_interval() {
+        let mut server = test_headless_server();
+        let t0 = Instant::now();
+        assert!(server.housekeeping_pass_due(t0));
+        assert_eq!(
+            server.housekeeping_wake_after(true),
+            None,
+            "a pass that ran must not force the loop awake"
+        );
+        assert!(!server.housekeeping_pass_due(t0 + Duration::from_millis(1)));
+        assert_eq!(
+            server.housekeeping_wake_after(false),
+            Some(t0 + HEADLESS_HOUSEKEEPING_MIN_INTERVAL),
+            "a skipped pass must be retried within the interval"
+        );
+    }
+
     fn test_headless_server() -> HeadlessServer {
         test_headless_server_with_event_hub(api::EventHub::default())
     }
@@ -5844,6 +5944,7 @@ mod tests {
             #[cfg(unix)]
             next_client_id: 1,
             foreground_client_id: None,
+            last_housekeeping_pass: None,
             view_owner: None,
             #[cfg(test)]
             view_recomputes_for_input: 0,
