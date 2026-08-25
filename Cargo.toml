@@ -24,6 +24,7 @@ include = [
 # the files surface writes archives with it; the sheet preview tests read them.
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 base64 = "0.22.1"
+flate2 = "1.1.9"
 bincode = { version = "2", features = ["serde"] }
 bytes = "1"
 clap = { version = "4.5", default-features = false, features = ["std", "help", "usage"] }

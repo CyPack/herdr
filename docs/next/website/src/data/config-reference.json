@@ -1462,6 +1462,12 @@
           "description": "Experimental local Kitty graphics rendering for attached clients."
         },
         {
+          "key": "experimental.kitty_graphics_compression",
+          "type": "boolean",
+          "default": "true",
+          "description": "Send Kitty graphics payloads deflated (o=z). A remote client pays for every pixel of every frame over its connection; the same frame that costs 25 MB raw costs under 200 KB deflated. Terminals that speak the graphics protocol inflate it; set this to false only for one that cannot."
+        },
+        {
           "key": "experimental.pane_history",
           "type": "boolean",
           "default": "false",

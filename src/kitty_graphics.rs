@@ -19,6 +19,14 @@ use crate::layout::{PaneId, PaneInfo};
 use crate::terminal::TerminalRuntimeRegistry;
 
 const KITTY_CHUNK_BYTES: usize = 3072;
+/// Payloads at or above this size are worth deflating. A browser pane measured
+/// on 2026-08-25 sent a remote client 25 MB for one click as raw RGBA; the same
+/// pixels deflate 147x in 3 ms at level 1. Below this size the call costs more
+/// than the bytes it saves, and the encoder runs once per frame per client.
+const KITTY_COMPRESSION_MIN_BYTES: usize = 64 * 1024;
+/// Level 1, not 6. Level 6 reaches 508x instead of 147x on the same frame but
+/// spends seven times the CPU for it, on a path that runs per frame per client.
+const KITTY_COMPRESSION_LEVEL: u32 = 1;
 pub(crate) const HEADLESS_GRAPHICS_TRANSACTION_BUDGET: usize =
     crate::protocol::MAX_GRAPHICS_FRAME_SIZE - crate::protocol::MAX_FRAME_SIZE;
 const HOST_IMAGE_ID_BASE: u32 = 10_000;
@@ -360,10 +368,19 @@ pub(crate) struct HostGraphicsCache {
 }
 
 static KITTY_GRAPHICS_ENABLED: AtomicBool = AtomicBool::new(false);
+/// Whether payloads travel deflated (`o=z`). On by default: the terminals that
+/// speak the graphics protocol at all inflate it, and the bytes it saves are
+/// the difference between a usable and an unusable remote session.
+static KITTY_PAYLOAD_COMPRESSION: AtomicBool = AtomicBool::new(true);
 static LOCAL_HOST_GRAPHICS: OnceLock<Mutex<HostGraphicsCache>> = OnceLock::new();
 
 pub(crate) fn set_enabled(enabled: bool) {
     KITTY_GRAPHICS_ENABLED.store(enabled, Ordering::Release);
+}
+
+/// TP-GFX-ZLIB-01 kill switch, for a terminal that cannot inflate `o=z`.
+pub(crate) fn set_kitty_payload_compression(enabled: bool) {
+    KITTY_PAYLOAD_COMPRESSION.store(enabled, Ordering::Release);
 }
 
 pub(crate) fn is_enabled() -> bool {
@@ -1976,8 +1993,41 @@ pub(crate) fn encode_kitty_data_to(
     out.write_all(&buffer)
 }
 
+/// Deflate a payload worth deflating, or leave it alone (TP-GFX-ZLIB-01).
+///
+/// The whole payload is one zlib stream, produced before any chunking: a
+/// terminal inflates once, after the last chunk arrives, so compressing chunk
+/// by chunk would hand it a stream that decodes as garbage.
+fn compress_kitty_payload(data: &[u8]) -> Option<Vec<u8>> {
+    if data.len() < KITTY_COMPRESSION_MIN_BYTES
+        || !KITTY_PAYLOAD_COMPRESSION.load(Ordering::Acquire)
+    {
+        return None;
+    }
+    let mut encoder = flate2::write::ZlibEncoder::new(
+        Vec::with_capacity(data.len() / 8),
+        flate2::Compression::new(KITTY_COMPRESSION_LEVEL),
+    );
+    if encoder.write_all(data).is_err() {
+        return None;
+    }
+    // A payload that grew is a payload not worth announcing as compressed.
+    encoder
+        .finish()
+        .ok()
+        .filter(|deflated| deflated.len() < data.len())
+}
+
 fn encode_kitty_data(out: &mut Vec<u8>, control: &str, data: &[u8]) {
-    let mut chunks = data.chunks(KITTY_CHUNK_BYTES).peekable();
+    let deflated = compress_kitty_payload(data);
+    let payload = deflated.as_deref().unwrap_or(data);
+    let control = if deflated.is_some() {
+        std::borrow::Cow::Owned(format!("{control},o=z"))
+    } else {
+        std::borrow::Cow::Borrowed(control)
+    };
+
+    let mut chunks = payload.chunks(KITTY_CHUNK_BYTES).peekable();
     let Some(first) = chunks.next() else {
         return;
     };
@@ -1993,9 +2043,164 @@ fn encode_kitty_data(out: &mut Vec<u8>, control: &str, data: &[u8]) {
 }
 
 #[cfg(test)]
+fn inflate_for_test(bytes: &[u8]) -> Vec<u8> {
+    use std::io::Read as _;
+    let mut out = Vec::new();
+    flate2::read::ZlibDecoder::new(bytes)
+        .read_to_end(&mut out)
+        .expect("the wire carries one inflatable zlib stream");
+    out
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::fm::image_preview::{ImagePreviewTarget, PreparedImagePreview};
+
+    // ---- TP-GFX-ZLIB-01: remote-friendly payloads -----------------------
+    //
+    // A browser pane measured on 2026-08-25 cost a remote client 25 MB for one
+    // click: full RGBA frames, base64, no compression. The pixels compress
+    // 147x at zlib level 1 in 3 ms, so the bytes were not the price of the
+    // picture — they were the price of not compressing it.
+
+    /// Every payload the encoder emitted, reassembled: (control of the first
+    /// chunk, the base64-decoded bytes of all of them).
+    fn decode_kitty_stream(bytes: &[u8]) -> (String, Vec<u8>) {
+        let text = String::from_utf8_lossy(bytes).into_owned();
+        let mut control = String::new();
+        let mut payload = Vec::new();
+        for (index, raw) in text.split("\u{1b}_G").skip(1).enumerate() {
+            let body = raw.strip_suffix("\u{1b}\\").unwrap_or(raw);
+            let (head, data) = body.split_once(';').expect("kitty command has a payload");
+            if index == 0 {
+                control = head.to_owned();
+            } else {
+                assert!(
+                    head.starts_with("m="),
+                    "continuation chunks carry only the continuation flag: {head}"
+                );
+            }
+            payload.extend(
+                base64::engine::general_purpose::STANDARD
+                    .decode(data)
+                    .expect("chunk is valid base64"),
+            );
+        }
+        (control, payload)
+    }
+
+    fn compressible_pixels(bytes: usize) -> Vec<u8> {
+        // A screenshot is mostly flat colour, which is why it compresses; a
+        // random buffer would measure the opposite of the real workload.
+        (0..bytes).map(|i| ((i / 4096) % 251) as u8).collect()
+    }
+
+    /// U1: the wire carries `o=z` and the terminal can get the pixels back.
+    /// Smaller output alone proves nothing — the only contract that matters is
+    /// that inflating what we sent returns exactly what we were given.
+    #[test]
+    fn large_payload_is_compressed_and_inflates_to_the_original() {
+        let pixels = compressible_pixels(512 * 1024);
+        let mut out = Vec::new();
+        encode_kitty_data(&mut out, "a=t,t=d,f=32,s=100,v=100,i=7,q=2", &pixels);
+
+        let (control, wire) = decode_kitty_stream(&out);
+        assert!(
+            control.contains("o=z"),
+            "control announces compression: {control}"
+        );
+        let inflated = inflate_for_test(&wire);
+        assert_eq!(
+            inflated, pixels,
+            "the terminal gets the original pixels back"
+        );
+        assert!(
+            wire.len() * 4 < pixels.len(),
+            "compressed {} bytes is not smaller than {} raw",
+            wire.len(),
+            pixels.len()
+        );
+    }
+
+    /// U2: compression covers the whole payload before it is split. Ghostty
+    /// inflates once, after the last chunk arrives; compressing per chunk
+    /// produces a stream that decodes as garbage.
+    #[test]
+    fn compression_covers_the_whole_payload_before_chunking() {
+        let pixels = compressible_pixels(512 * 1024);
+        let mut out = Vec::new();
+        encode_kitty_data(&mut out, "a=t,t=d,f=32,s=100,v=100,i=7,q=2", &pixels);
+
+        let text = String::from_utf8_lossy(&out);
+        let chunks = text.matches("\u{1b}_G").count();
+        assert!(chunks > 1, "a payload this size is chunked: {chunks}");
+        let (_, wire) = decode_kitty_stream(&out);
+        // One zlib stream, not one per chunk: inflating the concatenation
+        // succeeds and consumes everything.
+        assert_eq!(inflate_for_test(&wire), pixels);
+        assert_eq!(
+            text.matches("o=z").count(),
+            1,
+            "only the first chunk carries the control keys"
+        );
+    }
+
+    /// U3: a small payload is left alone. Paying zlib for a few kilobytes
+    /// spends CPU on every frame to save bytes nobody notices.
+    #[test]
+    fn small_payload_is_left_uncompressed() {
+        let pixels = compressible_pixels(4 * 1024);
+        let mut out = Vec::new();
+        encode_kitty_data(&mut out, "a=t,t=d,f=32,s=8,v=8,i=7,q=2", &pixels);
+
+        let (control, wire) = decode_kitty_stream(&out);
+        assert!(
+            !control.contains("o=z"),
+            "no compression announced: {control}"
+        );
+        assert_eq!(wire, pixels, "the payload travels as-is");
+    }
+
+    /// U4: the switch is exact. A kill switch that changes the output in any
+    /// other way is not a kill switch.
+    #[test]
+    fn disabled_compression_is_byte_for_byte_the_old_output() {
+        let pixels = compressible_pixels(512 * 1024);
+        let control = "a=t,t=d,f=32,s=100,v=100,i=7,q=2";
+
+        set_kitty_payload_compression(false);
+        let mut plain = Vec::new();
+        encode_kitty_data(&mut plain, control, &pixels);
+        set_kitty_payload_compression(true);
+        let mut compressed = Vec::new();
+        encode_kitty_data(&mut compressed, control, &pixels);
+        set_kitty_payload_compression(true);
+
+        let (plain_control, plain_wire) = decode_kitty_stream(&plain);
+        assert!(!plain_control.contains("o=z"));
+        assert_eq!(plain_wire, pixels);
+        assert!(
+            plain.len() > compressed.len(),
+            "disabling costs the old bytes"
+        );
+    }
+
+    /// U5: compression changes the transport, never the picture. `s=`/`v=`
+    /// describe the pixels, not the bytes, and Ghostty sizes the image from
+    /// them.
+    #[test]
+    fn geometry_keys_survive_compression() {
+        let pixels = compressible_pixels(512 * 1024);
+        let mut out = Vec::new();
+        encode_kitty_data(&mut out, "a=t,t=d,f=32,s=1411,v=1739,i=151712,q=2", &pixels);
+
+        let (control, _) = decode_kitty_stream(&out);
+        for key in ["a=t", "t=d", "f=32", "s=1411", "v=1739", "i=151712", "q=2"] {
+            assert!(control.contains(key), "{key} survives: {control}");
+        }
+    }
+
     use crate::fm::{FmFilePreview, FmImagePreview, FmImagePreviewState, FmPreview, FmState};
     use crate::ghostty::KittyPlacementRenderInfo;
 

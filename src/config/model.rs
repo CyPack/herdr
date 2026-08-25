@@ -2086,6 +2086,12 @@ pub struct ExperimentalConfig {
     pub allow_nested: bool,
     /// Experimental local Kitty graphics rendering for attached clients. Default: false.
     pub kitty_graphics: bool,
+    /// Send Kitty graphics payloads deflated (`o=z`). A remote client pays for
+    /// every pixel of every frame over its connection, and the same frame that
+    /// costs 25 MB raw costs under 200 KB deflated. Terminals that speak the
+    /// graphics protocol inflate it; set this to `false` only for one that
+    /// cannot. Default: true (unset).
+    pub kitty_graphics_compression: Option<bool>,
     /// Persist pane screen history to session-history.json. Default: false.
     pub pane_history: bool,
     /// Automatically put retired panes to sleep: a pane whose child process
@@ -3602,6 +3608,33 @@ kitty_graphics = true
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert!(config.experimental.kitty_graphics);
+    }
+
+    /// TP-GFX-ZLIB-01: unset means on. A remote client that would otherwise
+    /// pay raw RGBA for every frame should not have to discover a setting
+    /// first, and `Config::default()` must agree with a parsed empty config —
+    /// a default that differs from the parsed one is a silent two-mode system.
+    #[test]
+    fn kitty_graphics_compression_defaults_to_on_and_can_be_turned_off() {
+        assert!(Config::default()
+            .experimental
+            .kitty_graphics_compression
+            .unwrap_or(true));
+
+        let empty: Config = toml::from_str("[experimental]\n").unwrap();
+        assert!(empty
+            .experimental
+            .kitty_graphics_compression
+            .unwrap_or(true));
+
+        let off: Config = toml::from_str(
+            r#"
+[experimental]
+kitty_graphics_compression = false
+"#,
+        )
+        .unwrap();
+        assert_eq!(off.experimental.kitty_graphics_compression, Some(false));
     }
 
     #[test]

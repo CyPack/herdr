@@ -1054,6 +1054,7 @@ dependencies = [
  "clap_complete",
  "crossterm",
  "ctrlc",
+ "flate2",
  "hayro",
  "image",
  "interprocess",
