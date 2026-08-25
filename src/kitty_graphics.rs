@@ -379,6 +379,20 @@ pub(crate) fn set_enabled(enabled: bool) {
 }
 
 /// TP-GFX-ZLIB-01 kill switch, for a terminal that cannot inflate `o=z`.
+/// One transmission that removes every image the outer terminal knows,
+/// whether or not this server was the one that put it there. `clear_bytes`
+/// can only delete ids this cache remembers; after a lost delete frame, a
+/// server restart, or another program's leftovers, the outer terminal holds
+/// ids nobody remembers -- this is the only delete that reaches them.
+pub(crate) const KITTY_DELETE_ALL: &[u8] = b"\x1b_Ga=d,d=A,q=2\x1b\\";
+
+/// Resets the cache bookkeeping and returns the delete-all barrier the next
+/// frame must open with. TP-GFX-RESET-01 wiring.
+pub(crate) fn reset_barrier_bytes(cache: &mut HostGraphicsCache) -> Vec<u8> {
+    let _ = cache.clear_bytes();
+    KITTY_DELETE_ALL.to_vec()
+}
+
 pub(crate) fn set_kitty_payload_compression(enabled: bool) {
     KITTY_PAYLOAD_COMPRESSION.store(enabled, Ordering::Release);
 }
@@ -2099,6 +2113,16 @@ mod tests {
     /// U1: the wire carries `o=z` and the terminal can get the pixels back.
     /// Smaller output alone proves nothing — the only contract that matters is
     /// that inflating what we sent returns exactly what we were given.
+    // TP-GFX-RESET-01
+    #[test]
+    fn reset_barrier_wipes_unknown_images_too() {
+        let mut cache = HostGraphicsCache::default();
+        cache.test_mark_non_empty();
+        let bytes = reset_barrier_bytes(&mut cache);
+        assert_eq!(bytes, KITTY_DELETE_ALL.to_vec());
+        assert!(cache.is_empty());
+    }
+
     #[test]
     fn large_payload_is_compressed_and_inflates_to_the_original() {
         let pixels = compressible_pixels(512 * 1024);

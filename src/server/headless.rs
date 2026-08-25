@@ -4890,7 +4890,9 @@ impl HeadlessServer {
                         let mut next_graphics_cache = client.graphics_cache.clone();
                         if self.app.state.kitty_graphics_enabled && cell_size.is_known() {
                             if client.graphics_surface_reset_pending {
-                                frame.graphics = next_graphics_cache.clear_bytes();
+                                frame.graphics = crate::kitty_graphics::reset_barrier_bytes(
+                                    &mut next_graphics_cache,
+                                );
                             }
                             let graphics_started = crate::render_prof::timer();
                             let encoded = crate::kitty_graphics::encode_local_pane_graphics(
@@ -5006,6 +5008,10 @@ impl HeadlessServer {
                 frame.graphics.clear();
                 commit_graphics_cache = false;
                 encoded_incomplete = false;
+                // Dropped deletes would orphan the outer terminal's images
+                // forever; the next frame rebuilds from the barrier instead.
+                // TP-GFX-RESET-01
+                client.graphics_surface_reset_pending = true;
             }
             let has_graphics = !frame.graphics.is_empty();
             let Some(mut prepared) = client.render_state.prepare_frame(frame) else {
@@ -5058,6 +5064,8 @@ impl HeadlessServer {
                     prepared = text_only_prepared;
                     commit_graphics_cache = false;
                     encoded_incomplete = false;
+                    // Same orphan risk as the oversized drop above. TP-GFX-RESET-01
+                    client.graphics_surface_reset_pending = true;
                     framed
                 }
                 Err(protocol::FramingError::Oversized { claimed, max }) => {
@@ -6028,6 +6036,92 @@ mod tests {
     fn read_server_message(bytes: Vec<u8>) -> ServerMessage {
         let mut cursor = std::io::Cursor::new(bytes);
         protocol::read_message(&mut cursor, MAX_FRAME_SIZE).expect("decode server message")
+    }
+
+    // Fork behaviour: every client connection starts with a delete-all
+    // barrier, because the outer terminal may still be showing images from a
+    // previous life this server never tracked (a lost delete frame, an
+    // earlier server, another program's leftovers). The barrier is the only
+    // delete that reaches ids nobody remembers. TP-GFX-RESET-01
+    #[tokio::test]
+    async fn a_fresh_client_first_frame_opens_with_a_delete_all_barrier() {
+        let (mut server, client_rx, _pane_id) = retained_test_server(b"aaaa");
+        server.app.state.kitty_graphics_enabled = true;
+        server.clients.get_mut(&1).unwrap().cell_size = crate::kitty_graphics::HostCellSize {
+            width_px: 10,
+            height_px: 20,
+        };
+        assert!(
+            server
+                .clients
+                .get(&1)
+                .unwrap()
+                .graphics_surface_reset_pending,
+            "a new connection must be born with the barrier armed"
+        );
+
+        server.render_and_stream();
+        let frame = read_server_frame(
+            client_rx
+                .recv_timeout(Duration::from_millis(100))
+                .expect("first frame"),
+        );
+        assert!(
+            frame
+                .graphics
+                .starts_with(crate::kitty_graphics::KITTY_DELETE_ALL),
+            "first graphics bytes must open with the delete-all barrier, got {:?}",
+            String::from_utf8_lossy(&frame.graphics)
+        );
+        assert!(
+            !server
+                .clients
+                .get(&1)
+                .unwrap()
+                .graphics_surface_reset_pending,
+            "a delivered barrier must disarm the flag"
+        );
+    }
+
+    // The drop-sites re-arm the same flag when a graphics payload is thrown
+    // away; the next frame must rebuild the outer terminal from the barrier.
+    // TP-GFX-RESET-01
+    #[tokio::test]
+    async fn a_rearmed_barrier_fires_again_on_the_next_frame() {
+        let (mut server, client_rx, pane_id) = retained_test_server(b"aaaa");
+        server.app.state.kitty_graphics_enabled = true;
+        server.clients.get_mut(&1).unwrap().cell_size = crate::kitty_graphics::HostCellSize {
+            width_px: 10,
+            height_px: 20,
+        };
+        server.render_and_stream();
+        let _ = client_rx
+            .recv_timeout(Duration::from_millis(100))
+            .expect("first frame");
+
+        server
+            .clients
+            .get_mut(&1)
+            .unwrap()
+            .graphics_surface_reset_pending = true;
+        let runtime = server
+            .app
+            .state
+            .runtime_for_pane_in_workspace(&server.app.terminal_runtimes, 0, pane_id)
+            .expect("runtime");
+        runtime.test_process_pty_bytes(b"\rZ");
+        server.render_and_stream();
+        let frame = read_server_frame(
+            client_rx
+                .recv_timeout(Duration::from_millis(100))
+                .expect("second frame"),
+        );
+        assert!(
+            frame
+                .graphics
+                .starts_with(crate::kitty_graphics::KITTY_DELETE_ALL),
+            "a re-armed barrier must open the next frame"
+        );
     }
 
     fn read_server_frame(bytes: Vec<u8>) -> FrameData {

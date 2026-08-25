@@ -134,7 +134,9 @@ impl ClientConnection {
             graphics_cache: crate::kitty_graphics::HostGraphicsCache::default(),
             direct_graphics: false,
             pixel_mouse: false,
-            graphics_surface_reset_pending: false,
+            // Born armed: the outer terminal may still be showing images from a
+            // previous life this server never tracked. TP-GFX-RESET-01
+            graphics_surface_reset_pending: true,
             render_pending: false,
             terminal_wheel_routing_sent: None,
             host_mouse_capture_active: None,
