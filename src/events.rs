@@ -172,3 +172,31 @@ pub enum AppEvent {
     /// Background `git worktree remove` completed.
     WorktreeRemoveFinished(Box<WorktreeRemoveResult>),
 }
+
+impl AppEvent {
+    /// Stable profiling label for this event kind, so the render profiler
+    /// can attribute loop wakes to their internal-event sources.
+    pub(crate) fn prof_label(&self) -> &'static str {
+        match self {
+            AppEvent::PaneDied { .. } => "ev.pane_died",
+            AppEvent::AgentProcessDetected { .. } => "ev.agent_process_detected",
+            AppEvent::StateChanged { .. } => "ev.state_changed",
+            AppEvent::HookStateReported { .. } => "ev.hook_state_reported",
+            AppEvent::AgentSessionReported { .. } => "ev.agent_session_reported",
+            AppEvent::HookMetadataReported { .. } => "ev.hook_metadata_reported",
+            AppEvent::HookAuthorityCleared { .. } => "ev.hook_authority_cleared",
+            AppEvent::HookAgentReleased { .. } => "ev.hook_agent_released",
+            AppEvent::UpdateReady { .. } => "ev.update_ready",
+            AppEvent::AgentDetectionManifestsUpdated { .. } => "ev.agent_manifests_updated",
+            AppEvent::TerminalBell { .. } => "ev.terminal_bell",
+            AppEvent::ClipboardWrite { .. } => "ev.clipboard_write",
+            AppEvent::PrefixInputSource { .. } => "ev.prefix_input_source",
+            AppEvent::TerminalCwdReported { .. } => "ev.terminal_cwd_reported",
+            AppEvent::GitStatusRefreshed { .. } => "ev.git_status_refreshed",
+            AppEvent::TabBarCommandFinished { .. } => "ev.tab_bar_command_finished",
+            AppEvent::PluginCommandFinished { .. } => "ev.plugin_command_finished",
+            AppEvent::WorktreeAddFinished(_) => "ev.worktree_add_finished",
+            AppEvent::WorktreeRemoveFinished(_) => "ev.worktree_remove_finished",
+        }
+    }
+}

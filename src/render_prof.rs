@@ -7,6 +7,9 @@ use std::time::{Duration, Instant};
 use std::{cell::RefCell, thread::LocalKey};
 
 const ENV_VAR: &str = "HERDR_RENDER_PROF";
+/// Config-dir marker file that arms profiling when the environment variable
+/// is absent — the way to profile a server born from a live handoff.
+const MARKER_FILE: &str = "render-prof.on";
 const MAX_METRIC_LABELS_PER_KIND: usize = 128;
 // Nanosecond log2 buckets cover the complete `Duration` range while keeping
 // every duration label fixed-size (96 * 8 bytes) and allocation-free.
@@ -155,10 +158,24 @@ impl RenderProfiler {
 
 pub(crate) fn enabled() -> bool {
     *ENABLED.get_or_init(|| {
-        std::env::var(ENV_VAR)
-            .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
-            .unwrap_or(false)
+        profiling_requested(
+            std::env::var(ENV_VAR).ok().as_deref(),
+            crate::config::config_dir().join(MARKER_FILE).exists(),
+        )
     })
+}
+
+/// Whether profiling is requested, from the environment variable and the
+/// config-dir marker file. The environment stays authoritative in both
+/// directions; the marker only decides when the variable is absent. The
+/// marker exists because a live-handoff child inherits the *old* server's
+/// environment, so an environment variable alone can never arm profiling
+/// across a handoff. TP-SRV-PROF-01
+fn profiling_requested(env: Option<&str>, marker_file_exists: bool) -> bool {
+    match env {
+        Some(value) => matches!(value, "1" | "true" | "yes" | "on"),
+        None => marker_file_exists,
+    }
 }
 
 fn with_profiler(update: impl FnOnce(&mut RenderProfiler)) {
@@ -370,6 +387,25 @@ mod tests {
         assert!(profiler.durations.is_empty());
         assert_eq!(profiler.dropped_counter_labels, 0);
         assert_eq!(profiler.dropped_duration_labels, 0);
+    }
+
+    // TP-SRV-PROF-01: the render profiler can be armed by a config-dir
+    // marker file, so a live-handoff child — which inherits the old
+    // server's environment — can still be born with profiling on.
+    #[test]
+    fn render_profiling_marker_file_requests_profiling() {
+        assert!(profiling_requested(None, true));
+        assert!(!profiling_requested(None, false));
+    }
+
+    // The environment variable stays authoritative in both directions, so
+    // an explicit off wins over a stale marker file.
+    #[test]
+    fn render_profiling_env_overrides_the_marker_file() {
+        assert!(!profiling_requested(Some("0"), true));
+        assert!(profiling_requested(Some("1"), false));
+        assert!(profiling_requested(Some("yes"), false));
+        assert!(!profiling_requested(Some("off"), true));
     }
 
     #[test]

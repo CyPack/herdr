@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added
+- A `render-prof.on` marker file in the config directory now arms render profiling for servers born from a live handoff, where an environment variable cannot reach; profiler windows also report per-turn working time, render time, and internal-event kinds on the headless loop.
+
 ### Fixed
 - The headless server no longer pays its full housekeeping pass on every PTY wake; the pass is batched to a 10ms cadence, which stops busy panes from pinning a full CPU core while nothing visible changes.
 

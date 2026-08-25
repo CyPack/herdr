@@ -606,6 +606,10 @@ impl HeadlessServer {
         loop {
             crate::render_prof::event("loop.tick");
             crate::render_prof::flush_if_due();
+            // Working time of this turn, select-wait excluded: recorded just
+            // before the loop parks, so the profiler can split wake rate from
+            // per-turn cost when attributing a busy main thread.
+            let turn_started = crate::render_prof::enabled().then(Instant::now);
             self.app.reap_finished_detached_processes();
 
             // If shutdown has been initiated, complete it and exit.
@@ -768,6 +772,7 @@ impl HeadlessServer {
                         )))
             {
                 crate::render_prof::event("render.attempt");
+                let _render_profile = crate::render_prof::duration_guard("headless.render");
                 let render_request = self.app.render_dirty.take();
                 let pty_dirty = !render_request.pty_sources.is_empty();
                 if pty_dirty {
@@ -874,6 +879,7 @@ impl HeadlessServer {
                 Some(wake) => Some(next_deadline.map_or(wake, |current| current.min(wake))),
                 None => next_deadline,
             };
+            crate::render_prof::duration_since("headless.turn", turn_started);
             let event = {
                 tokio::select! {
                     maybe_api = self.app.api_rx.recv() => match maybe_api {
@@ -2496,6 +2502,7 @@ impl HeadlessServer {
     ///
     /// Returns true if the event changed visual state (requiring a re-render).
     fn handle_internal_event_with_forwarding(&mut self, ev: AppEvent) -> bool {
+        crate::render_prof::counter(ev.prof_label(), 1);
         match &ev {
             AppEvent::TerminalBell { pane_id, count } => {
                 if !self.send_to_foreground_client(ServerMessage::TerminalBell { count: *count }) {
