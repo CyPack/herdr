@@ -879,6 +879,9 @@ impl HeadlessServer {
                 Some(wake) => Some(next_deadline.map_or(wake, |current| current.min(wake))),
                 None => next_deadline,
             };
+            let park_now = Instant::now();
+            let next_deadline =
+                next_deadline.map(|deadline| self.clamp_due_deadline(deadline, park_now));
             crate::render_prof::duration_since("headless.turn", turn_started);
             let event = {
                 tokio::select! {
@@ -5135,6 +5138,19 @@ impl HeadlessServer {
     /// interval after the last pass. A pass that ran schedules nothing, so
     /// an idle server keeps sleeping on its event sources alone.
     /// TP-SRV-HK-02
+    /// Clamps a past-due loop deadline to the housekeeping cadence. Every
+    /// deadline in the select chain is consumed by the housekeeping pass, so
+    /// a deadline in the past can only be waiting for that pass — sleeping
+    /// on it directly returns immediately and spins the loop. TP-SRV-HK-03
+    fn clamp_due_deadline(&self, deadline: Instant, now: Instant) -> Instant {
+        if deadline > now {
+            return deadline;
+        }
+        self.last_housekeeping_pass.map_or(now, |last| {
+            (last + HEADLESS_HOUSEKEEPING_MIN_INTERVAL).max(now)
+        })
+    }
+
     fn housekeeping_wake_after(&self, ran: bool) -> Option<Instant> {
         if ran {
             return None;
@@ -5898,6 +5914,31 @@ mod tests {
             server.housekeeping_wake_after(false),
             Some(t0 + HEADLESS_HOUSEKEEPING_MIN_INTERVAL),
             "a skipped pass must be retried within the interval"
+        );
+    }
+
+    // TP-SRV-HK-03: a loop deadline already in the past is clamped to the
+    // housekeeping cadence. Every deadline in the select chain is consumed
+    // by the housekeeping pass, so a past-due deadline can only mean "the
+    // pass will handle it on its next run" — waking sooner is a pure spin.
+    // Measured live: one unserviced deadline turned the loop 167,000
+    // times per second.
+    #[test]
+    fn a_past_due_loop_deadline_is_clamped_to_the_housekeeping_cadence() {
+        let mut server = test_headless_server();
+        let now = Instant::now();
+        assert!(server.housekeeping_pass_due(now));
+        let past = now - Duration::from_secs(1);
+        assert_eq!(
+            server.clamp_due_deadline(past, now),
+            now + HEADLESS_HOUSEKEEPING_MIN_INTERVAL,
+            "a past-due deadline must wait for the next housekeeping run"
+        );
+        let future = now + Duration::from_secs(1);
+        assert_eq!(
+            server.clamp_due_deadline(future, now),
+            future,
+            "a future deadline must pass through untouched"
         );
     }
 

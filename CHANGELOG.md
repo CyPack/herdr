@@ -7,6 +7,7 @@
 
 ### Fixed
 - The headless server no longer pays its full housekeeping pass on every PTY wake; the pass is batched to a 10ms cadence, which stops busy panes from pinning a full CPU core while nothing visible changes.
+- The headless loop no longer spins on a deadline already in the past: past-due deadlines are clamped to the housekeeping cadence, which cuts a measured 167,000 wakes per second down to about a hundred.
 
 ## [0.8.2] - 2026-08-19
 
