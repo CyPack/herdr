@@ -310,6 +310,9 @@ düşürür); vendored patch reverse-apply kapısı.
 | SCM_RIGHTS çekirdek tavanı | 253 fd/mesaj (254=EINVAL); herdr tavanı 128 | 2026-08-16 |
 | 46 idle shell (v2 hedefi) | 141 MiB RSS + 46 PTY fd; CPU ≈ 0 | 2026-08-16 |
 | Devir zinciri koruması | 4 ardışık canlı devirde scroll 15.720→17.162, kayıp 0 | 2026-08-17 |
+| Due-geçmiş deadline spin'i (canlı, 27 pane + 15 agent) | 167.000 boş tur/s × ~5 µs = ana thread %98 → clamp sonrası 119 tur/s, %3,5 | 2026-08-25 |
+| Housekeeping pass kapısı (10 ms) | sel altında 179.721 tick/s'te pass ≤99/s; idle'da ek uyanış 0 (tick 4-6/s değişmedi) | 2026-08-25 |
+| Housekeeping tur maliyeti | kapı öncesi ~300 µs/tur (display surface-swap dahil) → kapı sonrası tur 5 µs | 2026-08-25 |
 
 Reçeteler: kanonik tam-koşum PRD §7e · izole idle taban PRD §16 (soket yolu ≤108 bayt!) ·
 eğri: `cargo nextest run -E 'test(render_cost_curve)' --run-ignored ignored-only --no-capture`.
@@ -326,6 +329,7 @@ eğri: `cargo nextest run -E 'test(render_cost_curve)' --run-ignored ignored-onl
 | 8 KiB inline tavanı büyütülemedi (0,77 MiB/s) | kısıtın etrafından tasarım: sidecar freight → RD7 |
 | Alt-screen "max=0" gözlem sanıldı, sözleşme çıktı | sözleşme > gözlem → RD8 |
 | Sessiz relicense (üç-yollu merge uyarısız aldı) | davranış = kayıt (TP + registry) → RD8 |
+| Karşılayıcısı olmayan due-geçmiş randevu döngüyü 167k tur/s boş uyandırdı; ptrace örneklem profili iki kez yanlış suçlu gösterdi | uyanış, işleyicinin kadansına clamp'lenir + suçlu atfı in-process sayaçla (prof marker) → RD2 + `headless-loop-cadence.md` |
 
 ## §6 · YENİ FEATURE KONTROL LİSTESİ — tasarım aşamasında cevaplanır, PR'da değil
 
@@ -377,6 +381,7 @@ tasarım referansı; kod kopyalama lisans kapısından geçer).
 | Perf regresyon bütçesi | eğri elle koşuluyor (#[ignore]); "idle server > X% ise kırmızı" sınıfı otomatik bütçe testi YOK |
 | Canlı trafik gözlemlenebilirliği | per-client bayt/frame sayaçları API'de yok (T-D ailesi: `dormant` + `alternate_screen` alanlarıyla birlikte) |
 | Dormant dosya bütçesi | wake/close/restore tüketiyor; çok uzun ömürlü oturumda toplam-boyut tavanı/yaş GC'si tanımsız (ölçülmedi) |
+| 10-client × housekeeping kombinasyonu | pass başına client-sayısı kadar display defter-değişimi; 10 client'ta ~1000 swap/s TEORİK — canlıda ölçülmedi. Görev: HP'de 10-sahte-client + çıktı seli stres lab'ı → sayılar §4'e (`headless-loop-cadence.md`) |
 | Windows | devir/freight/dormancy-capture unix-only (kayıtlı sınır; refusal non-unix'te yaşıyor) |
 
 ## §9 · Agent onboarding (harness köprüsü)

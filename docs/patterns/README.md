@@ -16,6 +16,7 @@ commit, a `TP-*` behavior id (see `behaviors/`), or a named test.
 | `fm-trail-filter.md` | The `/` filter road (editor, live narrowing, cursor normalization) |
 | `tui-composition.md` | compute→render split, view projections, hit-area discipline |
 | `multi-client-focus.md` | Two clients, focus authority, resize interplay |
+| `headless-loop-cadence.md` | The 98%-core spin incident: past-due deadline clamp, 10ms housekeeping gate, live profiling marker |
 | `custom-layout.md` | Pane layout maths |
 | `document-rendering.md` | Preview/detail rendering (text, image, PDF) |
 | `machine-readable-surfaces.md` | `herdr shell spec` and the two-way doc gates |
