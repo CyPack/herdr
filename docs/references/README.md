@@ -32,12 +32,13 @@ related:
 | **custom-layout** | `docs/references/custom-layout.md` | `docs/patterns/custom-layout.md` | **`CL*`** | `docs/analysis/2026-07-24-custom-layout-state.md` | *(B1 artefaktı — henüz üretilmedi)* |
 | **pty-ipc-runtime** | `docs/references/pty-ipc-runtime.md` | `docs/patterns/pty-ipc-runtime.md` | **`PI1–PI19`** + anti-pattern **`PA1–PA11`** | *(havuz: `~/.cartography/refpool/` 17 repo)* | `.cartography/pty-ipc-runtime-SYSTEM-MAP.json` |
 | **remote-media-transport** | `docs/references/remote-media-transport.md` | `docs/patterns/remote-media-transport.md` | **`RM1–RM10`** + anti-pattern **`RA1–RA7`** | *(registry içinde §7.5 ölçümler · §7.6 endüstri · §7.7 herdr-browser yüzeyi)* | *(F0'da üretilecek)* |
+| **remote-graphics-transport** | `docs/references/remote-graphics-transport.md` | *(RG5/RG6 olcumleri PRD SR3.13-R3.14'te)* | **`RG1-RG9`** + anti-pattern **`RGA1-RGA5`** | `.local/research/{kitty-libghostty-index,terminal-graphics-landscape}.md` | *(olcum aletleri `.local/measure/`)* |
 | **architecture-seams** | *(analiz içinde)* | — | — | `docs/analysis/2026-07-24-architecture-seams.md` | — |
 | **vision-mission** | *(analiz içinde)* | — | — | `docs/analysis/2026-07-24-vision-mission-state.md` | — |
 | **session-continuity** | *(analiz içinde)* | — | — | `docs/analysis/2026-07-24-chat-forensics-codex-cursor-handover.md` | — |
 
 > **Pattern ID çakışma kuralı:** Yeni domain açan agent, ID önekini bu tablodan seçer ve BURAYA yazar.
-> Mevcut önekler: `HP`, `P`, `TC`, `FM`, `DR`, `DA`, `CL`, `PI`, `PA`, `RM`. Aynı öneki iki domain KULLANAMAZ.
+> Mevcut önekler: `HP`, `P`, `TC`, `FM`, `DR`, `DA`, `CL`, `PI`, `PA`, `RM`, `RG`. Aynı öneki iki domain KULLANAMAZ.
 
 > **Prior-art havuzu (`~/.cartography/refpool/`).** Dış referans repo'ları buraya **shallow
 > klonlanır** ve `codebase-memory-mcp` ile indekslenir → registry satırları çıplak iddia değil,
