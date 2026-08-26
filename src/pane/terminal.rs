@@ -1990,7 +1990,7 @@ impl GhosttyPaneTerminal {
             return None;
         }
         let mut encoder = ghostty_mouse_encoder_for_terminal(&core.terminal, position)?;
-        let (x, y) = ghostty_mouse_position_for_terminal(position)?;
+        let (x, y) = ghostty_mouse_position_for_terminal(&core.terminal, position)?;
         event.set_position(x, y);
         encoder
             .encode(&event)
@@ -4902,27 +4902,61 @@ mod tests {
         assert_eq!(encoded.as_deref(), Some(&b"\x1b[<35;5;7M"[..]));
     }
 
+    // DECSET 1016 contract (TP-INP-MOUSE-04): a pixel-mouse pane receives
+    // exact pixel positions untouched, and a CELL position is CONVERTED to the
+    // cell's pixel centre — because SGR-cell and SGR-pixel share one wire
+    // shape, a 1016 consumer reads whatever numbers arrive as pixels, so the
+    // old downgrade parked every press in the top-left pixel band (the
+    // terminal-browser toolbar bug). Only a terminal that does not know its
+    // pixel geometry still falls back to the cell-shaped report.
     #[test]
-    fn ghostty_mouse_sgr_pixels_preserves_exact_and_downgrades_cell_input() {
+    fn ghostty_mouse_sgr_pixels_preserves_exact_and_converts_cell_input() {
         let (tx, _rx) = mpsc::channel(4);
-        let mut terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
-        terminal.resize(80, 24, 10, 20).unwrap();
-        terminal.write(b"\x1b[?1003h\x1b[?1006h\x1b[?1016h");
-        let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
+        let terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
+        let pane = GhosttyPaneTerminal::new(terminal, tx.clone()).unwrap();
+        let pane_id = PaneId::from_raw(1);
+        pane.resize(24, 80, 9, 18);
+        let _ = pane.process_pty_bytes(pane_id, 0, b"\x1b[?1003h\x1b[?1006h\x1b[?1016h", &tx);
 
-        let exact = pane.encode_mouse_motion(
-            crossterm::event::MouseEventKind::Moved,
-            crate::input::mouse::Position::Pixels { x: 48, y: 139 },
-            crossterm::event::KeyModifiers::empty(),
+        // exact pixels pass through untouched
+        assert_eq!(
+            pane.encode_mouse_motion(
+                crossterm::event::MouseEventKind::Moved,
+                crate::input::mouse::Position::Pixels { x: 45, y: 130 },
+                crossterm::event::KeyModifiers::empty(),
+            ),
+            Some(b"\x1b[<35;45;130M".to_vec()),
         );
-        let fallback = pane.encode_mouse_motion(
-            crossterm::event::MouseEventKind::Moved,
-            crate::input::mouse::Position::Cell { column: 4, row: 6 },
-            crossterm::event::KeyModifiers::empty(),
+        // a cell position becomes that cell's pixel centre (9x18 px cells)
+        assert_eq!(
+            pane.encode_mouse_motion(
+                crossterm::event::MouseEventKind::Moved,
+                crate::input::mouse::Position::Cell { column: 5, row: 7 },
+                crossterm::event::KeyModifiers::empty(),
+            ),
+            Some(b"\x1b[<35;50;136M".to_vec()),
         );
+    }
 
-        assert_eq!(exact.as_deref(), Some(&b"\x1b[<35;48;139M"[..]));
-        assert_eq!(fallback.as_deref(), Some(&b"\x1b[<35;5;7M"[..]));
+    // Without pixel geometry the old cell-shaped fallback is all there is:
+    // inventing pixels from nothing would be worse than the downgrade.
+    #[test]
+    fn ghostty_mouse_sgr_pixels_without_geometry_still_downgrades_cell_input() {
+        let (tx, _rx) = mpsc::channel(4);
+        let terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
+        let pane = GhosttyPaneTerminal::new(terminal, tx.clone()).unwrap();
+        let pane_id = PaneId::from_raw(1);
+        // NOTE: no resize -> width_px/height_px stay 0
+        let _ = pane.process_pty_bytes(pane_id, 0, b"\x1b[?1003h\x1b[?1006h\x1b[?1016h", &tx);
+
+        assert_eq!(
+            pane.encode_mouse_motion(
+                crossterm::event::MouseEventKind::Moved,
+                crate::input::mouse::Position::Cell { column: 5, row: 7 },
+                crossterm::event::KeyModifiers::empty(),
+            ),
+            Some(b"\x1b[<35;6;8M".to_vec()),
+        );
     }
 
     #[test]
@@ -5388,6 +5422,106 @@ mod tests {
 
         assert!(pane.detection_text().trim().is_empty());
         assert!(pane.recent_text(3).trim().is_empty());
+    }
+
+    // A pane program that enabled SGR *pixel* mouse mode (DECSET 1016 — the
+    // terminal-browser case) must receive PIXEL coordinates. Before the fix the
+    // encoder downgraded to cell-format SGR, but 1016 consumers interpret the
+    // very same `CSI < b;x;y` numbers as pixels, so every click landed in the
+    // top-left ~(cols,rows) pixel band of the program's viewport. TP-INP-MOUSE-04
+    #[test]
+    fn sgr_pixel_pane_receives_pixel_coordinates_for_cell_positions() {
+        let (tx, _rx) = mpsc::channel(4);
+        let terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
+        let pane = GhosttyPaneTerminal::new(terminal, tx.clone()).unwrap();
+        let pane_id = PaneId::from_raw(1);
+        pane.resize(24, 80, 9, 18); // cell 9x18 px -> screen 720x432 px
+        let _ = pane.process_pty_bytes(pane_id, 0, b"\x1b[?1003h\x1b[?1006h\x1b[?1016h", &tx);
+
+        let bytes = pane
+            .encode_mouse_button(
+                crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+                crate::input::mouse::Position::Cell { column: 10, row: 5 },
+                crossterm::event::KeyModifiers::empty(),
+            )
+            .expect("a 1016 pane still receives the press");
+        let text = String::from_utf8(bytes).unwrap();
+        let caps = regex_captures(&text);
+        let (b, x, y, m) = caps.expect("SGR-shaped report");
+        assert_eq!((b, m), (0, 'M'), "left press: {text:?}");
+        // cell centre in pixels: x = 10*9 + 9/2, y = 5*18 + 18/2 (with the
+        // report's 1-based origin). Anything in the cell's pixel span is
+        // correct; the cell NUMBERS themselves (10/5) are the bug.
+        assert!(
+            (90..=100).contains(&x),
+            "x must be pixels, got {x} in {text:?}"
+        );
+        assert!(
+            (90..=109).contains(&y),
+            "y must be pixels, got {y} in {text:?}"
+        );
+    }
+
+    // Regression guard for ordinary SGR (1006-only) panes: cell numbers stay.
+    #[test]
+    fn sgr_cell_pane_keeps_cell_coordinates() {
+        let (tx, _rx) = mpsc::channel(4);
+        let terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
+        let pane = GhosttyPaneTerminal::new(terminal, tx.clone()).unwrap();
+        let pane_id = PaneId::from_raw(1);
+        pane.resize(24, 80, 9, 18);
+        let _ = pane.process_pty_bytes(pane_id, 0, b"\x1b[?1002h\x1b[?1006h", &tx);
+
+        let bytes = pane
+            .encode_mouse_button(
+                crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+                crate::input::mouse::Position::Cell { column: 10, row: 5 },
+                crossterm::event::KeyModifiers::empty(),
+            )
+            .expect("a 1006 pane receives the press");
+        let text = String::from_utf8(bytes).unwrap();
+        assert_eq!(text, "\x1b[<0;11;6M", "1-based cell coordinates");
+    }
+
+    // The same conversion must hold for the wheel: a 1016 pane scrolled at a
+    // cell position gets pixel numbers (65 = wheel-down). TP-INP-MOUSE-04
+    #[test]
+    fn sgr_pixel_pane_receives_pixel_coordinates_for_wheel() {
+        let (tx, _rx) = mpsc::channel(4);
+        let terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
+        let pane = GhosttyPaneTerminal::new(terminal, tx.clone()).unwrap();
+        let pane_id = PaneId::from_raw(1);
+        pane.resize(24, 80, 9, 18);
+        let _ = pane.process_pty_bytes(pane_id, 0, b"\x1b[?1003h\x1b[?1006h\x1b[?1016h", &tx);
+
+        let bytes = pane
+            .encode_mouse_wheel(
+                crossterm::event::MouseEventKind::ScrollDown,
+                crate::input::mouse::Position::Cell { column: 10, row: 5 },
+                crossterm::event::KeyModifiers::empty(),
+            )
+            .expect("a 1016 pane receives the wheel");
+        let text = String::from_utf8(bytes).unwrap();
+        let (b, x, y, m) = regex_captures(&text).expect("SGR-shaped report");
+        assert_eq!((b, m), (65, 'M'), "wheel down: {text:?}");
+        assert!(
+            x > 80 && y > 24,
+            "wheel coords must be pixels, got ({x},{y}) in {text:?}"
+        );
+    }
+
+    /// `CSI < b ; x ; y (M|m)` -> (b, x, y, final). Test-local, no regex crate.
+    fn regex_captures(text: &str) -> Option<(u32, u32, u32, char)> {
+        let rest = text.strip_prefix("\x1b[<")?;
+        let m = rest.chars().last()?;
+        let nums: Vec<u32> = rest[..rest.len() - 1]
+            .split(';')
+            .map(|part| part.parse().ok())
+            .collect::<Option<_>>()?;
+        match nums.as_slice() {
+            [b, x, y] => Some((*b, *x, *y, m)),
+            _ => None,
+        }
     }
 
     #[test]

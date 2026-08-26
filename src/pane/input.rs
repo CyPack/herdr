@@ -72,6 +72,19 @@ pub(super) fn ghostty_mouse_encoder_for_terminal(
                 .mode_get(crate::ghostty::MODE_MOUSE_SGR_PIXELS)
                 .ok()?
             {
+                // DECSET 1016: the program reads the very same `CSI < b;x;y`
+                // numbers as PIXELS. Downgrading the format keeps the wire
+                // shape identical, so cell numbers would land every press in
+                // the program's top-left pixel band (the terminal-browser
+                // toolbar bug). Encode a real pixel position instead when the
+                // terminal knows its pixel geometry; only a terminal with no
+                // pixel size falls back to the old cell-shaped report.
+                let width_px = terminal.width_px().ok()?;
+                let height_px = terminal.height_px().ok()?;
+                if width_px > 0 && height_px > 0 && cols > 0 && rows > 0 {
+                    encoder.set_size(width_px, height_px, width_px / cols, height_px / rows);
+                    return Some(encoder);
+                }
                 encoder.set_format(crate::ghostty::MOUSE_FORMAT_SGR);
             }
             encoder.set_size(cols, rows, 1, 1);
@@ -89,11 +102,34 @@ pub(super) fn ghostty_mouse_encoder_for_terminal(
 }
 
 pub(super) fn ghostty_mouse_position_for_terminal(
+    terminal: &crate::ghostty::Terminal,
     position: crate::input::mouse::Position,
 ) -> Option<(f32, f32)> {
     match position {
         crate::input::mouse::Position::Pixels { x, y } => Some((x as f32, y as f32)),
-        crate::input::mouse::Position::Cell { column, row } => Some((column as f32, row as f32)),
+        crate::input::mouse::Position::Cell { column, row } => {
+            if terminal
+                .mode_get(crate::ghostty::MODE_MOUSE_SGR_PIXELS)
+                .ok()?
+            {
+                let cols = terminal.cols().ok()? as u32;
+                let rows = terminal.rows().ok()? as u32;
+                let width_px = terminal.width_px().ok()?;
+                let height_px = terminal.height_px().ok()?;
+                if width_px > 0 && height_px > 0 && cols > 0 && rows > 0 {
+                    // centre of the cell, matching what a pixel-reporting host
+                    // would have sent for a click on that cell
+                    let cell_w = (width_px / cols).max(1);
+                    let cell_h = (height_px / rows).max(1);
+                    // 1-based like a real pixel-reporting host (the client's
+                    // own Pixels producer adds the same +1)
+                    let x = u32::from(column) * cell_w + cell_w / 2 + 1;
+                    let y = u32::from(row) * cell_h + cell_h / 2 + 1;
+                    return Some((x as f32, y as f32));
+                }
+            }
+            Some((column as f32, row as f32))
+        }
     }
 }
 

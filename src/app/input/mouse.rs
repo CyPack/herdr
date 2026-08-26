@@ -6132,7 +6132,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ordinary_cell_mouse_downgrades_pixel_mode_to_cell_coordinates() {
+    async fn ordinary_cell_mouse_converts_pixel_mode_to_cell_centre_pixels() {
         let mut app = app_for_mouse_test();
         let mut ws = Workspace::test_new("test");
         let pane_id = ws.tabs[0].root_pane;
@@ -6171,7 +6171,7 @@ mod tests {
 
         assert_eq!(
             input_rx.try_recv().expect("forwarded mouse motion"),
-            Bytes::from_static(b"\x1b[<35;3;4M")
+            Bytes::from_static(b"\x1b[<35;26;71M")
         );
         assert!(input_rx.try_recv().is_err());
     }
