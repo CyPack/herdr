@@ -10795,6 +10795,41 @@ next_tab = ""
         calls
     }
 
+    // The app-level drain is unit-tested; this pins the one line in the server
+    // loop that calls it, so a merge cannot leave queued presses unpublished
+    // while every unit test stays green. TP-INP-MOUSE-01
+    #[test]
+    fn the_server_loop_publishes_queued_pointer_presses() {
+        const HEADLESS_SOURCE: &str = include_str!("headless.rs");
+        // A real newline plus the indent keeps this pattern from matching
+        // its own escaped spelling inside this test.
+        const RUN: &str = "\n    pub async fn run(&mut self) -> io::Result<()> {";
+        let run = HEADLESS_SOURCE.find(RUN).expect("the headless run loop");
+        assert_eq!(
+            HEADLESS_SOURCE.rfind(RUN),
+            Some(run),
+            "one run loop, so the search cannot land in another function"
+        );
+        let body = &HEADLESS_SOURCE[run + RUN.len()..];
+        let next_fn = [
+            "\n    pub ",
+            "\n    pub(crate) ",
+            "\n    fn ",
+            "\n    async fn ",
+        ]
+        .iter()
+        .filter_map(|marker| body.find(marker))
+        .min()
+        .expect("a function follows the run loop");
+        let drain = body
+            .find("self.app.drain_pane_pointer_events();")
+            .expect("the run loop drains queued pointer presses into events");
+        assert!(
+            drain < next_fn,
+            "the drain call belongs to the run loop itself, not a later function"
+        );
+    }
+
     // The two schedulers must agree, and every difference must be named.
     //
     // The image-preview markers fix one missing call; this makes the whole

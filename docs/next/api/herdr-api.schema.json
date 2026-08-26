@@ -82,6 +82,64 @@
         "EventData": {
           "oneOf": [
             {
+              "description": "A pointer press the pane's program never asked to receive: the pane\npaints graphics but enabled no terminal mouse mode, so the gesture\nwould otherwise vanish. An out-of-band bridge (a CDP driver for an\nembedded browser, a click-to-context tool) can deliver it instead.\nTP-INP-MOUSE-01",
+              "properties": {
+                "button": {
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "column": {
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "$ref": "#/schemas/event/$defs/PanePointerKind"
+                },
+                "pane_id": {
+                  "type": "string"
+                },
+                "row": {
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "type": {
+                  "const": "pane_pointer",
+                  "type": "string"
+                },
+                "x_px": {
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "y_px": {
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "type",
+                "pane_id",
+                "kind",
+                "button",
+                "column",
+                "row"
+              ],
+              "type": "object"
+            },
+            {
               "properties": {
                 "type": {
                   "const": "workspace_created",
@@ -753,6 +811,7 @@
             "pane_exited",
             "pane_agent_detected",
             "pane_agent_status_changed",
+            "pane_pointer",
             "layout_updated"
           ],
           "type": "string"
@@ -1004,6 +1063,13 @@
             "rect"
           ],
           "type": "object"
+        },
+        "PanePointerKind": {
+          "enum": [
+            "down",
+            "up"
+          ],
+          "type": "string"
         },
         "PaneScrollInfo": {
           "properties": {
@@ -4138,6 +4204,19 @@
               "type": "object"
             },
             {
+              "description": "Pointer presses no pane program claimed, published for panes that\npaint graphics. Delivery starts at the subscription; nothing earlier\nis replayed. TP-INP-MOUSE-02",
+              "properties": {
+                "type": {
+                  "const": "pane.pointer",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "type": "object"
+            },
+            {
               "properties": {
                 "type": {
                   "const": "layout.updated",
@@ -6571,6 +6650,64 @@
         "EventData": {
           "oneOf": [
             {
+              "description": "A pointer press the pane's program never asked to receive: the pane\npaints graphics but enabled no terminal mouse mode, so the gesture\nwould otherwise vanish. An out-of-band bridge (a CDP driver for an\nembedded browser, a click-to-context tool) can deliver it instead.\nTP-INP-MOUSE-01",
+              "properties": {
+                "button": {
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "column": {
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "$ref": "#/schemas/success_response/$defs/PanePointerKind"
+                },
+                "pane_id": {
+                  "type": "string"
+                },
+                "row": {
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "type": {
+                  "const": "pane_pointer",
+                  "type": "string"
+                },
+                "x_px": {
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "y_px": {
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "type",
+                "pane_id",
+                "kind",
+                "button",
+                "column",
+                "row"
+              ],
+              "type": "object"
+            },
+            {
               "properties": {
                 "type": {
                   "const": "workspace_created",
@@ -7257,6 +7394,7 @@
             "pane_exited",
             "pane_agent_detected",
             "pane_agent_status_changed",
+            "pane_pointer",
             "layout_updated"
           ],
           "type": "string"
@@ -7972,6 +8110,13 @@
             "layout"
           ],
           "type": "object"
+        },
+        "PanePointerKind": {
+          "enum": [
+            "down",
+            "up"
+          ],
+          "type": "string"
         },
         "PaneProcessInfo": {
           "properties": {

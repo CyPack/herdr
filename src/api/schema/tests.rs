@@ -598,6 +598,54 @@ fn subscribe_request_parses_parameterized_subscriptions() {
     ));
 }
 
+// The bridge that turns a press into a browser click subscribes by dot name;
+// an unknown type is refused by the subscription parser, so the name has to be
+// a real variant. TP-INP-MOUSE-02
+#[test]
+fn pane_pointer_subscription_parses_from_its_dot_name() {
+    let parsed: Subscription = serde_json::from_str(r#"{"type":"pane.pointer"}"#)
+        .expect("pane.pointer is a subscription type");
+    assert_eq!(
+        serde_json::to_value(&parsed).unwrap()["type"],
+        "pane.pointer",
+        "the subscription keeps its dot name on the wire"
+    );
+}
+
+// The wire shape a bridge parses: the event name, the snake_case data tag,
+// the lower-case press kind, and pixel fields that are absent rather than
+// null when the client reported cells. TP-INP-MOUSE-02
+#[test]
+fn pane_pointer_event_serializes_its_wire_shape() {
+    let event = EventEnvelope {
+        event: EventKind::PanePointer,
+        data: EventData::PanePointer {
+            pane_id: "w1:p2".into(),
+            kind: PanePointerKind::Down,
+            button: 0,
+            column: 5,
+            row: 7,
+            x_px: None,
+            y_px: None,
+        },
+    };
+    let json = serde_json::to_value(&event).unwrap();
+    // Pushed event names are the kind's snake_case serde name (`tab_created`,
+    // `pane_agent_detected`); the dot name is the subscription `type`.
+    assert_eq!(json["event"], "pane_pointer");
+    assert_eq!(json["data"]["type"], "pane_pointer");
+    assert_eq!(json["data"]["kind"], "down");
+    assert_eq!(json["data"]["button"], 0);
+    assert_eq!(json["data"]["column"], 5);
+    assert_eq!(json["data"]["row"], 7);
+    assert!(
+        json["data"].get("x_px").is_none() && json["data"].get("y_px").is_none(),
+        "pixel fields are omitted when the client reported cells"
+    );
+    let restored: EventEnvelope = serde_json::from_value(json).unwrap();
+    assert_eq!(restored, event);
+}
+
 #[test]
 fn subscription_event_envelope_round_trips() {
     let event = SubscriptionEventEnvelope {

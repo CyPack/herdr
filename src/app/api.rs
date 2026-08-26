@@ -843,13 +843,20 @@ impl App {
             if !has_layer {
                 continue;
             }
-            let Some(ws_idx) = self.state.active else {
+            // The press was queued against the viewer's workspace at input
+            // time; by now another display may have moved `active`, so find
+            // the pane where it lives (pane ids are global).
+            let Some(ws_idx) = self
+                .state
+                .workspaces
+                .iter()
+                .position(|workspace| workspace.pane_state(press.pane_id).is_some())
+            else {
                 continue;
             };
-            let Some(info) = self.pane_info(ws_idx, press.pane_id) else {
+            let Some(pane_id) = self.public_pane_id(ws_idx, press.pane_id) else {
                 continue;
             };
-            let pane_id = info.pane_id;
             self.emit_event(crate::api::schema::EventEnvelope {
                 event: crate::api::schema::EventKind::PanePointer,
                 data: crate::api::schema::EventData::PanePointer {

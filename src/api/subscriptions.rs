@@ -293,6 +293,13 @@ impl ActiveSubscription {
                     request_prefix: format!("{request_id}:sub:{index}"),
                 }))
             }
+            // A pointer bridge must only ever see presses made after it
+            // attached; replaying the hub's history would click the page.
+            // TP-INP-MOUSE-02
+            Subscription::PanePointer {} => Ok(Self::Event(ActiveEventSubscription {
+                event_kind: crate::api::schema::EventKind::PanePointer,
+                last_sequence: event_hub.current_sequence(),
+            })),
         }
     }
 
@@ -676,6 +683,50 @@ mod tests {
             alternate_screen: false,
             revision: 0,
         }
+    }
+
+    fn pointer_event(column: u16, row: u16) -> EventEnvelope {
+        EventEnvelope {
+            event: EventKind::PanePointer,
+            data: EventData::PanePointer {
+                pane_id: "pane_1".into(),
+                kind: crate::api::schema::PanePointerKind::Down,
+                button: 0,
+                column,
+                row,
+                x_px: None,
+                y_px: None,
+            },
+        }
+    }
+
+    // A bridge that connects after the user has already clicked must not be
+    // handed those presses: replaying them would click the page on attach.
+    // TP-INP-MOUSE-02
+    #[test]
+    fn a_pointer_subscription_starts_at_now_and_never_replays_old_presses() {
+        let event_hub = EventHub::default();
+        let (api_tx, _api_rx) = tokio::sync::mpsc::unbounded_channel();
+        event_hub.push(pointer_event(3, 4));
+        let subscription: Subscription = serde_json::from_str(r#"{"type":"pane.pointer"}"#)
+            .expect("pane.pointer is a subscription type");
+        let mut active = ActiveSubscription::new(subscription, "test", 0, &api_tx, &event_hub)
+            .expect("pane.pointer subscription");
+        assert!(
+            active.poll(&api_tx, &event_hub).is_none(),
+            "a press from before the subscription is not replayed"
+        );
+        event_hub.push(pointer_event(9, 2));
+        let delivered = active
+            .poll(&api_tx, &event_hub)
+            .expect("the next press is delivered");
+        assert_eq!(delivered["event"], "pane_pointer");
+        assert_eq!(delivered["data"]["column"], 9);
+        assert_eq!(delivered["data"]["row"], 2);
+        assert!(
+            active.poll(&api_tx, &event_hub).is_none(),
+            "each press is delivered once"
+        );
     }
 
     #[test]

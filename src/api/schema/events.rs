@@ -80,6 +80,11 @@ pub enum Subscription {
     },
     #[serde(rename = "pane.scroll_changed")]
     PaneScrollChanged { pane_id: String },
+    /// Pointer presses no pane program claimed, published for panes that
+    /// paint graphics. Delivery starts at the subscription; nothing earlier
+    /// is replayed. TP-INP-MOUSE-02
+    #[serde(rename = "pane.pointer")]
+    PanePointer {},
     #[serde(rename = "layout.updated")]
     LayoutUpdated {},
 }

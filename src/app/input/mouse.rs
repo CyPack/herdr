@@ -2988,15 +2988,16 @@ impl AppState {
             crate::input::mouse::Position::Cell { column, row } => (column, row, None, None),
             crate::input::mouse::Position::Pixels { x, y } => (0, 0, Some(x), Some(y)),
         };
-        self.pending_pane_pointer.push(crate::app::PanePointerPress {
-            pane_id,
-            kind,
-            button,
-            column,
-            row,
-            x_px,
-            y_px,
-        });
+        self.pending_pane_pointer
+            .push(crate::app::PanePointerPress {
+                pane_id,
+                kind,
+                button,
+                column,
+                row,
+                x_px,
+                y_px,
+            });
     }
 
     pub(super) fn forward_pane_mouse_motion(
@@ -3289,8 +3290,8 @@ mod tests {
     // A pane that paints graphics but never enabled a terminal mouse mode
     // would swallow the user's click; the press is published instead so an
     // out-of-band bridge can deliver it. TP-INP-MOUSE-01
-    #[test]
-    fn an_unclaimed_click_on_a_graphics_pane_is_published() {
+    #[tokio::test]
+    async fn an_unclaimed_click_on_a_graphics_pane_is_published() {
         let (mut app, registry, info) = pane_pointer_fixture();
         app.pane_graphics.slots.insert(
             (info.id, "L".to_string()),
@@ -3322,8 +3323,8 @@ mod tests {
     }
 
     // TP-INP-MOUSE-01
-    #[test]
-    fn a_program_that_asked_for_the_mouse_keeps_it_exclusively() {
+    #[tokio::test]
+    async fn a_program_that_asked_for_the_mouse_keeps_it_exclusively() {
         let (mut app, registry, info) = pane_pointer_fixture();
         app.pane_graphics.slots.insert(
             (info.id, "L".to_string()),
@@ -3348,8 +3349,8 @@ mod tests {
     }
 
     // TP-INP-MOUSE-01
-    #[test]
-    fn a_plain_text_pane_does_not_publish_pointer_events() {
+    #[tokio::test]
+    async fn a_plain_text_pane_does_not_publish_pointer_events() {
         let (mut app, registry, info) = pane_pointer_fixture();
         let handled = app.state.forward_pane_mouse_button(
             &registry,
@@ -3362,6 +3363,50 @@ mod tests {
             pointer_events(&app).is_empty(),
             "a pane with no graphics layer keeps the quiet path"
         );
+    }
+
+    // A press is queued against whichever workspace the viewer had at input
+    // time; by the time the server loop drains it another display may have
+    // moved `active`, so the pane is found where it lives, not where the
+    // cursor is now. TP-INP-MOUSE-01
+    #[tokio::test]
+    async fn a_queued_press_is_published_even_when_its_workspace_is_no_longer_active() {
+        let (mut app, _registry, info) = pane_pointer_fixture();
+        app.state.workspaces.push(Workspace::test_new("elsewhere"));
+        app.state.active = Some(1);
+        app.state.selected = 1;
+        app.pane_graphics.slots.insert(
+            (info.id, "L".to_string()),
+            crate::app::pane_graphics::Slot::test(77, None),
+        );
+        app.state
+            .pending_pane_pointer
+            .push(crate::app::PanePointerPress {
+                pane_id: info.id,
+                kind: crate::api::schema::PanePointerKind::Up,
+                button: 2,
+                column: 3,
+                row: 1,
+                x_px: None,
+                y_px: None,
+            });
+        app.drain_pane_pointer_events();
+        let events = pointer_events(&app);
+        assert_eq!(events.len(), 1, "the press is still published");
+        let expected = app.public_pane_id(0, info.id).expect("public pane id");
+        match &events[0].data {
+            crate::api::schema::EventData::PanePointer {
+                pane_id,
+                kind,
+                button,
+                ..
+            } => {
+                assert_eq!(pane_id, &expected);
+                assert_eq!(*kind, crate::api::schema::PanePointerKind::Up);
+                assert_eq!(*button, 2);
+            }
+            other => panic!("expected PanePointer data, got {other:?}"),
+        }
     }
 
     fn app_with_dock_targets() -> (crate::app::App, Rect, Rect) {

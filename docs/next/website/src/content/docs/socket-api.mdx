@@ -823,11 +823,22 @@ Tab event subscriptions include `tab.created`, `tab.closed`, `tab.focused`,
 that workspace.
 Pane event subscriptions include `pane.created`, `pane.updated`, `pane.closed`, `pane.focused`,
 `pane.moved`, `pane.exited`, `pane.agent_detected`,
-`pane.output_matched`, `pane.agent_status_changed`, and `pane.scroll_changed`.
+`pane.output_matched`, `pane.agent_status_changed`, `pane.scroll_changed`, and
+`pane.pointer`.
 Terminal-title changes can emit `pane.updated`, but spinner-only raw-title changes do not emit it when `terminal_title_stripped` is unchanged.
 `pane.scroll_changed` is scoped to one `pane_id` and emits `pane_id`,
 `workspace_id`, and the current `scroll` metrics whenever Herdr observes a
 changed scroll snapshot.
+`pane.pointer` publishes a mouse press or release on a pane whose program
+never enabled terminal mouse reporting, when that pane owns a graphics layer
+(`pane.graphics.set` or a stream). The event carries `pane_id`, `kind`
+(`down` or `up`), `button` (`0` left, `1` middle, `2` right), the cell
+`column` and `row`, and `x_px`/`y_px` when the client reported pixel
+coordinates. Pushed lines carry `"event": "pane_pointer"` with
+`"type": "pane_pointer"` inside `data`, the same snake_case spelling every
+other event kind uses on the wire. A subscription starts at the moment it is
+made, so presses from before it are not replayed. A program that enabled a mouse mode keeps
+receiving presses directly and no `pane.pointer` event is emitted for it.
 Layout event subscriptions include `layout.updated`. The event carries the
 updated `PaneLayoutSnapshot` for one tab. Clients that bootstrap with
 `session.snapshot` should replace the cached layout with the same
