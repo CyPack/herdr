@@ -45,6 +45,14 @@ impl App {
         correlation_id: &str,
     ) -> PluginInvocationContext {
         match &event.data {
+            // Pointer presses have no richer hook context than their pane;
+            // bridges consume them straight off the event stream.
+            // TP-INP-MOUSE-01
+            EventData::PanePointer { pane_id, .. } => {
+                let mut context = empty_plugin_context(correlation_id);
+                context.focused_pane_id = Some(pane_id.clone());
+                context
+            }
             EventData::WorkspaceCreated { workspace }
             | EventData::WorkspaceUpdated { workspace }
             | EventData::WorkspaceMetadataUpdated { workspace }

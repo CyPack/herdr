@@ -827,6 +827,44 @@ impl App {
         }
     }
 
+    /// Publishes queued unclaimed pointer presses for panes that are painting
+    /// graphics; presses on plain panes are dropped quietly. TP-INP-MOUSE-01
+    pub(crate) fn drain_pane_pointer_events(&mut self) {
+        if self.state.pending_pane_pointer.is_empty() {
+            return;
+        }
+        let presses = std::mem::take(&mut self.state.pending_pane_pointer);
+        for press in presses {
+            let has_layer = self
+                .pane_graphics
+                .slots
+                .keys()
+                .any(|(pane_id, _)| *pane_id == press.pane_id);
+            if !has_layer {
+                continue;
+            }
+            let Some(ws_idx) = self.state.active else {
+                continue;
+            };
+            let Some(info) = self.pane_info(ws_idx, press.pane_id) else {
+                continue;
+            };
+            let pane_id = info.pane_id;
+            self.emit_event(crate::api::schema::EventEnvelope {
+                event: crate::api::schema::EventKind::PanePointer,
+                data: crate::api::schema::EventData::PanePointer {
+                    pane_id,
+                    kind: press.kind,
+                    button: press.button,
+                    column: press.column,
+                    row: press.row,
+                    x_px: press.x_px,
+                    y_px: press.y_px,
+                },
+            });
+        }
+    }
+
     pub(super) fn emit_event(&mut self, event: crate::api::schema::EventEnvelope) {
         self.run_plugin_event_hooks(&event);
         self.event_hub.push(event);

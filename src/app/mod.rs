@@ -37,6 +37,19 @@ mod ids;
 mod image_preview_worker;
 mod input;
 pub(crate) mod pane_graphics;
+
+/// One unclaimed pointer press, queued by the input layer and drained into a
+/// `pane.pointer` event when the pane is painting graphics. TP-INP-MOUSE-01
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PanePointerPress {
+    pub(crate) pane_id: crate::layout::PaneId,
+    pub(crate) kind: crate::api::schema::PanePointerKind,
+    pub(crate) button: u8,
+    pub(crate) column: u16,
+    pub(crate) row: u16,
+    pub(crate) x_px: Option<u32>,
+    pub(crate) y_px: Option<u32>,
+}
 mod per_display;
 mod popup;
 mod preview;
@@ -1263,6 +1276,7 @@ impl App {
             tab_press: Default::default(),
             spinner_tick: 0,
             pane_graphics_streams: std::collections::HashMap::new(),
+            pending_pane_pointer: Vec::new(),
         };
 
         state.terminals = restored_terminals;

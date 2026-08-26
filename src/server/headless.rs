@@ -743,6 +743,7 @@ impl HeadlessServer {
                 crate::render_prof::event("full_render_cause.default_workspace");
             }
 
+            self.app.drain_pane_pointer_events();
             if self.app.pane_graphics.retain_live_panes(&self.app.state) {
                 needs_render = true;
                 needs_graphics_render = true;

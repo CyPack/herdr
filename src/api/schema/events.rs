@@ -217,6 +217,7 @@ pub enum EventKind {
     PaneExited,
     PaneAgentDetected,
     PaneAgentStatusChanged,
+    PanePointer,
     LayoutUpdated,
 }
 
@@ -248,6 +249,7 @@ impl EventKind {
             EventKind::PaneExited => "pane.exited",
             EventKind::PaneAgentDetected => "pane.agent_detected",
             EventKind::PaneAgentStatusChanged => "pane.agent_status_changed",
+            EventKind::PanePointer => "pane.pointer",
             EventKind::LayoutUpdated => "layout.updated",
         }
     }
@@ -280,6 +282,7 @@ pub const KNOWN_EVENT_KINDS: &[EventKind] = &[
     EventKind::PaneExited,
     EventKind::PaneAgentDetected,
     EventKind::PaneAgentStatusChanged,
+    EventKind::PanePointer,
     EventKind::LayoutUpdated,
 ];
 
@@ -420,6 +423,22 @@ pub struct PaneScrollChangedEvent {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum EventData {
+    /// A pointer press the pane's program never asked to receive: the pane
+    /// paints graphics but enabled no terminal mouse mode, so the gesture
+    /// would otherwise vanish. An out-of-band bridge (a CDP driver for an
+    /// embedded browser, a click-to-context tool) can deliver it instead.
+    /// TP-INP-MOUSE-01
+    PanePointer {
+        pane_id: String,
+        kind: PanePointerKind,
+        button: u8,
+        column: u16,
+        row: u16,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        x_px: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        y_px: Option<u32>,
+    },
     WorkspaceCreated {
         workspace: WorkspaceInfo,
     },
@@ -553,4 +572,11 @@ pub enum EventData {
     LayoutUpdated {
         layout: super::panes::PaneLayoutSnapshot,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PanePointerKind {
+    Down,
+    Up,
 }

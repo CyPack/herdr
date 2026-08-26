@@ -4452,6 +4452,10 @@ pub struct AppState {
     /// Runtime image layers owned by API clients and composited over panes.
     /// Active streaming graphics owner token by pane id.
     pub(crate) pane_graphics_streams: std::collections::HashMap<PaneId, String>,
+    /// Pointer presses no pane program claimed (no terminal mouse mode); the
+    /// App layer drains these into `pane.pointer` events for graphics panes.
+    /// TP-INP-MOUSE-01
+    pub(crate) pending_pane_pointer: Vec<crate::app::PanePointerPress>,
     /// Session-modal terminal popup. This is intentionally outside workspace layouts.
     pub(crate) popup_pane: Option<PopupPaneState>,
     /// History files of closed dormant terminals, awaiting deletion by the
@@ -5687,6 +5691,7 @@ impl AppState {
             installed_plugins: std::collections::HashMap::new(),
             plugin_panes: std::collections::HashMap::new(),
             pane_graphics_streams: std::collections::HashMap::new(),
+            pending_pane_pointer: Vec::new(),
             popup_pane: None,
             pending_dormant_history_removals: Vec::new(),
             plugin_command_logs: Vec::new(),

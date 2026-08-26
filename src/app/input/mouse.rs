@@ -2940,7 +2940,7 @@ impl AppState {
     }
 
     pub(super) fn forward_pane_mouse_button(
-        &self,
+        &mut self,
         terminal_runtimes: &TerminalRuntimeRegistry,
         info: &PaneInfo,
         mouse: MouseEvent,
@@ -2956,6 +2956,9 @@ impl AppState {
             return false;
         };
         let Some(bytes) = rt.encode_mouse_button(mouse.kind, position, mouse.modifiers) else {
+            // The program never asked for the mouse; queue the press so the
+            // App layer can publish it for graphics panes. TP-INP-MOUSE-01
+            self.queue_unclaimed_pane_pointer(info.id, position, mouse);
             return false;
         };
         rt.scroll_reset();
@@ -2963,6 +2966,37 @@ impl AppState {
             warn!(pane = info.id.raw(), err = %err, kind = ?mouse.kind, "failed to forward mouse button event");
         }
         true
+    }
+
+    fn queue_unclaimed_pane_pointer(
+        &mut self,
+        pane_id: crate::layout::PaneId,
+        position: crate::input::mouse::Position,
+        mouse: MouseEvent,
+    ) {
+        let (kind, button) = match mouse.kind {
+            MouseEventKind::Down(button) => (crate::api::schema::PanePointerKind::Down, button),
+            MouseEventKind::Up(button) => (crate::api::schema::PanePointerKind::Up, button),
+            _ => return,
+        };
+        let button = match button {
+            MouseButton::Left => 0,
+            MouseButton::Middle => 1,
+            MouseButton::Right => 2,
+        };
+        let (column, row, x_px, y_px) = match position {
+            crate::input::mouse::Position::Cell { column, row } => (column, row, None, None),
+            crate::input::mouse::Position::Pixels { x, y } => (0, 0, Some(x), Some(y)),
+        };
+        self.pending_pane_pointer.push(crate::app::PanePointerPress {
+            pane_id,
+            kind,
+            button,
+            column,
+            row,
+            x_px,
+            y_px,
+        });
     }
 
     pub(super) fn forward_pane_mouse_motion(
@@ -3215,6 +3249,120 @@ mod tests {
         detect::{Agent, AgentState},
         workspace::Workspace,
     };
+
+    fn pane_pointer_fixture() -> (
+        crate::app::App,
+        crate::terminal::TerminalRuntimeRegistry,
+        crate::layout::PaneInfo,
+    ) {
+        let mut app = app_for_mouse_test();
+        let mut workspace = Workspace::test_new("pointer");
+        let pane_id = workspace.focused_pane_id().expect("pane");
+        workspace.insert_test_runtime(
+            pane_id,
+            crate::terminal::TerminalRuntime::test_with_screen_bytes(80, 24, b""),
+        );
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        let info = crate::layout::PaneInfo {
+            id: pane_id,
+            rect: Rect::new(0, 0, 80, 24),
+            inner_rect: Rect::new(0, 0, 80, 24),
+            scrollbar_rect: None,
+            borders: ratatui::widgets::Borders::NONE,
+            is_focused: true,
+        };
+        let registry = crate::terminal::TerminalRuntimeRegistry::default();
+        (app, registry, info)
+    }
+
+    fn pointer_events(app: &crate::app::App) -> Vec<crate::api::schema::EventEnvelope> {
+        app.event_hub
+            .events_after(0)
+            .into_iter()
+            .map(|(_, envelope)| envelope)
+            .filter(|envelope| envelope.event == crate::api::schema::EventKind::PanePointer)
+            .collect()
+    }
+
+    // A pane that paints graphics but never enabled a terminal mouse mode
+    // would swallow the user's click; the press is published instead so an
+    // out-of-band bridge can deliver it. TP-INP-MOUSE-01
+    #[test]
+    fn an_unclaimed_click_on_a_graphics_pane_is_published() {
+        let (mut app, registry, info) = pane_pointer_fixture();
+        app.pane_graphics.slots.insert(
+            (info.id, "L".to_string()),
+            crate::app::pane_graphics::Slot::test(77, None),
+        );
+        let handled = app.state.forward_pane_mouse_button(
+            &registry,
+            &info,
+            mouse(MouseEventKind::Down(MouseButton::Left), 5, 5),
+        );
+        assert!(!handled, "an unclaimed press still falls through to the UI");
+        app.drain_pane_pointer_events();
+        let events = pointer_events(&app);
+        assert_eq!(events.len(), 1, "exactly one pane.pointer event");
+        match &events[0].data {
+            crate::api::schema::EventData::PanePointer {
+                kind,
+                button,
+                column,
+                row,
+                ..
+            } => {
+                assert_eq!(*kind, crate::api::schema::PanePointerKind::Down);
+                assert_eq!(*button, 0);
+                assert_eq!((*column, *row), (5, 5));
+            }
+            other => panic!("expected PanePointer data, got {other:?}"),
+        }
+    }
+
+    // TP-INP-MOUSE-01
+    #[test]
+    fn a_program_that_asked_for_the_mouse_keeps_it_exclusively() {
+        let (mut app, registry, info) = pane_pointer_fixture();
+        app.pane_graphics.slots.insert(
+            (info.id, "L".to_string()),
+            crate::app::pane_graphics::Slot::test(77, None),
+        );
+        let runtime = app
+            .state
+            .runtime_for_pane_in_workspace(&registry, 0, info.id)
+            .expect("runtime");
+        runtime.test_process_pty_bytes(b"\x1b[?1002;1006h");
+        let handled = app.state.forward_pane_mouse_button(
+            &registry,
+            &info,
+            mouse(MouseEventKind::Down(MouseButton::Left), 5, 5),
+        );
+        assert!(handled, "an SGR-mode pane receives the press directly");
+        app.drain_pane_pointer_events();
+        assert!(
+            pointer_events(&app).is_empty(),
+            "no side-channel event when the program already got the press"
+        );
+    }
+
+    // TP-INP-MOUSE-01
+    #[test]
+    fn a_plain_text_pane_does_not_publish_pointer_events() {
+        let (mut app, registry, info) = pane_pointer_fixture();
+        let handled = app.state.forward_pane_mouse_button(
+            &registry,
+            &info,
+            mouse(MouseEventKind::Down(MouseButton::Left), 5, 5),
+        );
+        assert!(!handled);
+        app.drain_pane_pointer_events();
+        assert!(
+            pointer_events(&app).is_empty(),
+            "a pane with no graphics layer keeps the quiet path"
+        );
+    }
 
     fn app_with_dock_targets() -> (crate::app::App, Rect, Rect) {
         let mut app = app_for_mouse_test();
