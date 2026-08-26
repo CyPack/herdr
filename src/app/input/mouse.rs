@@ -3365,6 +3365,47 @@ mod tests {
         );
     }
 
+    // The browser case: terminal-browser paints through the terminal with
+    // kitty graphics, not the pane.graphics API, so the gate must accept a
+    // pane whose own program is drawing kitty images even with no API layer.
+    // Caught by the end-to-end proof after the API-slot-only gate shipped
+    // green in unit tests but dropped every real click. TP-INP-MOUSE-01
+    #[tokio::test]
+    async fn an_unclaimed_click_on_a_terminal_graphics_pane_is_published() {
+        crate::kitty_graphics::set_enabled(true);
+        let (mut app, registry, info) = pane_pointer_fixture();
+        // No API layer: the pane's own program transmits a kitty image, exactly
+        // as an in-pane browser would. Generation goes non-zero on transmit,
+        // independent of a known cell pixel size or a live placement.
+        let runtime = app
+            .state
+            .runtime_for_pane_in_workspace(&registry, 0, info.id)
+            .expect("runtime");
+        runtime.test_process_pty_bytes(b"\x1b_Ga=t,f=32,t=d,i=7,s=1,v=1,q=2;/wAA/w==\x1b\\");
+        assert!(
+            runtime.kitty_graphics_generation() > 0,
+            "the pane's terminal has painted kitty graphics",
+        );
+        assert!(
+            !app.pane_graphics
+                .slots
+                .contains_key(&(info.id, "L".to_string())),
+            "and it owns no pane.graphics API layer",
+        );
+        let handled = app.state.forward_pane_mouse_button(
+            &registry,
+            &info,
+            mouse(MouseEventKind::Down(MouseButton::Left), 5, 5),
+        );
+        assert!(!handled, "the program never asked for the mouse");
+        app.drain_pane_pointer_events();
+        assert_eq!(
+            pointer_events(&app).len(),
+            1,
+            "a click on terminal-native graphics is published",
+        );
+    }
+
     // A press is queued against whichever workspace the viewer had at input
     // time; by the time the server loop drains it another display may have
     // moved `active`, so the pane is found where it lives, not where the

@@ -445,6 +445,10 @@ impl TerminalRuntime {
         self.0.kitty_image_placements_with_data_filter(needs_data)
     }
 
+    pub fn kitty_graphics_generation(&self) -> u64 {
+        self.0.kitty_graphics_generation()
+    }
+
     pub fn keyboard_protocol(&self) -> crate::input::KeyboardProtocol {
         self.0.keyboard_protocol()
     }

@@ -830,8 +830,9 @@ Terminal-title changes can emit `pane.updated`, but spinner-only raw-title chang
 `workspace_id`, and the current `scroll` metrics whenever Herdr observes a
 changed scroll snapshot.
 `pane.pointer` publishes a mouse press or release on a pane whose program
-never enabled terminal mouse reporting, when that pane owns a graphics layer
-(`pane.graphics.set` or a stream). The event carries `pane_id`, `kind`
+never enabled terminal mouse reporting, when that pane is painting graphics —
+either an API layer (`pane.graphics.set` or a stream) or terminal-native kitty
+graphics transmitted by the pane's own program, such as an embedded browser. The event carries `pane_id`, `kind`
 (`down` or `up`), `button` (`0` left, `1` middle, `2` right), the cell
 `column` and `row`, and `x_px`/`y_px` when the client reported pixel
 coordinates. Pushed lines carry `"event": "pane_pointer"` with

@@ -511,6 +511,10 @@ impl PaneTerminal {
             .kitty_image_placements_with_data_filter(needs_data)
     }
 
+    pub fn kitty_graphics_generation(&self) -> u64 {
+        self.ghostty.kitty_graphics_generation()
+    }
+
     pub fn apply_host_terminal_theme(&self, theme: crate::terminal_theme::TerminalTheme) {
         self.ghostty.apply_host_terminal_theme(theme);
     }
@@ -2136,6 +2140,14 @@ impl GhosttyPaneTerminal {
                     .ok()
             })
             .unwrap_or_default()
+    }
+
+    pub fn kitty_graphics_generation(&self) -> u64 {
+        self.core
+            .lock()
+            .ok()
+            .and_then(|core| core.terminal.kitty_graphics_generation().ok())
+            .unwrap_or(0)
     }
 
     pub fn render(&self, frame: &mut Frame, area: Rect, show_cursor: bool) {

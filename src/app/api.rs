@@ -835,14 +835,6 @@ impl App {
         }
         let presses = std::mem::take(&mut self.state.pending_pane_pointer);
         for press in presses {
-            let has_layer = self
-                .pane_graphics
-                .slots
-                .keys()
-                .any(|(pane_id, _)| *pane_id == press.pane_id);
-            if !has_layer {
-                continue;
-            }
             // The press was queued against the viewer's workspace at input
             // time; by now another display may have moved `active`, so find
             // the pane where it lives (pane ids are global).
@@ -854,6 +846,9 @@ impl App {
             else {
                 continue;
             };
+            if !self.pane_is_painting_graphics(ws_idx, press.pane_id) {
+                continue;
+            }
             let Some(pane_id) = self.public_pane_id(ws_idx, press.pane_id) else {
                 continue;
             };
@@ -870,6 +865,27 @@ impl App {
                 },
             });
         }
+    }
+
+    /// Whether a pane has graphics under the cursor worth delivering an
+    /// unclaimed press to. Two independent graphics paths count: an
+    /// API-owned layer (`pane.graphics.set`/stream) and terminal-native
+    /// kitty images painted by the pane's own program — the browser case
+    /// (terminal-browser paints through the terminal, not the API). Called
+    /// only when a press is already queued, so the placement scan is rare.
+    /// TP-INP-MOUSE-01
+    fn pane_is_painting_graphics(&self, ws_idx: usize, pane_id: crate::layout::PaneId) -> bool {
+        let has_api_layer = self
+            .pane_graphics
+            .slots
+            .keys()
+            .any(|(slot_pane, _)| *slot_pane == pane_id);
+        if has_api_layer {
+            return true;
+        }
+        self.state
+            .runtime_for_pane_in_workspace(&self.terminal_runtimes, ws_idx, pane_id)
+            .is_some_and(|runtime| runtime.kitty_graphics_generation() > 0)
     }
 
     pub(super) fn emit_event(&mut self, event: crate::api::schema::EventEnvelope) {

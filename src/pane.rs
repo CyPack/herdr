@@ -2922,6 +2922,14 @@ impl PaneRuntime {
             .kitty_image_placements_with_data_filter(needs_data)
     }
 
+    /// Non-zero once the pane's program has transmitted kitty graphics. A
+    /// scalar "this pane paints via kitty" signal that does not depend on a
+    /// known cell pixel size or on a placement existing at this instant.
+    /// TP-INP-MOUSE-01
+    pub fn kitty_graphics_generation(&self) -> u64 {
+        self.terminal.kitty_graphics_generation()
+    }
+
     pub fn keyboard_protocol(&self) -> crate::input::KeyboardProtocol {
         let fallback = crate::input::KeyboardProtocol::from_kitty_flags(
             self.kitty_keyboard_flags.load(Ordering::Relaxed),
@@ -3158,6 +3166,12 @@ impl PaneRuntime {
         let (resize_tx, _resize_rx) = watch::channel((rows, cols, 0, 0));
         let mut terminal =
             crate::ghostty::Terminal::new(cols, rows, scrollback_limit_bytes).unwrap();
+        // Honour the same kitty-graphics toggle the real spawn path gates on
+        // (default off), so a test that opts in with `set_enabled(true)` gets a
+        // terminal that stores kitty images. TP-INP-MOUSE-01
+        if crate::kitty_graphics::is_enabled() {
+            let _ = terminal.enable_kitty_graphics();
+        }
         terminal.write(bytes);
 
         (
