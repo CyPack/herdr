@@ -19,7 +19,7 @@ const RUNTIME_OWNER_MARKER: &str = ".herdr-test-owner-pid";
 // crate exposes no lib for tests to import. The wire's own comment explains
 // why 19 was skipped. If this drifts, the protocol fixture tests fail fast —
 // which is exactly how the drift gets noticed.
-pub const CURRENT_PROTOCOL: u32 = 20;
+pub const CURRENT_PROTOCOL: u32 = 21;
 
 pub fn register_spawned_herdr_pid(pid: Option<u32>) {
     let Some(pid) = pid else {
@@ -292,6 +292,7 @@ pub fn client_handshake(
             &encode_varint_u32(0),  // RenderEncoding::SemanticFrame
             &encode_varint_u32(0),  // ClientKeybindings::Server
             &encode_varint_u32(0),  // ClientLaunchMode::App
+            &[1u8],                 // pixel_mouse: true (bincode bool = one byte)
         ],
     );
     let framed = frame_message(&hello_payload);

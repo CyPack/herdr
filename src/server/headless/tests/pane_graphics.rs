@@ -258,6 +258,89 @@ async fn pixel_mouse_activation_requires_graphics_demand_not_direct_transport() 
     ));
 }
 
+/// TP-INP-MOUSE-05 — TN-4 (PIX-1): a pane that paints Kitty graphics straight through its PTY — terminal-browser
+/// and every other native Kitty producer — never registers an API graphics layer. Reading only
+/// the API layer left those panes on cell-quantised mouse reports, so any target shorter than one
+/// cell was unreachable. Same two-path rule as `pane_is_painting_graphics` (D65).
+#[tokio::test]
+async fn terminal_native_kitty_graphics_demands_the_pixel_mouse() {
+    // Mouse modes plus a real Kitty transmission straight through the PTY - no API layer.
+    let (mut server, _client_rx, pane_id) = retained_test_server(
+        b"\x1b[?1003h\x1b[?1006h\x1b[?1016h\x1b_Ga=t,f=32,t=d,i=7,s=1,v=1,q=2;/wAA/w==\x1b\\",
+    );
+    let (writer, control_rx, _render_rx) = test_client_writer();
+    let client = server.clients.get_mut(&1).unwrap();
+    client.writer = Some(writer);
+    client.direct_graphics = false;
+    client.pixel_mouse = true;
+    client.host_mouse_capture_active = None;
+    client.host_sgr_pixels_active = None;
+    server.app.direct_graphics_available = false;
+    assert!(
+        !server.app.pane_graphics.active_for_pane(pane_id),
+        "precondition: the pane must have no API graphics layer"
+    );
+
+    server.stream_host_mouse_capture_mode();
+    assert!(
+        matches!(
+            read_server_message(control_rx.recv_timeout(Duration::from_millis(100)).unwrap()),
+            ServerMessage::MouseCapture {
+                enabled: true,
+                sgr_pixels: true
+            }
+        ),
+        "a PTY-native Kitty painter must get sub-cell mouse reports"
+    );
+}
+
+/// TP-INP-MOUSE-05 — TN-7 (PIX-1): a client that cannot report pixel positions must never be asked to enable
+/// DECSET 1016, however much the focused pane wants sub-cell input.
+#[tokio::test]
+async fn a_client_without_the_pixel_mouse_capability_is_never_asked_for_it() {
+    let (mut server, _client_rx, _pane_id) = retained_test_server(
+        b"\x1b[?1003h\x1b[?1006h\x1b[?1016h\x1b_Ga=t,f=32,t=d,i=7,s=1,v=1,q=2;/wAA/w==\x1b\\",
+    );
+    let (writer, control_rx, _render_rx) = test_client_writer();
+    let client = server.clients.get_mut(&1).unwrap();
+    client.writer = Some(writer);
+    client.pixel_mouse = false;
+    client.host_mouse_capture_active = None;
+    client.host_sgr_pixels_active = None;
+
+    server.stream_host_mouse_capture_mode();
+    assert!(matches!(
+        read_server_message(control_rx.recv_timeout(Duration::from_millis(100)).unwrap()),
+        ServerMessage::MouseCapture {
+            sgr_pixels: false,
+            ..
+        }
+    ));
+}
+
+/// TP-INP-MOUSE-05 — TN-5 (PIX-1): the two-path rule must not fire for ordinary text panes; asking every terminal
+/// for DECSET 1016 would widen reports nobody consumes.
+#[tokio::test]
+async fn a_plain_text_pane_does_not_demand_the_pixel_mouse() {
+    let (mut server, _client_rx, _pane_id) =
+        retained_test_server(b"\x1b[?1003h\x1b[?1006h\x1b[?1016h plain text, no graphics");
+    let (writer, control_rx, _render_rx) = test_client_writer();
+    let client = server.clients.get_mut(&1).unwrap();
+    client.writer = Some(writer);
+    client.pixel_mouse = true;
+    client.host_mouse_capture_active = None;
+    client.host_sgr_pixels_active = None;
+
+    server.stream_host_mouse_capture_mode();
+    assert!(matches!(
+        read_server_message(control_rx.recv_timeout(Duration::from_millis(100)).unwrap()),
+        ServerMessage::MouseCapture {
+            sgr_pixels: false,
+            ..
+        }
+    ));
+}
+
 #[tokio::test]
 async fn pixel_input_metadata_cannot_resize_authoritative_client_state() {
     let (mut server, _client_rx, pane_id) =
@@ -318,6 +401,7 @@ fn direct_eligibility_is_installed_with_the_client_connection() {
         keybindings: None,
         direct_attach_requested: false,
         direct_graphics: true,
+        pixel_mouse: true,
         writer,
     }));
 

@@ -14,12 +14,15 @@ use serde::{Deserialize, Serialize};
 
 /// Current protocol version. Bumped when wire format changes incompatibly.
 ///
+/// 21, not 20: protocol 20 is already published in the preview channel, and
+/// `Hello` now carries the client's pixel-mouse capability. The check below is
+/// exact-match, so reusing 20 would let a released client speak a different
+/// dialect under the same number.
+///
 /// 20, not 19: the latest released tag (preview-2026-08-04) already shipped a
-/// wire that calls itself 19 while this source line said 18. The check below
-/// is exact-match, so reusing 19 would let a released client speak a
-/// different dialect under the same number. Numbers are cheap; collisions are
-/// not.
-pub const PROTOCOL_VERSION: u32 = 20;
+/// wire that calls itself 19 while this source line said 18. Numbers are
+/// cheap; collisions are not.
+pub const PROTOCOL_VERSION: u32 = 21;
 
 /// Maximum allowed frame payload size (2 MB). Frames larger than this are
 /// rejected to prevent denial-of-service via oversized length prefixes.
@@ -365,6 +368,12 @@ pub enum ClientMessage {
         keybindings: ClientKeybindings,
         /// Whether this connection will render the full app or attach directly to a pane terminal.
         launch_mode: ClientLaunchMode,
+        /// Whether this client can report sub-cell (DECSET 1016) mouse positions.
+        ///
+        /// Independent of `launch_mode`: direct graphics ships whole frames and is refused over
+        /// relayed transports, while a pixel mouse report only widens numbers already present in
+        /// every mouse event.
+        pixel_mouse: bool,
     },
 
     /// Raw input bytes read from the client's stdin.
@@ -1100,6 +1109,7 @@ mod tests {
             requested_encoding: RenderEncoding::SemanticFrame,
             keybindings: ClientKeybindings::Server,
             launch_mode: ClientLaunchMode::App,
+            pixel_mouse: true,
         };
         let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
         let (decoded, _): (ClientMessage, _) =
@@ -1137,6 +1147,7 @@ mod tests {
                 requested_encoding: RenderEncoding::SemanticFrame,
                 keybindings: ClientKeybindings::Server,
                 launch_mode: ClientLaunchMode::App,
+                pixel_mouse: true,
             }),
             0
         );
@@ -1718,6 +1729,7 @@ mod tests {
             requested_encoding: RenderEncoding::SemanticFrame,
             keybindings: ClientKeybindings::Server,
             launch_mode: ClientLaunchMode::App,
+            pixel_mouse: true,
         };
         let mut buf = Vec::new();
         write_message(&mut buf, &msg).unwrap();
@@ -1792,6 +1804,7 @@ mod tests {
                     requested_encoding: RenderEncoding::SemanticFrame,
                     keybindings: ClientKeybindings::Server,
                     launch_mode: ClientLaunchMode::App,
+                    pixel_mouse: true,
                 },
                 1 => ClientMessage::Input {
                     data: vec![(i % 256) as u8; (i as usize % 50) + 1],
@@ -2228,6 +2241,7 @@ mod tests {
             requested_encoding: RenderEncoding::SemanticFrame,
             keybindings: ClientKeybindings::Server,
             launch_mode: ClientLaunchMode::App,
+            pixel_mouse: true,
         };
         let mut buf = Vec::new();
         write_message(&mut buf, &msg).unwrap();
@@ -2264,6 +2278,7 @@ mod tests {
                 requested_encoding: RenderEncoding::SemanticFrame,
                 keybindings: ClientKeybindings::Server,
                 launch_mode: ClientLaunchMode::App,
+                pixel_mouse: true,
             },
             ClientMessage::Input {
                 data: b"hello world".to_vec(),

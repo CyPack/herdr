@@ -3247,6 +3247,7 @@ impl HeadlessServer {
                 render_encoding,
                 direct_attach_requested,
                 direct_graphics,
+                pixel_mouse,
             } => {
                 if self.handoff_in_progress {
                     if let Ok(message) =
@@ -3288,7 +3289,10 @@ impl HeadlessServer {
                     Some(writer),
                 );
                 connection.direct_graphics = direct_graphics;
-                connection.pixel_mouse = direct_graphics;
+                // Not `direct_graphics`: a relayed transport refuses whole-frame streaming but
+                // still carries pixel mouse reports, and tying them together degraded every
+                // remote session to cell-quantised clicks (PIX-1).
+                connection.pixel_mouse = pixel_mouse;
                 self.clients.insert(client_id, connection);
                 if !direct_attach_requested {
                     self.foreground_client_id = Some(client_id);
@@ -4227,12 +4231,29 @@ impl HeadlessServer {
     }
 
     fn focused_pane_graphics_demand(&self) -> bool {
+        let Some(ws_idx) = self.app.state.active else {
+            return false;
+        };
+        let Some(pane_id) = self
+            .app
+            .state
+            .workspaces
+            .get(ws_idx)
+            .and_then(crate::workspace::Workspace::focused_pane_id)
+        else {
+            return false;
+        };
+        // Two independent graphics paths, exactly as in `pane_is_painting_graphics`: an API layer
+        // streamed by a client, or the pane's own terminal emitting Kitty transmissions through
+        // its PTY. Terminal-browser and every other native producer only ever takes the second
+        // path, and reading just the first one left them on cell-quantised mouse reports.
+        if self.app.pane_graphics.active_for_pane(pane_id) {
+            return true;
+        }
         self.app
             .state
-            .active
-            .and_then(|ws_idx| self.app.state.workspaces.get(ws_idx))
-            .and_then(crate::workspace::Workspace::focused_pane_id)
-            .is_some_and(|pane_id| self.app.pane_graphics.active_for_pane(pane_id))
+            .runtime_for_pane_in_workspace(&self.app.terminal_runtimes, ws_idx, pane_id)
+            .is_some_and(|runtime| runtime.kitty_graphics_generation() > 0)
     }
 
     fn stream_host_mouse_capture_mode(&mut self) {
@@ -7077,6 +7098,7 @@ mod tests {
             keybindings: None,
             direct_attach_requested: false,
             direct_graphics: true,
+            pixel_mouse: true,
             writer: writer_a,
         }));
         assert!(server.clients[&1].direct_graphics);
@@ -7094,6 +7116,7 @@ mod tests {
             keybindings: None,
             direct_attach_requested: false,
             direct_graphics: false,
+            pixel_mouse: false,
             writer: writer_b,
         }));
         assert!(!server.direct_graphics_available());
@@ -7124,6 +7147,7 @@ new_tab = "prefix+t"
             keybindings: Some(Box::new(local_keybindings)),
             direct_attach_requested: false,
             direct_graphics: false,
+            pixel_mouse: false,
             writer: writer_a,
         }));
         assert_eq!(
@@ -7149,6 +7173,7 @@ new_tab = "prefix+t"
             keybindings: None,
             direct_attach_requested: false,
             direct_graphics: false,
+            pixel_mouse: false,
             writer: writer_b,
         }));
         assert_eq!(
@@ -7190,6 +7215,7 @@ new_tab = "prefix+t"
             keybindings: Some(Box::new(local_keybindings)),
             direct_attach_requested: false,
             direct_graphics: false,
+            pixel_mouse: false,
             writer: writer_a,
         }));
         assert_eq!(server.app.state.config_diagnostic, without_keybindings);
@@ -7204,6 +7230,7 @@ new_tab = "prefix+t"
             keybindings: None,
             direct_attach_requested: false,
             direct_graphics: false,
+            pixel_mouse: false,
             writer: writer_b,
         }));
         assert_eq!(
@@ -7248,6 +7275,7 @@ next_tab = ""
             keybindings: Some(Box::new(local_keybindings)),
             direct_attach_requested: false,
             direct_graphics: false,
+            pixel_mouse: false,
             writer,
         }));
         server.app.state.mode = crate::app::Mode::Settings;
@@ -7324,6 +7352,7 @@ next_tab = ""
             keybindings: Some(Box::new(local_config.live_keybinds().unwrap())),
             direct_attach_requested: false,
             direct_graphics: false,
+            pixel_mouse: false,
             writer: writer_a,
         }));
         server.app.state.mode = crate::app::Mode::Settings;
@@ -7345,6 +7374,7 @@ next_tab = ""
             keybindings: None,
             direct_attach_requested: false,
             direct_graphics: false,
+            pixel_mouse: false,
             writer: writer_b,
         }));
         assert_eq!(
@@ -7380,6 +7410,7 @@ next_tab = ""
             keybindings: None,
             direct_attach_requested: true,
             direct_graphics: false,
+            pixel_mouse: false,
             writer,
         }));
         assert!(server.clients.contains_key(&7));
@@ -7446,6 +7477,7 @@ next_tab = ""
             keybindings: None,
             direct_attach_requested: true,
             direct_graphics: false,
+            pixel_mouse: false,
             writer,
         }));
         control_rx
@@ -7860,6 +7892,7 @@ next_tab = ""
             keybindings: None,
             direct_attach_requested: false,
             direct_graphics: false,
+            pixel_mouse: false,
             writer,
         }));
 
@@ -7895,6 +7928,7 @@ next_tab = ""
             keybindings: None,
             direct_attach_requested: true,
             direct_graphics: false,
+            pixel_mouse: false,
             writer,
         }));
 
@@ -7929,6 +7963,7 @@ next_tab = ""
             keybindings: None,
             direct_attach_requested: false,
             direct_graphics: false,
+            pixel_mouse: false,
             writer,
         }));
         assert!(server.has_app_client());
@@ -8030,6 +8065,7 @@ next_tab = ""
             keybindings: None,
             direct_attach_requested: true,
             direct_graphics: false,
+            pixel_mouse: false,
             writer,
         }));
         assert!(
@@ -12317,6 +12353,7 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
             keybindings: None,
             direct_attach_requested: true,
             direct_graphics: false,
+            pixel_mouse: false,
             writer,
         }));
         assert!(

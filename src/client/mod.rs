@@ -734,6 +734,39 @@ fn direct_graphics_profile_values(
     supported && !blocked_transport && terminals
 }
 
+/// Whether this client can report sub-cell (SGR pixel, DECSET 1016) mouse positions.
+///
+/// Deliberately independent of [`direct_graphics_profile_values`]: direct graphics ships large
+/// RGBA payloads and is refused over relayed transports, while a pixel mouse report only widens
+/// three numbers already present in every mouse event. Tying the two together silently degraded
+/// remote sessions to cell-quantised clicks, which makes any target shorter than one cell
+/// unreachable.
+#[cfg(any(unix, test))]
+fn pixel_mouse_profile_values(
+    term_program: &str,
+    term: &str,
+    kitty_window: bool,
+    terminals: bool,
+) -> bool {
+    // Same terminal support test as direct graphics, without the transport block.
+    direct_graphics_profile_values(term_program, term, kitty_window, false, terminals)
+}
+
+#[cfg(unix)]
+fn pixel_mouse_profile_allowed() -> bool {
+    pixel_mouse_profile_values(
+        &std::env::var("TERM_PROGRAM").unwrap_or_default(),
+        &std::env::var("TERM").unwrap_or_default(),
+        std::env::var_os("KITTY_WINDOW_ID").is_some(),
+        io::stdin().is_terminal() && io::stdout().is_terminal(),
+    )
+}
+
+#[cfg(not(unix))]
+fn pixel_mouse_profile_allowed() -> bool {
+    false
+}
+
 #[cfg(unix)]
 fn direct_graphics_profile_allowed(direct_attach: bool) -> bool {
     let term_program = std::env::var("TERM_PROGRAM").unwrap_or_default();
@@ -850,6 +883,7 @@ fn do_handshake(
             cell_width_px,
             cell_height_px,
         ),
+        pixel_mouse: pixel_mouse_profile_allowed(),
     };
     protocol::write_message(stream, &hello)
         .map_err(|e| ClientError::ConnectionFailed(io::Error::other(e.to_string())))?;
@@ -2942,6 +2976,42 @@ mod tests {
         ));
         assert!(!direct_graphics_profile_values(
             "ghostty", "", false, false, false
+        ));
+    }
+
+    /// TP-INP-MOUSE-05 — TN-1 (PIX-1): a relayed transport must not disable the pixel mouse. Direct graphics stays
+    /// off over SSH because it ships whole frames; the mouse report costs nothing extra.
+    #[test]
+    fn ssh_keeps_the_pixel_mouse_while_direct_graphics_stays_off() {
+        assert!(
+            pixel_mouse_profile_values("", "xterm-kitty", false, true),
+            "kitty over SSH must still report sub-cell mouse positions"
+        );
+        assert!(
+            !direct_graphics_profile_values("", "xterm-kitty", false, true, true),
+            "direct graphics must stay refused over a relayed transport"
+        );
+    }
+
+    /// TN-2 (PIX-1): terminals that do not implement DECSET 1016 must not be asked for it.
+    #[test]
+    fn an_unsupported_terminal_reports_no_pixel_mouse() {
+        assert!(!pixel_mouse_profile_values(
+            "",
+            "xterm-256color",
+            false,
+            true
+        ));
+    }
+
+    /// TN-3 (PIX-1): without a real terminal on both ends there is no mouse to report.
+    #[test]
+    fn a_pipe_reports_no_pixel_mouse() {
+        assert!(!pixel_mouse_profile_values(
+            "ghostty",
+            "xterm-ghostty",
+            true,
+            false
         ));
     }
 

@@ -316,6 +316,8 @@ pub(crate) enum ServerEvent {
         keybindings: Option<Box<crate::config::LiveKeybindConfig>>,
         direct_attach_requested: bool,
         direct_graphics: bool,
+        /// Client can report sub-cell (DECSET 1016) mouse positions.
+        pixel_mouse: bool,
         writer: ClientWriter,
     },
     /// A client sent an input message.
@@ -563,6 +565,7 @@ pub(crate) fn handle_client_handshake(
         keybindings,
         direct_attach_requested,
         direct_graphics,
+        pixel_mouse,
     ) = match hello {
         ClientMessage::Hello {
             version,
@@ -573,6 +576,7 @@ pub(crate) fn handle_client_handshake(
             requested_encoding,
             keybindings,
             launch_mode,
+            pixel_mouse,
         } => {
             // Version check.
             match protocol::check_client_version(version) {
@@ -613,6 +617,7 @@ pub(crate) fn handle_client_handshake(
                 keybindings,
                 launch_mode == ClientLaunchMode::TerminalAttach,
                 launch_mode == ClientLaunchMode::AppDirectGraphics,
+                pixel_mouse,
             )
         }
         _ => {
@@ -677,6 +682,7 @@ pub(crate) fn handle_client_handshake(
         keybindings,
         direct_attach_requested,
         direct_graphics,
+        pixel_mouse,
         writer,
     };
     if let Err(err) = server_event_tx.blocking_send(connected) {
@@ -1335,6 +1341,7 @@ new_tab = "ctrl+notakey"
                 requested_encoding: RenderEncoding::TerminalAnsi,
                 keybindings: ClientKeybindings::Server,
                 launch_mode: ClientLaunchMode::App,
+                pixel_mouse: true,
             },
         )
         .expect("write hello");
@@ -1368,6 +1375,7 @@ new_tab = "ctrl+notakey"
                 keybindings,
                 direct_attach_requested,
                 direct_graphics,
+                pixel_mouse,
                 writer,
             } => {
                 assert_eq!(client_id, 42);
@@ -1377,6 +1385,9 @@ new_tab = "ctrl+notakey"
                 assert!(keybindings.is_none());
                 assert!(!direct_attach_requested);
                 assert!(!direct_graphics);
+                // TP-INP-MOUSE-05: the capability travels independently of the launch mode, so a
+                // client that cannot stream direct graphics still arrives with its pixel mouse.
+                assert!(pixel_mouse);
                 drop(writer);
             }
             other => panic!("expected ClientConnected, got {other:?}"),
@@ -1412,6 +1423,7 @@ new_tab = "ctrl+notakey"
                 requested_encoding: RenderEncoding::TerminalAnsi,
                 keybindings: ClientKeybindings::Server,
                 launch_mode: ClientLaunchMode::TerminalAttach,
+                pixel_mouse: false,
             },
         )
         .expect("write hello");
