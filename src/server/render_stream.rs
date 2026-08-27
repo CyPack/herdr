@@ -62,15 +62,19 @@ impl ClientRenderState {
         }
     }
 
-    pub(crate) fn prepare_frame(&mut self, frame: FrameData) -> Option<PreparedRender> {
+    /// Prepares the next frame for this client, or returns the frame back
+    /// when it matches what was already sent — the caller may still need its
+    /// `graphics` bytes, which are NOT covered by "already sent" semantics
+    /// on their own (TP-GFX-CONVERGE-01).
+    pub(crate) fn prepare_frame(&mut self, frame: FrameData) -> Result<PreparedRender, FrameData> {
         match self {
             Self::Semantic { last_frame } => {
                 if last_frame.as_ref() == Some(&frame) {
                     crate::render_prof::event("prepare_frame.semantic.skip_current");
-                    return None;
+                    return Err(frame);
                 }
                 crate::render_prof::event("prepare_frame.semantic.changed");
-                Some(PreparedRender::Semantic {
+                Ok(PreparedRender::Semantic {
                     message: ServerMessage::Frame(frame),
                 })
             }
@@ -81,7 +85,7 @@ impl ClientRenderState {
             } => {
                 if !*repaint_pending && blit_encoder.is_current(&frame) {
                     crate::render_prof::event("prepare_frame.ansi.skip_current");
-                    return None;
+                    return Err(frame);
                 }
                 let mut encoded = blit_encoder.encode(&frame, *repaint_pending);
                 crate::render_prof::event("prepare_frame.ansi.changed");
@@ -96,7 +100,7 @@ impl ClientRenderState {
                     "prepare_frame.graphics.bytes",
                     frame.graphics.len() as u64,
                 );
-                Some(PreparedRender::TerminalAnsi {
+                Ok(PreparedRender::TerminalAnsi {
                     message: ServerMessage::Terminal(TerminalFrame {
                         seq: *seq + 1,
                         width: frame.width,

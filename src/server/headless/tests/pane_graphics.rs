@@ -1373,3 +1373,247 @@ fn timeout_retires_stream_without_producer_ack() {
     assert!(!server.clients[&7].direct_graphics);
     assert!(server.clients[&7].pixel_mouse);
 }
+
+// ---------------------------------------------------------------------------
+// K3 / BRW-2.1 repro probe. The user narrowed the browser pane and a frame of
+// an already-closed video stayed painted OUTSIDE the pane. tb rewrites its
+// placement grid only when it sends a NEW frame, so the reproduction is: a
+// wide placement on screen, the visible area narrows, and no new frame ever
+// arrives. The server must either re-clip the placement to the narrower area
+// or delete it; leaving the wide placement standing is the reported defect.
+fn first_control_field(graphics: &str, action: &str, field: &str) -> Option<u32> {
+    let start = graphics.find(action)?;
+    let tail = &graphics[start..];
+    let end = tail.find('\x1b').unwrap_or(tail.len());
+    let control = &tail[..end];
+    let key = format!("{field}=");
+    let pos = control.find(&key)? + key.len();
+    let digits: String = control[pos..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    digits.parse().ok()
+}
+
+// TP-GFX-CONVERGE-01
+#[tokio::test]
+async fn narrowing_the_view_reclips_or_deletes_a_stale_pane_graphics_placement() {
+    let (mut server, client_rx, pane_id) = retained_test_server(b"stale-frame");
+    set_graphics_layer(&mut server, pane_id, vec![7, 7, 7, 7]);
+    if let Some(layer) = server
+        .app
+        .pane_graphics
+        .slots
+        .get_mut(&graphics_key(pane_id))
+        .and_then(|slot| slot.layer.as_mut())
+    {
+        // What tb leaves behind: the grid of the LAST frame it rendered,
+        // sized for the wide pane. No new frame arrives after the narrowing.
+        layer.render.grid_cols = 200;
+        layer.render.grid_rows = 100;
+    }
+    let initial = enable_graphics_and_render(&mut server, &client_rx);
+    let g0 = String::from_utf8_lossy(&initial.graphics).into_owned();
+    let cols0 = first_control_field(&g0, "a=p", "c")
+        .unwrap_or_else(|| panic!("first frame must place the layer: {g0:?}"));
+    let image0 = first_control_field(&g0, "a=p", "i");
+    let placement0 = first_control_field(&g0, "a=p", "p");
+
+    // The visible area narrows; the layer is untouched (no new frame).
+    assert!(server.handle_server_event(ServerEvent::ClientResize {
+        client_id: 1,
+        cols: 40,
+        rows: 24,
+        cell_width_px: 10,
+        cell_height_px: 20,
+    }));
+    server.render_and_stream();
+    let frame = read_server_frame(receive_render(&client_rx, Duration::from_millis(500)));
+    let g1 = String::from_utf8_lossy(&frame.graphics).into_owned();
+    let deleted = g1.contains("a=d");
+    let cols1 = first_control_field(&g1, "a=p", "c");
+    let reclipped = cols1.is_some_and(|c| c < cols0);
+    assert!(
+        deleted || reclipped,
+        "narrowed view left the wide placement standing: cols0={cols0} cols1={cols1:?} \
+         i0={image0:?} p0={placement0:?} second graphics={g1:?}"
+    );
+}
+
+// K3 / BRW-2.1 multi-client repro. The product-layer lab proved it three times
+// out of three: with two differently sized displays attached, a rapid
+// grow-then-shrink of the pane leaves one client holding the WIDE placement
+// forever (0 bytes reach it after the resizes; the screenshot's stale strip).
+// The contract under test is the user's own framing: the server knows what
+// every client's screen holds (its graphics_cache), so after the dust settles
+// EVERY client must have been brought to the final pane geometry.
+fn drain_into(rx: &std::sync::mpsc::Receiver<Vec<u8>>, history: &mut Vec<u32>) -> String {
+    let mut labels = Vec::new();
+    while let Ok(bytes) = rx.recv_timeout(Duration::from_millis(120)) {
+        let (kind, graphics) = match read_server_message(bytes) {
+            ServerMessage::Frame(frame) => (
+                "Frame",
+                String::from_utf8_lossy(&frame.graphics).into_owned(),
+            ),
+            ServerMessage::Graphics { bytes } => {
+                ("Graphics", String::from_utf8_lossy(&bytes).into_owned())
+            }
+            other => {
+                labels.push(format!("{:?}", std::mem::discriminant(&other)));
+                continue;
+            }
+        };
+        let cols = last_placement_cols(&graphics);
+        if let Some(cols) = cols {
+            history.push(cols);
+        }
+        labels.push(format!("{kind}(g={}B,last_c={cols:?})", graphics.len()));
+    }
+    labels.join(",")
+}
+
+fn last_placement_cols(graphics: &str) -> Option<u32> {
+    let mut cols = None;
+    let mut rest = graphics;
+    while let Some(start) = rest.find("a=p") {
+        let tail = &rest[start..];
+        let end = tail.find('\x1b').unwrap_or(tail.len());
+        if let Some(pos) = tail[..end].find(",c=") {
+            let digits: String = tail[pos + 3..end]
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
+            if let Ok(value) = digits.parse() {
+                cols = Some(value);
+            }
+        }
+        rest = &rest[start + 3..];
+    }
+    cols
+}
+
+// TP-GFX-CONVERGE-01
+#[tokio::test]
+async fn every_client_converges_to_the_final_pane_geometry_after_rapid_resizes() {
+    let (mut server, rx1, pane_id) = retained_test_server(b"stale strip");
+    // Second, differently sized display — the live session always has one.
+    let (tx2, _control2, rx2) = test_client_writer();
+    server.clients.insert(
+        2,
+        ClientConnection::new(
+            (120, 40),
+            crate::kitty_graphics::HostCellSize {
+                width_px: 10,
+                height_px: 20,
+            },
+            crate::terminal_theme::TerminalTheme::default(),
+            None,
+            2,
+            RenderEncoding::SemanticFrame,
+            Some(tx2),
+        ),
+    );
+    server.sync_foreground_client_state();
+    server.resize_shared_runtime_to_effective_size();
+
+    set_graphics_layer(&mut server, pane_id, vec![9, 9, 9, 9]);
+    if let Some(layer) = server
+        .app
+        .pane_graphics
+        .slots
+        .get_mut(&graphics_key(pane_id))
+        .and_then(|slot| slot.layer.as_mut())
+    {
+        // The last frame tb rendered, sized for the wide pane; no new frame
+        // arrives during the gesture.
+        layer.render.grid_cols = 200;
+        layer.render.grid_rows = 100;
+    }
+    server.app.state.kitty_graphics_enabled = true;
+    server.clients.get_mut(&1).unwrap().cell_size = crate::kitty_graphics::HostCellSize {
+        width_px: 10,
+        height_px: 20,
+    };
+    server.render_and_stream();
+    let mut history1 = Vec::new();
+    let mut history2 = Vec::new();
+    println!(
+        "setup c1=[{}] c2=[{}]",
+        drain_into(&rx1, &mut history1),
+        drain_into(&rx2, &mut history2)
+    );
+    assert!(
+        !history1.is_empty() || !history2.is_empty(),
+        "setup must place the layer somewhere"
+    );
+
+    // A second pane shares the tab (the browser never lives alone in the
+    // live session), and it gives resize_pane a neighbour to trade with.
+    let _neighbour =
+        server.app.state.workspaces[0].test_split(ratatui::layout::Direction::Horizontal);
+    server.render_and_stream();
+    println!(
+        "split c1=[{}] c2=[{}]",
+        drain_into(&rx1, &mut history1),
+        drain_into(&rx2, &mut history2)
+    );
+
+    // The user's gesture: grow, then shrink, one render turn per step —
+    // exactly what dragging a divider produces.
+    let area = server.app.state.view.terminal_area;
+    for (turn, (direction, amount)) in [
+        (crate::api::schema::PaneDirection::Right, 0.20_f32),
+        (crate::api::schema::PaneDirection::Left, 0.12_f32),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let moved = server.app.state.workspaces[0].tabs[0].layout.resize_pane(
+            pane_id,
+            direction.into(),
+            amount,
+            area,
+        );
+        assert!(moved, "resize step must change the layout");
+        server.render_and_stream();
+        println!(
+            "turn={turn} c1=[{}] c2=[{}]",
+            drain_into(&rx1, &mut history1),
+            drain_into(&rx2, &mut history2)
+        );
+    }
+    // Give every deferred path its follow-up turn.
+    for follow in 0..2 {
+        server.render_and_stream();
+        println!(
+            "follow={follow} c1=[{}] c2=[{}]",
+            drain_into(&rx1, &mut history1),
+            drain_into(&rx2, &mut history2)
+        );
+    }
+
+    // Two behavioural invariants, measured in each client's OWN stream so no
+    // cross-viewer geometry guess can lie: the stream settles (the follow-up
+    // turns repeat the final placement instead of falling silent), and the
+    // settled value is narrower than the widest placement ever shown (the
+    // shrink actually reached this client). The defect's signature — one
+    // client parked on the grow-turn width for ever — fails both.
+    for (name, history) in [("1", &history1), ("2", &history2)] {
+        let n = history.len();
+        assert!(
+            n >= 2,
+            "client {name} never saw a placement update: {history:?}"
+        );
+        let last = history[n - 1];
+        let peak = *history.iter().max().expect("nonempty history");
+        assert_eq!(
+            history[n - 1],
+            history[n - 2],
+            "client {name}'s stream never settled: {history:?}"
+        );
+        assert!(
+            last < peak,
+            "client {name} was left on its widest placement (no shrink reached it): {history:?}"
+        );
+    }
+}

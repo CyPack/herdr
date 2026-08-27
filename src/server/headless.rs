@@ -4648,7 +4648,7 @@ impl HeadlessServer {
             return false;
         };
         let prepare_started = crate::render_prof::timer();
-        let Some(prepared) = client.render_state.prepare_frame(frame) else {
+        let Ok(prepared) = client.render_state.prepare_frame(frame) else {
             client.clear_deferred_render();
             crate::render_prof::event("retained_send.skip_identical");
             crate::render_prof::duration_since("retained_send.prepare_frame", prepare_started);
@@ -5036,19 +5036,71 @@ impl HeadlessServer {
                 client.graphics_surface_reset_pending = true;
             }
             let has_graphics = !frame.graphics.is_empty();
-            let Some(mut prepared) = client.render_state.prepare_frame(frame) else {
-                if commit_graphics_cache {
-                    client.graphics_cache = next_graphics_cache;
-                    client.graphics_surface_reset_pending = false;
+            let mut prepared = match client.render_state.prepare_frame(frame) {
+                Ok(prepared) => prepared,
+                Err(same_frame) => {
+                    // The text cells match the last sent frame, but the
+                    // graphics bytes may still carry work the outer terminal
+                    // has not seen: the re-clip after a pane resize, or the
+                    // delete for a vanished source. Dropping them while
+                    // committing the cache convinced the server the client
+                    // was clean, and the wide placement stayed on the user's
+                    // screen forever (the stale strip in the 2026-08-27
+                    // screenshot). TP-GFX-CONVERGE-01
+                    let graphics = same_frame.graphics;
+                    if graphics.is_empty() {
+                        if commit_graphics_cache {
+                            client.graphics_cache = next_graphics_cache;
+                            client.graphics_surface_reset_pending = false;
+                        }
+                        if encoded_incomplete {
+                            client.defer_full_render();
+                            deferred_frame = true;
+                        } else {
+                            client.clear_deferred_render();
+                        }
+                        crate::render_prof::event("full_render.skip_identical");
+                        continue;
+                    }
+                    match Self::frame_server_message_with_max(
+                        &ServerMessage::Graphics {
+                            bytes: pane_graphics::frame_pane_graphics(graphics),
+                        },
+                        MAX_GRAPHICS_FRAME_SIZE,
+                    ) {
+                        Ok(serialized) => match writer.render.try_send(serialized) {
+                            Ok(()) => {
+                                if commit_graphics_cache {
+                                    client.graphics_cache = next_graphics_cache;
+                                    client.graphics_surface_reset_pending = false;
+                                }
+                                if encoded_incomplete {
+                                    client.defer_full_render();
+                                    deferred_frame = true;
+                                } else {
+                                    client.clear_deferred_render();
+                                }
+                                crate::render_prof::event(
+                                    "full_render.graphics_after_identical_text",
+                                );
+                            }
+                            Err(std::sync::mpsc::TrySendError::Full(_)) => {
+                                client.defer_full_render();
+                                deferred_frame = true;
+                            }
+                            Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
+                                broken_clients.push(client_id);
+                            }
+                        },
+                        Err(_) => {
+                            // Same orphan risk as the oversized drop above:
+                            // the next frame rebuilds from the barrier.
+                            // TP-GFX-RESET-01
+                            client.graphics_surface_reset_pending = true;
+                        }
+                    }
+                    continue;
                 }
-                if encoded_incomplete {
-                    client.defer_full_render();
-                    deferred_frame = true;
-                } else {
-                    client.clear_deferred_render();
-                }
-                crate::render_prof::event("full_render.skip_identical");
-                continue;
             };
             let max = if has_graphics {
                 MAX_GRAPHICS_FRAME_SIZE
@@ -5067,8 +5119,7 @@ impl HeadlessServer {
                         continue;
                     };
                     text_only_frame.graphics.clear();
-                    let Some(text_only_prepared) =
-                        client.render_state.prepare_frame(text_only_frame)
+                    let Ok(text_only_prepared) = client.render_state.prepare_frame(text_only_frame)
                     else {
                         client.clear_deferred_render();
                         crate::render_prof::event("full_render.skip_identical_text_only");
