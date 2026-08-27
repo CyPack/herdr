@@ -1275,7 +1275,6 @@ impl App {
             workspace_press: Default::default(),
             tab_press: Default::default(),
             spinner_tick: 0,
-            pane_graphics_streams: std::collections::HashMap::new(),
             pending_pane_pointer: Vec::new(),
         };
 

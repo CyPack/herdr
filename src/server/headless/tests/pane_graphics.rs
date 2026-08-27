@@ -1395,6 +1395,37 @@ fn first_control_field(graphics: &str, action: &str, field: &str) -> Option<u32>
     digits.parse().ok()
 }
 
+// TP-GFX-STREAM-02
+#[tokio::test]
+async fn a_live_stream_owner_is_recognised_by_the_cancel_sweep() {
+    let (mut server, _rx, pane_id) = retained_test_server(b"stream owner");
+    set_stream_owner(&mut server, pane_id, "owner-live");
+    // A1 — the defect's unit: a slot that is alive and active MUST count as
+    // active, or the sweep cancels every stream the moment it registers
+    // (measured live on 2026-08-27: 898 one-per-second stream_closed retries,
+    // a frozen browser frame on every tab, and the pixel mouse withdrawn).
+    assert!(
+        server.pane_graphics_stream_owner_is_active("owner-live"),
+        "a live, active stream owner must be recognised"
+    );
+    // A4 — no cross-owner match.
+    assert!(!server.pane_graphics_stream_owner_is_active("owner-other"));
+    // A2 — a slot whose gate closed is a ghost: the sweep may cancel it.
+    if let Some(active) = server
+        .app
+        .pane_graphics
+        .slots
+        .get(&graphics_key(pane_id))
+        .and_then(|slot| slot.stream_active.clone())
+    {
+        active.store(false, std::sync::atomic::Ordering::Release);
+    }
+    assert!(!server.pane_graphics_stream_owner_is_active("owner-live"));
+    // A3 — an empty world is safely inactive.
+    server.app.pane_graphics.slots.clear();
+    assert!(!server.pane_graphics_stream_owner_is_active("owner-live"));
+}
+
 // TP-GFX-CONVERGE-01
 #[tokio::test]
 async fn narrowing_the_view_reclips_or_deletes_a_stale_pane_graphics_placement() {

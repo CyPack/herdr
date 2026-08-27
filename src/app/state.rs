@@ -4451,7 +4451,6 @@ pub struct AppState {
     pub(crate) plugin_panes: std::collections::HashMap<PaneId, PluginPaneRecord>,
     /// Runtime image layers owned by API clients and composited over panes.
     /// Active streaming graphics owner token by pane id.
-    pub(crate) pane_graphics_streams: std::collections::HashMap<PaneId, String>,
     /// Pointer presses no pane program claimed (no terminal mouse mode); the
     /// App layer drains these into `pane.pointer` events for graphics panes.
     /// TP-INP-MOUSE-01
@@ -5690,7 +5689,6 @@ impl AppState {
             integration_install_messages: Vec::new(),
             installed_plugins: std::collections::HashMap::new(),
             plugin_panes: std::collections::HashMap::new(),
-            pane_graphics_streams: std::collections::HashMap::new(),
             pending_pane_pointer: Vec::new(),
             popup_pane: None,
             pending_dormant_history_removals: Vec::new(),

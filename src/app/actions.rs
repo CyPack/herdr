@@ -3421,7 +3421,6 @@ impl AppState {
         }
         for pane_id in pane_ids {
             self.plugin_panes.remove(&pane_id);
-            self.pane_graphics_streams.remove(&pane_id);
         }
     }
 

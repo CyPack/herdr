@@ -18,13 +18,19 @@ pub(super) fn frame_pane_graphics(bytes: Vec<u8>) -> Vec<u8> {
 }
 
 impl HeadlessServer {
+    /// Whether some pane-graphics slot still owns a live stream under this
+    /// owner — the cancel sweep's single source of truth. TP-GFX-STREAM-02
+    pub(super) fn pane_graphics_stream_owner_is_active(&self, owner: &str) -> bool {
+        self.app
+            .pane_graphics
+            .slots
+            .values()
+            .any(|slot| slot.stream_owner.as_deref() == Some(owner) && slot.stream_is_active())
+    }
+
     pub(super) fn cancel_inactive_pane_graphics_streams(&self) {
         api::cancel_inactive_pane_graphics_streams(|owner| {
-            self.app
-                .state
-                .pane_graphics_streams
-                .values()
-                .any(|active_owner| active_owner == owner)
+            self.pane_graphics_stream_owner_is_active(owner)
         });
     }
 
