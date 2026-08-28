@@ -854,6 +854,27 @@ fn client_launch_mode(
 ///
 /// Sends Hello with the terminal size and protocol version, reads the Welcome
 /// response. Returns Ok(()) on success, or an error if the server rejects us.
+/// What the client keeps from a successful handshake.
+///
+/// The encoding alone is not enough any more: the accepted capability set is
+/// the only record of what the server agreed to, and a later media path has to
+/// be able to ask.
+struct HandshakeOutcome {
+    encoding: RenderEncoding,
+    /// Read by the first phase that offers a capability; kept here because the
+    /// handshake is the only moment the answer exists.
+    #[allow(dead_code)]
+    accepted: crate::protocol::CapabilitySet,
+}
+
+/// Capabilities this client can actually honour.
+///
+/// Empty while there is no media path: announcing a name the client cannot
+/// serve would entitle the server to use it.
+fn client_capabilities() -> Vec<crate::protocol::CapabilityEntry> {
+    Vec::new()
+}
+
 fn do_handshake(
     stream: &mut LocalStream,
     cols: u16,
@@ -863,7 +884,7 @@ fn do_handshake(
     exact_cell_size: bool,
     requested_encoding: RenderEncoding,
     direct_attach_requested: bool,
-) -> Result<RenderEncoding, ClientError> {
+) -> Result<HandshakeOutcome, ClientError> {
     stream
         .set_nonblocking(false)
         .map_err(ClientError::ConnectionFailed)?;
@@ -884,7 +905,7 @@ fn do_handshake(
             cell_height_px,
         ),
         pixel_mouse: pixel_mouse_profile_allowed(),
-        capabilities: Vec::new(),
+        capabilities: client_capabilities(),
     };
     protocol::write_message(stream, &hello)
         .map_err(|e| ClientError::ConnectionFailed(io::Error::other(e.to_string())))?;
@@ -912,8 +933,14 @@ fn do_handshake(
             if let Some(error) = error {
                 return Err(ClientError::HandshakeRejected { version, error });
             }
-            info!(version, ?encoding, "handshake succeeded");
-            Ok(encoding)
+            let accepted = crate::protocol::CapabilitySet::from_entries(accepted);
+            info!(
+                version,
+                ?encoding,
+                capabilities = accepted.entries().len(),
+                "handshake succeeded"
+            );
+            Ok(HandshakeOutcome { encoding, accepted })
         }
         _ => Err(ClientError::Protocol(protocol::FramingError::Io(
             io::Error::new(io::ErrorKind::InvalidData, "expected Welcome message"),
@@ -1252,8 +1279,9 @@ fn connect_terminal_session_stream(
         RenderEncoding::TerminalAnsi,
         true,
     ) {
-        Ok(RenderEncoding::TerminalAnsi) => {}
-        Ok(encoding) => {
+        Ok(outcome) if outcome.encoding == RenderEncoding::TerminalAnsi => {}
+        Ok(outcome) => {
+            let encoding = outcome.encoding;
             eprintln!(
                 "herdr: terminal session observe negotiated unsupported encoding {encoding:?}"
             );
@@ -1496,7 +1524,7 @@ fn run_client_with_mode(
     log_host_terminal_metrics(cols, rows);
 
     // Perform handshake while the stream is still in blocking mode.
-    let negotiated_encoding = match do_handshake(
+    let handshake_outcome = match do_handshake(
         &mut stream,
         cols,
         rows,
@@ -1506,12 +1534,13 @@ fn run_client_with_mode(
         requested_encoding,
         direct_attach_requested,
     ) {
-        Ok(encoding) => encoding,
+        Ok(outcome) => outcome,
         Err(err) => {
             eprintln!("herdr: {err}");
             std::process::exit(1);
         }
     };
+    let negotiated_encoding = handshake_outcome.encoding;
 
     if let Some((terminal_id, takeover)) = attach_request {
         let attach = ClientMessage::AttachTerminal {
@@ -2936,6 +2965,45 @@ mod tests {
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    #[test]
+    fn the_client_announces_the_capabilities_it_can_actually_serve() {
+        // Announcing a capability the client cannot honour is the client-side
+        // half of the same mistake the server avoids by intersecting: the
+        // server would then be entitled to use it.
+        let announced = crate::protocol::CapabilitySet::from_entries(client_capabilities());
+        for entry in announced.entries() {
+            assert!(
+                !entry.name.is_empty(),
+                "an announced capability needs a name"
+            );
+        }
+        // F0 ships no media, so the honest announcement is empty. This assert
+        // is what makes the next phase notice it has to change it deliberately.
+        assert!(
+            announced.entries().is_empty(),
+            "f0 announces nothing; add the name in the phase that adds the code"
+        );
+    }
+
+    #[test]
+    fn the_handshake_outcome_keeps_what_the_server_accepted() {
+        // The client has to remember the accepted set, not just the encoding:
+        // it is the only place a later media path can ask what was granted.
+        let outcome = HandshakeOutcome {
+            encoding: RenderEncoding::TerminalAnsi,
+            accepted: crate::protocol::CapabilitySet::from_entries(vec![
+                crate::protocol::CapabilityEntry::flag(crate::protocol::capability::MEDIA_STREAMS),
+            ]),
+        };
+        assert_eq!(outcome.encoding, RenderEncoding::TerminalAnsi);
+        assert!(outcome
+            .accepted
+            .has(crate::protocol::capability::MEDIA_STREAMS));
+        assert!(!outcome
+            .accepted
+            .has(crate::protocol::capability::AUDIO_SINK));
     }
 
     #[test]

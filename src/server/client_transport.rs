@@ -18,7 +18,7 @@ use tracing::{debug, warn};
 
 use crate::ipc::LocalStream;
 use crate::protocol::{
-    self, capability, AttachScrollDirection, AttachScrollSource, CapabilityEntry, CapabilitySet,
+    self, AttachScrollDirection, AttachScrollSource, CapabilityEntry, CapabilitySet,
     ClientInputEvent, ClientKeybindings, ClientLaunchMode, ClientMessage, RenderEncoding,
     ServerMessage, MAX_CLIPBOARD_IMAGE_PAYLOAD, MAX_FRAME_SIZE, MAX_GRAPHICS_FRAME_SIZE,
     PROTOCOL_VERSION,
@@ -1045,6 +1045,7 @@ fn client_read_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::capability;
     use crate::app::test_wait::LoadAwareDeadline;
     use interprocess::local_socket::traits::Listener as _;
     use std::path::PathBuf;

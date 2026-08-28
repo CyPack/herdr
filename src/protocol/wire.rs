@@ -67,6 +67,13 @@ const LENGTH_PREFIX_BYTES: usize = 4;
 /// (RFC 9113 §6.5.2, unknown SETTINGS identifiers MUST be ignored) all
 /// converged on independently.
 pub mod capability {
+    // The names exist before their first consumer on purpose: F0 builds the
+    // negotiation and F1 is the phase that announces `MEDIA_STREAMS` and
+    // `AUDIO_SINK` for real. Defining them here keeps every later phase from
+    // inventing its own spelling of the same name, which is the failure two
+    // herdr-browser plugins already produced independently.
+    #![allow(dead_code)]
+
     /// Client can receive timestamped media streams and take part in clock sync.
     pub const MEDIA_STREAMS: &str = "media.streams";
     /// Client has a local audio sink. Values are the codecs it can decode.
@@ -93,6 +100,10 @@ pub struct CapabilityEntry {
 }
 
 impl CapabilityEntry {
+    // Constructors are used by tests and by the phases that announce real
+    // capabilities; production code in F0 only ever passes empty lists.
+    #![allow(dead_code)]
+
     /// A capability with no parameters.
     pub fn flag(name: impl Into<String>) -> Self {
         Self {
@@ -125,6 +136,12 @@ pub struct CapabilitySet {
 }
 
 impl CapabilitySet {
+    // `has` and `values_of` are the reading half of the contract. F0 negotiates
+    // and stores; F1 is the first phase that asks. Keeping them beside
+    // `intersect` means the reading rule is written and tested once, not
+    // rediscovered by whichever feature needs it first.
+    #![allow(dead_code)]
+
     /// Builds a set from announced entries.
     ///
     /// A repeated name keeps its first announcement: a malformed or hostile
