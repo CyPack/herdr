@@ -59,6 +59,17 @@ pub struct Tab {
     /// Wires the chat to exactly one tab so repeated clicks focus it instead
     /// of spawning duplicates; cleared with the tab when it closes.
     pub resumed_session_id: Option<String>,
+    /// The bound chat's live title, mirrored onto the tab so its name can
+    /// follow the conversation it hosts.
+    ///
+    /// Derived, never persisted (a restart re-reads it from the chat store):
+    /// the chat-row sync writes it from whichever chat this tab is bound to —
+    /// the session it resumed, or the agent session detected running in it —
+    /// so an external `/rename` and Herdr's own rename both reach the tab
+    /// through one path. `tab_display_name` prefers an explicit rename
+    /// (`custom_name`) over it, and falls back to the tab number when neither
+    /// is set. TP-TAB-CHAT-01
+    pub chat_title: Option<String>,
     /// The tab was opened in the background and has never been activated.
     ///
     /// Opt-in: constructors start it `false` and only the background-opening
@@ -218,6 +229,7 @@ impl Tab {
                 custom_name: None,
                 number,
                 resumed_session_id: None,
+                chat_title: None,
                 unseen: false,
                 spawned_at: Some(Instant::now()),
                 root_pane: root_id,
@@ -235,8 +247,17 @@ impl Tab {
         ))
     }
 
+    /// The tab carries no name of its own — neither an explicit rename nor the
+    /// title of a chat it hosts — so surfaces fall back to its number and
+    /// style it as an unnamed tab. A tab wearing a hosted chat's title is a
+    /// named tab, not a dimmed placeholder. TP-TAB-CHAT-01
     pub fn is_auto_named(&self) -> bool {
         self.custom_name.is_none()
+            && self
+                .chat_title
+                .as_deref()
+                .map(str::trim)
+                .is_none_or(str::is_empty)
     }
 
     /// Blink phase of the spawn flash: `None` outside the window,
@@ -530,6 +551,7 @@ impl Tab {
             custom_name,
             number,
             resumed_session_id: None,
+            chat_title: None,
             // The person moved this pane here themselves — nothing to notice,
             // nothing to flash about.
             unseen: false,

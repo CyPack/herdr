@@ -6542,11 +6542,20 @@ mod tests {
         server.app.state.request_chat_rename = Some(("sess-t".into(), "taze ad".into()));
         assert!(server.handle_deferred_requests_headless());
 
+        // TP-TAB-CHAT-01: the tab wears the renamed conversation's name, and
+        // it does so through the chat title — `custom_name` stays clear so an
+        // explicit tab rename would still outrank it.
         assert_eq!(
-            server.app.state.workspaces[ws_idx].tabs[0]
-                .custom_name
+            server.app.state.workspaces[ws_idx]
+                .tab_display_name(0)
                 .as_deref(),
             Some("taze ad")
+        );
+        assert!(
+            server.app.state.workspaces[ws_idx].tabs[0]
+                .custom_name
+                .is_none(),
+            "a chat rename follows via the chat title, not by stamping custom_name",
         );
         shutdown_test_runtimes(&mut server);
     }

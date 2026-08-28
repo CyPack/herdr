@@ -5103,6 +5103,56 @@ impl AppState {
         self.find_resumed_chat_tab(session_id).is_none()
     }
 
+    /// TP-TAB-CHAT-01: mirror each bound tab's chat title onto the tab, so
+    /// its display name follows the conversation it hosts.
+    ///
+    /// The binding is the tab's resumed session. A chat renamed ANYWHERE
+    /// reaches the tab through this one path: an external Claude `/rename`
+    /// lands in `row.title` via the transcript merge, and Herdr's own rename
+    /// verb is overlaid onto the same field by `apply_chat_names` — both run
+    /// before this in the sync, so by here `row.title` is the authoritative
+    /// name. A withdrawn (empty) title leaves the tab's current name alone
+    /// rather than blanking it: the row falls back to its derived title, and
+    /// the tab keeps whatever it was wearing (the TP-CHAT-NAME-02 posture).
+    ///
+    /// Runs on every chat-row sync and at every startup/handoff, which is why
+    /// `chat_title` need not be persisted — it is re-derived here.
+    pub(crate) fn sync_bound_tab_titles(&mut self) {
+        // Session id -> current title, taken owned so no borrow of the rows
+        // outlives the tab mutation below. Rows are keyed by directory and a
+        // bound session may sit under any key; the first non-empty title for
+        // an id wins, matching the drawer's own one-row-per-chat rule.
+        let mut titles: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        for rows in self.workspace_chat_rows.values() {
+            for row in rows {
+                let Some(title) = row.title.as_deref().map(str::trim) else {
+                    continue;
+                };
+                if !title.is_empty() {
+                    titles
+                        .entry(row.session_id.clone())
+                        .or_insert_with(|| title.to_string());
+                }
+            }
+        }
+        if titles.is_empty() {
+            return;
+        }
+        for workspace in &mut self.workspaces {
+            for tab in &mut workspace.tabs {
+                let Some(session) = tab.resumed_session_id.as_deref() else {
+                    continue;
+                };
+                if let Some(title) = titles.get(session) {
+                    if tab.chat_title.as_deref() != Some(title.as_str()) {
+                        tab.chat_title = Some(title.clone());
+                    }
+                }
+            }
+        }
+    }
+
     pub(crate) fn refresh_project_sessions_in(&mut self, projects_dir: &std::path::Path) {
         // Parse only slightly more than the sidebar can show: opening a
         // session file reads it whole, and busy projects hold hundreds of
@@ -6584,6 +6634,67 @@ mod tests {
         state.workspaces.push(workspace);
         let key = crate::persist::workspace_chats::ledger_key(&cwd);
         (cwd, key)
+    }
+
+    // TP-TAB-CHAT-01: a tab bound to a chat wears that chat's title, follows a
+    // rename of it (the shape an external `/rename` takes — `row.title`
+    // changes and a resync runs), yields to an explicit tab rename, and never
+    // touches a tab bound to nothing.
+    #[test]
+    fn a_bound_tab_wears_its_chats_title_and_follows_a_rename() {
+        let mut state = AppState::test_new();
+        let mut ws = crate::workspace::Workspace::test_new("a");
+        let bound = ws.active_tab_index();
+        ws.tabs[bound].resumed_session_id = Some("sess-1".to_string());
+        // A second, unbound tab must stay a number throughout.
+        let unbound = ws.test_add_tab(None);
+        state.workspaces = vec![ws];
+
+        let key = crate::persist::workspace_chats::ledger_key(std::path::Path::new(
+            "/herdr-test-nonexistent/chat-dir",
+        ));
+        state.workspace_chat_rows.insert(
+            key.clone(),
+            vec![WorkspaceChatRow {
+                session_id: "sess-1".to_string(),
+                agent: "claude".to_string(),
+                title: Some("Fix login bug".to_string()),
+                last_seen_ms: 1,
+                last_modified: None,
+                last_message_at: None,
+            }],
+        );
+
+        state.sync_bound_tab_titles();
+        assert_eq!(
+            state.workspaces[0].tab_display_name(bound).as_deref(),
+            Some("Fix login bug"),
+            "the bound tab wears its chat's title",
+        );
+        assert_eq!(
+            state.workspaces[0].tab_display_name(unbound),
+            Some((unbound + 1).to_string()),
+            "an unbound tab stays a number",
+        );
+
+        // The chat is renamed: the transcript's title changes, a resync runs.
+        state.workspace_chat_rows.get_mut(&key).expect("rows")[0].title =
+            Some("Fix logout bug".to_string());
+        state.sync_bound_tab_titles();
+        assert_eq!(
+            state.workspaces[0].tab_display_name(bound).as_deref(),
+            Some("Fix logout bug"),
+            "a chat rename reaches the bound tab",
+        );
+
+        // An explicit tab rename outranks the derived chat title.
+        state.workspaces[0].tabs[bound].custom_name = Some("my tab".to_string());
+        state.sync_bound_tab_titles();
+        assert_eq!(
+            state.workspaces[0].tab_display_name(bound).as_deref(),
+            Some("my tab"),
+            "an explicit rename wins over the derived chat title",
+        );
     }
 
     // TP-DRAW-01: the drawer lists what the agent's own store holds, not only

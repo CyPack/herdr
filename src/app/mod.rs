@@ -634,6 +634,10 @@ impl App {
             })
             .collect();
         state.chat_move_overrides = ledger.moves.clone();
+        // TP-TAB-CHAT-01: last, once `row.title` carries the merge's title and
+        // every ledger overlay (moves, names), mirror each bound tab's chat
+        // title onto the tab so its display name follows the conversation.
+        state.sync_bound_tab_titles();
     }
 
     /// Load the graveyard from disk and seed it from the transcript rows.
