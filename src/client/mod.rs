@@ -98,6 +98,13 @@ struct ClientState {
     repaint_pending: bool,
     /// Whether this client draws the cursor into frame cells instead of using the host cursor.
     draw_host_cursor: bool,
+    /// What the handshake granted. Read when a stream is offered, so the
+    /// client plays only what it said it could.
+    accepted: crate::protocol::CapabilitySet,
+    /// The playout thread, started at the first stream and never before.
+    media: Option<crate::media::playback::PlaybackThread>,
+    media_clock: crate::media::clock::ClockSync,
+    media_ticks: u32,
 }
 
 #[derive(Debug, Default)]
@@ -861,9 +868,8 @@ fn client_launch_mode(
 /// be able to ask.
 struct HandshakeOutcome {
     encoding: RenderEncoding,
-    /// Read by the first phase that offers a capability; kept here because the
-    /// handshake is the only moment the answer exists.
-    #[allow(dead_code)]
+    /// Kept because the handshake is the only moment the answer exists; the
+    /// loop reads it when a stream is offered.
     accepted: crate::protocol::CapabilitySet,
 }
 
@@ -876,10 +882,16 @@ struct HandshakeOutcome {
 /// on chunks that reach a client with nowhere to play them. That failure is
 /// silent from both ends: the server sees a healthy stream and the listener
 /// hears nothing.
-fn client_capabilities() -> Vec<crate::protocol::CapabilityEntry> {
-    vec![crate::protocol::CapabilityEntry::flag(
-        crate::protocol::capability::MEDIA_STREAMS,
-    )]
+fn client_capabilities(sink_available: bool) -> Vec<crate::protocol::CapabilityEntry> {
+    use crate::protocol::{capability, codec, CapabilityEntry};
+    let mut announced = vec![CapabilityEntry::flag(capability::MEDIA_STREAMS)];
+    if sink_available {
+        announced.push(CapabilityEntry::with_values(
+            capability::AUDIO_SINK,
+            [codec::OPUS],
+        ));
+    }
+    announced
 }
 
 fn do_handshake(
@@ -912,7 +924,7 @@ fn do_handshake(
             cell_height_px,
         ),
         pixel_mouse: pixel_mouse_profile_allowed(),
-        capabilities: client_capabilities(),
+        capabilities: client_capabilities(crate::media::sink::probe_available()),
     };
     protocol::write_message(stream, &hello)
         .map_err(|e| ClientError::ConnectionFailed(io::Error::other(e.to_string())))?;
@@ -1548,6 +1560,7 @@ fn run_client_with_mode(
         }
     };
     let negotiated_encoding = handshake_outcome.encoding;
+    let accepted_capabilities = handshake_outcome.accepted;
 
     if let Some((terminal_id, takeover)) = attach_request {
         let attach = ClientMessage::AttachTerminal {
@@ -1616,6 +1629,7 @@ fn run_client_with_mode(
             should_quit,
             loop_config,
             negotiated_encoding,
+            accepted_capabilities,
             attach_escape,
         )
         .await
@@ -1665,6 +1679,7 @@ async fn run_client_loop(
     should_quit: Arc<AtomicBool>,
     config: ClientLoopConfig,
     negotiated_encoding: RenderEncoding,
+    accepted: crate::protocol::CapabilitySet,
     attach_escape: Option<AttachEscapeState>,
 ) -> Result<(), ClientError> {
     #[cfg(windows)]
@@ -1690,6 +1705,10 @@ async fn run_client_loop(
         redraw_on_focus_gained: config.redraw_on_focus_gained,
         repaint_pending: false,
         draw_host_cursor,
+        accepted,
+        media: None,
+        media_clock: crate::media::clock::ClockSync::new(),
+        media_ticks: 0,
     };
     debug!(?negotiated_encoding, "client render encoding active");
     let host_mouse_capture_active = Arc::new(AtomicBool::new(state.mouse_capture_active));
@@ -2176,19 +2195,60 @@ async fn run_client_loop(
                 // streams to a client which cannot play is visible rather
                 // than merely wasteful. Playback lands with the codec.
                 ServerMessage::MediaOpen {
-                    stream_id, codec, ..
+                    stream_id,
+                    codec,
+                    target_latency_us,
+                    ..
                 } => {
-                    debug!(stream_id, %codec, "media stream offered to a client with no sink");
-                }
-                ServerMessage::MediaChunk { stream_id, .. }
-                | ServerMessage::MediaClose { stream_id, .. } => {
-                    debug!(
+                    media_open(
+                        &mut state,
+                        &mut write_stream,
                         stream_id,
-                        "media message for a stream this client never opened"
+                        &codec,
+                        target_latency_us,
                     );
                 }
-                ServerMessage::TimeSyncReply { .. } => {
-                    debug!("clock reply for a probe this client never sent");
+                ServerMessage::MediaChunk {
+                    stream_id,
+                    seq,
+                    pts_us,
+                    data,
+                } => {
+                    if let Some(media) = state.media.as_ref() {
+                        media.send(crate::media::playback::PlaybackCommand::Chunk {
+                            stream_id,
+                            seq,
+                            pts_us,
+                            data,
+                        });
+                    }
+                }
+                ServerMessage::MediaClose {
+                    stream_id,
+                    reason,
+                    detail,
+                } => {
+                    debug!(stream_id, ?reason, %detail, "media stream closed");
+                    if let Some(media) = state.media.as_ref() {
+                        media.send(crate::media::playback::PlaybackCommand::Close { stream_id });
+                    }
+                }
+                ServerMessage::TimeSyncReply {
+                    client_send_us,
+                    server_recv_us,
+                    server_send_us,
+                } => {
+                    state.media_clock.observe(
+                        client_send_us,
+                        server_recv_us,
+                        server_send_us,
+                        crate::media::now_us(),
+                    );
+                    if let Some(media) = state.media.as_ref() {
+                        media.send(crate::media::playback::PlaybackCommand::ClockOffset(
+                            state.media_clock.offset_us(),
+                        ));
+                    }
                 }
             },
             ClientLoopEvent::ServerDisconnected => {
@@ -2198,6 +2258,7 @@ async fn run_client_loop(
                 )));
             }
             ClientLoopEvent::Timer => {
+                media_tick(&mut state, &mut write_stream);
                 #[cfg(unix)]
                 if let Ok(mut matcher) = state.direct_graphics_response.lock() {
                     matcher.expire();
@@ -2207,6 +2268,9 @@ async fn run_client_loop(
     }
 
     // Clean exit (Ctrl+C). Send Detach before closing.
+    if let Some(media) = state.media.take() {
+        media.shutdown();
+    }
     let detach = ClientMessage::Detach;
     let _ = write_to_server(&mut write_stream, &detach);
     let _ = io::stdout().flush();
@@ -2282,6 +2346,83 @@ fn server_reader_thread(
 /// Writes a message to the server stream (blocking).
 fn write_to_server(stream: &mut LocalStream, msg: &ClientMessage) -> io::Result<()> {
     protocol::write_message(stream, msg).map_err(|e| io::Error::other(e.to_string()))
+}
+
+/// Probes the server's clock once a second while a stream is open.
+const MEDIA_PROBE_EVERY_TICKS: u32 = 10;
+
+/// Answers a `MediaOpen`.
+///
+/// The stream is accepted only for the codec the handshake negotiated. Anything
+/// else is declined with zero credit — the one refusal this protocol has — so
+/// the server stops sending instead of streaming into a client that will
+/// decode nothing.
+fn media_open(
+    state: &mut ClientState,
+    write_stream: &mut LocalStream,
+    stream_id: u32,
+    codec: &str,
+    target_latency_us: u32,
+) {
+    use crate::media::playback::{PlaybackCommand, PlaybackThread};
+    use crate::protocol::capability;
+
+    let granted = state.accepted.negotiated_value(capability::AUDIO_SINK);
+    if granted != Some(codec) {
+        debug!(stream_id, %codec, ?granted, "media stream declined: not the negotiated codec");
+        let _ = write_to_server(
+            write_stream,
+            &ClientMessage::MediaCredit {
+                stream_id,
+                chunks: 0,
+            },
+        );
+        return;
+    }
+    let media = state
+        .media
+        .get_or_insert_with(|| PlaybackThread::spawn(Box::new(crate::media::sink::open_default)));
+    media.send(PlaybackCommand::Open {
+        stream_id,
+        target_latency_us,
+    });
+    media.send(PlaybackCommand::ClockOffset(state.media_clock.offset_us()));
+    // The first probe goes out with the open: the buffer cannot place a chunk
+    // until it knows what the server's clock says.
+    let _ = write_to_server(
+        write_stream,
+        &ClientMessage::TimeSync {
+            client_send_us: crate::media::now_us(),
+        },
+    );
+    state.media_ticks = 0;
+}
+
+/// Runs on the 100 ms timer. Costs nothing while no stream is open.
+fn media_tick(state: &mut ClientState, write_stream: &mut LocalStream) {
+    use std::sync::atomic::Ordering;
+    let Some(media) = state.media.as_ref() else {
+        return;
+    };
+    let stats = media.stats();
+    let stream_id = stats.open_stream.load(Ordering::Relaxed);
+    if stream_id == 0 {
+        return;
+    }
+    state.media_ticks = state.media_ticks.wrapping_add(1);
+    let chunks = stats.credit.load(Ordering::Relaxed);
+    let _ = write_to_server(
+        write_stream,
+        &ClientMessage::MediaCredit { stream_id, chunks },
+    );
+    if state.media_ticks.is_multiple_of(MEDIA_PROBE_EVERY_TICKS) {
+        let _ = write_to_server(
+            write_stream,
+            &ClientMessage::TimeSync {
+                client_send_us: crate::media::now_us(),
+            },
+        );
+    }
 }
 
 fn write_remote_image_to_server(
@@ -3000,7 +3141,7 @@ mod tests {
         // Announcing a capability the client cannot honour is the client-side
         // half of the same mistake the server avoids by intersecting: the
         // server would then be entitled to use it.
-        let announced = crate::protocol::CapabilitySet::from_entries(client_capabilities());
+        let announced = crate::protocol::CapabilitySet::from_entries(client_capabilities(false));
         for entry in announced.entries() {
             assert!(
                 !entry.name.is_empty(),
@@ -3016,7 +3157,16 @@ mod tests {
         // ends look healthy while the listener hears nothing.
         assert!(
             !announced.has(crate::protocol::capability::AUDIO_SINK),
-            "announce the sink in the phase that opens an audio device, not before"
+            "no sink on this machine, no sink announced"
+        );
+
+        // With a sink the announcement names the codec, not merely the fact:
+        // two sides agreeing on a name and disagreeing on its content have not
+        // negotiated anything.
+        let with_sink = crate::protocol::CapabilitySet::from_entries(client_capabilities(true));
+        assert_eq!(
+            with_sink.negotiated_value(crate::protocol::capability::AUDIO_SINK),
+            Some(crate::protocol::codec::OPUS)
         );
     }
 
