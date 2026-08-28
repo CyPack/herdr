@@ -14,6 +14,8 @@
 
 pub mod clock;
 pub mod opus;
+pub mod playout;
+pub mod stream;
 
 /// Sample rate every audio stream uses.
 ///
