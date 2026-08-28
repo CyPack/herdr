@@ -1923,6 +1923,96 @@ async fn the_live_render_plan_with_a_second_display_never_strands_a_placement() 
     }
 }
 
+fn drop_pending_messages(rx: &std::sync::mpsc::Receiver<Vec<u8>>) -> usize {
+    // A graphics message that reaches the wire but never reaches the terminal:
+    // taken off the channel and thrown away without touching the simulated
+    // kitty, while the server has already committed it to the ledger.
+    let mut dropped = 0;
+    while rx.try_recv().is_ok() {
+        dropped += 1;
+    }
+    dropped
+}
+
+// TP-GFX-LEDGER-02
+#[tokio::test]
+async fn a_lost_graphics_message_still_leaves_one_placement_on_the_terminal() {
+    // Every frame of a streaming pane is content-hashed into a NEW host image
+    // id, so each one becomes a separate kitty placement and the previous one
+    // dies only through the delete that travels with its successor. That gives
+    // the wire a fault tolerance of zero: lose a single message and the frame
+    // it would have deleted stays on screen for the rest of the session, with
+    // the next frames stacking on top of it — the 2026-08-28 live case, where
+    // an old browser frame sat pinned to the left of the pane and older ones
+    // bled through it. A streaming source must therefore keep ONE identity
+    // across frames, so that even a lost message can only leave the picture
+    // stale for a turn instead of stranding it forever.
+    // Every turn is tried in isolation: the encoder emits at most one
+    // transaction per turn, so a delete and the display that supersedes it can
+    // land in different messages. Losing one fixed turn only samples one of
+    // those roles; sweeping them all is what actually asks the question.
+    for lose_turn in 0..12usize {
+        let mut lost_messages = 0;
+        let (mut server, rx1, pane_id) = retained_test_server(b"video pane");
+        server.app.state.kitty_graphics_enabled = true;
+        server.clients.get_mut(&1).unwrap().cell_size = crate::kitty_graphics::HostCellSize {
+            width_px: 10,
+            height_px: 20,
+        };
+        server.sync_foreground_client_state();
+        server.resize_shared_runtime_to_effective_size();
+        let neighbour =
+            server.app.state.workspaces[0].test_split(ratatui::layout::Direction::Horizontal);
+        set_graphics_layer(&mut server, neighbour, vec![7, 7, 7, 7]);
+        server.render_and_stream();
+        let mut kitty = std::collections::HashMap::new();
+        drain_alive_fast(&rx1, &mut kitty);
+
+        for turn in 0..12usize {
+            push_tb_frame(&mut server, pane_id, turn as u8 + 1);
+            match server.render_retained_graphics_update_and_stream() {
+                RetainedGraphicsOutcome::Sent => {}
+                _ => server.render_and_stream(),
+            }
+            if turn == lose_turn {
+                lost_messages += drop_pending_messages(&rx1);
+            } else {
+                drain_alive_fast(&rx1, &mut kitty);
+            }
+        }
+        for _ in 0..6 {
+            match server.render_retained_graphics_update_and_stream() {
+                RetainedGraphicsOutcome::Sent => {}
+                _ => server.render_and_stream(),
+            }
+            drain_alive_fast(&rx1, &mut kitty);
+        }
+
+        let pane_alive: Vec<_> = kitty
+            .iter()
+            .filter(|((image, _), cols)| {
+                **cols > 0 && image.parse::<u64>().is_ok_and(|id| id < 0x8000_0000)
+            })
+            .map(|((image, placement), cols)| format!("i={image} p={placement} c={cols}"))
+            .collect();
+        // A test that loses nothing proves nothing: without this the assertion
+        // below passes on an empty channel and reports resilience the run never
+        // exercised.
+        assert!(
+            lost_messages > 0,
+            "lose_turn={lose_turn}: nothing was on the wire to lose, so this run never \
+             tested the lost-message case"
+        );
+        assert!(
+            pane_alive.len() <= 1,
+            "lose_turn={lose_turn}: {lost_messages} lost graphics message(s) stranded {} \
+             placements on the terminal — a streaming pane must hold one identity so a lost \
+             message can only leave the picture stale, never stacked: {pane_alive:?}",
+            pane_alive.len()
+        );
+    }
+}
+
 // TP-GFX-CONVERGE-01
 #[tokio::test]
 async fn narrowing_the_view_reclips_or_deletes_a_stale_pane_graphics_placement() {
