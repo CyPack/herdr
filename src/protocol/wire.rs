@@ -210,6 +210,20 @@ impl CapabilitySet {
             .map_or(&[], |entry| entry.values.as_slice())
     }
 
+    /// The value both sides agreed on for `name`, if there is one.
+    ///
+    /// The question `has` cannot answer. `intersect` keeps a name whose values
+    /// do not overlap — it has to, because a flag capability has no values and
+    /// an empty list is therefore not evidence of disagreement. That leaves
+    /// `has(AUDIO_SINK) == true` with no codec in common, which is exactly the
+    /// state where opening a stream produces silence and no error.
+    ///
+    /// So valued capabilities ask this instead, and flags keep asking `has`.
+    /// `None` here means "no usable agreement", never "not supported".
+    pub fn negotiated_value(&self, name: &str) -> Option<&str> {
+        self.values_of(name).first().map(String::as_str)
+    }
+
     /// The capabilities both sides support.
     ///
     /// Names present on only one side are dropped, and the surviving values are
