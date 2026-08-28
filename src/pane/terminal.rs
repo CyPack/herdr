@@ -1498,50 +1498,34 @@ impl GhosttyPaneTerminal {
             input_state.color_scheme_reporting,
         );
 
-        for mode in [
-            MODE_MOUSE_X10,
-            MODE_MOUSE_PRESS_RELEASE,
-            MODE_MOUSE_BUTTON_MOTION,
-            MODE_MOUSE_ANY_MOTION,
-        ] {
-            let _ = core.terminal.mode_set(mode, false);
-        }
-        let mouse_mode = match input_state.mouse_protocol_mode {
+        // Mouse modes must flow through the stream as DECSET sequences: the
+        // mode bitset alone satisfies mode_get and wheel routing, but
+        // ghostty's mouse encoder copies the terminal's derived mouse flags,
+        // which only the stream handler updates. Seeding these via mode_set
+        // left every handed-off pane mouse-dead while routing still claimed
+        // the mouse. TP-INP-MOUSE-06
+        let mut mouse_seed: Vec<u8> = b"\x1b[?9l\x1b[?1000l\x1b[?1002l\x1b[?1003l".to_vec();
+        let mouse_mode_seq: Option<&[u8]> = match input_state.mouse_protocol_mode {
             crate::input::MouseProtocolMode::None => None,
-            crate::input::MouseProtocolMode::Press => Some(MODE_MOUSE_X10),
-            crate::input::MouseProtocolMode::PressRelease => Some(MODE_MOUSE_PRESS_RELEASE),
-            crate::input::MouseProtocolMode::ButtonMotion => Some(MODE_MOUSE_BUTTON_MOTION),
-            crate::input::MouseProtocolMode::AnyMotion => Some(MODE_MOUSE_ANY_MOTION),
+            crate::input::MouseProtocolMode::Press => Some(b"\x1b[?9h"),
+            crate::input::MouseProtocolMode::PressRelease => Some(b"\x1b[?1000h"),
+            crate::input::MouseProtocolMode::ButtonMotion => Some(b"\x1b[?1002h"),
+            crate::input::MouseProtocolMode::AnyMotion => Some(b"\x1b[?1003h"),
         };
-        if let Some(mode) = mouse_mode {
-            let _ = core.terminal.mode_set(mode, true);
+        if let Some(seq) = mouse_mode_seq {
+            mouse_seed.extend_from_slice(seq);
         }
-
-        let _ = core
-            .terminal
-            .mode_set(crate::ghostty::MODE_MOUSE_UTF8, false);
-        let _ = core
-            .terminal
-            .mode_set(crate::ghostty::MODE_MOUSE_SGR, false);
-        let _ = core
-            .terminal
-            .mode_set(crate::ghostty::MODE_MOUSE_SGR_PIXELS, false);
-        match input_state.mouse_protocol_encoding {
-            crate::input::MouseProtocolEncoding::Default => {}
-            crate::input::MouseProtocolEncoding::Utf8 => {
-                let _ = core
-                    .terminal
-                    .mode_set(crate::ghostty::MODE_MOUSE_UTF8, true);
-            }
-            crate::input::MouseProtocolEncoding::Sgr => {
-                let _ = core.terminal.mode_set(crate::ghostty::MODE_MOUSE_SGR, true);
-            }
-            crate::input::MouseProtocolEncoding::SgrPixels => {
-                let _ = core
-                    .terminal
-                    .mode_set(crate::ghostty::MODE_MOUSE_SGR_PIXELS, true);
-            }
+        mouse_seed.extend_from_slice(b"\x1b[?1005l\x1b[?1006l\x1b[?1016l");
+        let encoding_seq: Option<&[u8]> = match input_state.mouse_protocol_encoding {
+            crate::input::MouseProtocolEncoding::Default => None,
+            crate::input::MouseProtocolEncoding::Utf8 => Some(b"\x1b[?1005h"),
+            crate::input::MouseProtocolEncoding::Sgr => Some(b"\x1b[?1006h"),
+            crate::input::MouseProtocolEncoding::SgrPixels => Some(b"\x1b[?1016h"),
+        };
+        if let Some(seq) = encoding_seq {
+            mouse_seed.extend_from_slice(seq);
         }
+        core.terminal.write(&mouse_seed);
 
         if input_state.modify_other_keys {
             core.terminal.write(b"\x1b[>4;2m");
@@ -3707,6 +3691,92 @@ mod tests {
         assert_eq!(
             buffer.word_motion(0, 4, TerminalWordMotion::NextBigEnd),
             Some(TerminalTextPoint { row: 2, col: 2 })
+        );
+    }
+
+    // TP-INP-MOUSE-06: mouse modes seeded by a live handoff must drive the
+    // encoder. `mode_set` fills the mode bitset that wheel routing reads, but
+    // ghostty's mouse encoder copies the terminal's derived mouse flags, and
+    // only a DECSET flowing through the stream updates those. Seeding modes
+    // any other way leaves every wheel/click encode empty and the pane
+    // mouse-dead (S47 live incident: 317 empty wheel encodes after a
+    // clientless live-handoff).
+    fn seeded_any_motion_sgr_pixels_pane() -> PaneTerminal {
+        let (tx, _rx) = mpsc::channel(4);
+        let terminal = crate::ghostty::Terminal::new(80, 24, 100).unwrap();
+        let pane = PaneTerminal::new(GhosttyPaneTerminal::new(terminal, tx).unwrap());
+        pane.resize(24, 80, 10, 20);
+        pane.ghostty.seed_handoff_input_state(InputState {
+            alternate_screen: false,
+            application_cursor: false,
+            bracketed_paste: false,
+            focus_reporting: false,
+            mouse_protocol_mode: crate::input::MouseProtocolMode::AnyMotion,
+            mouse_protocol_encoding: crate::input::MouseProtocolEncoding::SgrPixels,
+            mouse_alternate_scroll: false,
+            modify_other_keys: false,
+            color_scheme_reporting: false,
+        });
+        pane
+    }
+
+    #[test]
+    fn handoff_seeded_mouse_modes_drive_the_wheel_encoder() {
+        let pane = seeded_any_motion_sgr_pixels_pane();
+        let bytes = pane
+            .encode_mouse_wheel(
+                crossterm::event::MouseEventKind::ScrollDown,
+                crate::input::mouse::Position::Pixels { x: 100, y: 100 },
+                crossterm::event::KeyModifiers::NONE,
+            )
+            .expect("a seeded any-motion + sgr-pixels pane must encode a wheel report");
+        assert!(
+            bytes.starts_with(b"\x1b[<"),
+            "expected an SGR-shaped report, got {bytes:?}"
+        );
+    }
+
+    #[test]
+    fn handoff_seeded_mouse_modes_drive_the_button_encoder() {
+        let pane = seeded_any_motion_sgr_pixels_pane();
+        let bytes = pane
+            .encode_mouse_button(
+                crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+                crate::input::mouse::Position::Pixels { x: 100, y: 100 },
+                crossterm::event::KeyModifiers::NONE,
+            )
+            .expect("a seeded any-motion + sgr-pixels pane must encode a button report");
+        assert!(
+            bytes.starts_with(b"\x1b[<0;"),
+            "expected a left-press SGR report, got {bytes:?}"
+        );
+    }
+
+    #[test]
+    fn handoff_seed_with_mouse_off_keeps_the_encoder_silent() {
+        let (tx, _rx) = mpsc::channel(4);
+        let terminal = crate::ghostty::Terminal::new(80, 24, 100).unwrap();
+        let pane = PaneTerminal::new(GhosttyPaneTerminal::new(terminal, tx).unwrap());
+        pane.resize(24, 80, 10, 20);
+        pane.ghostty.seed_handoff_input_state(InputState {
+            alternate_screen: false,
+            application_cursor: false,
+            bracketed_paste: false,
+            focus_reporting: false,
+            mouse_protocol_mode: crate::input::MouseProtocolMode::None,
+            mouse_protocol_encoding: crate::input::MouseProtocolEncoding::Default,
+            mouse_alternate_scroll: false,
+            modify_other_keys: false,
+            color_scheme_reporting: false,
+        });
+        assert!(
+            pane.encode_mouse_wheel(
+                crossterm::event::MouseEventKind::ScrollDown,
+                crate::input::mouse::Position::Pixels { x: 100, y: 100 },
+                crossterm::event::KeyModifiers::NONE,
+            )
+            .is_none(),
+            "a pane that never asked for the mouse must stay silent"
         );
     }
 
