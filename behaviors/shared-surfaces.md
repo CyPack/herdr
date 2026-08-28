@@ -181,6 +181,32 @@ The client's event lanes. Upstream owns the loop; the fork's rule is that a burs
 | TP-FMP-CLIENT-03 | Incremental terminal frames are not complete snapshots, so they remain lossless and ordered on the control lane. | Terminal output is coalesced like a snapshot and characters are lost. | `fmp_client_terminal_frames_remain_lossless_and_ordered` |
 | TP-FMP-CLIENT-04 | Input-first does not mean control starvation: after one bounded input quantum, one ready ordered event must make progress. | Sustained input starves the control lane and the session stops responding to anything else. | `fmp_client_input_quantum_yields_to_ordered_control` |
 
+## Server writer lanes
+
+The server's own side of the same rule, in `src/server/client_transport.rs`. The
+queue was already correct when this row was written; what it lacked was a name,
+which is the only thing that stops a merge from taking upstream's version of the
+module and leaving a plain FIFO behind. A plain FIFO compiles, passes everything
+else, and turns a burst of frames into input lag.
+
+| ID | Behavior | Breaks if lost | Verified by |
+|---|---|---|---|
+| TP-CLIENT-WRITE-PRIO-01 | The client writer queue is strictly prioritised: a queued control frame is always drained before any render, and a render that was dropped for a newer one is reported rather than silently lost. | Control traffic queues behind presentation frames, so resize, shutdown and notification messages arrive late or out of order behind a redraw burst — and the drop of a stale render becomes invisible. | `client_writer_prioritizes_control_and_reports_render_drain` |
+
+## Handshake capability negotiation
+
+`Hello.capabilities` / `Welcome.accepted` in `src/protocol/wire.rs`, negotiated in
+`src/server/client_transport.rs` and kept by `src/client/mod.rs`. This is the
+fork's mechanism for adding media features without a protocol bump per feature;
+the 20 → 21 bump, which cost the whole client fleet for one boolean, is what it
+replaces.
+
+| ID | Behavior | Breaks if lost | Verified by |
+|---|---|---|---|
+| TP-MEDIA-CAP-01 | The server accepts only the intersection of what the client announced and what it can itself serve, and the session carries exactly that set. | The server reflects the client's announcement back and promises capabilities it has no code for; or it accepts a capability and forgets it, so the client believes a feature was granted while the session has no record. Neither fails at handshake time — both fail later, inside whichever feature first relies on it. | `the_handshake_accepts_only_capabilities_both_sides_support` · `accepted_capabilities_travel_with_the_connected_event` · `capability_intersection_drops_what_only_one_side_offers` |
+| TP-MEDIA-CAP-02 | An unknown capability name costs nothing: it is ignored, the handshake still succeeds, and adding a name only lengthens the frame instead of moving the fields around it. | The negotiation stops being additive. Every new media capability then needs a wire change and another `PROTOCOL_VERSION` bump, which breaks every released client — exactly the loop this mechanism was built to end. | `an_unknown_capability_name_is_ignored_rather_than_fatal` · `a_client_announcing_only_unknown_capabilities_still_connects` · `adding_a_capability_does_not_shift_the_wire_shape` |
+| TP-MEDIA-CAP-03 | A client that announces nothing gets the pre-negotiation behaviour end to end: empty announcement, empty accepted set, empty session record. | The default path silently changes for every existing client, which is the one outcome a compatibility mechanism may never produce. | `an_empty_announcement_is_accepted_as_the_pre_negotiation_case` · `an_empty_capability_announcement_survives_a_roundtrip` |
+
 ## Notes for the next sync
 
 - `TP-REPAINT-2B` is the only row here that asserts something *does not* happen. A

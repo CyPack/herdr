@@ -275,6 +275,8 @@ impl ClientWriterQueue {
         }
     }
 
+    /// Drains in strict priority order: control first, then ordered renders,
+    /// then the newest render. TP-CLIENT-WRITE-PRIO-01
     fn recv(&self) -> Option<ClientWriteItem> {
         let mut state = self.lock_state();
         loop {
@@ -651,6 +653,7 @@ fn handle_client_handshake_offering(
             // Only what both sides named survives. Reflecting the client's
             // announcement back here would promise capabilities this server has
             // no code for, and nothing downstream would catch it.
+            // TP-MEDIA-CAP-01, TP-MEDIA-CAP-03
             let accepted = CapabilitySet::from_entries(capabilities).intersect(offered);
 
             // Clamp size.

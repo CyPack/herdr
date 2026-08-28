@@ -129,7 +129,7 @@ impl CapabilityEntry {
 ///
 /// The reading contract is the negotiation's safety property: asking about a
 /// name nobody announced is an ordinary `false`, never an error, so a peer
-/// speaking a richer dialect costs this side nothing.
+/// speaking a richer dialect costs this side nothing. TP-MEDIA-CAP-02
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CapabilitySet {
     entries: Vec<CapabilityEntry>,
