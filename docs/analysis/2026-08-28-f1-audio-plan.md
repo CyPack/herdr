@@ -183,25 +183,46 @@ F1'de daha en baştan **yedi** tane çıkardı.)
 
 ---
 
-## 7. Görev tablosu
+## 7. Görev tablosu ve DURUM (2026-08-28 kapanış)
 
-| # | Görev | Bağımlı | TP |
+| # | Görev | Durum | Kanıt |
 |---|---|---|---|
-| F1.1 | PRD + test noktaları (**bu belge**) | — | — |
-| F1.2 | L3.a `[features]` + `media-sink` (BOŞ, kod yok) | — | FLAG-01 |
-| F1.3 | L2.a wire mesajları + tag-sıra testi | F1.2 | WIRE-01/02/03 |
-| F1.4 | L1.a/b/c yetenek ilanı + boş-değer tuzağı | F1.3 | CAP-04..07 |
-| F1.5 | L2.b/c stream yaşam döngüsü + seq/pts | F1.3 | STREAM-01/02, SEQ-01 |
-| F1.6 | L3.b/c codec dikişi + opus-rs | F1.2 | OPUS-01, BITRATE-01 |
-| F1.7 | L3.d interop (ffmpeg çapraz) | F1.6 | OPUS-INTEROP |
-| F1.8 | L4.a saat offset + medyan + 60 sn | F1.5 | CLOCK-01/02/03 |
-| F1.9 | L4.b/c/d jitter + drift + oynatma | F1.8 | JITTER-01..05, DRIFT-01 |
-| F1.10 | L5.a medya şeridi | F1.3 | PRIO-01/02 |
-| F1.11 | L5.b/c/d düşürme + kredi + bozulma | F1.10 | DEADLINE-01, CREDIT-01, DEGRADE-01 |
-| F1.12 | L6 `pane_audio_stream` | F1.5 | API-01/02 |
-| F1.13 | Ölçümler | F1.10 | HOL-01, FRAMESIZE-01, SINK-MACOS |
-| F1.14 | Davranış kaydı + `just check` (iki bayrak) | hepsi | B7/B8 |
-| F1.15 | Belge güncelleme + makine kopyaları + devir NN=50 | F1.14 | — |
+| F1.1 | PRD + test noktaları (**bu belge**) | ✅ | `55199d51` |
+| F1.3 | L2.a wire mesajları + tag-sıra testi | ✅ | `aa68e5a7` RED → `9143b2c7` GREEN · 4 test |
+| F1.4 | L1 yetenek ilanı (sunucu+istemci) + boş-değer tuzağı | ✅ | `19233efd` RED → `d58d8d6f` · `71405fdc` · 6 test |
+| F1.6 | L3.b/c codec dikişi + opus-rs (CBR) | ✅ | `b6beef41` RED → `843efaff` GREEN · 5 test |
+| F1.8 | L4.a saat offset + medyan + 60 sn bayatlık | ✅ | `99d6833c` · 4 test |
+| F1.9 | L4.b/d jitter + uyarlanır oynatma | ✅ | `99d6833c` · 7 test |
+| F1.10 | L5.a medya şeridi + `test_channel_through_queue` | ✅ | `20bbea56` RED → `331cdabf` GREEN · 3 test |
+| F1.11 | L5.b/c kaynakta düşürme + kredi | ✅ | `0dd45250` · 6 test |
+| F1.5 | L2.b/c oynatma tamponu (sıra, kayıp, çift) | ✅ | `0dd45250` · 7 test |
+| — | Saat probu cevabı (okuma thread'inde) | ✅ | `71405fdc` · 1 test |
+| F1.13 | Ölçüm: Opus bitrate (ffmpeg çapraz) | ✅ | araştırma §2.2.1 · 5 satır ölçüm |
+| **F1.2** | `[features] media-sink` | ⬜ **YAPILMADI** | Kapsam değişti (D5): bayrak yalnız `cpal`'i kapsayacak; `cpal` gelene kadar bayrağın içi boş olurdu |
+| **F1.7** | L3.d **çalışan** interop testi (bizim encoder → libopus) | ⬜ **YAPILMADI** | Beklenti ffmpeg ile çapalandı (§2.2.1) ama **bizim çıktımız** libopus'a verilmedi |
+| **F1.12** | L6 `pane_audio_stream` API | ⬜ **YAPILMADI** | — |
+| **F1.13b** | TP-MEDIA-HOL-01 (32 MB yazma süresi) · FRAMESIZE-01 | ⬜ **YAPILMADI** | Mekanizma bulundu (araştırma §1.2), **sayı üretilmedi** |
+| **—** | İstemci ses sink'i (`cpal` veya dış süreç) | ⬜ **YAPILMADI** | F1'in kalan en büyük parçası; bu olmadan ses **çalmıyor** |
+| **—** | Sunucu tarafı akış açma/besleme (pane → `AudioStream`) | ⬜ **YAPILMADI** | Motor hazır, çağıranı yok |
+| F1.14 | Davranış kaydı + `just check` | ✅ kayıt (1123) · kapı koşuldu | — |
+| F1.15 | Belge + devir NN=50 | ⏳ | — |
+
+**Dürüst özet:** F1'in **motoru** bitti ve testli; **teslimatı** bitmedi. Uzak bir pane'in
+sesi bugün hâlâ Mac'ten çıkmıyor, çünkü (a) kimse akış açmıyor, (b) istemcide ses aygıtı yok.
+Yazılan her parça o iki adımın altındaki katman ve hiçbiri çöp değil — ama kabul kriterleri
+B1/B2/B3/B5 **ölçülemedi**, çünkü ölçülecek bir çalma yok.
+
+| Kriter | Durum |
+|---|---|
+| B1 60 dk 0 underrun | ⬜ ölçülemedi (çalma yok) |
+| B2 < 800 ms gecikme | ⬜ ölçülemedi · tavan **yapısal olarak** kuruldu (jitter ≤500 ms) |
+| B3 < 1 ms/saat sürüklenme | ⬜ ölçülemedi · offset+medyan+bayatlık hazır, **drift düzeltmesi yazılmadı** |
+| B4 kontrol gecikmesi değişmez | ✅ **yapısal** — medya şeridi en sonda, testle çivili |
+| B5 sıkışmada ses düşmez | ⬜ kısmi — kaynakta düşürme var, bozulma sırası (RM9) yok (video da yok) |
+| B6 varsayılan ikili değişmez | ⚠ **DEĞİŞTİ** — `opus-rs` koşulsuz eklendi (gerekçe D5); `cpal` hâlâ dışarıda |
+| B7 kırmızı test yok | ✅ |
+| B8 TP kayıtlı | ✅ 1123 documented |
+| B9 codec interop | ⚠ kısmi — beklenti çapalandı, **çift yönlü test yok** |
 
 ## 8. Riskler
 
