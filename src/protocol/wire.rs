@@ -2801,6 +2801,85 @@ mod tests {
             Ok(to_read)
         }
     }
+    // TP-MEDIA-CAP-06
+    #[test]
+    fn a_shared_name_with_no_shared_value_is_not_a_usable_capability() {
+        // The trap this exists to close: `intersect` keeps a name whose values
+        // do not overlap, because a flag capability legitimately has no values
+        // and the set cannot tell the two apart. So after negotiating "audio
+        // sink: opus" against "audio sink: pcm", `has` answers true and
+        // `values_of` answers empty — and a caller that asks the first question
+        // opens a stream the far side cannot decode a single byte of.
+        //
+        // Nothing about that failure is loud. The handshake succeeds, the
+        // stream opens, chunks flow, and the only symptom is silence.
+        let client = CapabilitySet::from_entries(vec![CapabilityEntry::with_values(
+            capability::AUDIO_SINK,
+            ["opus"],
+        )]);
+        let server = CapabilitySet::from_entries(vec![CapabilityEntry::with_values(
+            capability::AUDIO_SINK,
+            ["pcm-s16le"],
+        )]);
+
+        let accepted = client.intersect(&server);
+
+        assert!(
+            accepted.has(capability::AUDIO_SINK),
+            "the name survives — this is the trap, not a bug"
+        );
+        assert!(accepted.values_of(capability::AUDIO_SINK).is_empty());
+        assert_eq!(
+            accepted.negotiated_value(capability::AUDIO_SINK),
+            None,
+            "the question a caller should be asking answers no"
+        );
+    }
+
+    // TP-MEDIA-CAP-06
+    #[test]
+    fn a_negotiated_value_is_the_first_the_client_named() {
+        // Order is preference. `intersect` keeps the announcing side's order,
+        // and the announcing side of a sink is the client, so the first
+        // surviving value is the client's favourite codec that the server can
+        // also produce. Reversing this picks a codec both sides support and
+        // neither prefers, silently and forever.
+        let client = CapabilitySet::from_entries(vec![CapabilityEntry::with_values(
+            capability::AUDIO_SINK,
+            [codec::OPUS, codec::PCM_S16LE],
+        )]);
+        let server = CapabilitySet::from_entries(vec![CapabilityEntry::with_values(
+            capability::AUDIO_SINK,
+            [codec::PCM_S16LE, codec::OPUS],
+        )]);
+
+        let accepted = client.intersect(&server);
+
+        assert_eq!(
+            accepted.values_of(capability::AUDIO_SINK),
+            [codec::OPUS, codec::PCM_S16LE]
+        );
+        assert_eq!(
+            accepted.negotiated_value(capability::AUDIO_SINK),
+            Some(codec::OPUS)
+        );
+    }
+
+    // TP-MEDIA-CAP-06
+    #[test]
+    fn a_flag_capability_has_no_negotiated_value_and_that_is_not_a_failure() {
+        // The other half of the same distinction: `media.streams` carries no
+        // values by design, so `negotiated_value` answering None must not be
+        // read as "not supported". `has` is the question for a flag; the two
+        // are not interchangeable and this pins which is which.
+        let both =
+            CapabilitySet::from_entries(vec![CapabilityEntry::flag(capability::MEDIA_STREAMS)]);
+        let accepted = both.intersect(&both);
+
+        assert!(accepted.has(capability::MEDIA_STREAMS));
+        assert_eq!(accepted.negotiated_value(capability::MEDIA_STREAMS), None);
+    }
+
     // -- Media streams (F1) ------------------------------------------------
     //
     // Everything below guards one property: a media message must not be able
