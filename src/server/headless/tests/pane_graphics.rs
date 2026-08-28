@@ -1598,6 +1598,331 @@ async fn resizing_a_streaming_terminal_pane_leaves_no_orphan_placements() {
     );
 }
 
+fn drain_alive_fast(
+    rx: &std::sync::mpsc::Receiver<Vec<u8>>,
+    feed: &mut std::collections::HashMap<(String, String), u32>,
+) -> usize {
+    // The render channel's sender runs on this same thread, so anything the
+    // server managed to enqueue is already there: no timeout needed.
+    let mut messages = 0;
+    while let Ok(bytes) = rx.try_recv() {
+        messages += 1;
+        match read_server_message(bytes) {
+            ServerMessage::Frame(frame) => {
+                alive_placements(feed, &String::from_utf8_lossy(&frame.graphics));
+            }
+            ServerMessage::Graphics { bytes } => {
+                alive_placements(feed, &String::from_utf8_lossy(&bytes));
+            }
+            _ => {}
+        }
+    }
+    messages
+}
+
+// TP-GFX-LEDGER-01
+#[tokio::test]
+async fn alternating_render_paths_never_strand_a_terminal_placement() {
+    // The live wire interleaves the full text-frame path with the graphics-only
+    // retained path against a capacity-1 client channel, while the reader
+    // drains at its own pace. A fixed alternation leaves the retained path
+    // permanently Deferred, so the Sent/Deferred hand-over weave was never
+    // exercised before. Sweep every 8-bit interleaving of the first eight
+    // turns crossed with five reader cadences; after convergence the simulated
+    // kitty and the server's placement ledger must agree, and at most one
+    // terminal placement may survive for the pane.
+    let gesture: &[Option<(crate::api::schema::PaneDirection, f32)>] = &[
+        None,
+        None,
+        None,
+        Some((crate::api::schema::PaneDirection::Right, 0.20)),
+        None,
+        None,
+        Some((crate::api::schema::PaneDirection::Left, 0.12)),
+        None,
+        None,
+        Some((crate::api::schema::PaneDirection::Left, 0.10)),
+        None,
+        None,
+    ];
+    for path_mask in 0..256u32 {
+        for drain_mask in [0xFFFu32, 0xAAA, 0x555, 0x0F0, 0x000] {
+            let (mut server, rx1, pane_id) = retained_test_server(b"video pane");
+            server.app.state.kitty_graphics_enabled = true;
+            server.clients.get_mut(&1).unwrap().cell_size = crate::kitty_graphics::HostCellSize {
+                width_px: 10,
+                height_px: 20,
+            };
+            server.sync_foreground_client_state();
+            server.resize_shared_runtime_to_effective_size();
+            let neighbour =
+                server.app.state.workspaces[0].test_split(ratatui::layout::Direction::Horizontal);
+            set_graphics_layer(&mut server, neighbour, vec![7, 7, 7, 7]);
+            server.render_and_stream();
+            let mut kitty = std::collections::HashMap::new();
+            drain_alive_fast(&rx1, &mut kitty);
+
+            let area = server.app.state.view.terminal_area;
+            for (turn, step) in gesture.iter().enumerate() {
+                if let Some((direction, amount)) = step {
+                    let moved = server.app.state.workspaces[0].tabs[0].layout.resize_pane(
+                        pane_id,
+                        (*direction).into(),
+                        *amount,
+                        area,
+                    );
+                    assert!(moved, "resize step must change the layout");
+                }
+                push_tb_frame(&mut server, pane_id, turn as u8 + 1);
+                let use_retained = if turn < 8 {
+                    path_mask & (1 << turn) != 0
+                } else {
+                    turn % 2 == 1
+                };
+                if use_retained {
+                    let _ = server.render_retained_graphics_update_and_stream();
+                } else {
+                    server.render_and_stream();
+                }
+                if drain_mask & (1 << turn) != 0 {
+                    drain_alive_fast(&rx1, &mut kitty);
+                }
+            }
+            for _ in 0..6 {
+                server.render_and_stream();
+                let _ = server.render_retained_graphics_update_and_stream();
+                drain_alive_fast(&rx1, &mut kitty);
+            }
+            drain_alive_fast(&rx1, &mut kitty);
+
+            let ledger: std::collections::HashSet<(u32, u32)> = server
+                .clients
+                .get(&1)
+                .expect("client 1")
+                .graphics_cache
+                .test_placement_keys()
+                .into_iter()
+                .collect();
+            let pane_alive: Vec<_> = kitty
+                .iter()
+                .filter(|((image, _), cols)| {
+                    **cols > 0 && image.parse::<u64>().is_ok_and(|id| id < 0x8000_0000)
+                })
+                .map(|((image, placement), cols)| {
+                    (
+                        image.parse::<u32>().unwrap_or(0),
+                        placement.parse::<u32>().unwrap_or(0),
+                        *cols,
+                    )
+                })
+                .collect();
+            for (image, placement, cols) in &pane_alive {
+                assert!(
+                    ledger.contains(&(*image, *placement)),
+                    "path_mask={path_mask:03x} drain_mask={drain_mask:03x}: the terminal \
+                     still shows i={image} p={placement} c={cols} but the server ledger no \
+                     longer tracks it — that placement can never be deleted again",
+                );
+            }
+            assert!(
+                pane_alive.len() <= 1,
+                "path_mask={path_mask:03x} drain_mask={drain_mask:03x}: the terminal shows \
+                 {} placements for one pane after convergence: {pane_alive:?}",
+                pane_alive.len()
+            );
+        }
+    }
+}
+
+fn push_tb_frame_large(server: &mut HeadlessServer, pane_id: crate::layout::PaneId, tick: u8) {
+    // A production-sized fallback-browser frame: 64x96 RGBA pixels make a
+    // ~32KB base64 payload that spans many kitty chunks, exactly like the
+    // 4105-byte chunk trains recorded on the live wire.
+    let pixels: Vec<u8> = (0..64usize * 96 * 4).map(|n| (n as u8) ^ tick).collect();
+    use base64::Engine as _;
+    let payload = base64::engine::general_purpose::STANDARD.encode(&pixels);
+    let mut apc = String::new();
+    let chunks: Vec<&str> = payload
+        .as_bytes()
+        .chunks(4096)
+        .map(|chunk| std::str::from_utf8(chunk).expect("base64 is ascii"))
+        .collect();
+    for (index, chunk) in chunks.iter().enumerate() {
+        let more = if index + 1 == chunks.len() { 0 } else { 1 };
+        if index == 0 {
+            apc.push_str(&format!(
+                "\u{1b}_Ga=T,f=32,s=64,v=96,i=77,p=9,q=2,m={more};{chunk}\u{1b}\\"
+            ));
+        } else {
+            apc.push_str(&format!("\u{1b}_Gm={more};{chunk}\u{1b}\\"));
+        }
+    }
+    if let Some(runtime) =
+        server
+            .app
+            .state
+            .runtime_for_pane_in_workspace(&server.app.terminal_runtimes, 0, pane_id)
+    {
+        runtime.test_process_pty_bytes(apc.as_bytes());
+    }
+}
+
+// TP-GFX-LEDGER-01
+#[tokio::test]
+async fn the_live_render_plan_with_a_second_display_never_strands_a_placement() {
+    // The wire capture pinned every stranded placement to the wrapped
+    // ServerMessage::Graphics stream, and the absence of d=i deletes proved
+    // the stranded transactions were never committed to the ledger. Drive the
+    // real plan flow (retained first; Fallback runs the full path in the same
+    // tick, Deferred resolves into a full render next tick) with a
+    // production-sized frame, an optional second display that reads slowly,
+    // and focus-style full redraws — then the simulated kitty of the first
+    // display and the server ledger must agree.
+    let gesture: &[Option<(crate::api::schema::PaneDirection, f32)>] = &[
+        None,
+        None,
+        None,
+        Some((crate::api::schema::PaneDirection::Right, 0.20)),
+        None,
+        None,
+        Some((crate::api::schema::PaneDirection::Left, 0.12)),
+        None,
+        None,
+        Some((crate::api::schema::PaneDirection::Left, 0.10)),
+        None,
+        None,
+    ];
+    for second_client in [None, Some((80u16, 24u16)), Some((60u16, 20u16))] {
+        for drain_mask in [0xFFFu32, 0xAAA, 0x249, 0x000] {
+            for redraw_mask in [0x000u32, 0x044, 0x420] {
+                for drain_second in [false, true] {
+                    let (mut server, rx1, pane_id) = retained_test_server(b"video pane");
+                    server.app.state.kitty_graphics_enabled = true;
+                    server.clients.get_mut(&1).unwrap().cell_size =
+                        crate::kitty_graphics::HostCellSize {
+                            width_px: 10,
+                            height_px: 20,
+                        };
+                    server.sync_foreground_client_state();
+                    server.resize_shared_runtime_to_effective_size();
+                    let neighbour = server.app.state.workspaces[0]
+                        .test_split(ratatui::layout::Direction::Horizontal);
+                    set_graphics_layer(&mut server, neighbour, vec![7, 7, 7, 7]);
+                    let mut rx2 = None;
+                    if let Some(size) = second_client {
+                        let (writer, _control_rx, render_rx) = test_client_writer();
+                        server.clients.insert(
+                            2,
+                            ClientConnection::new(
+                                size,
+                                crate::kitty_graphics::HostCellSize {
+                                    width_px: 10,
+                                    height_px: 20,
+                                },
+                                crate::terminal_theme::TerminalTheme::default(),
+                                None,
+                                2,
+                                RenderEncoding::SemanticFrame,
+                                Some(writer),
+                            ),
+                        );
+                        rx2 = Some(render_rx);
+                    }
+                    server.render_and_stream();
+                    let mut kitty = std::collections::HashMap::new();
+                    drain_alive_fast(&rx1, &mut kitty);
+                    let mut kitty2 = std::collections::HashMap::new();
+                    if let Some(rx2) = rx2.as_ref() {
+                        drain_alive_fast(rx2, &mut kitty2);
+                    }
+
+                    let area = server.app.state.view.terminal_area;
+                    for (turn, step) in gesture.iter().enumerate() {
+                        if let Some((direction, amount)) = step {
+                            server.app.state.workspaces[0].tabs[0].layout.resize_pane(
+                                pane_id,
+                                (*direction).into(),
+                                *amount,
+                                area,
+                            );
+                        }
+                        push_tb_frame_large(&mut server, pane_id, turn as u8 + 1);
+                        if redraw_mask & (1 << turn) != 0 {
+                            server.app.full_redraw_pending = true;
+                        }
+                        match server.render_retained_graphics_update_and_stream() {
+                            RetainedGraphicsOutcome::Sent => {}
+                            RetainedGraphicsOutcome::Deferred
+                            | RetainedGraphicsOutcome::Fallback => {
+                                server.render_and_stream();
+                            }
+                        }
+                        if drain_mask & (1 << turn) != 0 {
+                            drain_alive_fast(&rx1, &mut kitty);
+                        }
+                        if drain_second {
+                            if let Some(rx2) = rx2.as_ref() {
+                                drain_alive_fast(rx2, &mut kitty2);
+                            }
+                        }
+                    }
+                    for _ in 0..8 {
+                        match server.render_retained_graphics_update_and_stream() {
+                            RetainedGraphicsOutcome::Sent => {}
+                            _ => server.render_and_stream(),
+                        }
+                        drain_alive_fast(&rx1, &mut kitty);
+                        if let Some(rx2) = rx2.as_ref() {
+                            drain_alive_fast(rx2, &mut kitty2);
+                        }
+                    }
+                    drain_alive_fast(&rx1, &mut kitty);
+
+                    let ledger: std::collections::HashSet<(u32, u32)> = server
+                        .clients
+                        .get(&1)
+                        .expect("client 1")
+                        .graphics_cache
+                        .test_placement_keys()
+                        .into_iter()
+                        .collect();
+                    let pane_alive: Vec<_> = kitty
+                        .iter()
+                        .filter(|((image, _), cols)| {
+                            **cols > 0 && image.parse::<u64>().is_ok_and(|id| id < 0x8000_0000)
+                        })
+                        .map(|((image, placement), cols)| {
+                            (
+                                image.parse::<u32>().unwrap_or(0),
+                                placement.parse::<u32>().unwrap_or(0),
+                                *cols,
+                            )
+                        })
+                        .collect();
+                    let context = format!(
+                        "second_client={second_client:?} drain_mask={drain_mask:03x} \
+                         redraw_mask={redraw_mask:03x} drain_second={drain_second}"
+                    );
+                    for (image, placement, cols) in &pane_alive {
+                        assert!(
+                            ledger.contains(&(*image, *placement)),
+                            "{context}: display 1 still shows i={image} p={placement} \
+                             c={cols} but the server ledger no longer tracks it — that \
+                             placement can never be deleted again",
+                        );
+                    }
+                    assert!(
+                        pane_alive.len() <= 1,
+                        "{context}: display 1 shows {} placements for one pane after \
+                         convergence: {pane_alive:?}",
+                        pane_alive.len()
+                    );
+                }
+            }
+        }
+    }
+}
+
 // TP-GFX-CONVERGE-01
 #[tokio::test]
 async fn narrowing_the_view_reclips_or_deletes_a_stale_pane_graphics_placement() {

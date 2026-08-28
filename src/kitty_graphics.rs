@@ -1121,6 +1121,14 @@ pub(crate) fn clear_all_host_graphics() -> io::Result<()> {
 }
 
 impl HostGraphicsCache {
+    /// Test-only ledger view: which (image, placement) pairs the server still
+    /// believes exist on the outer terminal. Lets integration tests compare a
+    /// simulated kitty against this accounting to catch stranded placements.
+    #[cfg(test)]
+    pub(crate) fn test_placement_keys(&self) -> Vec<(u32, u32)> {
+        self.placements.keys().copied().collect()
+    }
+
     fn clear_pane_sources(&mut self) -> Vec<u8> {
         let pane_sources = self
             .sources
