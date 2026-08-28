@@ -1034,6 +1034,17 @@ fn client_read_loop(
                 // Duplicate Hello — ignore.
                 continue;
             }
+            // A client only learns these exist by announcing a media
+            // capability, and this server announces none yet. Answering them
+            // needs the clock (TimeSync) and an open stream (MediaCredit);
+            // both arrive with their own tests rather than as a reflex here.
+            // Until then a probe is dropped, not half-answered: a reply built
+            // from a clock nobody keeps would be worse than no reply, because
+            // the client would believe it.
+            ClientMessage::TimeSync { .. } | ClientMessage::MediaCredit { .. } => {
+                debug!(client_id, "media control message before media exists");
+                continue;
+            }
         };
 
         if server_event_tx.blocking_send(event).is_err() {

@@ -2162,6 +2162,27 @@ async fn run_client_loop(
                 ServerMessage::Welcome { .. } => {
                     debug!("received unexpected Welcome in main loop");
                 }
+                // Media messages reach a client that never announced a sink
+                // only from a server that ignored the handshake's answer.
+                // Dropping them is the correct behaviour for this build and
+                // the loud one: the log names the stream, so a server that
+                // streams to a client which cannot play is visible rather
+                // than merely wasteful. Playback lands with the codec.
+                ServerMessage::MediaOpen {
+                    stream_id, codec, ..
+                } => {
+                    debug!(stream_id, %codec, "media stream offered to a client with no sink");
+                }
+                ServerMessage::MediaChunk { stream_id, .. }
+                | ServerMessage::MediaClose { stream_id, .. } => {
+                    debug!(
+                        stream_id,
+                        "media message for a stream this client never opened"
+                    );
+                }
+                ServerMessage::TimeSyncReply { .. } => {
+                    debug!("clock reply for a probe this client never sent");
+                }
             },
             ClientLoopEvent::ServerDisconnected => {
                 return Err(ClientError::ConnectionLost(io::Error::new(

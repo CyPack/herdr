@@ -84,6 +84,47 @@ pub mod capability {
     pub const SIDE_CHANNEL: &str = "media.side_channel";
 }
 
+/// Codec names, shared by the capability values and the wire.
+///
+/// One vocabulary, not two. `AUDIO_SINK`'s values are drawn from here and so
+/// is `MediaOpen::codec`, which is what makes the handshake's answer directly
+/// usable as the stream's codec without a translation table nobody maintains.
+pub mod codec {
+    #![allow(dead_code)]
+
+    /// Opus, the only real-time audio codec both clients decode natively.
+    /// 48 kHz, 20 ms frames, 64-128 kbps (canonical design L3).
+    pub const OPUS: &str = "opus";
+    /// Uncompressed little-endian signed 16-bit PCM. Local and debugging use;
+    /// 32x the bytes of Opus at the same quality, measured, not estimated.
+    pub const PCM_S16LE: &str = "pcm-s16le";
+}
+
+/// Stream parameters, one variant per media kind.
+///
+/// Audio is the only kind F1 carries. Video appends a variant in F2 — appends,
+/// because a variant inserted before this one would re-tag every stream that
+/// is already open on a released client.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MediaParams {
+    /// Sample rate and channel count of an audio stream.
+    Audio { sample_rate_hz: u32, channels: u8 },
+}
+
+/// Why a media stream ended.
+///
+/// Deliberately two values and a free-form detail, rather than a growing list
+/// of reasons: a receiver that meets an unknown discriminant cannot decode the
+/// message at all, so the closed set carries the meaning and the string carries
+/// the specifics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MediaCloseReason {
+    /// The source finished normally.
+    Ended,
+    /// The stream stopped because something went wrong. `detail` says what.
+    Failed,
+}
+
 /// One announced capability: a name plus its parameter values.
 ///
 /// Values are free-form strings whose meaning belongs to the name (codec ids
@@ -641,6 +682,17 @@ pub enum ClientMessage {
 
     /// The direct command was written and flushed; terminal response timing starts now.
     GraphicsTransmissionStarted { transfer_id: u64, image_id: u32 },
+
+    // -- Media streams (F1) -------------------------------------------------
+    /// How many further chunks the client can hold for this stream.
+    ///
+    /// Without it a slow client grows the server's memory instead of its own
+    /// queue, and the first sign of trouble is the server, not the playback.
+    MediaCredit { stream_id: u32, chunks: u16 },
+
+    /// Clock-sync probe. The client stamps it and the server answers with
+    /// `ServerMessage::TimeSyncReply`.
+    TimeSync { client_send_us: u64 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -982,6 +1034,57 @@ pub enum ServerMessage {
 
     /// Suppress a direct command that expired before terminal delivery.
     GraphicsTransmissionRetired { transfer_id: u64, image_id: u32 },
+
+    // -- Media streams (F1) -------------------------------------------------
+    //
+    // Appended, and every later media message appends too. `Graphics` stays
+    // exactly as it is: a one-shot picture is the right primitive for a TUI
+    // drawing a cover, and it costs nothing. These carry *continuous* sources.
+    /// A media stream opened for one pane.
+    MediaOpen {
+        /// Identifies the stream for its whole life. Bound to the pane, not to
+        /// a frame: waypipe's measured mistake was binding a stream to the
+        /// buffer, which made surfaces flicker as buffers rotated.
+        stream_id: u32,
+        pane_id: String,
+        /// Codec name from `codec`, drawn from what the handshake agreed on.
+        codec: String,
+        params: MediaParams,
+        /// How long after `pts_us` the client should play a chunk. The server's
+        /// opening suggestion; the client raises it as it measures jitter.
+        target_latency_us: u32,
+    },
+
+    /// One chunk of an open stream.
+    MediaChunk {
+        stream_id: u32,
+        /// Monotonic per stream. A gap is a loss, and the client conceals it
+        /// rather than stalling — stalling turns a lost packet into silence.
+        seq: u64,
+        /// Presentation time in the server's clock. The only thing A/V sync
+        /// rests on, and the reason audio and video need no separate alignment.
+        pts_us: u64,
+        data: Vec<u8>,
+    },
+
+    /// A stream ended.
+    MediaClose {
+        stream_id: u32,
+        reason: MediaCloseReason,
+        /// Free-form specifics. Empty for a normal end.
+        detail: String,
+    },
+
+    /// Answer to `ClientMessage::TimeSync`, carrying the server's two stamps.
+    ///
+    /// Three stamps travel and the client takes the fourth on arrival: the
+    /// NTP four-timestamp shape, which is what lets the client separate the
+    /// clock offset from the round trip instead of confusing the two.
+    TimeSyncReply {
+        client_send_us: u64,
+        server_recv_us: u64,
+        server_send_us: u64,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -2806,7 +2909,10 @@ mod tests {
             }),
             13
         );
-        assert_eq!(client_tag(&ClientMessage::TimeSync { client_send_us: 1 }), 14);
+        assert_eq!(
+            client_tag(&ClientMessage::TimeSync { client_send_us: 1 }),
+            14
+        );
     }
 
     // TP-MEDIA-WIRE-02
@@ -2857,8 +2963,7 @@ mod tests {
                 server_send_us: 30,
             },
         ] {
-            let encoded =
-                bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
+            let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
             let (decoded, _): (ServerMessage, _) =
                 bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
             assert_eq!(decoded, msg);
@@ -2869,12 +2974,9 @@ mod tests {
                 stream_id: 7,
                 chunks: 3,
             },
-            ClientMessage::TimeSync {
-                client_send_us: 99,
-            },
+            ClientMessage::TimeSync { client_send_us: 99 },
         ] {
-            let encoded =
-                bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
+            let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
             let (decoded, _): (ClientMessage, _) =
                 bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
             assert_eq!(decoded, msg);
@@ -2898,7 +3000,7 @@ mod tests {
         let mut buf = Vec::new();
         write_message(&mut buf, &msg).unwrap();
 
-        let err = read_message::<ServerMessage, _>(&mut buf.as_slice(), MAX_FRAME_SIZE)
+        let err = read_message::<_, ServerMessage>(&mut buf.as_slice(), MAX_FRAME_SIZE)
             .expect_err("an oversized media chunk must not decode");
         assert!(
             matches!(err, FramingError::Oversized { .. }),
