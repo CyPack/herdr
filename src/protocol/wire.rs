@@ -2698,4 +2698,239 @@ mod tests {
             Ok(to_read)
         }
     }
+    // -- Media streams (F1) ------------------------------------------------
+    //
+    // Everything below guards one property: a media message must not be able
+    // to move an existing message's wire tag, and must not be able to carry a
+    // value the reader cannot survive. bincode is not self-describing — the
+    // variant's position IS the tag — so an insertion in the middle of either
+    // enum re-labels every message after it. That failure is silent: it
+    // compiles, and the wrong variant decodes as a neighbour.
+
+    /// The leading varint of a bincode-encoded enum is its discriminant.
+    /// Values below 251 are a single byte, which is every tag we have.
+    fn wire_tag(encoded: &[u8]) -> u8 {
+        assert!(
+            encoded[0] < 251,
+            "tag {} left the single-byte varint range; this helper needs to grow",
+            encoded[0]
+        );
+        encoded[0]
+    }
+
+    fn server_tag(msg: &ServerMessage) -> u8 {
+        wire_tag(&bincode::serde::encode_to_vec(msg, bincode::config::standard()).unwrap())
+    }
+
+    fn client_tag(msg: &ClientMessage) -> u8 {
+        wire_tag(&bincode::serde::encode_to_vec(msg, bincode::config::standard()).unwrap())
+    }
+
+    fn sample_media_open() -> ServerMessage {
+        ServerMessage::MediaOpen {
+            stream_id: 7,
+            pane_id: "w1:p3".to_string(),
+            codec: codec::OPUS.to_string(),
+            params: MediaParams::Audio {
+                sample_rate_hz: 48_000,
+                channels: 2,
+            },
+            target_latency_us: 120_000,
+        }
+    }
+
+    // TP-MEDIA-WIRE-01
+    #[test]
+    fn media_variants_are_appended_after_every_existing_one() {
+        // The tags below are not a wish list: they are what the wire already
+        // says. Adding a variant anywhere but the end changes one of these,
+        // and this test is the only thing that notices before a released
+        // client decodes a Graphics frame as something else.
+        assert_eq!(
+            server_tag(&ServerMessage::ReloadSoundConfig),
+            8,
+            "an existing ServerMessage tag moved"
+        );
+        assert_eq!(
+            server_tag(&ServerMessage::GraphicsTransmissionRetired {
+                transfer_id: 1,
+                image_id: 2,
+            }),
+            15,
+            "GraphicsTransmissionRetired was the last variant before media"
+        );
+        assert_eq!(server_tag(&sample_media_open()), 16);
+        assert_eq!(
+            server_tag(&ServerMessage::MediaChunk {
+                stream_id: 7,
+                seq: 1,
+                pts_us: 2,
+                data: vec![9],
+            }),
+            17
+        );
+        assert_eq!(
+            server_tag(&ServerMessage::MediaClose {
+                stream_id: 7,
+                reason: MediaCloseReason::Ended,
+                detail: String::new(),
+            }),
+            18
+        );
+        assert_eq!(
+            server_tag(&ServerMessage::TimeSyncReply {
+                client_send_us: 1,
+                server_recv_us: 2,
+                server_send_us: 3,
+            }),
+            19
+        );
+
+        assert_eq!(
+            client_tag(&ClientMessage::Detach),
+            4,
+            "an existing ClientMessage tag moved"
+        );
+        assert_eq!(
+            client_tag(&ClientMessage::GraphicsTransmissionStarted {
+                transfer_id: 1,
+                image_id: 2,
+            }),
+            12,
+            "GraphicsTransmissionStarted was the last variant before media"
+        );
+        assert_eq!(
+            client_tag(&ClientMessage::MediaCredit {
+                stream_id: 7,
+                chunks: 4,
+            }),
+            13
+        );
+        assert_eq!(client_tag(&ClientMessage::TimeSync { client_send_us: 1 }), 14);
+    }
+
+    // TP-MEDIA-WIRE-02
+    #[test]
+    fn media_messages_survive_the_wire_field_for_field() {
+        let open = sample_media_open();
+        let encoded = bincode::serde::encode_to_vec(&open, bincode::config::standard()).unwrap();
+        let (decoded, _): (ServerMessage, _) =
+            bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
+        match decoded {
+            ServerMessage::MediaOpen {
+                stream_id,
+                pane_id,
+                codec,
+                params,
+                target_latency_us,
+            } => {
+                assert_eq!(stream_id, 7);
+                assert_eq!(pane_id, "w1:p3");
+                assert_eq!(codec, codec::OPUS);
+                assert_eq!(
+                    params,
+                    MediaParams::Audio {
+                        sample_rate_hz: 48_000,
+                        channels: 2,
+                    }
+                );
+                assert_eq!(target_latency_us, 120_000);
+            }
+            other => panic!("expected MediaOpen, got {other:?}"),
+        }
+
+        for msg in [
+            ServerMessage::MediaChunk {
+                stream_id: 7,
+                seq: u64::MAX,
+                pts_us: 1_234_567,
+                data: vec![1, 2, 3],
+            },
+            ServerMessage::MediaClose {
+                stream_id: 7,
+                reason: MediaCloseReason::Failed,
+                detail: "encoder gone".to_string(),
+            },
+            ServerMessage::TimeSyncReply {
+                client_send_us: 10,
+                server_recv_us: 20,
+                server_send_us: 30,
+            },
+        ] {
+            let encoded =
+                bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
+            let (decoded, _): (ServerMessage, _) =
+                bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
+            assert_eq!(decoded, msg);
+        }
+
+        for msg in [
+            ClientMessage::MediaCredit {
+                stream_id: 7,
+                chunks: 3,
+            },
+            ClientMessage::TimeSync {
+                client_send_us: 99,
+            },
+        ] {
+            let encoded =
+                bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
+            let (decoded, _): (ClientMessage, _) =
+                bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
+            assert_eq!(decoded, msg);
+        }
+    }
+
+    // TP-MEDIA-WIRE-03
+    #[test]
+    fn an_audio_chunk_larger_than_a_control_frame_is_refused_not_decoded() {
+        // A 20 ms Opus packet is roughly 160 bytes. A megabyte-sized "audio
+        // chunk" is a malformed or hostile peer, and the reader must answer
+        // with a framing error rather than allocating whatever the header
+        // claims. MAX_FRAME_SIZE, not MAX_GRAPHICS_FRAME_SIZE, is the ceiling
+        // that applies here: media is not a graphics frame.
+        let msg = ServerMessage::MediaChunk {
+            stream_id: 1,
+            seq: 0,
+            pts_us: 0,
+            data: vec![0u8; MAX_FRAME_SIZE + 1],
+        };
+        let mut buf = Vec::new();
+        write_message(&mut buf, &msg).unwrap();
+
+        let err = read_message::<ServerMessage, _>(&mut buf.as_slice(), MAX_FRAME_SIZE)
+            .expect_err("an oversized media chunk must not decode");
+        assert!(
+            matches!(err, FramingError::Oversized { .. }),
+            "expected Oversized, got {err:?}"
+        );
+    }
+
+    // TP-MEDIA-CODEC-NAME-01
+    #[test]
+    fn an_unknown_codec_name_decodes_instead_of_killing_the_message() {
+        // The codec travels as a name for the same reason capabilities do: a
+        // bincode enum cannot decode a discriminant it has never seen, and the
+        // whole message dies with it — a connection-level failure for what
+        // should be one refusable stream. With a name, an old client decodes
+        // the open, does not recognise the codec, and can decline the stream.
+        let msg = ServerMessage::MediaOpen {
+            stream_id: 1,
+            pane_id: "w1:p1".to_string(),
+            codec: "a-codec-from-2030".to_string(),
+            params: MediaParams::Audio {
+                sample_rate_hz: 48_000,
+                channels: 2,
+            },
+            target_latency_us: 0,
+        };
+        let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
+        let (decoded, _): (ServerMessage, _) =
+            bincode::serde::decode_from_slice(&encoded, bincode::config::standard())
+                .expect("an unknown codec name must still decode");
+        match decoded {
+            ServerMessage::MediaOpen { codec, .. } => assert_eq!(codec, "a-codec-from-2030"),
+            other => panic!("expected MediaOpen, got {other:?}"),
+        }
+    }
 }
