@@ -161,6 +161,26 @@ ropus = "0.12"  # Pure-Rust Opus encoding (replaces C libopus/audiopus-sys)
 Yani alanın referans uygulaması **C libopus/audiopus-sys'ten saf Rust'a GEÇTİ.** Bu, bizim
 bağımsız olarak yeniden keşfetmemiz gereken bir karar değil; **kanıt**.
 
+### 2.2.1 Bağımsız bitrate ölçümü (bu oturumda, ffmpeg 8.1.2 · libopus)
+
+Yöntem: `sine=440Hz, 48 kHz, 10 sn`, s16le stereo ham girdi (1.920.000 bayt = 192 KB/s) →
+`-c:a libopus -frame_duration 20`.
+
+| Mod | Bitrate | Çıktı | B/s | MB/dk |
+|---|--:|--:|--:|--:|
+| CBR (`-vbr off`) | 32k | 41.015 | 4.101 | 0,235 |
+| **CBR** | **64k** | **81.095** | **8.109** | **0,464** |
+| CBR | 128k | 161.756 | 16.175 | 0,926 |
+| VBR (`-vbr on`) | 64k · saf ton | 106.437 | 10.643 | **0,609** ⚠ nominalin üstünde |
+| VBR | 64k · pembe gürültü | 58.500 | 5.850 | **0,335** ← belgedeki sayı |
+
+**Üç sonuç:**
+1. Belgedeki 0,34 MB/dk **doğrulandı** ama **VBR**'dir; CBR karşılığı 0,464 MB/dk.
+2. VBR **nominal bitrate'i aşabilir** (tonal içerikte %66 fazla). Kontrol şeridiyle kanal
+   paylaşan bir akışta bu kabul edilemez — bütçe önceden bilinmeli.
+3. → **CBR seçildi.** Aynı zamanda `TP-MEDIA-BITRATE-01`'i ±%15 gibi dar bir bantla
+   yazılabilir kılan şey de budur; VBR'de böyle bir assert imkânsızdı.
+
 ### 2.3 Karar
 
 **Birincil: `opus-rs` (saf Rust) · Yedek: `opus` (libopus bağlaması)**
@@ -255,6 +275,9 @@ diffToServer_ = medyan(diffBuffer)  // gürültü medyan filtreyle atılır
 | D2 | §8 açık madde 1: 32 MB kuyruk etkisi "ölçülmedi" | **Mekanizma bulundu**: `write_all` atomik+bloklayıcı → şerit önceliği süren yazmayı kesemez | Sayı TP-MEDIA-HOL-01 ile ölçülecek; tasarım 3 katmanlı savunmayla yanıtlıyor (§1.2) |
 | D3 | §L1 `Capability` **enum** olarak taslaklanmıştı | F0 **ad tabanlı** uyguladı (bincode self-describing değil) | Belge F0'da düzeltildi ✅ |
 | D4 | §L4 "NTP dört-damga" | snapcast pratikte `(c2s−s2c)/2` + **medyan** + **60 sn bayatlık temizliği** | 60 sn kuralı tasarıma eklendi (dormancy ile kesişiyor) |
+| **D5** | §5.1 `media-sink = ["dep:cpal", "dep:audiopus"]` — codec **ve** sink birlikte bayrak altında | Bayrak yanlış şeyi kapsıyor: **sunucu kodlar, istemci çalar.** Codec bayrak altındaysa, bayraksız derlenmiş bir sunucu **hiç ses servis edemez** ve yetenek el sıkışmasına istemcinin göremediği bir sebeple farklı cevap verir | **Codec koşulsuz** (saf Rust, sistem bağımlılığı yok, kapı derliyor); **`media-sink` yalnız `cpal`'i** (gerçek ses aygıtı) kapsar. `sound.rs`'in kaçındığı şey zaten *aygıt kütüphanesi*ydi |
+| **D6** | §7.5 "Opus 64k = 0,34 MB/dk = 5,7 KB/s" | **VBR ölçümü.** ffmpeg 8.1.2 ile yeniden ölçüldü: pembe gürültü VBR **0,335 MB/dk** (belge doğrulandı) · saf ton VBR **0,609 MB/dk** (nominal bitrate'in ÜSTÜNDE) · **CBR 0,464 MB/dk** (8109 B/s) | Kodlayıcı **CBR** ister. Paylaşılan kanalda bütçe önceden bilinebilir olmalı; VBR içerik tonalse ikiye katlanıyor. Kanal planı sayısı **0,464 MB/dk** |
+| **D7** | §8 açık madde 5: cpal × macOS test edilmedi | HP build kutusunda **ALSA geliştirme başlıkları YOK** (`pkg-config alsa` boş, `asoundlib.h` yok) → `cpal` kapıda **derlenemez** | `media-sink` kapı tarafından test EDİLEMİYOR. Bu bir eksiklik olarak kayda geçer; kapatmak build kutusuna paket kurmayı gerektirir = **kullanıcı kararı** (altyapı değişikliği) |
 
 ---
 
