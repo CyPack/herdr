@@ -577,6 +577,7 @@ pub(crate) fn handle_client_handshake(
             keybindings,
             launch_mode,
             pixel_mouse,
+            capabilities,
         } => {
             // Version check.
             match protocol::check_client_version(version) {
@@ -587,6 +588,7 @@ pub(crate) fn handle_client_handshake(
                         version: PROTOCOL_VERSION,
                         encoding: RenderEncoding::SemanticFrame,
                         error: Some(reason),
+                        accepted: Vec::new(),
                     };
                     let _ = protocol::write_message(&mut stream, &welcome);
                     return Ok(());
@@ -600,6 +602,7 @@ pub(crate) fn handle_client_handshake(
                         version: PROTOCOL_VERSION,
                         encoding: RenderEncoding::SemanticFrame,
                         error: Some(error),
+                        accepted: Vec::new(),
                     };
                     let _ = protocol::write_message(&mut stream, &welcome);
                     return Ok(());
@@ -627,6 +630,7 @@ pub(crate) fn handle_client_handshake(
                 version: PROTOCOL_VERSION,
                 encoding: RenderEncoding::SemanticFrame,
                 error: Some("expected Hello as first message".to_owned()),
+                accepted: Vec::new(),
             };
             let _ = protocol::write_message(&mut stream, &welcome);
             return Ok(());
@@ -642,6 +646,7 @@ pub(crate) fn handle_client_handshake(
         version: PROTOCOL_VERSION,
         encoding: render_encoding,
         error: None,
+        accepted: Vec::new(),
     };
     protocol::write_message(&mut stream, &welcome).map_err(|e| io::Error::other(e.to_string()))?;
 
@@ -1342,6 +1347,7 @@ new_tab = "ctrl+notakey"
                 keybindings: ClientKeybindings::Server,
                 launch_mode: ClientLaunchMode::App,
                 pixel_mouse: true,
+                capabilities: Vec::new(),
             },
         )
         .expect("write hello");
@@ -1353,7 +1359,9 @@ new_tab = "ctrl+notakey"
                 version,
                 encoding,
                 error,
+                accepted,
             } => {
+                assert!(accepted.is_empty());
                 assert_eq!(version, PROTOCOL_VERSION);
                 assert_eq!(encoding, RenderEncoding::TerminalAnsi);
                 assert_eq!(error, None);
@@ -1424,6 +1432,7 @@ new_tab = "ctrl+notakey"
                 keybindings: ClientKeybindings::Server,
                 launch_mode: ClientLaunchMode::TerminalAttach,
                 pixel_mouse: false,
+                capabilities: Vec::new(),
             },
         )
         .expect("write hello");
@@ -1435,7 +1444,9 @@ new_tab = "ctrl+notakey"
                 version,
                 encoding,
                 error,
+                accepted,
             } => {
+                assert!(accepted.is_empty());
                 assert_eq!(version, PROTOCOL_VERSION);
                 assert_eq!(encoding, RenderEncoding::TerminalAnsi);
                 assert_eq!(error, None);

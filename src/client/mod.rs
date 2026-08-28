@@ -884,6 +884,7 @@ fn do_handshake(
             cell_height_px,
         ),
         pixel_mouse: pixel_mouse_profile_allowed(),
+        capabilities: Vec::new(),
     };
     protocol::write_message(stream, &hello)
         .map_err(|e| ClientError::ConnectionFailed(io::Error::other(e.to_string())))?;
@@ -906,6 +907,7 @@ fn do_handshake(
             version,
             encoding,
             error,
+            accepted,
         } => {
             if let Some(error) = error {
                 return Err(ClientError::HandshakeRejected { version, error });
