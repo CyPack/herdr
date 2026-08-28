@@ -1223,6 +1223,101 @@ mod tests {
         handle.join().expect("writer exits after senders drop");
     }
 
+    // -- Media lane (F1) ----------------------------------------------------
+
+    // TP-MEDIA-PRIO-01
+    #[test]
+    fn the_media_lane_drains_after_every_other_lane() {
+        // The regression gate of the whole phase: media must never delay a
+        // keystroke or a repaint. Priority is the only structural guarantee of
+        // that — a scheduler that merely tries to be fair would make the gate
+        // a measurement instead of a property.
+        //
+        // This drives the real queue with no writer thread on purpose. A drain
+        // thread empties each lane the instant it fills, so two lanes are never
+        // occupied at once and the order is never actually exercised: the test
+        // would pass against any priority at all.
+        let (writer, drain) = ClientWriter::test_channel_through_queue();
+
+        writer.control.send(b"control".to_vec()).expect("control");
+        writer
+            .render
+            .send_ordered(b"ordered".to_vec())
+            .expect("ordered");
+        writer.render.try_send(b"render".to_vec()).expect("render");
+        writer.media.try_send(b"media".to_vec()).expect("media");
+
+        let drained = drain.drain();
+        let lanes: Vec<WriteLane> = drained.iter().map(|(lane, _)| *lane).collect();
+        assert_eq!(
+            lanes,
+            vec![
+                WriteLane::Control,
+                WriteLane::Ordered,
+                WriteLane::Render,
+                WriteLane::Media
+            ],
+            "media must come last and the other three must keep their order"
+        );
+        let payloads: Vec<&[u8]> = drained.iter().map(|(_, data)| data.as_slice()).collect();
+        assert_eq!(
+            payloads,
+            vec![
+                b"control".as_slice(),
+                b"ordered".as_slice(),
+                b"render".as_slice(),
+                b"media".as_slice()
+            ]
+        );
+    }
+
+    // TP-MEDIA-PRIO-02
+    #[test]
+    fn a_full_media_lane_still_lets_control_through_first() {
+        // The empty-queue case proves ordering; this proves it under the only
+        // condition that matters. A backlog of audio is exactly when a slow
+        // link is also when the user is most likely to press a key.
+        let (writer, drain) = ClientWriter::test_channel_through_queue();
+        for i in 0..MEDIA_LANE_CAPACITY {
+            writer
+                .media
+                .try_send(vec![i as u8])
+                .expect("media lane accepts up to its capacity");
+        }
+        assert!(
+            matches!(
+                writer.media.try_send(b"one too many".to_vec()),
+                Err(TrySendError::Full(_))
+            ),
+            "a full media lane must refuse rather than grow: an unbounded lane \
+             is bufferbloat with extra steps"
+        );
+
+        writer.control.send(b"keystroke".to_vec()).expect("control");
+
+        let (lane, data) = drain.try_recv().expect("something is queued");
+        assert_eq!(lane, WriteLane::Control);
+        assert_eq!(data, b"keystroke");
+    }
+
+    // TP-MEDIA-PRIO-03
+    #[test]
+    fn closing_the_writer_clears_the_media_lane_too() {
+        // A lane that survives close keeps bytes for a client that is gone, and
+        // the queue is freed only when the last handle drops. The other lanes
+        // are already cleared here; the new one has to be as well or it becomes
+        // the leak the others were written to avoid.
+        let (writer, drain) = ClientWriter::test_channel_through_queue();
+        writer.media.try_send(b"media".to_vec()).expect("media");
+        writer.test_close();
+
+        assert!(drain.try_recv().is_none(), "close must drop queued media");
+        assert!(matches!(
+            writer.media.try_send(b"after close".to_vec()),
+            Err(TrySendError::Disconnected(_))
+        ));
+    }
+
     #[test]
     fn client_writer_exits_when_all_writer_handles_drop() {
         let (_client_stream, server_stream, _path) = local_stream_pair("client-writer-drop");
