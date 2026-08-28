@@ -506,8 +506,10 @@ mod tests {
     #[test]
     fn a_torn_graveyard_is_quarantined_and_the_previous_save_restored() {
         let path = temp_path("torn-graveyard");
-        let mut store = ClosedAgentStore::default();
-        store.version = CLOSED_AGENTS_VERSION;
+        let store = ClosedAgentStore {
+            version: CLOSED_AGENTS_VERSION,
+            ..Default::default()
+        };
         save_to_path(&path, &store).unwrap();
         save_to_path(&path, &store).unwrap();
         std::fs::write(&path, b"{").unwrap();
