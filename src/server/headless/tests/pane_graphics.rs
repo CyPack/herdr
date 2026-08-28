@@ -2013,6 +2013,124 @@ async fn a_lost_graphics_message_still_leaves_one_placement_on_the_terminal() {
     }
 }
 
+fn blank_graphics_layer(
+    server: &mut HeadlessServer,
+    pane_id: crate::layout::PaneId,
+    layer_id: &str,
+) {
+    // Keep the slot but drop its layer: the pool stays non-empty (so the
+    // incremental encoder still owns the surface) while this source stops
+    // being live, which is what the dead-source pass reacts to.
+    let key = (pane_id, layer_id.to_owned());
+    let host_image_id = server
+        .app
+        .pane_graphics
+        .reserve_image_id(&key)
+        .expect("reserved id");
+    server.app.pane_graphics.slots.insert(
+        key,
+        crate::app::pane_graphics::Slot::test(host_image_id, None),
+    );
+}
+
+// No marker yet: this is a hypothesis under test, not a behaviour being
+// claimed. It earns a TP id once the outcome is known.
+#[tokio::test]
+async fn a_hidden_turn_does_not_lose_the_delete_for_the_frame_before_it() {
+    // The wire signature of the live defect is "displayed once, never
+    // deleted", and there is a path that produces exactly that without any
+    // message being lost. When a turn renders no placements — the pane is off
+    // screen for a tick, or clipped to nothing mid-resize — the incremental
+    // encoder drops that terminal source from `sources` silently, emitting no
+    // delete. The next frame therefore finds no previous id to release, so the
+    // frame before the blank turn never receives a delete at all. Its
+    // placement is meant to be swept as stale in the blank turn instead, but
+    // that sweep yields to the one-transaction-per-turn rule, so whether it
+    // ever happens depends on what else that turn had to emit. Force the
+    // collision: make the blank turn also retire a neighbouring layer, so the
+    // dead-source pass emits first and the stale sweep is deferred.
+    for hidden_turn in 3..9usize {
+        let (mut server, rx1, pane_id) = retained_test_server(b"video pane");
+        server.app.state.kitty_graphics_enabled = true;
+        server.app.state.mode = crate::app::Mode::Terminal;
+        server.clients.get_mut(&1).unwrap().cell_size = crate::kitty_graphics::HostCellSize {
+            width_px: 10,
+            height_px: 20,
+        };
+        server.sync_foreground_client_state();
+        server.resize_shared_runtime_to_effective_size();
+        let neighbour =
+            server.app.state.workspaces[0].test_split(ratatui::layout::Direction::Horizontal);
+        set_graphics_layer(&mut server, neighbour, vec![7, 7, 7, 7]);
+        set_named_graphics_layer(&mut server, neighbour, "second", vec![8, 8, 8, 8], 1);
+        server.render_and_stream();
+        let mut kitty = std::collections::HashMap::new();
+        drain_alive_fast(&rx1, &mut kitty);
+
+        for turn in 0..12usize {
+            if turn == hidden_turn {
+                // Nothing to place this turn, and a neighbouring source dies in
+                // the same pass so the stale sweep has to wait its turn.
+                blank_graphics_layer(&mut server, neighbour, "second");
+                server.app.state.mode = crate::app::Mode::Navigate;
+            } else {
+                server.app.state.mode = crate::app::Mode::Terminal;
+                push_tb_frame(&mut server, pane_id, turn as u8 + 1);
+            }
+            match server.render_retained_graphics_update_and_stream() {
+                RetainedGraphicsOutcome::Sent => {}
+                _ => server.render_and_stream(),
+            }
+            drain_alive_fast(&rx1, &mut kitty);
+        }
+        server.app.state.mode = crate::app::Mode::Terminal;
+        for _ in 0..8 {
+            match server.render_retained_graphics_update_and_stream() {
+                RetainedGraphicsOutcome::Sent => {}
+                _ => server.render_and_stream(),
+            }
+            drain_alive_fast(&rx1, &mut kitty);
+        }
+
+        let ledger: std::collections::HashSet<(u32, u32)> = server
+            .clients
+            .get(&1)
+            .expect("client 1")
+            .graphics_cache
+            .test_placement_keys()
+            .into_iter()
+            .collect();
+        let pane_alive: Vec<_> = kitty
+            .iter()
+            .filter(|((image, _), cols)| {
+                **cols > 0 && image.parse::<u64>().is_ok_and(|id| id < 0x8000_0000)
+            })
+            .map(|((image, placement), cols)| {
+                (
+                    image.parse::<u32>().unwrap_or(0),
+                    placement.parse::<u32>().unwrap_or(0),
+                    *cols,
+                )
+            })
+            .collect();
+        for (image, placement, cols) in &pane_alive {
+            assert!(
+                ledger.contains(&(*image, *placement)),
+                "hidden_turn={hidden_turn}: the terminal still shows i={image} p={placement} \
+                 c={cols} while the server ledger has forgotten it — no later sweep can name \
+                 that placement again",
+            );
+        }
+        assert!(
+            pane_alive.len() <= 1,
+            "hidden_turn={hidden_turn}: a blank turn stranded {} placements — the frame before \
+             it lost its delete because the blank turn dropped its source silently: \
+             {pane_alive:?}",
+            pane_alive.len()
+        );
+    }
+}
+
 // TP-GFX-CONVERGE-01
 #[tokio::test]
 async fn narrowing_the_view_reclips_or_deletes_a_stale_pane_graphics_placement() {
