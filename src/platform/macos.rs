@@ -1282,3 +1282,134 @@ printf '%s\n' "$@" > "$HERDR_NOTIFY_ARGS"
         assert!(argv[2].contains("/tmp/herdr scrollback.txt"));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Audio output
+// ---------------------------------------------------------------------------
+
+/// The native audio sink: CoreAudio through `cpal`, fed from a lock-free ring.
+///
+/// Lives here rather than in `media` because it is the one piece of the audio
+/// path that talks to an OS API, and the dependency behind it is declared for
+/// this target alone — a Linux or Windows build never sees it.
+pub(crate) mod audio {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Arc;
+
+    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+
+    use crate::media::ring::{ring, Producer};
+    use crate::media::sink::{AudioSink, SinkError};
+    use crate::media::{CHANNELS, FRAME_SAMPLES, SAMPLE_RATE_HZ};
+
+    /// Frames the ring holds between the playout thread and the callback.
+    ///
+    /// Eight frames is 160 ms: enough that a late playout tick does not starve
+    /// the device, small enough that the ring never becomes a second jitter
+    /// buffer hiding latency the first one already accounted for.
+    const RING_FRAMES: usize = 8;
+
+    /// Whether a default output device exists, without opening it.
+    pub(crate) fn probe() -> bool {
+        cpal::default_host().default_output_device().is_some()
+    }
+
+    /// Opens the default output at the stream's fixed shape.
+    ///
+    /// A device that cannot run 48 kHz stereo f32 is refused rather than
+    /// resampled to: the error goes back to the caller, which falls through to
+    /// an external player, and the log says which device declined and why.
+    pub(crate) fn open() -> Result<Box<dyn AudioSink>, SinkError> {
+        let host = cpal::default_host();
+        let device = host
+            .default_output_device()
+            .ok_or_else(|| SinkError::Unavailable("no default output device".into()))?;
+        // cpal 0.18: the name lives on a description, the rate is a bare
+        // u32, and the config is taken by value.
+        let name = device
+            .description()
+            .map(|description| description.name().to_string())
+            .unwrap_or_else(|_| "unnamed device".to_string());
+        let config = cpal::StreamConfig {
+            channels: CHANNELS as u16,
+            sample_rate: SAMPLE_RATE_HZ,
+            buffer_size: cpal::BufferSize::Default,
+        };
+        let (producer, mut consumer) = ring(FRAME_SAMPLES * CHANNELS as usize * RING_FRAMES + 1);
+        let underruns = Arc::new(AtomicU64::new(0));
+        let callback_underruns = Arc::clone(&underruns);
+        let stream = device
+            .build_output_stream(
+                config,
+                move |out: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                    // The audio thread: no lock, no allocation, no log.
+                    let real = consumer.pop_into(out);
+                    if real < out.len() {
+                        callback_underruns.fetch_add(1, Ordering::Relaxed);
+                    }
+                },
+                |err| tracing::warn!(%err, "coreaudio output stream error"),
+                None,
+            )
+            .map_err(|err| SinkError::Unavailable(format!("{name}: {err}")))?;
+        stream
+            .play()
+            .map_err(|err| SinkError::Unavailable(format!("{name}: {err}")))?;
+        Ok(Box::new(CoreAudioSink {
+            stream: Some(stream),
+            producer,
+            underruns,
+            dropped: 0,
+            device: name,
+        }))
+    }
+
+    struct CoreAudioSink {
+        stream: Option<cpal::Stream>,
+        producer: Producer,
+        underruns: Arc<AtomicU64>,
+        dropped: u64,
+        device: String,
+    }
+
+    impl AudioSink for CoreAudioSink {
+        fn write_frame(&mut self, pcm: &[f32]) -> Result<(), SinkError> {
+            let expected = FRAME_SAMPLES * CHANNELS as usize;
+            if pcm.len() != expected {
+                return Err(SinkError::FrameSize {
+                    expected,
+                    got: pcm.len(),
+                });
+            }
+            if self.stream.is_none() {
+                return Err(SinkError::Closed(format!("{} already closed", self.device)));
+            }
+            // A frame that does not fit is dropped whole rather than split:
+            // half a frame in the ring is a click, a missing frame is a gap
+            // the jitter buffer was already prepared to conceal.
+            if self.producer.free() < pcm.len() {
+                self.dropped += 1;
+                return Ok(());
+            }
+            self.producer.push(pcm);
+            Ok(())
+        }
+
+        fn close(&mut self) -> Result<(), SinkError> {
+            if let Some(stream) = self.stream.take() {
+                let _ = stream.pause();
+                tracing::info!(
+                    device = %self.device,
+                    device_underruns = self.underruns.load(Ordering::Relaxed),
+                    dropped_frames = self.dropped,
+                    "coreaudio sink closed"
+                );
+            }
+            Ok(())
+        }
+
+        fn describe(&self) -> String {
+            format!("coreaudio:{}", self.device)
+        }
+    }
+}

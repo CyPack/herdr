@@ -23,6 +23,7 @@ pub mod clock;
 pub mod opus;
 pub mod playback;
 pub mod playout;
+pub mod ring;
 pub mod sink;
 pub mod stream;
 

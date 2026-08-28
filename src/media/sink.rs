@@ -282,6 +282,37 @@ fn check_frame(pcm: &[f32]) -> Result<(), SinkError> {
     Ok(())
 }
 
+/// Opens the best sink this machine has: the native device where one is
+/// wired, else the first external player that starts.
+pub fn open_default() -> Result<Box<dyn AudioSink>, SinkError> {
+    if let Some(native) = crate::platform::native_audio_sink() {
+        match native {
+            Ok(sink) => return Ok(sink),
+            Err(err) => {
+                tracing::warn!(%err, "native audio output declined; trying an external player")
+            }
+        }
+    }
+    ExternalSink::spawn_available().map(|sink| Box::new(sink) as Box<dyn AudioSink>)
+}
+
+/// Whether `open_default` has any chance of succeeding, without opening
+/// anything. This is what the handshake announces.
+pub fn probe_available() -> bool {
+    crate::platform::native_audio_sink_available()
+        || EXTERNAL_PLAYERS
+            .iter()
+            .any(|player| on_path(player.program))
+}
+
+/// Whether `program` is an executable file somewhere on `PATH`.
+fn on_path(program: &str) -> bool {
+    let Some(paths) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&paths).any(|dir| dir.join(program).is_file())
+}
+
 /// The stream shape every sink here expects, published so a caller cannot
 /// disagree with it silently.
 pub const SINK_SAMPLE_RATE_HZ: u32 = SAMPLE_RATE_HZ;
@@ -419,6 +450,17 @@ mod tests {
             }
             other => panic!("expected Unavailable, got {other:?}"),
         }
+    }
+
+    // TP-MEDIA-SINK-03
+    #[test]
+    fn the_path_probe_finds_what_exists_and_nothing_else() {
+        // The handshake announces a sink on the strength of this probe. A probe
+        // that said yes to a missing program would have the server stream to a
+        // client that opens nothing; one that said no to a present program
+        // would keep audio off on every machine.
+        assert!(on_path("sh"), "sh is on every unix PATH");
+        assert!(!on_path("herdr-no-such-player-at-all"));
     }
 
     // TP-MEDIA-SINK-03
