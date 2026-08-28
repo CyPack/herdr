@@ -31,7 +31,18 @@ use crate::protocol::{
 /// one failure this whole mechanism exists to prevent. Each later phase adds
 /// its name here once the code behind it works.
 fn server_capabilities() -> CapabilitySet {
-    CapabilitySet::from_entries(Vec::new())
+    // The server announces what it has code for, which is now the media
+    // vocabulary: it can carry timestamped streams and take part in the clock
+    // probe, and it can produce Opus for a client that has somewhere to play
+    // it. Announcing a name it cannot serve would be the exact failure the
+    // intersection exists to prevent, one level up.
+    CapabilitySet::from_entries(vec![
+        CapabilityEntry::flag(crate::protocol::capability::MEDIA_STREAMS),
+        CapabilityEntry::with_values(
+            crate::protocol::capability::AUDIO_SINK,
+            [crate::protocol::codec::OPUS],
+        ),
+    ])
 }
 
 /// Minimum accepted attached client size.
@@ -893,6 +904,9 @@ fn handle_client_handshake_offering(
     }
 
     // Notify the main loop about the new client.
+    // Cloned before the event takes ownership of the writer: the clock
+    // probe is answered on the reading thread, which never sees the event.
+    let clock_writer = writer.control.clone();
     let connected = ServerEvent::ClientConnected {
         client_id,
         cols: client_cols,
@@ -914,7 +928,13 @@ fn handle_client_handshake_offering(
     }
 
     // Enter read loop — read client messages and forward to main loop.
-    client_read_loop(stream, client_id, server_event_tx, should_quit)
+    client_read_loop_answering_clock(
+        stream,
+        client_id,
+        server_event_tx,
+        should_quit,
+        Some(&clock_writer),
+    )
 }
 
 fn send_shutdown_to_unregistered_client(writer: &ClientWriter) {
@@ -975,10 +995,24 @@ fn write_framed_bytes(stream: &mut LocalStream, data: &[u8]) -> bool {
 
 /// The client read loop — reads messages from the client and forwards to the server event channel.
 fn client_read_loop(
+    stream: LocalStream,
+    client_id: u64,
+    server_event_tx: &mpsc::Sender<ServerEvent>,
+    should_quit: &Arc<AtomicBool>,
+) -> io::Result<()> {
+    client_read_loop_answering_clock(stream, client_id, server_event_tx, should_quit, None)
+}
+
+/// The read loop, with the writer it answers clock probes on.
+///
+/// Separated so the existing tests keep their signature and so a test can drive
+/// the loop with no writer at all; the production path always passes one.
+fn client_read_loop_answering_clock(
     mut stream: LocalStream,
     client_id: u64,
     server_event_tx: &mpsc::Sender<ServerEvent>,
     should_quit: &Arc<AtomicBool>,
+    clock_writer: Option<&ClientControlWriter>,
 ) -> io::Result<()> {
     while !should_quit.load(Ordering::Acquire) {
         let msg: ClientMessage = match protocol::read_message(&mut stream, MAX_GRAPHICS_FRAME_SIZE)
@@ -1207,15 +1241,36 @@ fn client_read_loop(
                 // Duplicate Hello — ignore.
                 continue;
             }
-            // A client only learns these exist by announcing a media
-            // capability, and this server announces none yet. Answering them
-            // needs the clock (TimeSync) and an open stream (MediaCredit);
-            // both arrive with their own tests rather than as a reflex here.
-            // Until then a probe is dropped, not half-answered: a reply built
-            // from a clock nobody keeps would be worse than no reply, because
-            // the client would believe it.
-            ClientMessage::TimeSync { .. } | ClientMessage::MediaCredit { .. } => {
-                debug!(client_id, "media control message before media exists");
+            // Answered here, on the reading thread, rather than forwarded to
+            // the event loop. A clock probe that queued behind application
+            // work would measure the event loop's backlog and report it as
+            // network delay — the client would then size its buffer for a
+            // number that has nothing to do with the link.
+            // TP-MEDIA-CLOCK-02
+            ClientMessage::TimeSync { client_send_us } => {
+                let server_recv_us = crate::media::now_us();
+                if let Some(writer) = clock_writer {
+                    let reply = ServerMessage::TimeSyncReply {
+                        client_send_us,
+                        server_recv_us,
+                        // Taken again rather than reused: the gap between the
+                        // two stamps is the server's own processing time, and
+                        // reporting it as zero would fold it into the client's
+                        // estimate of the network.
+                        server_send_us: crate::media::now_us(),
+                    };
+                    let mut framed = Vec::new();
+                    if protocol::write_message(&mut framed, &reply).is_ok() {
+                        let _ = writer.send(framed);
+                    }
+                }
+                continue;
+            }
+            // Credit belongs to a stream, and no stream can be open yet. It is
+            // dropped rather than half-handled: the stream bookkeeping arrives
+            // with the streams themselves.
+            ClientMessage::MediaCredit { .. } => {
+                debug!(client_id, "media credit for a stream that is not open");
                 continue;
             }
         };
@@ -1395,6 +1450,114 @@ mod tests {
 
         drop(writer);
         handle.join().expect("writer exits after senders drop");
+    }
+
+    // TP-MEDIA-CAP-04
+    #[test]
+    fn the_server_announces_the_media_vocabulary_it_can_serve() {
+        // F0 shipped this function returning nothing, with an assertion saying
+        // so, precisely so that the phase which adds the code has to come here
+        // and change it on purpose. This is that change.
+        let offered = server_capabilities();
+        assert!(offered.has(capability::MEDIA_STREAMS));
+        assert_eq!(
+            offered.negotiated_value(capability::AUDIO_SINK),
+            Some(crate::protocol::codec::OPUS),
+            "the server produces Opus and says which codec, not merely that it has one"
+        );
+        // Not video: nothing here encodes it, and a name without code behind it
+        // is the failure the intersection exists to prevent one level up.
+        assert!(!offered.has(capability::VIDEO_DECODE));
+        assert!(!offered.has(capability::SIDE_CHANNEL));
+    }
+
+    // TP-MEDIA-CAP-04
+    #[test]
+    fn a_client_with_no_sink_is_not_granted_one() {
+        // The handshake's whole job in one case. The server can produce Opus
+        // and says so; a client that cannot play it does not claim a sink; the
+        // intersection therefore grants streams and not audio. Get this wrong
+        // in the permissive direction and the server encodes for a listener who
+        // will never hear it — healthy at both ends, silent in the middle.
+        let client =
+            CapabilitySet::from_entries(vec![CapabilityEntry::flag(capability::MEDIA_STREAMS)]);
+        let accepted = client.intersect(&server_capabilities());
+
+        assert!(accepted.has(capability::MEDIA_STREAMS));
+        assert!(!accepted.has(capability::AUDIO_SINK));
+    }
+
+    // TP-MEDIA-CLOCK-02
+    #[test]
+    fn a_clock_probe_is_answered_on_the_reading_thread() {
+        // Answered where it is read, not forwarded to the event loop. A probe
+        // that queued behind application work would measure the loop's backlog
+        // and report it as network delay, and the client would size its buffer
+        // for a number with nothing to do with the link. Nothing about that is
+        // visible: the reply arrives, the arithmetic works, the answer is wrong.
+        //
+        // The event channel is deliberately left unread here, which is what a
+        // busy server looks like. The reply still has to appear.
+        let (mut client_stream, server_stream, _path) = local_stream_pair("client-clock-probe");
+        let (server_event_tx, _server_event_rx) = mpsc::channel(1);
+        let should_quit = Arc::new(AtomicBool::new(false));
+        let read_quit = should_quit.clone();
+        let (writer, drain) = ClientWriter::test_channel_through_queue();
+        let clock_writer = writer.control.clone();
+
+        let handle = std::thread::spawn(move || {
+            client_read_loop_answering_clock(
+                server_stream,
+                7,
+                &server_event_tx,
+                &read_quit,
+                Some(&clock_writer),
+            )
+        });
+
+        let mut framed = Vec::new();
+        protocol::write_message(
+            &mut framed,
+            &ClientMessage::TimeSync {
+                client_send_us: 12_345,
+            },
+        )
+        .expect("frame probe");
+        client_stream.write_all(&framed).expect("send probe");
+        client_stream.flush().expect("flush probe");
+
+        let deadline = LoadAwareDeadline::new(5, "a clock reply");
+        let reply = loop {
+            if let Some((lane, bytes)) = drain.try_recv() {
+                assert_eq!(lane, WriteLane::Control, "a clock reply is control traffic");
+                break protocol::read_message::<_, ServerMessage>(
+                    &mut bytes.as_slice(),
+                    MAX_FRAME_SIZE,
+                )
+                .expect("decode reply");
+            }
+            deadline.check();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
+
+        match reply {
+            ServerMessage::TimeSyncReply {
+                client_send_us,
+                server_recv_us,
+                server_send_us,
+            } => {
+                assert_eq!(client_send_us, 12_345, "the client's stamp travels back");
+                assert!(
+                    server_send_us >= server_recv_us,
+                    "the server's own two stamps must not run backwards"
+                );
+            }
+            other => panic!("expected TimeSyncReply, got {other:?}"),
+        }
+
+        should_quit.store(true, Ordering::Release);
+        drop(client_stream);
+        let _ = handle.join();
     }
 
     // -- Media lane (F1) ----------------------------------------------------

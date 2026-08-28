@@ -869,10 +869,17 @@ struct HandshakeOutcome {
 
 /// Capabilities this client can actually honour.
 ///
-/// Empty while there is no media path: announcing a name the client cannot
-/// serve would entitle the server to use it.
+/// `media.streams` is announced because the client can receive timestamped
+/// chunks and take part in the clock probe — both of which exist and are
+/// tested. `media.audio.sink` is *not*, because nothing here can yet open an
+/// audio device, and announcing it would entitle the server to spend bandwidth
+/// on chunks that reach a client with nowhere to play them. That failure is
+/// silent from both ends: the server sees a healthy stream and the listener
+/// hears nothing.
 fn client_capabilities() -> Vec<crate::protocol::CapabilityEntry> {
-    Vec::new()
+    vec![crate::protocol::CapabilityEntry::flag(
+        crate::protocol::capability::MEDIA_STREAMS,
+    )]
 }
 
 fn do_handshake(
@@ -3000,11 +3007,16 @@ mod tests {
                 "an announced capability needs a name"
             );
         }
-        // F0 ships no media, so the honest announcement is empty. This assert
-        // is what makes the next phase notice it has to change it deliberately.
+        // The client can receive timestamped chunks and answer the clock
+        // probe, so it says so.
+        assert!(announced.has(crate::protocol::capability::MEDIA_STREAMS));
+        // It cannot open an audio device, so it does not say it can. This is
+        // the silent failure the announcement exists to prevent: a server told
+        // there is a sink spends bandwidth on chunks nobody plays, and both
+        // ends look healthy while the listener hears nothing.
         assert!(
-            announced.entries().is_empty(),
-            "f0 announces nothing; add the name in the phase that adds the code"
+            !announced.has(crate::protocol::capability::AUDIO_SINK),
+            "announce the sink in the phase that opens an audio device, not before"
         );
     }
 

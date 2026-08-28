@@ -91,3 +91,16 @@ impl std::fmt::Display for MediaError {
 }
 
 impl std::error::Error for MediaError {}
+
+/// Microseconds on the media clock.
+///
+/// Monotonic and process-local: it never goes backwards, which a wall clock
+/// does whenever the machine is corrected. Both ends read their own, and the
+/// probe measures the difference — so what matters is that each is steady, not
+/// that they agree.
+pub fn now_us() -> u64 {
+    use std::sync::OnceLock;
+    use std::time::Instant;
+    static ORIGIN: OnceLock<Instant> = OnceLock::new();
+    ORIGIN.get_or_init(Instant::now).elapsed().as_micros() as u64
+}

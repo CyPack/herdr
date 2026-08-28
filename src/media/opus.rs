@@ -1,8 +1,7 @@
 //! Opus encode and decode, one frame at a time.
 
 use super::{
-    MediaError, CHANNELS, DEFAULT_BITRATE_BPS, FRAME_SAMPLES, MAX_BITRATE_BPS, MIN_BITRATE_BPS,
-    SAMPLE_RATE_HZ,
+    MediaError, CHANNELS, FRAME_SAMPLES, MAX_BITRATE_BPS, MIN_BITRATE_BPS, SAMPLE_RATE_HZ,
 };
 
 /// Encodes one 20 ms stereo frame at a time.
@@ -128,6 +127,7 @@ const MIN_PACKET_BUFFER: usize = 4000;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::media::DEFAULT_BITRATE_BPS;
 
     /// One 20 ms frame of a 440 Hz tone, interleaved stereo.
     ///
