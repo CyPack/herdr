@@ -2915,7 +2915,7 @@ mod tests {
         );
     }
 
-    // TP-MEDIA-WIRE-02
+    // TP-MEDIA-WIRE-01
     #[test]
     fn media_messages_survive_the_wire_field_for_field() {
         let open = sample_media_open();
@@ -2983,7 +2983,7 @@ mod tests {
         }
     }
 
-    // TP-MEDIA-WIRE-03
+    // TP-MEDIA-WIRE-01
     #[test]
     fn an_audio_chunk_larger_than_a_control_frame_is_refused_not_decoded() {
         // A 20 ms Opus packet is roughly 160 bytes. A megabyte-sized "audio
@@ -3008,7 +3008,7 @@ mod tests {
         );
     }
 
-    // TP-MEDIA-CODEC-NAME-01
+    // TP-MEDIA-WIRE-01
     #[test]
     fn an_unknown_codec_name_decodes_instead_of_killing_the_message() {
         // The codec travels as a name for the same reason capabilities do: a

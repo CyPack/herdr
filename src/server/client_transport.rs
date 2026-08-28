@@ -62,6 +62,14 @@ pub(crate) struct ClientWriter {
     pub(crate) control: ClientControlWriter,
     /// Droppable render messages. Capacity is one so slow clients cannot build lag.
     pub(crate) render: ClientRenderWriter,
+    /// Media chunks. Last in priority and bounded, so a stream can never make
+    /// the interface slower than it was before the stream existed.
+    ///
+    /// Unused until the encoder lands: the lane is built first so that the
+    /// ordering guarantee is in place, and tested, before there is anything
+    /// able to break it.
+    #[allow(dead_code)]
+    pub(crate) media: ClientMediaWriter,
 }
 
 impl ClientWriter {
@@ -87,17 +95,21 @@ impl ClientWriter {
         let queue = ClientWriterQueue::new();
         let drain = queue.clone();
         let control_writer = ClientControlWriter::queue(queue.clone());
+        let media_writer = ClientMediaWriter::queue(queue.clone());
         let mut render_writer = ClientRenderWriter::queue(queue);
         render_writer.test_render = Some(render.clone());
         let writer = Self {
             control: control_writer,
             render: render_writer,
+            media: media_writer,
         };
         std::thread::spawn(move || {
             while let Some(item) = drain.recv() {
                 let sent = match item {
                     ClientWriteItem::Control(data) => control.send(data).is_ok(),
-                    ClientWriteItem::Render(data) => render.send(data).is_ok(),
+                    ClientWriteItem::Render(data) | ClientWriteItem::Media(data) => {
+                        render.send(data).is_ok()
+                    }
                 };
                 if !sent {
                     break;
@@ -106,6 +118,88 @@ impl ClientWriter {
             drain.close_writer();
         });
         writer
+    }
+
+    /// A writer backed by the real queue with **no drain thread**.
+    ///
+    /// `test_channel` starts a thread that forwards every item into an
+    /// unbounded channel, which means a lane is emptied the moment it fills:
+    /// `Full`, `send_ordered`'s displacement of the render slot, and the
+    /// priority order between lanes are never exercised by anything built on
+    /// it. Tests that care about queue behaviour — rather than about what the
+    /// far end eventually receives — need the queue itself and a consumer they
+    /// control.
+    ///
+    /// The drain is non-blocking on purpose: `ClientWriterQueue::recv` parks on
+    /// a condvar, so a single-threaded test that called it on an empty queue
+    /// would hang instead of fail.
+    #[cfg(test)]
+    pub(crate) fn test_channel_through_queue() -> (Self, TestQueueDrain) {
+        let queue = ClientWriterQueue::new();
+        let writer = Self {
+            control: ClientControlWriter::queue(queue.clone()),
+            render: ClientRenderWriter::queue(queue.clone()),
+            media: ClientMediaWriter::queue(queue.clone()),
+        };
+        (writer, TestQueueDrain { queue })
+    }
+}
+
+/// Test-side consumer of a real [`ClientWriterQueue`], reporting which lane
+/// each item came from.
+#[cfg(test)]
+pub(crate) struct TestQueueDrain {
+    queue: Arc<ClientWriterQueue>,
+}
+
+#[cfg(test)]
+impl TestQueueDrain {
+    /// Pops the highest-priority queued item, or `None` when every lane is
+    /// empty. Never blocks.
+    pub(crate) fn try_recv(&self) -> Option<(WriteLane, Vec<u8>)> {
+        let mut state = self.queue.lock_state();
+        ClientWriterQueue::try_pop(&mut state)
+    }
+
+    /// Drains every lane in priority order. The returned order is exactly the
+    /// order the writer thread would have written.
+    pub(crate) fn drain(&self) -> Vec<(WriteLane, Vec<u8>)> {
+        let mut out = Vec::new();
+        while let Some(item) = self.try_recv() {
+            out.push(item);
+        }
+        out
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct ClientMediaWriter {
+    queue: Arc<ClientWriterQueue>,
+    #[cfg(test)]
+    test_render: Option<std::sync::mpsc::SyncSender<Vec<u8>>>,
+}
+
+impl ClientMediaWriter {
+    // The lane exists a phase before its producer; see the field's note.
+    #![allow(dead_code)]
+
+    fn queue(queue: Arc<ClientWriterQueue>) -> Self {
+        queue.add_sender();
+        Self {
+            queue,
+            #[cfg(test)]
+            test_render: None,
+        }
+    }
+
+    /// Queues one media chunk, refusing when the lane is full.
+    ///
+    /// Refusing rather than growing is the whole point: an unbounded media lane
+    /// turns a slow link into an ever-growing delay that never recovers, which
+    /// is bufferbloat. The caller answers a refusal by dropping the chunk at
+    /// the source, where it still knows the chunk's deadline.
+    pub(crate) fn try_send(&self, data: Vec<u8>) -> Result<(), TrySendError<Vec<u8>>> {
+        self.queue.try_send_media(data)
     }
 }
 
@@ -144,6 +238,7 @@ macro_rules! writer_handle {
 }
 writer_handle!(ClientControlWriter);
 writer_handle!(ClientRenderWriter);
+writer_handle!(ClientMediaWriter);
 
 impl ClientControlWriter {
     fn queue(queue: Arc<ClientWriterQueue>) -> Self {
@@ -194,14 +289,40 @@ struct ClientWriterQueueState {
     control: VecDeque<Vec<u8>>,
     ordered: VecDeque<Vec<u8>>,
     render: Option<Vec<u8>>,
+    media: VecDeque<Vec<u8>>,
     senders: usize,
     writer_alive: bool,
 }
+
+/// How many media chunks may wait for the writer before the source is told to
+/// drop instead.
+///
+/// At the 20 ms Opus frame the design specifies this is about 1.3 seconds of
+/// audio — comfortably more than any jitter buffer will ask to hold, and far
+/// less than the point where a backlog would be worth writing out. The bound
+/// exists so that a stalled link produces *loss*, which the client conceals,
+/// rather than *delay*, which it cannot.
+#[allow(dead_code)]
+const MEDIA_LANE_CAPACITY: usize = 64;
 
 #[derive(Debug, PartialEq, Eq)]
 enum ClientWriteItem {
     Control(Vec<u8>),
     Render(Vec<u8>),
+    Media(Vec<u8>),
+}
+
+/// Which lane an item came out of.
+///
+/// Named separately from [`ClientWriteItem`] because the writer treats ordered
+/// and coalesced renders identically while a reader of the queue's behaviour
+/// needs to tell them apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WriteLane {
+    Control,
+    Ordered,
+    Render,
+    Media,
 }
 
 impl ClientWriterQueue {
@@ -249,6 +370,20 @@ impl ClientWriterQueue {
         Ok(())
     }
 
+    #[allow(dead_code)]
+    fn try_send_media(&self, data: Vec<u8>) -> Result<(), TrySendError<Vec<u8>>> {
+        let mut state = self.lock_state();
+        if !state.writer_alive {
+            return Err(TrySendError::Disconnected(data));
+        }
+        if state.media.len() >= MEDIA_LANE_CAPACITY {
+            return Err(TrySendError::Full(data));
+        }
+        state.media.push_back(data);
+        self.ready.notify_one();
+        Ok(())
+    }
+
     fn send_ordered(&self, data: Vec<u8>) -> Result<(), TrySendError<Vec<u8>>> {
         let mut state = self.lock_state();
         if !state.writer_alive {
@@ -269,26 +404,57 @@ impl ClientWriterQueue {
         let mut state = self.lock_state();
         state.render = None;
         state.ordered.clear();
+        // Cleanup replaces everything droppable with one authoritative frame.
+        // Media queued before it belongs to a picture that no longer exists.
+        state.media.clear();
         if state.writer_alive {
             state.control.push_back(data);
             self.ready.notify_one();
         }
     }
 
-    /// Drains in strict priority order: control first, then ordered renders,
-    /// then the newest render. TP-CLIENT-WRITE-PRIO-01
+    /// Pops the highest-priority queued item, or `None` when every lane is
+    /// empty. Never blocks and never waits on senders.
+    ///
+    /// The one place the priority order is written. `recv` blocks on top of
+    /// this and the tests read it directly, so a test cannot agree with an
+    /// order the writer thread does not actually use.
+    /// TP-CLIENT-WRITE-PRIO-01, TP-MEDIA-PRIO-01
+    fn try_pop(state: &mut ClientWriterQueueState) -> Option<(WriteLane, Vec<u8>)> {
+        if let Some(data) = state.control.pop_front() {
+            return Some((WriteLane::Control, data));
+        }
+        if let Some(data) = state.ordered.pop_front() {
+            return Some((WriteLane::Ordered, data));
+        }
+        if let Some(data) = state.render.take() {
+            return Some((WriteLane::Render, data));
+        }
+        // Media last, always. A chunk that waits behind a repaint is late by
+        // one frame; a repaint that waits behind a chunk is an interface that
+        // got slower the moment a stream opened, which is the one outcome this
+        // phase is not allowed to produce.
+        if let Some(data) = state.media.pop_front() {
+            return Some((WriteLane::Media, data));
+        }
+        None
+    }
+
+    /// Drains in strict priority order: control, then ordered renders, then the
+    /// newest render, then media. TP-CLIENT-WRITE-PRIO-01, TP-MEDIA-PRIO-01
     fn recv(&self) -> Option<ClientWriteItem> {
         let mut state = self.lock_state();
         loop {
-            if let Some(data) = state.control.pop_front() {
-                return Some(ClientWriteItem::Control(data));
-            }
-            if let Some(data) = state.ordered.pop_front() {
-                self.ready.notify_one();
-                return Some(ClientWriteItem::Render(data));
-            }
-            if let Some(data) = state.render.take() {
-                return Some(ClientWriteItem::Render(data));
+            if let Some((lane, data)) = Self::try_pop(&mut state) {
+                if lane == WriteLane::Ordered {
+                    // A sender may be waiting for the ordered lane to clear.
+                    self.ready.notify_one();
+                }
+                return Some(match lane {
+                    WriteLane::Control => ClientWriteItem::Control(data),
+                    WriteLane::Ordered | WriteLane::Render => ClientWriteItem::Render(data),
+                    WriteLane::Media => ClientWriteItem::Media(data),
+                });
             }
             if state.senders == 0 {
                 return None;
@@ -305,6 +471,7 @@ impl ClientWriterQueue {
         state.writer_alive = false;
         state.render = None;
         state.ordered.clear();
+        state.media.clear();
         self.ready.notify_all();
     }
 
@@ -710,6 +877,7 @@ fn handle_client_handshake_offering(
     let writer = ClientWriter {
         control: ClientControlWriter::queue(writer_queue.clone()),
         render: ClientRenderWriter::queue(writer_queue.clone()),
+        media: ClientMediaWriter::queue(writer_queue.clone()),
     };
 
     // Spawn a writer thread that forwards messages from the channels to the stream.
@@ -778,6 +946,11 @@ fn client_writer_loop(
                     server_event_tx.blocking_send(ServerEvent::ClientWriterDrained { client_id });
                 write_framed_bytes(&mut stream, &data)
             }
+            // No drained event: that signal means "the render slot is free
+            // again", and the media lane does not have one. Sending it here
+            // would make the server offer a repaint every time a 20 ms audio
+            // chunk went out.
+            ClientWriteItem::Media(data) => write_framed_bytes(&mut stream, &data),
         };
         if !written {
             let _ = server_event_tx.blocking_send(ServerEvent::ClientDisconnected { client_id });
@@ -1131,6 +1304,7 @@ mod tests {
             ClientWriter {
                 control: ClientControlWriter::queue(queue.clone()),
                 render: ClientRenderWriter::queue(queue.clone()),
+                media: ClientMediaWriter::queue(queue.clone()),
             },
             queue,
         )
@@ -1271,7 +1445,7 @@ mod tests {
         );
     }
 
-    // TP-MEDIA-PRIO-02
+    // TP-MEDIA-PRIO-01
     #[test]
     fn a_full_media_lane_still_lets_control_through_first() {
         // The empty-queue case proves ordering; this proves it under the only
@@ -1300,7 +1474,7 @@ mod tests {
         assert_eq!(data, b"keystroke");
     }
 
-    // TP-MEDIA-PRIO-03
+    // TP-MEDIA-PRIO-01
     #[test]
     fn closing_the_writer_clears_the_media_lane_too() {
         // A lane that survives close keeps bytes for a client that is gone, and
