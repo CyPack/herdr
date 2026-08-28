@@ -3294,7 +3294,8 @@ impl HeadlessServer {
                 // still carries pixel mouse reports, and tying them together degraded every
                 // remote session to cell-quantised clicks (PIX-1).
                 connection.pixel_mouse = pixel_mouse;
-                connection.capabilities = crate::protocol::CapabilitySet::from_entries(capabilities);
+                connection.capabilities =
+                    crate::protocol::CapabilitySet::from_entries(capabilities);
                 self.clients.insert(client_id, connection);
                 if !direct_attach_requested {
                     self.foreground_client_id = Some(client_id);

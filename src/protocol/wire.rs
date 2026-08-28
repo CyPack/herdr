@@ -1432,7 +1432,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(one.first(), three.first(), "enum tag must not move");
-        assert!(three.len() > one.len(), "more capabilities means more bytes");
+        assert!(
+            three.len() > one.len(),
+            "more capabilities means more bytes"
+        );
         // Both must decode with the same reader.
         for encoded in [&one, &three] {
             let (_decoded, _): (ClientMessage, _) =

@@ -1048,8 +1048,8 @@ fn client_read_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::capability;
     use crate::app::test_wait::LoadAwareDeadline;
+    use crate::protocol::capability;
     use interprocess::local_socket::traits::Listener as _;
     use std::path::PathBuf;
 
@@ -1446,9 +1446,8 @@ new_tab = "ctrl+notakey"
         // promised something it cannot do.
         // The server here offers one real name; the client also asks for one the
         // server has never heard of.
-        let offered = CapabilitySet::from_entries(vec![CapabilityEntry::flag(
-            capability::MEDIA_STREAMS,
-        )]);
+        let offered =
+            CapabilitySet::from_entries(vec![CapabilityEntry::flag(capability::MEDIA_STREAMS)]);
         let (welcome, _event) = handshake_with_capabilities(
             "client-handshake-caps-intersect",
             vec![
