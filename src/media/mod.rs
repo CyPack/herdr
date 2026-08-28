@@ -12,6 +12,7 @@
 //! on how it was built would make the capability handshake answer differently
 //! for reasons the client can never see.
 
+pub mod clock;
 pub mod opus;
 
 /// Sample rate every audio stream uses.
