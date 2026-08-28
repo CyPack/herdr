@@ -994,6 +994,12 @@ fn write_framed_bytes(stream: &mut LocalStream, data: &[u8]) -> bool {
 }
 
 /// The client read loop — reads messages from the client and forwards to the server event channel.
+/// The read loop with no clock writer.
+///
+/// Only tests call it now — the production path always has a writer — but it
+/// stays as the shape those tests were written against, and as the case that
+/// proves a probe with nowhere to reply is dropped rather than panicking.
+#[cfg(test)]
 fn client_read_loop(
     stream: LocalStream,
     client_id: u64,
