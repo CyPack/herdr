@@ -190,12 +190,13 @@ impl App {
         if !self.workspace_chat_ledger.set_name(session_id, name) {
             return;
         }
-        // TP-CHAT-NAME-02: the open tab wearing this conversation follows
-        // the rename — the row and the tab are two views of one name, and
-        // half of the reported defect was exactly the tab's reference label
-        // staying stale. A withdrawn (blank) name leaves the tab alone: the
-        // ledger falls back to the derived title, and the tab keeps whatever
-        // it was wearing rather than being blanked.
+        // TP-CHAT-NAME-02 / TP-TAB-CHAT-01: the open tab wearing this
+        // conversation follows the rename through its chat title, not by
+        // stamping `custom_name` — so an explicit tab rename still outranks it.
+        // Set directly here rather than only through the sync so the rename
+        // reaches a tab whose chat has no drawer row yet; the sync below then
+        // keeps it consistent with `row.title`. A withdrawn (blank) name
+        // leaves the tab alone: the row falls back to its derived title.
         let renamed = name.trim();
         if !renamed.is_empty() {
             if let Some((ws_idx, tab_idx)) = self.state.find_resumed_chat_tab(session_id) {
@@ -205,7 +206,7 @@ impl App {
                     .get_mut(ws_idx)
                     .and_then(|ws| ws.tabs.get_mut(tab_idx))
                 {
-                    tab.set_custom_name(renamed.to_string());
+                    tab.chat_title = Some(renamed.to_string());
                 }
             }
         }

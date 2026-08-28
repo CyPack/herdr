@@ -684,6 +684,19 @@ impl Workspace {
         Some(
             tab.custom_name
                 .clone()
+                // TP-TAB-CHAT-01: an explicit rename wins outright; otherwise
+                // the tab wears the title of the chat it hosts, and only when
+                // it hosts none does it fall back to its number. This is the
+                // one seam every surface reads (tab bar, agent panel, window
+                // title, the daily-area derivation), so routing the chat title
+                // here makes the whole app follow a conversation's name at once.
+                .or_else(|| {
+                    tab.chat_title
+                        .as_ref()
+                        .map(|title| title.trim())
+                        .filter(|title| !title.is_empty())
+                        .map(str::to_string)
+                })
                 .unwrap_or_else(|| (tab_idx + 1).to_string()),
         )
     }
@@ -1496,6 +1509,7 @@ impl Workspace {
             custom_name: None,
             number: 1,
             resumed_session_id: None,
+            chat_title: None,
             unseen: false,
             spawned_at: None,
             root_pane: root_id,
@@ -1557,6 +1571,7 @@ impl Workspace {
             custom_name: name.map(str::to_string),
             number: self.next_public_tab_number,
             resumed_session_id: None,
+            chat_title: None,
             unseen: false,
             spawned_at: None,
             root_pane: root_id,

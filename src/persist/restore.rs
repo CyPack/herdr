@@ -765,6 +765,11 @@ fn restore_tab(
                 // plain-shell restore stays unwired: stale wiring would focus
                 // a tab without claude and block re-resuming the chat.
                 resumed_session_id: restored_resumed_session_id,
+                // Derived, not persisted: the chat-row sync re-reads it from
+                // the store after restore, so a handed-off tab wears its
+                // conversation's name again without the snapshot carrying it.
+                // TP-TAB-CHAT-01
+                chat_title: None,
                 // A restored tab is not news — restarting must not light up
                 // or strobe the whole strip. TP-TAB-UNSEEN-05 · TP-TAB-FLASH-01
                 unseen: false,

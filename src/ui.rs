@@ -9,6 +9,10 @@ use ratatui::{
 pub(crate) mod app_dock;
 #[cfg(test)]
 pub(crate) use sidebar::closed_agent_row_slots;
+// TP-DAILY-28: the mobile tap roads resolve the daily row against the same
+// filtered list the section shows, so they reach for it through this re-export
+// rather than re-deriving the filter (which would drift from the desktop's).
+pub(crate) use sidebar::daily_chat_rows;
 
 mod chat_worklog;
 mod compose;

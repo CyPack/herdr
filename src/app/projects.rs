@@ -229,6 +229,10 @@ impl super::App {
                         &req.project_path,
                     );
                     self.state.workspaces[ws_idx].tabs[tab_idx].resumed_session_id = req.session_id;
+                    // TP-TAB-CHAT-01: a resume already knows its chat's title
+                    // from the row that was clicked, so name the tab now rather
+                    // than waiting for the next sync.
+                    self.state.sync_bound_tab_titles();
                     self.arm_projects_hot_poll();
                 }
                 Err(err) => {
@@ -283,16 +287,22 @@ impl super::App {
             &req.project_path,
         );
         self.state.workspaces[ws_idx].tabs[tab_idx].resumed_session_id = req.session_id;
+        // TP-TAB-CHAT-01: name the tab after its chat immediately, from the
+        // row that was clicked to open it.
+        self.state.sync_bound_tab_titles();
         self.arm_projects_hot_poll();
 
         self.announce_new_tab(ws_idx, tab_idx, root_pane);
     }
 }
 
-/// Names a freshly spawned project-chat tab after its project so every surface
-/// rendering tab identity (tab bar, agent panel, persisted snapshots) carries
-/// the project context. Never touches a tab the user (or anything else)
-/// already named, and tolerates a stale tab index without panicking.
+/// Seeds a freshly spawned project-chat tab's DERIVED name with its project
+/// label, so an unnamed tab reads as its directory until the chat it hosts is
+/// known and the sync overwrites it with the conversation's own title
+/// (TP-TAB-CHAT-01). Writes `chat_title`, not `custom_name`: an explicit
+/// rename still outranks both, and a resume that already knows its chat's
+/// title overrides this placeholder immediately. Left alone if the user (or
+/// anything else) already named the tab, and tolerant of a stale index.
 pub(crate) fn apply_project_chat_tab_name(
     ws: &mut crate::workspace::Workspace,
     tab_idx: usize,
@@ -301,8 +311,8 @@ pub(crate) fn apply_project_chat_tab_name(
     let Some(tab) = ws.tabs.get_mut(tab_idx) else {
         return;
     };
-    if tab.is_auto_named() {
-        tab.set_custom_name(crate::workspace::derive_label_from_cwd(project_path));
+    if tab.custom_name.is_none() && tab.chat_title.is_none() {
+        tab.chat_title = Some(crate::workspace::derive_label_from_cwd(project_path));
     }
 }
 
@@ -550,6 +560,58 @@ mod tests {
     }
 
     // T5a-8: with no identity match the tab opens in the ACTIVE workspace —
+    // TP-TAB-CHAT-01: resuming a chat from history names the tab after the
+    // conversation itself, not just its directory, so a person recognises the
+    // tab they reopened. The name is derived (not an explicit rename), so a
+    // later rename of the chat or the tab still behaves correctly.
+    #[tokio::test]
+    async fn resuming_a_chat_names_the_tab_after_the_conversation() {
+        let dir = unique_project_dir("named");
+        let mut app = test_app();
+        let mut ws = Workspace::test_new("proj");
+        ws.identity_cwd = dir.clone();
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        // The chat exists as a drawer row carrying its title — this is the row
+        // the person clicked to reopen it.
+        let key = crate::persist::workspace_chats::ledger_key(&dir);
+        app.state.workspace_chat_rows.insert(
+            key,
+            vec![crate::app::state::WorkspaceChatRow {
+                session_id: "sess-named".to_string(),
+                agent: "claude".to_string(),
+                title: Some("Fix login bug".to_string()),
+                last_seen_ms: 1,
+                last_modified: None,
+                last_message_at: None,
+            }],
+        );
+
+        app.open_project_chat_tab_with_argv(
+            req(dir.clone(), Some("sess-named")),
+            &sh_argv(),
+            Vec::new(),
+        );
+
+        let ws = &app.state.workspaces[0];
+        let tab_idx = ws.tabs.len() - 1;
+        assert_eq!(
+            ws.tabs[tab_idx].resumed_session_id.as_deref(),
+            Some("sess-named"),
+        );
+        assert_eq!(
+            ws.tab_display_name(tab_idx).as_deref(),
+            Some("Fix login bug"),
+            "the resumed tab wears its chat's title, not the directory",
+        );
+        assert!(
+            ws.tabs[tab_idx].custom_name.is_none(),
+            "the name is derived, so an explicit rename would still win",
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     // but its cwd must still be the project directory, and a new chat
     // (session_id None) must not wire a session id.
     #[tokio::test]
@@ -924,7 +986,16 @@ mod tests {
     fn project_chat_tab_name_applied_to_auto_named_tab() {
         let mut ws = Workspace::test_new("space");
         apply_project_chat_tab_name(&mut ws, 0, Path::new("/herdr-test-nonexistent/my-project"));
-        assert_eq!(ws.tabs[0].custom_name.as_deref(), Some("my-project"));
+        // TP-TAB-CHAT-01: the project label is a DERIVED name, seeded into
+        // `chat_title` so the tab reads as its directory until the chat it
+        // hosts is known — and so an explicit rename (`custom_name`) still wins.
+        assert_eq!(ws.tabs[0].chat_title.as_deref(), Some("my-project"));
+        assert!(ws.tabs[0].custom_name.is_none());
+        assert_eq!(ws.tab_display_name(0).as_deref(), Some("my-project"));
+        assert!(
+            !ws.tabs[0].is_auto_named(),
+            "a derived-named tab is not unnamed"
+        );
     }
 
     #[test]
