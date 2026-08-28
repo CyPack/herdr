@@ -65,6 +65,13 @@ image = { version = "0.25.10", default-features = false, features = ["png", "jpe
 trash = { version = "5.2.6", default-features = false, features = ["coinit_multithreaded"] }
 calamine = "0.36.0"
 hayro = "0.7.1"
+# Pure-Rust Opus (BSD-3-Clause), pinned exactly: the crate is young (0.1.x) and
+# publishes often, and a codec that silently changes its output between patch
+# releases is the one dependency whose drift is inaudible until playback.
+# Chosen over the libopus bindings because the gate lints a Windows target and
+# the build box has no audio system headers: a C dependency would make the
+# codec untestable on the only machine allowed to compile this repo.
+opus-rs = { version = "=0.1.32", default-features = false, features = ["std", "heap"] }
 
 [patch.crates-io]
 portable-pty = { path = "vendor/portable-pty" }
