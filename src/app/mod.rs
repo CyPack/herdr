@@ -634,6 +634,10 @@ impl App {
             })
             .collect();
         state.chat_move_overrides = ledger.moves.clone();
+        // TP-TAB-CHAT-02: promote any freshly detected agent session onto the
+        // tab hosting it, so a new chat wires like a resumed one before its
+        // name is mirrored below.
+        state.bind_unwired_tabs_to_detected_sessions();
         // TP-TAB-CHAT-01: last, once `row.title` carries the merge's title and
         // every ledger overlay (moves, names), mirror each bound tab's chat
         // title onto the tab so its display name follows the conversation.

@@ -55,9 +55,12 @@ enum SplitCommand<'a> {
 pub struct Tab {
     pub custom_name: Option<String>,
     pub number: usize,
-    /// Claude Code session id this tab was opened to resume (Projects tab).
-    /// Wires the chat to exactly one tab so repeated clicks focus it instead
-    /// of spawning duplicates; cleared with the tab when it closes.
+    /// The Claude chat session this tab hosts: the id it was opened to resume,
+    /// or the session detected running in its root pane and promoted here by
+    /// `bind_unwired_tabs_to_detected_sessions` (TP-TAB-CHAT-02). Wires the
+    /// chat to exactly one tab so repeated clicks focus it instead of spawning
+    /// a twin, marks it in the drawers, and names the tab after it (via
+    /// `chat_title`); cleared with the tab when it closes.
     pub resumed_session_id: Option<String>,
     /// The bound chat's live title, mirrored onto the tab so its name can
     /// follow the conversation it hosts.
