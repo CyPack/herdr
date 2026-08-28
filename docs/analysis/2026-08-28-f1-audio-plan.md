@@ -198,11 +198,11 @@ F1'de daha en baştan **yedi** tane çıkardı.)
 | F1.5 | L2.b/c oynatma tamponu (sıra, kayıp, çift) | ✅ | `0dd45250` · 7 test |
 | — | Saat probu cevabı (okuma thread'inde) | ✅ | `71405fdc` · 1 test |
 | F1.13 | Ölçüm: Opus bitrate (ffmpeg çapraz) | ✅ | araştırma §2.2.1 · 5 satır ölçüm |
-| **F1.2** | `[features] media-sink` | ⬜ **YAPILMADI** | Kapsam değişti (D5): bayrak yalnız `cpal`'i kapsayacak; `cpal` gelene kadar bayrağın içi boş olurdu |
+| ~~F1.2~~ | ~~`[features] media-sink`~~ | **İPTAL** | Bayrak yerine `[target.'cfg(target_os = "macos")'.dependencies] cpal` — CI'da açılamayan bayrak ölü kapı; hedef-kapılı bağımlılıkla macOS varsayılan ikilisi ses çalar |
 | **F1.7** | L3.d **çalışan** interop testi (bizim encoder → libopus) | ⬜ **YAPILMADI** | Beklenti ffmpeg ile çapalandı (§2.2.1) ama **bizim çıktımız** libopus'a verilmedi |
 | **F1.12** | L6 `pane_audio_stream` API | ⬜ **YAPILMADI** | — |
 | **F1.13b** | TP-MEDIA-HOL-01 (32 MB yazma süresi) · FRAMESIZE-01 | ⬜ **YAPILMADI** | Mekanizma bulundu (araştırma §1.2), **sayı üretilmedi** |
-| **—** | İstemci ses sink'i (`cpal` veya dış süreç) | ⬜ **YAPILMADI** | F1'in kalan en büyük parçası; bu olmadan ses **çalmıyor** |
+| **P1** | İstemci ses sink'i + oynatma bağlama | ✅ (22:5x) | `AudioSink` silent/ffplay/**CoreAudio(cpal, macOS-target-gated)** · `PlaybackThread` · `client/mod.rs` bağlı · darwin `cargo check` HP'de geçti · 27 test |
 | **—** | Sunucu tarafı akış açma/besleme (pane → `AudioStream`) | ⬜ **YAPILMADI** | Motor hazır, çağıranı yok |
 | F1.14 | Davranış kaydı + `just check` | ✅ kayıt (1123) · kapı koşuldu | — |
 | F1.15 | Belge + devir NN=50 | ⏳ | — |
