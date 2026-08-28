@@ -2910,6 +2910,132 @@ mod tests {
         assert!(!HostCellSize::fallback_for_area(Rect::default()).is_known());
     }
 
+    fn scan_browser_frame(tick: u32, area_w: u16) -> HostPlacement {
+        let mut placement = test_placement(0, 0);
+        placement.area = Rect::new(0, 0, area_w, 10);
+        placement.placement.data_fingerprint = 1000 + u64::from(tick);
+        placement.placement.render.grid_cols = u32::from(area_w).saturating_sub(2);
+        placement.placement.render.grid_rows = 8;
+        placement
+    }
+
+    fn scan_neighbour_frame(tick: u32) -> HostPlacement {
+        let mut placement = test_placement(0, 0);
+        placement.pane_id = PaneId::from_raw(2);
+        placement.host_image_id = Some(0x8000_0001);
+        placement.source_key = HostSourceKey::PaneLayer {
+            pane_id: PaneId::from_raw(2),
+            layer_id: "primary".into(),
+        };
+        placement.placement.image_id = 900;
+        placement.placement.placement_id = 900;
+        placement.placement.data_fingerprint = 5 + u64::from(tick / 3);
+        placement
+    }
+
+    fn scan_apply_to_kitty(
+        feed: &mut std::collections::HashMap<(String, String), u32>,
+        bytes: &[u8],
+    ) {
+        let text = String::from_utf8_lossy(bytes);
+        let mut rest = text.as_ref();
+        while let Some(start) = rest.find("\u{1b}_G") {
+            let tail = &rest[start + 3..];
+            let end = tail.find('\u{1b}').unwrap_or(tail.len());
+            let head = tail[..end].split(';').next().unwrap_or("");
+            let mut a = "";
+            let mut i = "";
+            let mut pl = "";
+            let mut d = "";
+            let mut c = 0u32;
+            for part in head.split(',') {
+                let Some((k, v)) = part.split_once('=') else {
+                    continue;
+                };
+                match k {
+                    "a" => a = v,
+                    "i" => i = v,
+                    "p" => pl = v,
+                    "d" => d = v,
+                    "c" => c = v.parse().unwrap_or(0),
+                    _ => {}
+                }
+            }
+            match a {
+                "T" | "p" => {
+                    feed.insert((i.to_owned(), pl.to_owned()), c);
+                }
+                "d" => match d {
+                    "A" | "a" => feed.clear(),
+                    "I" => feed.retain(|(image, _), _| image != i),
+                    _ => {
+                        feed.remove(&(i.to_owned(), pl.to_owned()));
+                    }
+                },
+                _ => {}
+            }
+            rest = &rest[start + 3..];
+        }
+    }
+
+    // TP-GFX-LEDGER-01 scan harness: replay the live wire's shape — a static
+    // neighbour layer plus a terminal-source video pane whose content hash
+    // changes every frame — through the incremental encoder, dropping some
+    // encoded turns the way a full channel drops them (clone discarded,
+    // bytes never delivered), across resize gestures. The terminal must
+    // never be left showing more than one browser placement.
+    #[test]
+    fn a_dropped_turn_during_a_resize_strands_no_terminal_placement() {
+        let live_sources: HashSet<HostSourceKey> = [HostSourceKey::PaneLayer {
+            pane_id: PaneId::from_raw(2),
+            layer_id: "primary".into(),
+        }]
+        .into_iter()
+        .collect();
+        let widths: [u16; 24] = [
+            20, 20, 20, 17, 17, 20, 20, 16, 16, 16, 20, 20, 14, 14, 20, 20, 12, 12, 20, 20, 10, 10,
+            10, 10,
+        ];
+        for drop_mask in 0u32..256 {
+            let mut cache = HostGraphicsCache::default();
+            let mut kitty = std::collections::HashMap::new();
+            for (turn, width) in widths.iter().enumerate() {
+                let placements = vec![
+                    scan_neighbour_frame(turn as u32),
+                    scan_browser_frame(turn as u32, *width),
+                ];
+                {
+                    let mut next = cache.clone();
+                    next.request_placement_replay();
+                    let encoded = encode_graphics_update_incremental(
+                        &mut next,
+                        &placements,
+                        &live_sources,
+                        Some(HEADLESS_GRAPHICS_TRANSACTION_BUDGET),
+                    );
+                    let dropped = (drop_mask >> (turn % 8)) & 1 == 1;
+                    if !dropped {
+                        cache = next;
+                        scan_apply_to_kitty(&mut kitty, &encoded.bytes);
+                    }
+                }
+                let browser_alive: Vec<_> = kitty
+                    .iter()
+                    .filter(|((image, _), cols)| {
+                        **cols > 0 && image.parse::<u64>().is_ok_and(|id| id < 0x8000_0000)
+                    })
+                    .map(|((image, placement), cols)| format!("i={image} p={placement} c={cols}"))
+                    .collect();
+                assert!(
+                    browser_alive.len() <= 1,
+                    "drop_mask={drop_mask:#010b} turn={turn} width={width}: the terminal \
+                     still shows {} browser placements: {browser_alive:?}",
+                    browser_alive.len()
+                );
+            }
+        }
+    }
+
     fn test_placement(viewport_col: i32, viewport_row: i32) -> HostPlacement {
         HostPlacement {
             pane_id: PaneId::from_raw(1),

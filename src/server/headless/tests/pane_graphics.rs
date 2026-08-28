@@ -1426,6 +1426,178 @@ async fn a_live_stream_owner_is_recognised_by_the_cancel_sweep() {
     assert!(!server.pane_graphics_stream_owner_is_active("owner-live"));
 }
 
+fn alive_placements(feed: &mut std::collections::HashMap<(String, String), u32>, graphics: &str) {
+    // A miniature kitty: apply every graphics command in order and keep the
+    // set of placements a real terminal would still be showing.
+    let mut rest = graphics;
+    while let Some(start) = rest.find("\u{1b}_G") {
+        let tail = &rest[start + 3..];
+        let end = tail.find('\u{1b}').unwrap_or(tail.len());
+        let head = &tail[..end];
+        let head = head.split(';').next().unwrap_or(head);
+        let mut a = "";
+        let mut i = "";
+        let mut pl = "";
+        let mut d = "";
+        let mut c = 0u32;
+        for part in head.split(',') {
+            let Some((k, v)) = part.split_once('=') else {
+                continue;
+            };
+            match k {
+                "a" => a = v,
+                "i" => i = v,
+                "p" => pl = v,
+                "d" => d = v,
+                "c" => c = v.parse().unwrap_or(0),
+                _ => {}
+            }
+        }
+        match a {
+            "T" | "p" => {
+                feed.insert((i.to_owned(), pl.to_owned()), c);
+            }
+            "d" => match d {
+                "A" | "a" => feed.clear(),
+                "I" | "i" if d == "I" => {
+                    feed.retain(|(image, _), _| image != i);
+                }
+                _ => {
+                    feed.remove(&(i.to_owned(), pl.to_owned()));
+                }
+            },
+            _ => {}
+        }
+        rest = &rest[start + 3..];
+    }
+}
+
+fn drain_alive(
+    rx: &std::sync::mpsc::Receiver<Vec<u8>>,
+    feed: &mut std::collections::HashMap<(String, String), u32>,
+) -> usize {
+    let mut messages = 0;
+    while let Ok(bytes) = rx.recv_timeout(Duration::from_millis(80)) {
+        messages += 1;
+        match read_server_message(bytes) {
+            ServerMessage::Frame(frame) => {
+                alive_placements(feed, &String::from_utf8_lossy(&frame.graphics));
+            }
+            ServerMessage::Graphics { bytes } => {
+                alive_placements(feed, &String::from_utf8_lossy(&bytes));
+            }
+            _ => {}
+        }
+    }
+    messages
+}
+
+fn push_tb_frame(server: &mut HeadlessServer, pane_id: crate::layout::PaneId, tick: u8) {
+    // One terminal-native video frame, the way the fallback browser paints:
+    // same kitty image id and placement id every frame, new pixel content —
+    // which gives the host a new content-hashed image id per frame.
+    let pixels: Vec<u8> = (0..16).map(|n| n ^ tick).collect();
+    use base64::Engine as _;
+    let payload = base64::engine::general_purpose::STANDARD.encode(&pixels);
+    let apc = format!("\u{1b}_Ga=T,f=32,s=2,v=2,i=77,p=9,q=2;{payload}\u{1b}\\");
+    if let Some(runtime) =
+        server
+            .app
+            .state
+            .runtime_for_pane_in_workspace(&server.app.terminal_runtimes, 0, pane_id)
+    {
+        runtime.test_process_pty_bytes(apc.as_bytes());
+    }
+}
+
+// TP-GFX-LEDGER-01
+#[tokio::test]
+async fn resizing_a_streaming_terminal_pane_leaves_no_orphan_placements() {
+    let (mut server, rx1, pane_id) = retained_test_server(b"video pane");
+    server.app.state.kitty_graphics_enabled = true;
+    server.clients.get_mut(&1).unwrap().cell_size = crate::kitty_graphics::HostCellSize {
+        width_px: 10,
+        height_px: 20,
+    };
+    server.sync_foreground_client_state();
+    server.resize_shared_runtime_to_effective_size();
+
+    // A neighbour pane holding an API graphics layer keeps the slot pool
+    // non-empty, which is what routes terminal-source placements through the
+    // incremental encoder in the live session.
+    let neighbour =
+        server.app.state.workspaces[0].test_split(ratatui::layout::Direction::Horizontal);
+    set_graphics_layer(&mut server, neighbour, vec![7, 7, 7, 7]);
+    server.render_and_stream();
+    let mut kitty = std::collections::HashMap::new();
+    drain_alive(&rx1, &mut kitty);
+
+    let area = server.app.state.view.terminal_area;
+    let gesture: &[Option<(crate::api::schema::PaneDirection, f32)>] = &[
+        None,
+        None,
+        None,
+        Some((crate::api::schema::PaneDirection::Right, 0.20)),
+        None,
+        None,
+        Some((crate::api::schema::PaneDirection::Left, 0.12)),
+        None,
+        None,
+        Some((crate::api::schema::PaneDirection::Left, 0.10)),
+        None,
+        None,
+    ];
+    for (turn, step) in gesture.iter().enumerate() {
+        if let Some((direction, amount)) = step {
+            let moved = server.app.state.workspaces[0].tabs[0].layout.resize_pane(
+                pane_id,
+                (*direction).into(),
+                *amount,
+                area,
+            );
+            assert!(moved, "resize step must change the layout");
+        }
+        push_tb_frame(&mut server, pane_id, turn as u8 + 1);
+        // The live wire alternates the two encode streams: the text frame
+        // path and the graphics-only retained path.
+        if turn % 2 == 0 {
+            server.render_and_stream();
+            println!("turn={turn} path=full");
+        } else {
+            let outcome = server.render_retained_graphics_update_and_stream();
+            println!("turn={turn} path=retained outcome={outcome:?}");
+        }
+        // A slow reader: drain only every second turn so the capacity-1
+        // render channel spends half the gesture full, like an ssh client.
+        if turn % 2 == 1 {
+            let n = drain_alive(&rx1, &mut kitty);
+            println!("turn={turn} drained={n} alive={}", kitty.len());
+        }
+    }
+    for _ in 0..4 {
+        server.render_and_stream();
+        let _ = server.render_retained_graphics_update_and_stream();
+        drain_alive(&rx1, &mut kitty);
+    }
+    drain_alive(&rx1, &mut kitty);
+
+    // Reserved ids (bit 31 set) carry the neighbour's API layer; the
+    // browser's terminal-source images live in the small hashed range.
+    let pane_alive: Vec<_> = kitty
+        .iter()
+        .filter(|((image, _), cols)| {
+            **cols > 0 && image.parse::<u64>().is_ok_and(|id| id < 0x8000_0000)
+        })
+        .map(|((image, placement), cols)| format!("i={image} p={placement} c={cols}"))
+        .collect();
+    assert!(
+        pane_alive.len() <= 1,
+        "the terminal still shows {} placements for one pane; a resize must \
+         not strand earlier frames: {pane_alive:?}",
+        pane_alive.len()
+    );
+}
+
 // TP-GFX-CONVERGE-01
 #[tokio::test]
 async fn narrowing_the_view_reclips_or_deletes_a_stale_pane_graphics_placement() {
