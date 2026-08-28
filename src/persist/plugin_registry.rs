@@ -32,24 +32,9 @@ fn with_registry_lock<T>(operation: impl FnOnce() -> std::io::Result<T>) -> std:
 }
 
 fn save_json_to_path<T: serde::Serialize + ?Sized>(path: &Path, value: &T) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
     let json = serde_json::to_string_pretty(value)?;
-    let tmp_path = path.with_extension("json.tmp");
-    std::fs::write(&tmp_path, json)?;
-    #[cfg(windows)]
-    if path.exists() {
-        if let Err(err) = std::fs::remove_file(path) {
-            let _ = std::fs::remove_file(&tmp_path);
-            return Err(err);
-        }
-    }
-    if let Err(err) = std::fs::rename(&tmp_path, path) {
-        let _ = std::fs::remove_file(&tmp_path);
-        return Err(err);
-    }
-    Ok(())
+    // TP-PERSIST-04: every state file herdr owns takes the same durable road.
+    super::durable::write_atomic(path, json.as_bytes())
 }
 
 pub fn save_to_path(path: &Path, plugins: &[InstalledPluginInfo]) -> std::io::Result<()> {
