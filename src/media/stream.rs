@@ -148,7 +148,7 @@ mod tests {
         AudioStream::new(1, "w1:p1", DEFAULT_BITRATE_BPS, 1_000_000).expect("stream")
     }
 
-    // TP-MEDIA-DEADLINE-01
+    // TP-MEDIA-SOURCE-01
     #[test]
     fn a_chunk_past_its_moment_is_dropped_before_it_is_encoded() {
         // Dropped at the source, which is the only place the deadline is still
@@ -173,7 +173,7 @@ mod tests {
         );
     }
 
-    // TP-MEDIA-DEADLINE-01
+    // TP-MEDIA-SOURCE-01
     #[test]
     fn a_dropped_chunk_still_consumes_its_slot_in_time_and_sequence() {
         // The subtle half. If time paused during a drop, everything after the
@@ -197,7 +197,7 @@ mod tests {
         }
     }
 
-    // TP-MEDIA-CREDIT-01
+    // TP-MEDIA-SOURCE-01
     #[test]
     fn a_client_with_no_room_is_not_sent_to() {
         // Without this the server's memory grows instead of the client's
@@ -210,7 +210,7 @@ mod tests {
         assert!(matches!(fate, ChunkFate::DroppedNoCredit { seq: 0, .. }));
     }
 
-    // TP-MEDIA-CREDIT-01
+    // TP-MEDIA-SOURCE-01
     #[test]
     fn credit_is_spent_one_chunk_at_a_time_and_replaced_not_accumulated() {
         // Replaced, because the client reports a level rather than a delta. A
@@ -239,7 +239,7 @@ mod tests {
         assert_eq!(audio.credit(), 5, "credit is a level, not a running total");
     }
 
-    // TP-MEDIA-DEADLINE-01
+    // TP-MEDIA-SOURCE-01
     #[test]
     fn one_frame_of_lateness_is_still_worth_sending() {
         // The boundary is a decision, not an accident: a chunk exactly one
@@ -253,7 +253,7 @@ mod tests {
         assert!(matches!(fate, ChunkFate::Send { seq: 0, .. }));
     }
 
-    // TP-MEDIA-STREAM-01
+    // TP-MEDIA-SOURCE-01
     #[test]
     fn a_wrong_sized_frame_is_refused_without_consuming_a_slot() {
         // A caller mistake must not move the stream's clock. If it did, every

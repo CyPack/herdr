@@ -12,6 +12,13 @@
 //! on how it was built would make the capability handshake answer differently
 //! for reasons the client can never see.
 
+// F1 builds this layer bottom-up: the codec, the clock and the two ends of the
+// buffer are written and tested before the server and client are wired to
+// them, so the ordering guarantees exist before anything can violate them.
+// Every item here has a caller by the end of the phase; until then the
+// compiler is right that nothing calls them.
+#![allow(dead_code)]
+
 pub mod clock;
 pub mod opus;
 pub mod playout;

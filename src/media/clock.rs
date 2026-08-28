@@ -232,7 +232,7 @@ mod tests {
         assert_eq!(sync.offset_us(), 0);
     }
 
-    // TP-MEDIA-CLOCK-02
+    // TP-MEDIA-CLOCK-01
     #[test]
     fn one_delayed_probe_does_not_move_the_offset() {
         // The reason this is a median and not an average. A single probe that
@@ -255,7 +255,7 @@ mod tests {
         );
     }
 
-    // TP-MEDIA-CLOCK-03
+    // TP-MEDIA-CLOCK-01
     #[test]
     fn a_gap_longer_than_a_minute_throws_the_old_samples_away() {
         // A suspended laptop wakes with a clock that jumped. Every sample from
@@ -295,7 +295,7 @@ mod tests {
         );
     }
 
-    // TP-MEDIA-JITTER-02
+    // TP-MEDIA-JITTER-01
     #[test]
     fn a_late_arrival_raises_the_estimate_and_a_calm_link_lowers_it_again() {
         let mut jitter = JitterEstimator::new();
@@ -325,7 +325,7 @@ mod tests {
         );
     }
 
-    // TP-MEDIA-JITTER-02
+    // TP-MEDIA-JITTER-01
     #[test]
     fn an_out_of_order_chunk_is_not_treated_as_jitter() {
         // RFC 3550 restricts the update to in-order packets, and the reason is
@@ -344,7 +344,7 @@ mod tests {
         assert_eq!(jitter.jitter_us(), before);
     }
 
-    // TP-MEDIA-JITTER-05
+    // TP-MEDIA-JITTER-01
     #[test]
     fn the_playout_target_stays_inside_its_bounds() {
         // The lower bound keeps the buffer from vanishing on a quiet link; the
@@ -364,7 +364,7 @@ mod tests {
         assert_eq!(delay.target_us(), MIN_PLAYOUT_DELAY_US);
     }
 
-    // TP-MEDIA-JITTER-02
+    // TP-MEDIA-JITTER-01
     #[test]
     fn the_playout_target_moves_slowly_rather_than_jumping() {
         // Audio played at a shifting delay is audio played at a shifting rate.
@@ -383,7 +383,7 @@ mod tests {
         );
     }
 
-    // TP-MEDIA-JITTER-03
+    // TP-MEDIA-JITTER-01
     #[test]
     fn an_early_chunk_waits_and_a_due_one_does_not() {
         // The rule the whole layer exists for. Playing on arrival hands every
@@ -397,7 +397,7 @@ mod tests {
         assert!(delay.is_due(pts, 1_200_000));
     }
 
-    // TP-MEDIA-JITTER-04
+    // TP-MEDIA-JITTER-01
     #[test]
     fn a_chunk_past_its_frame_is_expired_and_due_is_not_the_same_question() {
         // Due and expired are separate questions with separate answers. Merging

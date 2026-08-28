@@ -12,6 +12,20 @@ use super::{
 /// and produce audio that decodes without error and sounds wrong.
 pub struct AudioEncoder {
     inner: opus_rs::OpusEncoder,
+    bitrate_bps: i32,
+}
+
+// Written by hand because the codec's own types are not Debug, and because
+// what a reader of a failing test needs is the configuration, not the
+// encoder's internal prediction state.
+impl std::fmt::Debug for AudioEncoder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AudioEncoder")
+            .field("bitrate_bps", &self.bitrate_bps)
+            .field("sample_rate_hz", &SAMPLE_RATE_HZ)
+            .field("channels", &CHANNELS)
+            .finish()
+    }
 }
 
 impl AudioEncoder {
@@ -38,7 +52,7 @@ impl AudioEncoder {
         // is knowable in advance, not one that doubles when the content
         // happens to be tonal.
         inner.use_cbr = true;
-        Ok(Self { inner })
+        Ok(Self { inner, bitrate_bps })
     }
 
     /// Encodes exactly one frame of interleaved samples into `out`.
@@ -67,6 +81,15 @@ impl AudioEncoder {
 /// Decodes one packet at a time back into interleaved samples.
 pub struct AudioDecoder {
     inner: opus_rs::OpusDecoder,
+}
+
+impl std::fmt::Debug for AudioDecoder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AudioDecoder")
+            .field("sample_rate_hz", &SAMPLE_RATE_HZ)
+            .field("channels", &CHANNELS)
+            .finish()
+    }
 }
 
 impl AudioDecoder {
@@ -123,7 +146,7 @@ mod tests {
         pcm
     }
 
-    // TP-MEDIA-OPUS-01
+    // TP-MEDIA-CODEC-01
     #[test]
     fn a_frame_survives_encoding_with_its_sample_count_intact() {
         // Not "the audio sounds the same" — Opus is lossy and that assertion
@@ -151,7 +174,7 @@ mod tests {
         );
     }
 
-    // TP-MEDIA-OPUS-01
+    // TP-MEDIA-CODEC-01
     #[test]
     fn a_wrong_sized_frame_is_refused_rather_than_padded() {
         // The failure this prevents is the quiet one: pad a short frame and
@@ -171,7 +194,7 @@ mod tests {
         );
     }
 
-    // TP-MEDIA-OPUS-01
+    // TP-MEDIA-CODEC-01
     #[test]
     fn a_bitrate_outside_the_supported_range_is_refused_at_construction() {
         // Refused where it is asked for, not clamped: a stream that silently
@@ -194,7 +217,7 @@ mod tests {
         assert!(AudioEncoder::new(MAX_BITRATE_BPS).is_ok());
     }
 
-    // TP-MEDIA-BITRATE-01
+    // TP-MEDIA-CODEC-01
     #[test]
     fn a_second_of_audio_at_the_default_bitrate_costs_what_the_design_measured() {
         // Anchored to an independent measurement rather than to arithmetic:
@@ -229,7 +252,7 @@ mod tests {
         );
     }
 
-    // TP-MEDIA-OPUS-01
+    // TP-MEDIA-CODEC-01
     #[test]
     fn a_too_small_output_buffer_is_refused_not_silently_truncated() {
         // A truncated Opus packet is not a quieter packet; it is a packet the

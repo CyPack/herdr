@@ -186,7 +186,7 @@ mod tests {
         PlayoutBuffer::new(100_000)
     }
 
-    // TP-MEDIA-JITTER-03
+    // TP-MEDIA-PLAYOUT-01
     #[test]
     fn an_early_chunk_is_held_until_its_moment() {
         // The rule the layer exists for. Handing a chunk over on arrival passes
@@ -195,12 +195,18 @@ mod tests {
         let mut buf = buffer();
         assert!(buf.push(chunk(0, 1_000_000), 1_000_000));
 
-        assert_eq!(buf.take(1_050_000), Playout::Waiting);
-        assert_eq!(buf.take(1_099_999), Playout::Waiting);
-        assert_eq!(buf.take(1_100_000), Playout::Play(chunk(0, 1_000_000)));
+        // Read the boundary rather than assuming it. `push` has already folded
+        // one jitter reading into the target, so the deadline is not the
+        // number the buffer was constructed with — and a test that hardcodes
+        // it is asserting a constant instead of the rule.
+        let due_at = 1_000_000 + i64::from(buf.target_delay_us());
+
+        assert_eq!(buf.take(due_at - 50_000), Playout::Waiting);
+        assert_eq!(buf.take(due_at - 1), Playout::Waiting);
+        assert_eq!(buf.take(due_at), Playout::Play(chunk(0, 1_000_000)));
     }
 
-    // TP-MEDIA-JITTER-04
+    // TP-MEDIA-PLAYOUT-01
     #[test]
     fn a_chunk_that_arrives_after_its_moment_is_refused_at_the_door() {
         // Refused on arrival rather than filtered at playout: keeping it would
@@ -213,7 +219,7 @@ mod tests {
         assert_eq!(buf.take(1_500_000), Playout::Waiting);
     }
 
-    // TP-MEDIA-SEQ-01
+    // TP-MEDIA-PLAYOUT-01
     #[test]
     fn chunks_that_arrive_out_of_order_play_in_order() {
         // Arrival order is not presentation order, and a buffer that used it
@@ -227,7 +233,7 @@ mod tests {
         assert_eq!(buf.take(1_120_000), Playout::Play(chunk(1, 1_020_000)));
     }
 
-    // TP-MEDIA-SEQ-01
+    // TP-MEDIA-PLAYOUT-01
     #[test]
     fn a_missing_chunk_is_reported_before_the_one_after_it_plays() {
         // Loss the caller cannot see is loss it cannot conceal, and an
@@ -245,7 +251,7 @@ mod tests {
         assert_eq!(buf.take(1_140_000), Playout::Play(chunk(2, 1_040_000)));
     }
 
-    // TP-MEDIA-SEQ-01
+    // TP-MEDIA-PLAYOUT-01
     #[test]
     fn a_duplicate_chunk_is_not_played_twice() {
         let mut buf = buffer();
@@ -256,7 +262,7 @@ mod tests {
         assert_eq!(buf.take(1_100_000), Playout::Waiting);
     }
 
-    // TP-MEDIA-JITTER-04
+    // TP-MEDIA-PLAYOUT-01
     #[test]
     fn a_chunk_that_expires_while_waiting_is_discarded_rather_than_blocking() {
         // A stalled link leaves chunks in the buffer past their moment. Playing
@@ -273,7 +279,7 @@ mod tests {
         assert_eq!(buf.dropped_late(), 2);
     }
 
-    // TP-MEDIA-JITTER-05
+    // TP-MEDIA-PLAYOUT-01
     #[test]
     fn a_steady_stream_keeps_the_target_delay_from_growing() {
         // The counterpart to the estimator's own test, at the level a caller
