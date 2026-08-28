@@ -6810,11 +6810,15 @@ mod tests {
         state.workspaces = vec![crate::workspace::Workspace::test_new("a")];
         let tab_idx = state.workspaces[0].active_tab_index();
         wire_root_terminal(&mut state, 0, tab_idx, Some(("claude", "sess-live")), None);
-        assert!(state.workspaces[0].tabs[tab_idx].resumed_session_id.is_none());
+        assert!(state.workspaces[0].tabs[tab_idx]
+            .resumed_session_id
+            .is_none());
 
         state.bind_unwired_tabs_to_detected_sessions();
         assert_eq!(
-            state.workspaces[0].tabs[tab_idx].resumed_session_id.as_deref(),
+            state.workspaces[0].tabs[tab_idx]
+                .resumed_session_id
+                .as_deref(),
             Some("sess-live"),
             "a new chat's tab binds to the agent detected running in it",
         );
@@ -6847,7 +6851,13 @@ mod tests {
         let mut state = AppState::test_new();
         state.workspaces = vec![crate::workspace::Workspace::test_new("a")];
         let tab_idx = state.workspaces[0].active_tab_index();
-        wire_root_terminal(&mut state, 0, tab_idx, None, Some(("claude", "remembered-1")));
+        wire_root_terminal(
+            &mut state,
+            0,
+            tab_idx,
+            None,
+            Some(("claude", "remembered-1")),
+        );
         state.bind_unwired_tabs_to_detected_sessions();
         assert!(
             state.workspaces[0].tabs[tab_idx]
@@ -6868,7 +6878,9 @@ mod tests {
         wire_root_terminal(&mut state, 0, tab_idx, Some(("claude", "detected-2")), None);
         state.bind_unwired_tabs_to_detected_sessions();
         assert_eq!(
-            state.workspaces[0].tabs[tab_idx].resumed_session_id.as_deref(),
+            state.workspaces[0].tabs[tab_idx]
+                .resumed_session_id
+                .as_deref(),
             Some("resumed-1"),
             "a resume's own id is never overwritten by detection",
         );

@@ -126,8 +126,10 @@ fn client_protocol_accepts_hello(socket_path: &Path) -> io::Result<bool> {
         requested_encoding: crate::protocol::RenderEncoding::SemanticFrame,
         keybindings: crate::protocol::ClientKeybindings::Server,
         launch_mode: crate::protocol::ClientLaunchMode::App,
-
         pixel_mouse: false,
+        // A liveness probe, not a session: it announces nothing because it
+        // never renders anything either.
+        capabilities: Vec::new(),
     };
 
     match crate::protocol::write_message(&mut stream, &hello) {

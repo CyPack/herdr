@@ -14,6 +14,15 @@ use serde::{Deserialize, Serialize};
 
 /// Current protocol version. Bumped when wire format changes incompatibly.
 ///
+/// 22, not 21: the handshake now carries a capability announcement
+/// (`Hello.capabilities` / `Welcome.accepted`), which changes the frame shape
+/// once. It is meant to be the **last** media-driven bump: capabilities are
+/// names, so a future audio or video feature adds a name and leaves this
+/// number alone. Reaching for a bump because "media needs a new field" is the
+/// mistake this field was added to retire — see `docs/patterns/
+/// remote-media-transport.md` RA7, and the 20 -> 21 bump below, which cost the
+/// whole client fleet for one boolean.
+///
 /// 21, not 20: protocol 20 is already published in the preview channel, and
 /// `Hello` now carries the client's pixel-mouse capability. The check below is
 /// exact-match, so reusing 20 would let a released client speak a different
@@ -22,7 +31,7 @@ use serde::{Deserialize, Serialize};
 /// 20, not 19: the latest released tag (preview-2026-08-04) already shipped a
 /// wire that calls itself 19 while this source line said 18. Numbers are
 /// cheap; collisions are not.
-pub const PROTOCOL_VERSION: u32 = 21;
+pub const PROTOCOL_VERSION: u32 = 22;
 
 /// Maximum allowed frame payload size (2 MB). Frames larger than this are
 /// rejected to prevent denial-of-service via oversized length prefixes.
@@ -38,6 +47,168 @@ pub const MAX_CLIPBOARD_IMAGE_PAYLOAD: usize = 16 * 1024 * 1024;
 
 /// Length of the u32 little-endian length prefix in bytes.
 const LENGTH_PREFIX_BYTES: usize = 4;
+
+// ---------------------------------------------------------------------------
+// Capability negotiation
+// ---------------------------------------------------------------------------
+
+/// Well-known capability names.
+///
+/// Names, not enum variants, and that is the whole point. `bincode` is not
+/// self-describing: an unknown enum discriminant does not skip a field, it
+/// fails the decode of the entire message. So a capability enum would make
+/// every new media feature a wire change, and every wire change a
+/// `PROTOCOL_VERSION` bump — the exact loop this negotiation exists to end.
+/// A name list stays the same shape forever; a reader that has never heard of
+/// a name simply never asks for it.
+///
+/// This is the shape SSH (RFC 4253 §7.1, algorithm name lists), TLS
+/// (RFC 8446 §4.2, "clients MUST ignore unrecognized extensions") and HTTP/2
+/// (RFC 9113 §6.5.2, unknown SETTINGS identifiers MUST be ignored) all
+/// converged on independently.
+pub mod capability {
+    // The names exist before their first consumer on purpose: F0 builds the
+    // negotiation and F1 is the phase that announces `MEDIA_STREAMS` and
+    // `AUDIO_SINK` for real. Defining them here keeps every later phase from
+    // inventing its own spelling of the same name, which is the failure two
+    // herdr-browser plugins already produced independently.
+    #![allow(dead_code)]
+
+    /// Client can receive timestamped media streams and take part in clock sync.
+    pub const MEDIA_STREAMS: &str = "media.streams";
+    /// Client has a local audio sink. Values are the codecs it can decode.
+    pub const AUDIO_SINK: &str = "media.audio.sink";
+    /// Client can decode video and draw it itself. Values are the codecs.
+    pub const VIDEO_DECODE: &str = "media.video.decode";
+    /// Client can open a second transport for media. Values are the kinds.
+    pub const SIDE_CHANNEL: &str = "media.side_channel";
+}
+
+/// One announced capability: a name plus its parameter values.
+///
+/// Values are free-form strings whose meaning belongs to the name (codec ids
+/// for [`capability::AUDIO_SINK`], transport kinds for
+/// [`capability::SIDE_CHANNEL`]). Keeping them untyped here is deliberate: a
+/// typed payload would put the forward-compatibility problem back into the
+/// wire format, one level down.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityEntry {
+    /// Capability name. See [`capability`] for the well-known ones.
+    pub name: String,
+    /// Parameter values, in the announcer's order of preference.
+    pub values: Vec<String>,
+}
+
+impl CapabilityEntry {
+    // Constructors are used by tests and by the phases that announce real
+    // capabilities; production code in F0 only ever passes empty lists.
+    #![allow(dead_code)]
+
+    /// A capability with no parameters.
+    pub fn flag(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            values: Vec::new(),
+        }
+    }
+
+    /// A capability carrying ordered parameter values.
+    pub fn with_values<I, S>(name: impl Into<String>, values: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        Self {
+            name: name.into(),
+            values: values.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+/// A read-only view over announced capabilities.
+///
+/// The reading contract is the negotiation's safety property: asking about a
+/// name nobody announced is an ordinary `false`, never an error, so a peer
+/// speaking a richer dialect costs this side nothing. TP-MEDIA-CAP-02
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CapabilitySet {
+    entries: Vec<CapabilityEntry>,
+}
+
+impl CapabilitySet {
+    // `has` and `values_of` are the reading half of the contract. F0 negotiates
+    // and stores; F1 is the first phase that asks. Keeping them beside
+    // `intersect` means the reading rule is written and tested once, not
+    // rediscovered by whichever feature needs it first.
+    #![allow(dead_code)]
+
+    /// Builds a set from announced entries.
+    ///
+    /// A repeated name keeps its first announcement: a malformed or hostile
+    /// peer must not be able to make the handshake ambiguous.
+    pub fn from_entries(entries: impl IntoIterator<Item = CapabilityEntry>) -> Self {
+        let mut kept: Vec<CapabilityEntry> = Vec::new();
+        for entry in entries {
+            if !kept.iter().any(|existing| existing.name == entry.name) {
+                kept.push(entry);
+            }
+        }
+        Self { entries: kept }
+    }
+
+    /// Whether `name` was announced.
+    pub fn has(&self, name: &str) -> bool {
+        self.entries.iter().any(|entry| entry.name == name)
+    }
+
+    /// Values announced for `name`, or an empty slice when absent.
+    pub fn values_of(&self, name: &str) -> &[String] {
+        self.entries
+            .iter()
+            .find(|entry| entry.name == name)
+            .map_or(&[], |entry| entry.values.as_slice())
+    }
+
+    /// The capabilities both sides support.
+    ///
+    /// Names present on only one side are dropped, and the surviving values are
+    /// the ones both sides named, in `self`'s announced order. Reflecting an
+    /// announcement back instead would accept capabilities this side cannot
+    /// serve — and would leave every test green while doing it.
+    pub fn intersect(&self, other: &Self) -> Self {
+        let entries = self
+            .entries
+            .iter()
+            .filter_map(|entry| {
+                let theirs = other
+                    .entries
+                    .iter()
+                    .find(|candidate| candidate.name == entry.name)?;
+                let values = entry
+                    .values
+                    .iter()
+                    .filter(|value| theirs.values.contains(value))
+                    .cloned()
+                    .collect();
+                Some(CapabilityEntry {
+                    name: entry.name.clone(),
+                    values,
+                })
+            })
+            .collect();
+        Self { entries }
+    }
+
+    /// The announced entries, for putting back on the wire.
+    pub fn entries(&self) -> &[CapabilityEntry] {
+        &self.entries
+    }
+
+    /// Consumes the set into its entries.
+    pub fn into_entries(self) -> Vec<CapabilityEntry> {
+        self.entries
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Client → Server messages
@@ -374,6 +545,12 @@ pub enum ClientMessage {
         /// relayed transports, while a pixel mouse report only widens numbers already present in
         /// every mouse event.
         pixel_mouse: bool,
+        /// Optional capabilities this client announces (see [`capability`]).
+        ///
+        /// An empty list is the ordinary case and means "behave exactly as
+        /// before". Names the server does not know are ignored, which is what
+        /// lets later media features ship without touching this shape again.
+        capabilities: Vec<CapabilityEntry>,
     },
 
     /// Raw input bytes read from the client's stdin.
@@ -698,6 +875,13 @@ pub enum ServerMessage {
         /// If present, the handshake failed and this describes why.
         /// The client should exit with a clear error message.
         error: Option<String>,
+        /// Capabilities the server accepted for this connection.
+        ///
+        /// This is the intersection of what the client announced and what this
+        /// server supports — never a reflection of the client's list. The
+        /// server uses nothing outside it, so an empty list is exactly the
+        /// pre-negotiation behaviour.
+        accepted: Vec<CapabilityEntry>,
     },
 
     /// A rendered frame to be displayed by a semantic-frame client.
@@ -1098,6 +1282,168 @@ mod tests {
         }
     }
 
+    // -- Capability negotiation (F0) ---------------------------------------
+    //
+    // These pin the one promise the whole design rests on: a capability the
+    // reader has never heard of must cost nothing. If that breaks, every later
+    // media feature needs a protocol bump again, which is the trap this fork
+    // already fell into once (PROTOCOL_VERSION 20 -> 21 for a single bool).
+
+    #[test]
+    fn capability_entries_survive_a_hello_roundtrip() {
+        let msg = ClientMessage::Hello {
+            version: PROTOCOL_VERSION,
+            cols: 80,
+            rows: 24,
+            cell_width_px: 8,
+            cell_height_px: 16,
+            requested_encoding: RenderEncoding::SemanticFrame,
+            keybindings: ClientKeybindings::Server,
+            launch_mode: ClientLaunchMode::App,
+            pixel_mouse: true,
+            capabilities: vec![
+                CapabilityEntry::flag(capability::MEDIA_STREAMS),
+                CapabilityEntry::with_values(capability::AUDIO_SINK, ["opus", "pcm_s16"]),
+            ],
+        };
+        let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
+        let (decoded, _): (ClientMessage, _) =
+            bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
+        assert_eq!(msg, decoded);
+    }
+
+    #[test]
+    fn an_empty_capability_announcement_survives_a_roundtrip() {
+        // A client that announces nothing is the "behaves exactly like today"
+        // case, so it has to be representable and stable on the wire.
+        let msg = ServerMessage::Welcome {
+            version: PROTOCOL_VERSION,
+            encoding: RenderEncoding::SemanticFrame,
+            error: None,
+            accepted: Vec::new(),
+        };
+        let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
+        let (decoded, _): (ServerMessage, _) =
+            bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
+        assert_eq!(msg, decoded);
+        match decoded {
+            ServerMessage::Welcome { accepted, .. } => assert!(accepted.is_empty()),
+            other => panic!("expected Welcome, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_unknown_capability_name_is_ignored_rather_than_fatal() {
+        let set = CapabilitySet::from_entries(vec![
+            CapabilityEntry::flag("future.thing.nobody.here.knows"),
+            CapabilityEntry::flag(capability::MEDIA_STREAMS),
+        ]);
+        assert!(set.has(capability::MEDIA_STREAMS));
+        assert!(!set.has(capability::AUDIO_SINK));
+        // The unknown name is carried, not rejected: a reader that does not know
+        // it simply never asks for it.
+        assert!(!set.has("something.else.entirely"));
+    }
+
+    #[test]
+    fn capability_values_are_read_in_announced_order() {
+        let set = CapabilitySet::from_entries(vec![CapabilityEntry::with_values(
+            capability::AUDIO_SINK,
+            ["opus", "pcm_s16", "flac"],
+        )]);
+        assert_eq!(
+            set.values_of(capability::AUDIO_SINK),
+            ["opus", "pcm_s16", "flac"]
+        );
+        // An absent capability yields no values instead of panicking.
+        assert!(set.values_of(capability::VIDEO_DECODE).is_empty());
+    }
+
+    #[test]
+    fn a_repeated_capability_name_keeps_the_first_announcement() {
+        // A malformed or hostile client must not be able to make the handshake
+        // ambiguous; first announcement wins and nothing panics.
+        let set = CapabilitySet::from_entries(vec![
+            CapabilityEntry::with_values(capability::AUDIO_SINK, ["opus"]),
+            CapabilityEntry::with_values(capability::AUDIO_SINK, ["mp3"]),
+        ]);
+        assert_eq!(set.values_of(capability::AUDIO_SINK), ["opus"]);
+    }
+
+    #[test]
+    fn capability_intersection_drops_what_only_one_side_offers() {
+        // This is the rule the server's handshake depends on: reflecting the
+        // client's announcement back would silently accept capabilities the
+        // server cannot serve, and every test would still be green.
+        let client = CapabilitySet::from_entries(vec![
+            CapabilityEntry::flag(capability::MEDIA_STREAMS),
+            CapabilityEntry::with_values(capability::AUDIO_SINK, ["opus"]),
+            CapabilityEntry::flag("client.only.extension"),
+        ]);
+        let server = CapabilitySet::from_entries(vec![
+            CapabilityEntry::with_values(capability::AUDIO_SINK, ["opus", "pcm_s16"]),
+            CapabilityEntry::flag(capability::MEDIA_STREAMS),
+            CapabilityEntry::flag("server.only.extension"),
+        ]);
+
+        let accepted = client.intersect(&server);
+
+        assert!(accepted.has(capability::MEDIA_STREAMS));
+        assert!(accepted.has(capability::AUDIO_SINK));
+        assert!(!accepted.has("client.only.extension"));
+        assert!(!accepted.has("server.only.extension"));
+        // The values that survive are the ones both sides named, in the
+        // client's announced order: the client cannot be handed a codec it
+        // never claimed to decode.
+        assert_eq!(accepted.values_of(capability::AUDIO_SINK), ["opus"]);
+    }
+
+    #[test]
+    fn adding_a_capability_does_not_shift_the_wire_shape() {
+        // Guards the promise directly: more capabilities must only make the
+        // frame longer, never move the enum tag or the fields around it.
+        // (A variant-ordering slip cost this repo a 9.4s test timeout once.)
+        let hello = |caps: Vec<CapabilityEntry>| ClientMessage::Hello {
+            version: PROTOCOL_VERSION,
+            cols: 80,
+            rows: 24,
+            cell_width_px: 8,
+            cell_height_px: 16,
+            requested_encoding: RenderEncoding::SemanticFrame,
+            keybindings: ClientKeybindings::Server,
+            launch_mode: ClientLaunchMode::App,
+            pixel_mouse: false,
+            capabilities: caps,
+        };
+
+        let one = bincode::serde::encode_to_vec(
+            hello(vec![CapabilityEntry::flag(capability::MEDIA_STREAMS)]),
+            bincode::config::standard(),
+        )
+        .unwrap();
+        let three = bincode::serde::encode_to_vec(
+            hello(vec![
+                CapabilityEntry::flag(capability::MEDIA_STREAMS),
+                CapabilityEntry::with_values(capability::AUDIO_SINK, ["opus"]),
+                CapabilityEntry::flag("third.name"),
+            ]),
+            bincode::config::standard(),
+        )
+        .unwrap();
+
+        assert_eq!(one.first(), three.first(), "enum tag must not move");
+        assert!(
+            three.len() > one.len(),
+            "more capabilities means more bytes"
+        );
+        // Both must decode with the same reader.
+        for encoded in [&one, &three] {
+            let (_decoded, _): (ClientMessage, _) =
+                bincode::serde::decode_from_slice(encoded, bincode::config::standard())
+                    .expect("both announcements decode with one reader");
+        }
+    }
+
     #[test]
     fn client_hello_roundtrip() {
         let msg = ClientMessage::Hello {
@@ -1110,6 +1456,7 @@ mod tests {
             keybindings: ClientKeybindings::Server,
             launch_mode: ClientLaunchMode::App,
             pixel_mouse: true,
+            capabilities: Vec::new(),
         };
         let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
         let (decoded, _): (ClientMessage, _) =
@@ -1148,6 +1495,7 @@ mod tests {
                 keybindings: ClientKeybindings::Server,
                 launch_mode: ClientLaunchMode::App,
                 pixel_mouse: true,
+                capabilities: Vec::new(),
             }),
             0
         );
@@ -1451,6 +1799,7 @@ mod tests {
             version: PROTOCOL_VERSION,
             encoding: RenderEncoding::SemanticFrame,
             error: None,
+            accepted: Vec::new(),
         };
         let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
         let (decoded, _): (ServerMessage, _) =
@@ -1464,6 +1813,7 @@ mod tests {
             version: PROTOCOL_VERSION,
             encoding: RenderEncoding::SemanticFrame,
             error: Some("incompatible version".to_owned()),
+            accepted: Vec::new(),
         };
         let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
         let (decoded, _): (ServerMessage, _) =
@@ -1730,6 +2080,7 @@ mod tests {
             keybindings: ClientKeybindings::Server,
             launch_mode: ClientLaunchMode::App,
             pixel_mouse: true,
+            capabilities: Vec::new(),
         };
         let mut buf = Vec::new();
         write_message(&mut buf, &msg).unwrap();
@@ -1805,6 +2156,7 @@ mod tests {
                     keybindings: ClientKeybindings::Server,
                     launch_mode: ClientLaunchMode::App,
                     pixel_mouse: true,
+                    capabilities: Vec::new(),
                 },
                 1 => ClientMessage::Input {
                     data: vec![(i % 256) as u8; (i as usize % 50) + 1],
@@ -1969,11 +2321,13 @@ mod tests {
                 version: PROTOCOL_VERSION,
                 encoding: RenderEncoding::SemanticFrame,
                 error: None,
+                accepted: Vec::new(),
             },
             VersionCheck::Incompatible(reason) => ServerMessage::Welcome {
                 version: PROTOCOL_VERSION,
                 encoding: RenderEncoding::SemanticFrame,
                 error: Some(reason),
+                accepted: Vec::new(),
             },
         };
 
@@ -2242,6 +2596,7 @@ mod tests {
             keybindings: ClientKeybindings::Server,
             launch_mode: ClientLaunchMode::App,
             pixel_mouse: true,
+            capabilities: Vec::new(),
         };
         let mut buf = Vec::new();
         write_message(&mut buf, &msg).unwrap();
@@ -2279,6 +2634,7 @@ mod tests {
                 keybindings: ClientKeybindings::Server,
                 launch_mode: ClientLaunchMode::App,
                 pixel_mouse: true,
+                capabilities: Vec::new(),
             },
             ClientMessage::Input {
                 data: b"hello world".to_vec(),

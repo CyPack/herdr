@@ -18,10 +18,21 @@ use tracing::{debug, warn};
 
 use crate::ipc::LocalStream;
 use crate::protocol::{
-    self, AttachScrollDirection, AttachScrollSource, ClientInputEvent, ClientKeybindings,
-    ClientLaunchMode, ClientMessage, RenderEncoding, ServerMessage, MAX_CLIPBOARD_IMAGE_PAYLOAD,
-    MAX_FRAME_SIZE, MAX_GRAPHICS_FRAME_SIZE, PROTOCOL_VERSION,
+    self, AttachScrollDirection, AttachScrollSource, CapabilityEntry, CapabilitySet,
+    ClientInputEvent, ClientKeybindings, ClientLaunchMode, ClientMessage, RenderEncoding,
+    ServerMessage, MAX_CLIPBOARD_IMAGE_PAYLOAD, MAX_FRAME_SIZE, MAX_GRAPHICS_FRAME_SIZE,
+    PROTOCOL_VERSION,
 };
+
+/// Capabilities this server can actually serve.
+///
+/// Deliberately empty of media entries for now: F0 builds the negotiation, not
+/// the media path, and announcing something the server cannot deliver is the
+/// one failure this whole mechanism exists to prevent. Each later phase adds
+/// its name here once the code behind it works.
+fn server_capabilities() -> CapabilitySet {
+    CapabilitySet::from_entries(Vec::new())
+}
 
 /// Minimum accepted attached client size.
 ///
@@ -264,6 +275,8 @@ impl ClientWriterQueue {
         }
     }
 
+    /// Drains in strict priority order: control first, then ordered renders,
+    /// then the newest render. TP-CLIENT-WRITE-PRIO-01
     fn recv(&self) -> Option<ClientWriteItem> {
         let mut state = self.lock_state();
         loop {
@@ -318,6 +331,11 @@ pub(crate) enum ServerEvent {
         direct_graphics: bool,
         /// Client can report sub-cell (DECSET 1016) mouse positions.
         pixel_mouse: bool,
+        /// Capabilities the handshake accepted for this connection.
+        ///
+        /// Exactly what the client was told in `Welcome.accepted`: the session
+        /// must not believe it may use more than the client agreed to.
+        capabilities: Vec<CapabilityEntry>,
         writer: ClientWriter,
     },
     /// A client sent an input message.
@@ -519,10 +537,32 @@ fn set_client_recv_timeout(
 /// Reads the `Hello` message, validates the version, sends `Welcome`,
 /// and then enters a read loop forwarding messages to the server event channel.
 pub(crate) fn handle_client_handshake(
+    stream: LocalStream,
+    client_id: u64,
+    server_event_tx: &mpsc::Sender<ServerEvent>,
+    should_quit: &Arc<AtomicBool>,
+) -> io::Result<()> {
+    handle_client_handshake_offering(
+        stream,
+        client_id,
+        server_event_tx,
+        should_quit,
+        &server_capabilities(),
+    )
+}
+
+/// The handshake with the server's capability set passed in.
+///
+/// Split out so the negotiation can be exercised over the real path with a
+/// non-empty offer: F0 deliberately ships an empty one, and a test that could
+/// only ever compare two empty lists would not notice the accepted set failing
+/// to reach the session at all.
+fn handle_client_handshake_offering(
     mut stream: LocalStream,
     client_id: u64,
     server_event_tx: &mpsc::Sender<ServerEvent>,
     should_quit: &Arc<AtomicBool>,
+    offered: &CapabilitySet,
 ) -> io::Result<()> {
     if should_quit.load(Ordering::Acquire) {
         return Ok(());
@@ -566,6 +606,7 @@ pub(crate) fn handle_client_handshake(
         direct_attach_requested,
         direct_graphics,
         pixel_mouse,
+        accepted_capabilities,
     ) = match hello {
         ClientMessage::Hello {
             version,
@@ -577,6 +618,7 @@ pub(crate) fn handle_client_handshake(
             keybindings,
             launch_mode,
             pixel_mouse,
+            capabilities,
         } => {
             // Version check.
             match protocol::check_client_version(version) {
@@ -587,6 +629,7 @@ pub(crate) fn handle_client_handshake(
                         version: PROTOCOL_VERSION,
                         encoding: RenderEncoding::SemanticFrame,
                         error: Some(reason),
+                        accepted: Vec::new(),
                     };
                     let _ = protocol::write_message(&mut stream, &welcome);
                     return Ok(());
@@ -600,11 +643,18 @@ pub(crate) fn handle_client_handshake(
                         version: PROTOCOL_VERSION,
                         encoding: RenderEncoding::SemanticFrame,
                         error: Some(error),
+                        accepted: Vec::new(),
                     };
                     let _ = protocol::write_message(&mut stream, &welcome);
                     return Ok(());
                 }
             };
+
+            // Only what both sides named survives. Reflecting the client's
+            // announcement back here would promise capabilities this server has
+            // no code for, and nothing downstream would catch it.
+            // TP-MEDIA-CAP-01, TP-MEDIA-CAP-03
+            let accepted = CapabilitySet::from_entries(capabilities).intersect(offered);
 
             // Clamp size.
             let (clamped_cols, clamped_rows) = clamp_terminal_size(cols, rows);
@@ -618,6 +668,7 @@ pub(crate) fn handle_client_handshake(
                 launch_mode == ClientLaunchMode::TerminalAttach,
                 launch_mode == ClientLaunchMode::AppDirectGraphics,
                 pixel_mouse,
+                accepted,
             )
         }
         _ => {
@@ -627,6 +678,7 @@ pub(crate) fn handle_client_handshake(
                 version: PROTOCOL_VERSION,
                 encoding: RenderEncoding::SemanticFrame,
                 error: Some("expected Hello as first message".to_owned()),
+                accepted: Vec::new(),
             };
             let _ = protocol::write_message(&mut stream, &welcome);
             return Ok(());
@@ -642,6 +694,7 @@ pub(crate) fn handle_client_handshake(
         version: PROTOCOL_VERSION,
         encoding: render_encoding,
         error: None,
+        accepted: accepted_capabilities.entries().to_vec(),
     };
     protocol::write_message(&mut stream, &welcome).map_err(|e| io::Error::other(e.to_string()))?;
 
@@ -683,6 +736,7 @@ pub(crate) fn handle_client_handshake(
         direct_attach_requested,
         direct_graphics,
         pixel_mouse,
+        capabilities: accepted_capabilities.into_entries(),
         writer,
     };
     if let Err(err) = server_event_tx.blocking_send(connected) {
@@ -995,6 +1049,7 @@ fn client_read_loop(
 mod tests {
     use super::*;
     use crate::app::test_wait::LoadAwareDeadline;
+    use crate::protocol::capability;
     use interprocess::local_socket::traits::Listener as _;
     use std::path::PathBuf;
 
@@ -1320,6 +1375,190 @@ new_tab = "ctrl+notakey"
             .any(|binding| binding.label == "prefix+n"));
     }
 
+    /// Drives one handshake with the given announcement and returns the
+    /// `Welcome` the server sent plus the `ClientConnected` event it raised.
+    fn handshake_with_capabilities(
+        label: &str,
+        announced: Vec<CapabilityEntry>,
+        offered: CapabilitySet,
+    ) -> (ServerMessage, ServerEvent) {
+        let (mut client_stream, server_stream, _path) = local_stream_pair(label);
+        let (server_event_tx, mut server_event_rx) = mpsc::channel(4);
+        let should_quit = Arc::new(AtomicBool::new(false));
+        let handshake_quit = should_quit.clone();
+        let handle = std::thread::spawn(move || {
+            handle_client_handshake_offering(
+                server_stream,
+                7,
+                &server_event_tx,
+                &handshake_quit,
+                &offered,
+            )
+        });
+
+        protocol::write_message(
+            &mut client_stream,
+            &ClientMessage::Hello {
+                version: PROTOCOL_VERSION,
+                cols: 80,
+                rows: 24,
+                cell_width_px: 8,
+                cell_height_px: 16,
+                requested_encoding: RenderEncoding::SemanticFrame,
+                keybindings: ClientKeybindings::Server,
+                launch_mode: ClientLaunchMode::App,
+                pixel_mouse: false,
+                capabilities: announced,
+            },
+        )
+        .expect("write hello");
+
+        let welcome: ServerMessage =
+            protocol::read_message(&mut client_stream, MAX_FRAME_SIZE).expect("read welcome");
+        let event = server_event_rx
+            .blocking_recv()
+            .expect("client connected event");
+
+        drop(client_stream);
+        should_quit.store(true, Ordering::Release);
+        handle
+            .join()
+            .expect("handshake thread join")
+            .expect("handshake thread result");
+
+        (welcome, event)
+    }
+
+    fn welcome_accepted(welcome: &ServerMessage) -> CapabilitySet {
+        match welcome {
+            ServerMessage::Welcome { accepted, .. } => {
+                CapabilitySet::from_entries(accepted.clone())
+            }
+            other => panic!("expected Welcome, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_handshake_accepts_only_capabilities_both_sides_support() {
+        // The silent failure this pins: reflecting the client's announcement
+        // back instead of intersecting it. The connection would look healthy,
+        // every existing test would stay green, and the server would have
+        // promised something it cannot do.
+        // The server here offers one real name; the client also asks for one the
+        // server has never heard of.
+        let offered =
+            CapabilitySet::from_entries(vec![CapabilityEntry::flag(capability::MEDIA_STREAMS)]);
+        let (welcome, _event) = handshake_with_capabilities(
+            "client-handshake-caps-intersect",
+            vec![
+                CapabilityEntry::flag(capability::MEDIA_STREAMS),
+                CapabilityEntry::flag("client.invented.this.one"),
+            ],
+            offered.clone(),
+        );
+
+        let accepted = welcome_accepted(&welcome);
+        assert!(
+            !accepted.has("client.invented.this.one"),
+            "the server must not accept a capability it does not implement"
+        );
+        assert!(
+            accepted.has(capability::MEDIA_STREAMS),
+            "a name both sides offered must survive"
+        );
+        for entry in accepted.entries() {
+            assert!(
+                offered.has(&entry.name),
+                "accepted {} which is not in the server's own set",
+                entry.name
+            );
+        }
+    }
+
+    #[test]
+    fn a_client_announcing_only_unknown_capabilities_still_connects() {
+        let (welcome, _event) = handshake_with_capabilities(
+            "client-handshake-caps-unknown",
+            vec![
+                CapabilityEntry::flag("totally.unknown.name"),
+                CapabilityEntry::with_values("another.unknown", ["v1"]),
+            ],
+            CapabilitySet::from_entries(vec![CapabilityEntry::flag(capability::MEDIA_STREAMS)]),
+        );
+
+        match &welcome {
+            ServerMessage::Welcome { error, .. } => {
+                assert_eq!(*error, None, "unknown names must not fail the handshake")
+            }
+            other => panic!("expected Welcome, got {other:?}"),
+        }
+        assert!(welcome_accepted(&welcome).entries().is_empty());
+    }
+
+    #[test]
+    fn accepted_capabilities_travel_with_the_connected_event() {
+        // Without this the client believes a capability was granted while the
+        // session has no memory of it. Nothing fails at handshake time; it
+        // fails later, in whichever feature first tries to use it.
+        // Driven with an injected offer rather than the shipped one: F0 offers
+        // nothing yet, and two empty lists would compare equal even if the
+        // accepted set never reached the session at all.
+        let offered = CapabilitySet::from_entries(vec![
+            CapabilityEntry::flag(capability::MEDIA_STREAMS),
+            CapabilityEntry::with_values(capability::AUDIO_SINK, ["opus"]),
+        ]);
+        let announced: Vec<CapabilityEntry> = offered.entries().to_vec();
+
+        let (welcome, event) =
+            handshake_with_capabilities("client-handshake-caps-event", announced, offered);
+        let accepted = welcome_accepted(&welcome);
+
+        match event {
+            ServerEvent::ClientConnected {
+                capabilities,
+                writer,
+                ..
+            } => {
+                assert_eq!(
+                    CapabilitySet::from_entries(capabilities),
+                    accepted,
+                    "the session must carry exactly what the client was told"
+                );
+                drop(writer);
+            }
+            other => panic!("expected ClientConnected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_empty_announcement_is_accepted_as_the_pre_negotiation_case() {
+        let (welcome, event) = handshake_with_capabilities(
+            "client-handshake-caps-empty",
+            Vec::new(),
+            server_capabilities(),
+        );
+
+        match &welcome {
+            ServerMessage::Welcome { error, .. } => assert_eq!(*error, None),
+            other => panic!("expected Welcome, got {other:?}"),
+        }
+        assert!(welcome_accepted(&welcome).entries().is_empty());
+        match event {
+            ServerEvent::ClientConnected {
+                capabilities,
+                writer,
+                ..
+            } => {
+                assert!(
+                    capabilities.is_empty(),
+                    "an empty announcement must stay empty end to end"
+                );
+                drop(writer);
+            }
+            other => panic!("expected ClientConnected, got {other:?}"),
+        }
+    }
+
     #[test]
     fn handshake_negotiates_terminal_ansi_encoding() {
         let (mut client_stream, server_stream, _path) = local_stream_pair("client-handshake-ansi");
@@ -1342,6 +1581,7 @@ new_tab = "ctrl+notakey"
                 keybindings: ClientKeybindings::Server,
                 launch_mode: ClientLaunchMode::App,
                 pixel_mouse: true,
+                capabilities: Vec::new(),
             },
         )
         .expect("write hello");
@@ -1353,7 +1593,9 @@ new_tab = "ctrl+notakey"
                 version,
                 encoding,
                 error,
+                accepted,
             } => {
+                assert!(accepted.is_empty());
                 assert_eq!(version, PROTOCOL_VERSION);
                 assert_eq!(encoding, RenderEncoding::TerminalAnsi);
                 assert_eq!(error, None);
@@ -1373,6 +1615,7 @@ new_tab = "ctrl+notakey"
                 cell_height_px,
                 render_encoding,
                 keybindings,
+                capabilities: _,
                 direct_attach_requested,
                 direct_graphics,
                 pixel_mouse,
@@ -1424,6 +1667,7 @@ new_tab = "ctrl+notakey"
                 keybindings: ClientKeybindings::Server,
                 launch_mode: ClientLaunchMode::TerminalAttach,
                 pixel_mouse: false,
+                capabilities: Vec::new(),
             },
         )
         .expect("write hello");
@@ -1435,7 +1679,9 @@ new_tab = "ctrl+notakey"
                 version,
                 encoding,
                 error,
+                accepted,
             } => {
+                assert!(accepted.is_empty());
                 assert_eq!(version, PROTOCOL_VERSION);
                 assert_eq!(encoding, RenderEncoding::TerminalAnsi);
                 assert_eq!(error, None);

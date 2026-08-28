@@ -3248,6 +3248,7 @@ impl HeadlessServer {
                 direct_attach_requested,
                 direct_graphics,
                 pixel_mouse,
+                capabilities,
             } => {
                 if self.handoff_in_progress {
                     if let Ok(message) =
@@ -3293,6 +3294,8 @@ impl HeadlessServer {
                 // still carries pixel mouse reports, and tying them together degraded every
                 // remote session to cell-quantised clicks (PIX-1).
                 connection.pixel_mouse = pixel_mouse;
+                connection.capabilities =
+                    crate::protocol::CapabilitySet::from_entries(capabilities);
                 self.clients.insert(client_id, connection);
                 if !direct_attach_requested {
                     self.foreground_client_id = Some(client_id);
@@ -7160,6 +7163,7 @@ mod tests {
             direct_graphics: true,
             pixel_mouse: true,
             writer: writer_a,
+            capabilities: Vec::new(),
         }));
         assert!(server.clients[&1].direct_graphics);
         assert!(server.clients[&1].pixel_mouse);
@@ -7178,6 +7182,7 @@ mod tests {
             direct_graphics: false,
             pixel_mouse: false,
             writer: writer_b,
+            capabilities: Vec::new(),
         }));
         assert!(!server.direct_graphics_available());
     }
@@ -7209,6 +7214,7 @@ new_tab = "prefix+t"
             direct_graphics: false,
             pixel_mouse: false,
             writer: writer_a,
+            capabilities: Vec::new(),
         }));
         assert_eq!(
             server.app.state.prefix_code,
@@ -7235,6 +7241,7 @@ new_tab = "prefix+t"
             direct_graphics: false,
             pixel_mouse: false,
             writer: writer_b,
+            capabilities: Vec::new(),
         }));
         assert_eq!(
             server.app.state.prefix_code,
@@ -7277,6 +7284,7 @@ new_tab = "prefix+t"
             direct_graphics: false,
             pixel_mouse: false,
             writer: writer_a,
+            capabilities: Vec::new(),
         }));
         assert_eq!(server.app.state.config_diagnostic, without_keybindings);
 
@@ -7292,6 +7300,7 @@ new_tab = "prefix+t"
             direct_graphics: false,
             pixel_mouse: false,
             writer: writer_b,
+            capabilities: Vec::new(),
         }));
         assert_eq!(
             server.app.state.config_diagnostic,
@@ -7337,6 +7346,7 @@ next_tab = ""
             direct_graphics: false,
             pixel_mouse: false,
             writer,
+            capabilities: Vec::new(),
         }));
         server.app.state.mode = crate::app::Mode::Settings;
         server.app.state.settings.section = crate::app::state::SettingsSection::Toast;
@@ -7414,6 +7424,7 @@ next_tab = ""
             direct_graphics: false,
             pixel_mouse: false,
             writer: writer_a,
+            capabilities: Vec::new(),
         }));
         server.app.state.mode = crate::app::Mode::Settings;
         server.app.state.settings.section = crate::app::state::SettingsSection::Toast;
@@ -7436,6 +7447,7 @@ next_tab = ""
             direct_graphics: false,
             pixel_mouse: false,
             writer: writer_b,
+            capabilities: Vec::new(),
         }));
         assert_eq!(
             server.app.state.prefix_code,
@@ -7472,6 +7484,7 @@ next_tab = ""
             direct_graphics: false,
             pixel_mouse: false,
             writer,
+            capabilities: Vec::new(),
         }));
         assert!(server.clients.contains_key(&7));
 
@@ -7539,6 +7552,7 @@ next_tab = ""
             direct_graphics: false,
             pixel_mouse: false,
             writer,
+            capabilities: Vec::new(),
         }));
         control_rx
     }
@@ -7954,6 +7968,7 @@ next_tab = ""
             direct_graphics: false,
             pixel_mouse: false,
             writer,
+            capabilities: Vec::new(),
         }));
 
         assert!(server.has_app_client());
@@ -7990,6 +8005,7 @@ next_tab = ""
             direct_graphics: false,
             pixel_mouse: false,
             writer,
+            capabilities: Vec::new(),
         }));
 
         assert!(!server.has_app_client());
@@ -8025,6 +8041,7 @@ next_tab = ""
             direct_graphics: false,
             pixel_mouse: false,
             writer,
+            capabilities: Vec::new(),
         }));
         assert!(server.has_app_client());
 
@@ -8127,6 +8144,7 @@ next_tab = ""
             direct_graphics: false,
             pixel_mouse: false,
             writer,
+            capabilities: Vec::new(),
         }));
         assert!(
             server.handle_server_event(ServerEvent::ClientAttachTerminal {
@@ -12415,6 +12433,7 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
             direct_graphics: false,
             pixel_mouse: false,
             writer,
+            capabilities: Vec::new(),
         }));
         assert!(
             server.handle_server_event(ServerEvent::ClientAttachTerminal {

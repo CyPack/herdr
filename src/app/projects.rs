@@ -992,7 +992,10 @@ mod tests {
         assert_eq!(ws.tabs[0].chat_title.as_deref(), Some("my-project"));
         assert!(ws.tabs[0].custom_name.is_none());
         assert_eq!(ws.tab_display_name(0).as_deref(), Some("my-project"));
-        assert!(!ws.tabs[0].is_auto_named(), "a derived-named tab is not unnamed");
+        assert!(
+            !ws.tabs[0].is_auto_named(),
+            "a derived-named tab is not unnamed"
+        );
     }
 
     #[test]
