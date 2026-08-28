@@ -5,6 +5,103 @@ use super::{
     SAMPLE_RATE_HZ,
 };
 
+/// Encodes one 20 ms stereo frame at a time.
+///
+/// Held by value rather than shared: Opus encoders carry per-stream state, so
+/// two streams sharing one encoder would interleave their prediction history
+/// and produce audio that decodes without error and sounds wrong.
+pub struct AudioEncoder {
+    inner: opus_rs::OpusEncoder,
+}
+
+impl AudioEncoder {
+    /// Builds an encoder for the fixed stream shape at `bitrate_bps`.
+    pub fn new(bitrate_bps: i32) -> Result<Self, MediaError> {
+        if !(MIN_BITRATE_BPS..=MAX_BITRATE_BPS).contains(&bitrate_bps) {
+            return Err(MediaError::Bitrate { asked: bitrate_bps });
+        }
+        let mut inner = opus_rs::OpusEncoder::new(
+            SAMPLE_RATE_HZ as i32,
+            CHANNELS as usize,
+            // Audio, not Voip: a pane may be playing music as easily as
+            // speech, and the voice profile spends its bits on intelligibility
+            // in a way that is audible on anything else.
+            opus_rs::Application::Audio,
+        )
+        .map_err(|err| MediaError::Codec(err.to_string()))?;
+        inner.bitrate_bps = bitrate_bps;
+        // Constant bitrate, and the reason is the shared channel rather than
+        // audio quality. Measured with ffmpeg 8.1.2 at 64 kbps, 48 kHz stereo,
+        // 20 ms frames: VBR spends 5850 B/s on pink noise but 10643 B/s on a
+        // pure tone — above its own nominal rate — while CBR holds 8109 B/s on
+        // both. A lane that shares a link with keystrokes needs a budget that
+        // is knowable in advance, not one that doubles when the content
+        // happens to be tonal.
+        inner.use_cbr = true;
+        Ok(Self { inner })
+    }
+
+    /// Encodes exactly one frame of interleaved samples into `out`.
+    ///
+    /// Returns how many bytes of `out` the packet occupies.
+    pub fn encode(&mut self, pcm: &[f32], out: &mut [u8]) -> Result<usize, MediaError> {
+        let expected = FRAME_SAMPLES * CHANNELS as usize;
+        if pcm.len() != expected {
+            return Err(MediaError::FrameSize {
+                expected,
+                got: pcm.len(),
+            });
+        }
+        if out.len() < MIN_PACKET_BUFFER {
+            return Err(MediaError::OutputTooSmall {
+                needed: MIN_PACKET_BUFFER,
+                got: out.len(),
+            });
+        }
+        self.inner
+            .encode(pcm, FRAME_SAMPLES, out)
+            .map_err(|err| MediaError::Codec(err.to_string()))
+    }
+}
+
+/// Decodes one packet at a time back into interleaved samples.
+pub struct AudioDecoder {
+    inner: opus_rs::OpusDecoder,
+}
+
+impl AudioDecoder {
+    pub fn new() -> Result<Self, MediaError> {
+        let inner = opus_rs::OpusDecoder::new(SAMPLE_RATE_HZ as i32, CHANNELS as usize)
+            .map_err(|err| MediaError::Codec(err.to_string()))?;
+        Ok(Self { inner })
+    }
+
+    /// Decodes one packet into `pcm`, returning samples **per channel**.
+    ///
+    /// The count is per channel rather than total because that is what the
+    /// playout clock counts in: a frame is 960 samples at 48 kHz whether it is
+    /// mono or stereo, and converting in two places is how the two drift.
+    pub fn decode(&mut self, packet: &[u8], pcm: &mut [f32]) -> Result<usize, MediaError> {
+        let expected = FRAME_SAMPLES * CHANNELS as usize;
+        if pcm.len() < expected {
+            return Err(MediaError::OutputTooSmall {
+                needed: expected,
+                got: pcm.len(),
+            });
+        }
+        self.inner
+            .decode(packet, FRAME_SAMPLES, pcm)
+            .map_err(|err| MediaError::Codec(err.to_string()))
+    }
+}
+
+/// Smallest output buffer the encoder will write into.
+///
+/// The Opus RFC's own recommendation for a packet buffer. Refusing anything
+/// smaller here is what turns a truncated packet — which decodes into noise
+/// rather than into less audio — into an error the caller can see.
+const MIN_PACKET_BUFFER: usize = 4000;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -100,12 +197,19 @@ mod tests {
     // TP-MEDIA-BITRATE-01
     #[test]
     fn a_second_of_audio_at_the_default_bitrate_costs_what_the_design_measured() {
-        // The canonical design measured Opus 64 kbps at 0.34 MB per minute
-        // with ffmpeg — 5.7 KB per second. If this crate produces a materially
-        // different size, then either the bitrate is not being applied or the
-        // frame size is wrong, and both are configuration mistakes that no
-        // roundtrip test can see: the audio still decodes perfectly, it just
-        // does not fit the channel it was sized for.
+        // Anchored to an independent measurement rather than to arithmetic:
+        // ffmpeg 8.1.2 encoding the same shape (64 kbps, 48 kHz stereo, 20 ms
+        // frames, CBR) with libopus produces 8109 B/s, against the nominal
+        // 8000. This test asserts our crate lands in the same place.
+        //
+        // The canonical design's 0.34 MB/min figure is VBR — reproduced here
+        // at 0.335 MB/min on pink noise — and VBR on a pure tone runs to
+        // 0.609 MB/min, above its own nominal rate. That is why the encoder
+        // asks for CBR and why this assertion can be tight at all.
+        //
+        // A wrong bitrate or a wrong frame size is invisible to a roundtrip
+        // test: the audio decodes perfectly, it just no longer fits the
+        // channel it was sized for.
         let mut encoder = AudioEncoder::new(DEFAULT_BITRATE_BPS).expect("encoder");
         let pcm = tone_frame();
         let mut packet = vec![0u8; 4000];
@@ -117,8 +221,8 @@ mod tests {
         }
 
         let expected = DEFAULT_BITRATE_BPS as usize / 8; // 8000 bytes
-        let low = expected * 70 / 100;
-        let high = expected * 130 / 100;
+        let low = expected * 85 / 100;
+        let high = expected * 115 / 100;
         assert!(
             (low..=high).contains(&total),
             "a second of 64 kbps audio came to {total} bytes, outside {low}..={high}"
