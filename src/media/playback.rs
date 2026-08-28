@@ -20,6 +20,427 @@ use super::playout::{Chunk, Playout, PlayoutBuffer};
 use super::sink::{AudioSink, SinkError};
 use super::{now_us, MediaError, CHANNELS, FRAME_MS, FRAME_SAMPLES};
 
+/// Chunks the client tells the server it has room for when its buffer is
+/// empty. 32 frames of 20 ms is 640 ms — more than the largest playout delay,
+/// so a healthy link is never throttled by credit, and small enough that a
+/// stalled client cannot pull a second of audio into a buffer it will drop.
+pub const CREDIT_ROOM: u16 = 32;
+
+/// Most consecutive missing chunks replaced with silence.
+///
+/// One or two lost frames concealed with silence is a quiet moment; twenty
+/// would be a second of nothing while the buffer already holds newer audio.
+/// Past this the stream simply resumes from what arrived.
+const MAX_CONCEAL: u64 = 5;
+
+/// How far past its due time a played frame may fall behind before the gap
+/// counts as an underrun. Two frames: one is the ordinary scheduling slack of
+/// a 5 ms tick, the second is the actual silence.
+const UNDERRUN_SLACK_US: i64 = 2 * FRAME_MS as i64 * 1000;
+
+/// What one `tick` did.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TickReport {
+    pub played: u32,
+    pub concealed: u32,
+    pub underrun: bool,
+    pub sink_closed: bool,
+}
+
+/// One open audio stream and the sink it plays into.
+pub struct AudioPlayback {
+    stream_id: u32,
+    decoder: AudioDecoder,
+    buffer: PlayoutBuffer,
+    sink: Box<dyn AudioSink>,
+    pcm: Vec<f32>,
+    silence: Vec<f32>,
+    played: u64,
+    concealed: u64,
+    decode_errors: u64,
+    underruns: u64,
+    /// Set when the buffer was found empty mid-stream; cleared by the next
+    /// played frame, so one gap counts once however many ticks it spans.
+    starved: bool,
+    last_played_pts: Option<u64>,
+    sink_closed: bool,
+}
+
+impl AudioPlayback {
+    /// Opens playback for `stream_id` into `sink`, starting at the server's
+    /// suggested delay.
+    pub fn open(
+        stream_id: u32,
+        target_latency_us: u32,
+        sink: Box<dyn AudioSink>,
+    ) -> Result<Self, MediaError> {
+        let frame = FRAME_SAMPLES * CHANNELS as usize;
+        Ok(Self {
+            stream_id,
+            decoder: AudioDecoder::new()?,
+            buffer: PlayoutBuffer::new(target_latency_us),
+            sink,
+            pcm: vec![0.0; frame],
+            silence: vec![0.0; frame],
+            played: 0,
+            concealed: 0,
+            decode_errors: 0,
+            underruns: 0,
+            starved: false,
+            last_played_pts: None,
+            sink_closed: false,
+        })
+    }
+
+    pub fn stream_id(&self) -> u32 {
+        self.stream_id
+    }
+
+    /// Accepts one chunk that arrived at `now_server_us`. Returns whether the
+    /// buffer kept it.
+    pub fn push(&mut self, seq: u64, pts_us: u64, data: Vec<u8>, now_server_us: i64) -> bool {
+        if self.sink_closed {
+            return false;
+        }
+        self.buffer.push(Chunk { seq, pts_us, data }, now_server_us)
+    }
+
+    /// Plays everything that is due at `now_server_us`.
+    pub fn tick(&mut self, now_server_us: i64) -> TickReport {
+        let mut report = TickReport::default();
+        if self.sink_closed {
+            report.sink_closed = true;
+            return report;
+        }
+
+        loop {
+            match self.buffer.take(now_server_us) {
+                Playout::Play(chunk) => {
+                    let frame = match self.decoder.decode(&chunk.data, &mut self.pcm) {
+                        Ok(_) => &self.pcm,
+                        Err(_) => {
+                            // A packet that does not decode is concealed like
+                            // a packet that never arrived: the time it stood
+                            // for still has to pass, or everything after it
+                            // plays early.
+                            self.decode_errors += 1;
+                            self.concealed += 1;
+                            report.concealed += 1;
+                            &self.silence
+                        }
+                    };
+                    if let Err(err) = self.sink.write_frame(frame) {
+                        return self.sink_failed(err, report);
+                    }
+                    self.played += 1;
+                    report.played += 1;
+                    self.starved = false;
+                    self.last_played_pts = Some(chunk.pts_us);
+                }
+                Playout::Lost { missing } => {
+                    let conceal = missing.min(MAX_CONCEAL);
+                    for _ in 0..conceal {
+                        if let Err(err) = self.sink.write_frame(&self.silence) {
+                            return self.sink_failed(err, report);
+                        }
+                    }
+                    self.concealed += conceal;
+                    report.concealed += conceal as u32;
+                }
+                Playout::Waiting => break,
+            }
+        }
+
+        // Nothing due. That is fine before the first frame and fine while the
+        // next one is merely early; it is an underrun when a frame has played,
+        // the buffer is empty, and the time its successor was due has passed.
+        if !self.starved && self.buffer.held() == 0 {
+            if let Some(last) = self.last_played_pts {
+                let next_due =
+                    last as i64 + FRAME_MS as i64 * 1000 + self.buffer.target_delay_us() as i64;
+                if now_server_us > next_due + UNDERRUN_SLACK_US {
+                    self.starved = true;
+                    self.underruns += 1;
+                    report.underrun = true;
+                }
+            }
+        }
+        report
+    }
+
+    fn sink_failed(&mut self, err: SinkError, mut report: TickReport) -> TickReport {
+        tracing::warn!(stream_id = self.stream_id, %err, "audio sink failed; stream stops");
+        self.sink_closed = true;
+        report.sink_closed = true;
+        report
+    }
+
+    /// Chunks the server may still send. Zero once the sink is gone, which is
+    /// the only way this protocol has to say "stop".
+    pub fn credit(&self) -> u16 {
+        if self.sink_closed {
+            return 0;
+        }
+        CREDIT_ROOM.saturating_sub(self.buffer.held().min(u16::MAX as usize) as u16)
+    }
+
+    pub fn close(&mut self) {
+        let _ = self.sink.close();
+        self.sink_closed = true;
+    }
+
+    pub fn played(&self) -> u64 {
+        self.played
+    }
+    pub fn concealed(&self) -> u64 {
+        self.concealed
+    }
+    pub fn decode_errors(&self) -> u64 {
+        self.decode_errors
+    }
+    pub fn underruns(&self) -> u64 {
+        self.underruns
+    }
+    pub fn lost(&self) -> u64 {
+        self.buffer.lost()
+    }
+    pub fn dropped_late(&self) -> u64 {
+        self.buffer.dropped_late()
+    }
+    pub fn target_delay_us(&self) -> u32 {
+        self.buffer.target_delay_us()
+    }
+    pub fn jitter_us(&self) -> f64 {
+        self.buffer.jitter_us()
+    }
+    pub fn sink_closed(&self) -> bool {
+        self.sink_closed
+    }
+}
+
+/// What the main loop can tell the playout thread.
+#[derive(Debug)]
+pub enum PlaybackCommand {
+    Open {
+        stream_id: u32,
+        target_latency_us: u32,
+    },
+    Chunk {
+        stream_id: u32,
+        seq: u64,
+        pts_us: u64,
+        data: Vec<u8>,
+    },
+    Close {
+        stream_id: u32,
+    },
+    /// Microseconds to add to the client clock to get the server's.
+    ClockOffset(i64),
+    Shutdown,
+}
+
+/// Counters the playout thread publishes and the main loop reads.
+#[derive(Debug, Default)]
+pub struct PlaybackStats {
+    pub credit: AtomicU16,
+    pub played: AtomicU64,
+    pub concealed: AtomicU64,
+    pub underruns: AtomicU64,
+    pub lost: AtomicU64,
+    pub target_delay_us: AtomicU32,
+    pub sink_closed: AtomicBool,
+    pub open_stream: AtomicU32,
+    pub sink_name: std::sync::Mutex<String>,
+}
+
+impl PlaybackStats {
+    fn publish(&self, playback: Option<&AudioPlayback>) {
+        match playback {
+            Some(p) => {
+                self.credit.store(p.credit(), Ordering::Relaxed);
+                self.played.store(p.played(), Ordering::Relaxed);
+                self.concealed.store(p.concealed(), Ordering::Relaxed);
+                self.underruns.store(p.underruns(), Ordering::Relaxed);
+                self.lost.store(p.lost(), Ordering::Relaxed);
+                self.target_delay_us
+                    .store(p.target_delay_us(), Ordering::Relaxed);
+                self.sink_closed.store(p.sink_closed(), Ordering::Relaxed);
+                self.open_stream.store(p.stream_id(), Ordering::Relaxed);
+            }
+            None => {
+                self.credit.store(0, Ordering::Relaxed);
+                self.open_stream.store(0, Ordering::Relaxed);
+            }
+        }
+    }
+}
+
+/// A factory for the sink, run on the playout thread.
+///
+/// The sink is built where it is used rather than handed across threads, so a
+/// native audio stream that is not `Send` — and on some platforms it is not —
+/// never has to be.
+pub type SinkFactory = Box<dyn FnOnce() -> Result<Box<dyn AudioSink>, SinkError> + Send>;
+
+/// How often the thread looks for due frames while a stream is open.
+///
+/// A quarter of a frame: fine enough that scheduling slack stays well under
+/// the underrun threshold, coarse enough that an open stream costs a few
+/// hundred wakeups a second and nothing more.
+const TICK: Duration = Duration::from_millis(5);
+
+/// Handle to the playout thread.
+pub struct PlaybackThread {
+    tx: mpsc::Sender<PlaybackCommand>,
+    stats: Arc<PlaybackStats>,
+    join: Option<JoinHandle<()>>,
+}
+
+impl PlaybackThread {
+    /// Starts the thread. The sink is not opened until the first `Open`, so a
+    /// client that never receives a stream never touches an audio device.
+    pub fn spawn(open_sink: SinkFactory) -> Self {
+        let (tx, rx) = mpsc::channel();
+        let stats = Arc::new(PlaybackStats::default());
+        let thread_stats = Arc::clone(&stats);
+        let join = std::thread::Builder::new()
+            .name("herdr-audio-playout".into())
+            .spawn(move || run(rx, thread_stats, open_sink))
+            .ok();
+        Self { tx, stats, join }
+    }
+
+    pub fn send(&self, command: PlaybackCommand) {
+        let _ = self.tx.send(command);
+    }
+
+    pub fn stats(&self) -> &Arc<PlaybackStats> {
+        &self.stats
+    }
+
+    pub fn shutdown(mut self) {
+        let _ = self.tx.send(PlaybackCommand::Shutdown);
+        if let Some(join) = self.join.take() {
+            let _ = join.join();
+        }
+    }
+}
+
+fn run(rx: mpsc::Receiver<PlaybackCommand>, stats: Arc<PlaybackStats>, open_sink: SinkFactory) {
+    let mut open_sink = Some(open_sink);
+    let mut sink: Option<Box<dyn AudioSink>> = None;
+    let mut playback: Option<AudioPlayback> = None;
+    let mut offset_us: i64 = 0;
+    let mut pending: VecDeque<PlaybackCommand> = VecDeque::new();
+
+    loop {
+        // Block outright when nothing is open: an idle client must not wake.
+        let command = if playback.is_some() {
+            match rx.recv_timeout(TICK) {
+                Ok(command) => Some(command),
+                Err(RecvTimeoutError::Timeout) => None,
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
+        } else {
+            match rx.recv() {
+                Ok(command) => Some(command),
+                Err(_) => break,
+            }
+        };
+
+        if let Some(command) = command {
+            pending.push_back(command);
+            while let Ok(more) = rx.try_recv() {
+                pending.push_back(more);
+            }
+        }
+
+        let now_server_us = now_us() as i64 + offset_us;
+        let mut shutdown = false;
+        while let Some(command) = pending.pop_front() {
+            match command {
+                PlaybackCommand::ClockOffset(offset) => offset_us = offset,
+                PlaybackCommand::Open {
+                    stream_id,
+                    target_latency_us,
+                } => {
+                    if let Some(mut old) = playback.take() {
+                        // One sink, one stream. A second open replaces the
+                        // first rather than mixing into it.
+                        old.close();
+                        sink = None;
+                    }
+                    if sink.is_none() {
+                        if let Some(factory) = open_sink.take() {
+                            match factory() {
+                                Ok(built) => {
+                                    if let Ok(mut name) = stats.sink_name.lock() {
+                                        *name = built.describe();
+                                    }
+                                    sink = Some(built);
+                                }
+                                Err(err) => {
+                                    tracing::warn!(%err, "no audio sink; stream declined");
+                                    stats.sink_closed.store(true, Ordering::Relaxed);
+                                }
+                            }
+                        }
+                    }
+                    if let Some(built) = sink.take() {
+                        match AudioPlayback::open(stream_id, target_latency_us, built) {
+                            Ok(p) => playback = Some(p),
+                            Err(err) => {
+                                tracing::warn!(%err, "audio decoder failed; stream declined");
+                                stats.sink_closed.store(true, Ordering::Relaxed);
+                            }
+                        }
+                    }
+                }
+                PlaybackCommand::Chunk {
+                    stream_id,
+                    seq,
+                    pts_us,
+                    data,
+                } => {
+                    if let Some(p) = playback.as_mut() {
+                        if p.stream_id() == stream_id {
+                            p.push(seq, pts_us, data, now_server_us);
+                        }
+                    }
+                }
+                PlaybackCommand::Close { stream_id } => {
+                    if playback
+                        .as_ref()
+                        .is_some_and(|p| p.stream_id() == stream_id)
+                    {
+                        if let Some(mut p) = playback.take() {
+                            p.close();
+                        }
+                    }
+                }
+                PlaybackCommand::Shutdown => shutdown = true,
+            }
+        }
+
+        if let Some(p) = playback.as_mut() {
+            let report = p.tick(now_server_us);
+            if report.sink_closed {
+                if let Some(mut dead) = playback.take() {
+                    dead.close();
+                }
+            }
+        }
+        stats.publish(playback.as_ref());
+
+        if shutdown {
+            if let Some(mut p) = playback.take() {
+                p.close();
+            }
+            break;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -99,20 +520,24 @@ mod tests {
         // Silence keeps the sink's own clock honest: the time the lost frame
         // stood for still has to pass, or everything after it plays early and
         // the stream drifts ahead of the picture by one frame per loss.
+        //
+        // Ticked at each frame's own moment, the way the thread does. One tick
+        // at the end would find seq 0 already past its frame and discard it
+        // (the expiry rule in the jitter behaviour) — that test would measure
+        // expiry, not concealment.
         let (mut p, frames) = playback();
         let pts0 = 1_000_000;
         p.push(0, pts0, packet(), pts0 as i64);
-        p.push(
-            2,
-            pts0 + 2 * FRAME_US,
-            packet(),
-            (pts0 + 2 * FRAME_US) as i64,
-        );
+        let pts2 = pts0 + 2 * FRAME_US;
+        p.push(2, pts2, packet(), pts2 as i64);
+        let delay = i64::from(p.target_delay_us());
 
-        let late = pts0 as i64 + 2 * FRAME_US as i64 + i64::from(p.target_delay_us()) + 1;
-        let report = p.tick(late);
+        let first = p.tick(pts0 as i64 + delay);
+        assert_eq!(first.played, 1);
+        assert_eq!(first.concealed, 0, "nothing is missing yet");
 
-        assert_eq!(report.played, 2);
+        let report = p.tick(pts2 as i64 + delay + 1);
+        assert_eq!(report.played, 1);
         assert_eq!(report.concealed, 1);
         assert_eq!(
             frames.load(Ordering::Relaxed),
@@ -133,9 +558,11 @@ mod tests {
         p.push(0, pts0, packet(), pts0 as i64);
         let far = pts0 + 20 * FRAME_US;
         p.push(20, far, packet(), far as i64);
+        let delay = i64::from(p.target_delay_us());
 
-        let report = p.tick(far as i64 + i64::from(p.target_delay_us()) + 1);
-        assert_eq!(report.played, 2);
+        assert_eq!(p.tick(pts0 as i64 + delay).played, 1);
+        let report = p.tick(far as i64 + delay + 1);
+        assert_eq!(report.played, 1);
         assert_eq!(report.concealed as u64, MAX_CONCEAL);
         assert_eq!(frames.load(Ordering::Relaxed), 2 + MAX_CONCEAL);
     }
