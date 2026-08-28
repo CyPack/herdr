@@ -161,31 +161,31 @@ test edilmezse F1'e taşınacak olanlar. Test planı bu ikisine ayrı test nokta
 
 | # | Görev | Bağımlı | Test noktası | Statü |
 |---|---|---|---|---|
-| **T1** | `CapabilityEntry` + ad sabitleri (L1.a) | — | TP-1.1 | TODO |
+| **T1** | `CapabilityEntry` + ad sabitleri (L1.a) | — | TP-1.1 | ✅ DONE |
 | T1.1 | RED: TP-1.1 roundtrip testi | — | | |
 | T1.2 | GREEN: struct + `Serialize/Deserialize` | T1.1 | | |
-| **T2** | `CapabilitySet` okuma sözleşmesi (L1.b) | T1 | TP-1.2, 1.4, 1.5, 1.6 | TODO |
+| **T2** | `CapabilitySet` okuma sözleşmesi (L1.b) | T1 | TP-1.2, 1.4, 1.5, 1.6 | ✅ DONE |
 | T2.1 | RED: bilinmeyen-ad, çok-değer, tekrar-ad, kesişim testleri | T1 | | |
 | T2.2 | GREEN: `has` / `values_of` / `intersect` | T2.1 | | |
-| **T3** | `Hello.capabilities` + `Welcome.accepted` (L1.c/d) | T2 | TP-1.3 | TODO |
+| **T3** | `Hello.capabilities` + `Welcome.accepted` (L1.c/d) | T2 | TP-1.3 | ✅ DONE |
 | T3.1 | RED: şekil-kararlılığı testi (1 vs 3 giriş) | T2 | | |
 | T3.2 | GREEN: alanları ekle; **tüm literal sitelerini** güncelle (risk R1) | T3.1 | | |
-| **T4** | `PROTOCOL_VERSION` 21→22 + gerekçe (L1.e) | T3 | TP-2.5 | TODO |
+| **T4** | `PROTOCOL_VERSION` 21→22 + gerekçe (L1.e) | T3 | TP-2.5 | ✅ DONE |
 | T4.1 | Bump + "son medya bump'ı" yorumu (RA7 karşı-notu) | T3 | | |
 | T4.2 | `cargo check --all-targets` ile patlama yarıçapını al ve kapat (risk R2) | T4.1 | | |
-| **T5** | Sunucu el sıkışması (L2.a-c) | T4 | TP-2.1, 2.2, 2.3, 2.6 | TODO |
+| **T5** | Sunucu el sıkışması (L2.a-c) | T4 | TP-2.1, 2.2, 2.3, 2.6 | ✅ DONE |
 | T5.1 | RED: kesişim + bilinmeyen-ad + regresyon testleri | T4 | | |
 | T5.2 | GREEN: desen-eşleşmesi, `SERVER_CAPABILITIES`, kesişim, `Welcome` | T5.1 | | |
-| **T6** | `accepted`'ı oturuma taşı (L2.d) | T5 | TP-2.4 | TODO |
+| **T6** | `accepted`'ı oturuma taşı (L2.d) | T5 | TP-2.4 | ✅ DONE |
 | T6.1 | RED: `ClientConnected` yetenek taşıma testi | T5 | | |
 | T6.2 | GREEN: `ServerEvent` alanı + geçirme | T6.1 | | |
-| **T7** | İstemci tarafı (L3) | T6 | TP-3.1, 3.2 | TODO |
+| **T7** | İstemci tarafı (L3) | T6 | TP-3.1, 3.2 | ✅ DONE |
 | T7.1 | RED: istemci Hello ilanı + accepted saklama | T6 | | |
 | T7.2 | GREEN: istemci uygulaması | T7.1 | | |
-| **T8** | Davranış kaydı (L4) | T7 | TP-4.1, 4.2, 4.3 | TODO |
+| **T8** | Davranış kaydı (L4) | T7 | TP-4.1, 4.2, 4.3 | ✅ DONE |
 | T8.1 | TP-MEDIA-CAP-01/02 satırları + test adları | T7 | | |
 | T8.2 | TP-CLIENT-WRITE-PRIO-01 (mevcut davranışı kaydet) | — | | |
-| **T9** | Kapı + belge kapanışı | T8 | tüm regresyon | TODO |
+| **T9** | Kapı + belge kapanışı | T8 | tüm regresyon | ✅ DONE |
 | T9.1 | HP kutusunda `just check` | T8 | | |
 | T9.2 | `docs/patterns/remote-media-transport.md` F0 durumunu işaretle | T9.1 | | |
 | T9.3 | Makine kopyalarını senkronla (`~/.cartography/`) | T9.2 | | |
@@ -202,7 +202,32 @@ V = (yazılmamış test noktası) + (kırmızı test) + (kapsanmamış kabul kri
   + (kayıtsız shared-surface davranışı) + (düşen kapı)
 
 Başlangıç: V = 20 TP + 8 kriter + 3 TP-kaydı = 31
-DUR: V = 0  ·  V iki tur sabit (doygunluk)  ·  eskalasyon kapısı (§D)
+SONUÇ (2026-08-28): V = 0 ✅
 ```
+
+## 7. Kapanış — ölçülmüş sonuç
+
+| Kabul kriteri | Durum | Kanıt |
+|---|---|---|
+| A1 boş ilan = bugünkü davranış | ✅ | `an_empty_announcement_is_accepted_as_the_pre_negotiation_case` + el-kodlanmış fixture |
+| A2 bilinmeyen ad yok sayılır | ✅ | `an_unknown_capability_name_is_ignored_rather_than_fatal` · `a_client_announcing_only_unknown_capabilities_still_connects` |
+| A3 yeni ad wire şeklini değiştirmez | ✅ | `adding_a_capability_does_not_shift_the_wire_shape` |
+| A4 sunucu accepted dışını kullanmaz | ✅ | `the_handshake_accepts_only_capabilities_both_sides_support` · `capability_intersection_drops_what_only_one_side_offers` |
+| A5 kontrol önceliği korunur | ✅ | `client_writer_prioritizes_control_and_reports_render_drain` (mevcut davranış, artık adlandırılmış) |
+| A6 öncelik davranışı TP kayıtlı | ✅ | TP-CLIENT-WRITE-PRIO-01, `behavior_registry_check.py` OK |
+| A7 sürüm 22, semantik değişmedi | ✅ | `check_client_version` dokunulmadı; fixture'lar 22'ye taşındı |
+| A8 kırmızı test yok, lint temiz | ✅ | `just check`: **5998/5998** Rust + 221 Python + windows-lint + fmt + clippy |
+
+**Plandan sapmalar (kayıt için):**
+
+1. `handle_client_handshake_offering` enjeksiyon dikişi planda yoktu. F0'ın sunucu ilanı
+   dürüstçe boş olduğu için TP-2.4 iki boş listeyi karşılaştıracak ve L2.d'nin sessiz
+   başarısızlığını **göremeyecekti**. Reponun kendi deseni (`_at(path)` injectable) uygulandı.
+2. Test fixture'ları planda görünmüyordu: dört el-kodlanmış `Hello`, aynalanmış sürüm sabiti,
+   üretilmiş API şeması ve Windows-kapılı bir prob. Bump'ın gerçek yarıçapı derleme
+   hatalarından **büyüktü** — `decode_welcome` artık yeni alanı okuyor, yok saymıyor.
+3. Ölçülen iki araç tuzağı: `herdr-hp-check cargo fmt` ve `HERDR_UPDATE_API_SCHEMA=1` HP
+   kutusunda üretim yapıyor, sonuç yerele **dönmüyor** — fmt yerelde koşar, üretilen
+   artefakt `scp` ile geri alınır.
 
 *v1.0.0 — 2026-08-28*
