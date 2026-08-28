@@ -37,7 +37,11 @@ impl std::fmt::Display for SinkError {
 impl std::error::Error for SinkError {}
 
 /// A place to put decoded audio.
-pub trait AudioSink: Send {
+///
+/// Not `Send` on purpose. A native output stream is not always `Send`, and it
+/// never needs to be: the sink is built on the thread that feeds it (see
+/// `playback::SinkFactory`) and dies there.
+pub trait AudioSink {
     /// Hands over one frame of interleaved samples.
     fn write_frame(&mut self, pcm: &[f32]) -> Result<(), SinkError>;
     /// Stops the sink. Idempotent.
