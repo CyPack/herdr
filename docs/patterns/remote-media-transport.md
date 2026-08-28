@@ -136,6 +136,15 @@ Merdiven: **dokunma → yeniden paketle → yeniden kodla** (Jellyfin: Direct Pl
 **Nasıl:** `Hello.capabilities` / `Welcome.accepted`. Sunucu yalnız `accepted` içindekini kullanır.
 Boş liste gönderen eski istemci bugünkü davranışı bit-birebir görür.
 
+**✅ UYGULANDI (F0, 2026-08-28)** — `feat/media-capability`, `PROTOCOL_VERSION` 21→22.
+Yetenekler **enum değil AD**: bincode kendi-tanımlayıcı olmadığından bilinmeyen bir varyant
+ayrımcısı tüm mesajın çözümünü bozar; enum ile her yeni yetenek yine bump isterdi ve additive
+vaadi tutulmazdı. Ada dayalı liste + bilinmeyeni-yok-say kuralı (SSH RFC 4253 · TLS RFC 8446 ·
+HTTP/2 RFC 9113 üçünün de yakınsadığı şekil). Kayıt: `behaviors/shared-surfaces.md`
+TP-MEDIA-CAP-01/02/03. Karar ve ölçümler: `docs/analysis/2026-08-28-f0-capability-*.md`.
+Sunucu ve istemci ilanları F0'da **bilerek boş** — kodu olmayan adı ilan etmek bu mekanizmanın
+önlemek için var olduğu hatanın ta kendisi; adı ekleyen faz kodu da ekler.
+
 **Anti-pattern → [RA5]**
 
 ---
