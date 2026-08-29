@@ -94,17 +94,55 @@ impl DrainRateMeter {
     /// Records one completed socket write. Small writes are ignored (see
     /// [`RATE_SAMPLE_MIN_BYTES`]).
     pub(crate) fn record(&self, bytes: usize, elapsed: Duration) {
-        let _ = (bytes, elapsed);
+        if bytes < RATE_SAMPLE_MIN_BYTES {
+            return;
+        }
+        // A sub-microsecond write on a fast pipe still yields a finite,
+        // huge sample — which fail-opens toward the protocol ceiling.
+        let secs = elapsed.as_secs_f64().max(1e-6);
+        let sample = bytes as f64 / secs;
+        let previous = self
+            .bytes_per_sec
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let next = if previous == 0 {
+            sample
+        } else {
+            previous as f64 * (1.0 - DRAIN_RATE_EWMA_ALPHA) + sample * DRAIN_RATE_EWMA_ALPHA
+        };
+        // Never store 0 for a real measurement: 0 is the "unmeasured"
+        // sentinel and a measured link must not fail back open.
+        let stored = (next as u64).max(1);
+        self.bytes_per_sec
+            .store(stored, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// The measured drain rate, or `None` while nothing qualifying was seen.
     pub(crate) fn bytes_per_sec(&self) -> Option<u64> {
-        None
+        match self
+            .bytes_per_sec
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            0 => None,
+            rate => Some(rate),
+        }
     }
 
     /// The largest graphics frame this link should be handed right now.
+    ///
+    /// Fail-open (PRD K1): with no measurement the full protocol ceiling
+    /// stands, so local clients and fresh connections lose nothing. A
+    /// measured link gets a quarter second of its own drain rate, clamped
+    /// so one pathological sample cannot black out graphics (K4) and a
+    /// fast pipe keeps today's exact ceiling.
     pub(crate) fn effective_graphics_max(&self) -> usize {
-        0
+        let Some(rate) = self.bytes_per_sec() else {
+            return crate::protocol::MAX_GRAPHICS_FRAME_SIZE;
+        };
+        let budget = (rate / GRAPHICS_BUDGET_WIRE_OCCUPANCY_DIV) as usize;
+        budget.clamp(
+            GRAPHICS_BUDGET_FLOOR,
+            crate::protocol::MAX_GRAPHICS_FRAME_SIZE,
+        )
     }
 }
 
@@ -136,6 +174,10 @@ pub(crate) struct ClientWriter {
     /// able to break it.
     #[allow(dead_code)]
     pub(crate) media: ClientMediaWriter,
+    /// Measured drain rate of this client's socket, recorded by the writer
+    /// thread and read by the render path to size graphics frames the link
+    /// can carry inside a quarter second (TP-GFX-BUDGET-01).
+    pub(crate) rate: DrainRateMeter,
 }
 
 impl ClientWriter {
@@ -168,6 +210,7 @@ impl ClientWriter {
             control: control_writer,
             render: render_writer,
             media: media_writer,
+            rate: DrainRateMeter::new(),
         };
         std::thread::spawn(move || {
             while let Some(item) = drain.recv() {
@@ -206,6 +249,7 @@ impl ClientWriter {
             control: ClientControlWriter::queue(queue.clone()),
             render: ClientRenderWriter::queue(queue.clone()),
             media: ClientMediaWriter::queue(queue.clone()),
+            rate: DrainRateMeter::new(),
         };
         (writer, TestQueueDrain { queue })
     }
@@ -950,13 +994,21 @@ fn handle_client_handshake_offering(
         control: ClientControlWriter::queue(writer_queue.clone()),
         render: ClientRenderWriter::queue(writer_queue.clone()),
         media: ClientMediaWriter::queue(writer_queue.clone()),
+        rate: DrainRateMeter::new(),
     };
 
     // Spawn a writer thread that forwards messages from the channels to the stream.
     let write_stream = stream.try_clone()?;
     let writer_event_tx = server_event_tx.clone();
+    let writer_rate = writer.rate.clone();
     std::thread::spawn(move || {
-        client_writer_loop(write_stream, client_id, writer_queue, writer_event_tx);
+        client_writer_loop(
+            write_stream,
+            client_id,
+            writer_queue,
+            writer_rate,
+            writer_event_tx,
+        );
     });
 
     if should_quit.load(Ordering::Acquire) {
@@ -1017,21 +1069,22 @@ fn client_writer_loop(
     mut stream: LocalStream,
     client_id: u64,
     writer_queue: Arc<ClientWriterQueue>,
+    rate: DrainRateMeter,
     server_event_tx: mpsc::Sender<ServerEvent>,
 ) {
     while let Some(item) = writer_queue.recv() {
         let written = match item {
-            ClientWriteItem::Control(data) => write_framed_bytes(&mut stream, &data),
+            ClientWriteItem::Control(data) => measured_write(&mut stream, &data, &rate),
             ClientWriteItem::Render(data) => {
                 let _ =
                     server_event_tx.blocking_send(ServerEvent::ClientWriterDrained { client_id });
-                write_framed_bytes(&mut stream, &data)
+                measured_write(&mut stream, &data, &rate)
             }
             // No drained event: that signal means "the render slot is free
             // again", and the media lane does not have one. Sending it here
             // would make the server offer a repaint every time a 20 ms audio
             // chunk went out.
-            ClientWriteItem::Media(data) => write_framed_bytes(&mut stream, &data),
+            ClientWriteItem::Media(data) => measured_write(&mut stream, &data, &rate),
         };
         if !written {
             let _ = server_event_tx.blocking_send(ServerEvent::ClientDisconnected { client_id });
@@ -1040,6 +1093,19 @@ fn client_writer_loop(
     }
     writer_queue.close_writer();
     debug!("client writer thread exiting");
+}
+
+/// One socket write, timed for the drain-rate meter. The meter itself
+/// ignores writes below [`RATE_SAMPLE_MIN_BYTES`], so control chatter never
+/// moves the measurement — timing here costs two `Instant::now` calls
+/// against a syscall.
+fn measured_write(stream: &mut LocalStream, data: &[u8], rate: &DrainRateMeter) -> bool {
+    let started = std::time::Instant::now();
+    let written = write_framed_bytes(stream, data);
+    if written {
+        rate.record(data.len(), started.elapsed());
+    }
+    written
 }
 
 fn write_framed_bytes(stream: &mut LocalStream, data: &[u8]) -> bool {
@@ -1520,6 +1586,7 @@ mod tests {
                 control: ClientControlWriter::queue(queue.clone()),
                 render: ClientRenderWriter::queue(queue.clone()),
                 media: ClientMediaWriter::queue(queue.clone()),
+                rate: DrainRateMeter::new(),
             },
             queue,
         )
@@ -1589,7 +1656,13 @@ mod tests {
 
         let (server_event_tx, mut server_event_rx) = mpsc::channel(4);
         let handle = std::thread::spawn(move || {
-            client_writer_loop(server_stream, 9, queue, server_event_tx);
+            client_writer_loop(
+                server_stream,
+                9,
+                queue,
+                DrainRateMeter::new(),
+                server_event_tx,
+            );
         });
 
         match protocol::read_message(&mut client_stream, MAX_FRAME_SIZE).expect("read control") {
@@ -1822,7 +1895,13 @@ mod tests {
         let (server_event_tx, _server_event_rx) = mpsc::channel(4);
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            client_writer_loop(server_stream, 11, queue, server_event_tx);
+            client_writer_loop(
+                server_stream,
+                11,
+                queue,
+                DrainRateMeter::new(),
+                server_event_tx,
+            );
             let _ = done_tx.send(());
         });
 
@@ -1841,7 +1920,13 @@ mod tests {
         let (server_event_tx, _server_event_rx) = mpsc::channel(4);
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            client_writer_loop(server_stream, 12, queue, server_event_tx);
+            client_writer_loop(
+                server_stream,
+                12,
+                queue,
+                DrainRateMeter::new(),
+                server_event_tx,
+            );
             let _ = done_tx.send(());
         });
 
@@ -1879,7 +1964,13 @@ mod tests {
         let (server_event_tx, _server_event_rx) = mpsc::channel(4);
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            client_writer_loop(server_stream, 13, queue, server_event_tx);
+            client_writer_loop(
+                server_stream,
+                13,
+                queue,
+                DrainRateMeter::new(),
+                server_event_tx,
+            );
             let _ = done_tx.send(());
         });
 

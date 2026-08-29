@@ -548,6 +548,14 @@ impl HeadlessServer {
             let Some(client) = self.clients.get_mut(&client_id) else {
                 continue;
             };
+            // Per-client ceiling from the measured drain rate; unmeasured
+            // links keep the protocol ceiling (TP-GFX-BUDGET-02, fail-open).
+            let client_graphics_max = client
+                .writer
+                .as_ref()
+                .map_or(MAX_GRAPHICS_FRAME_SIZE, |writer| {
+                    writer.rate.effective_graphics_max()
+                });
             let serialized = if encoded.bytes.is_empty() {
                 None
             } else {
@@ -555,11 +563,15 @@ impl HeadlessServer {
                     &ServerMessage::Graphics {
                         bytes: frame_pane_graphics(encoded.bytes),
                     },
-                    MAX_GRAPHICS_FRAME_SIZE,
+                    client_graphics_max,
                 ) {
                     Ok(serialized) => Some(serialized),
                     Err(_) => {
-                        crate::render_prof::event("retained_graphics_fallback.oversized");
+                        if client_graphics_max < MAX_GRAPHICS_FRAME_SIZE {
+                            crate::render_prof::event("retained_graphics_fallback.over_budget");
+                        } else {
+                            crate::render_prof::event("retained_graphics_fallback.oversized");
+                        }
                         return RetainedGraphicsOutcome::Fallback;
                     }
                 }
