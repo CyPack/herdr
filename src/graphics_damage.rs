@@ -230,15 +230,19 @@ pub(crate) struct PatchPolicy {
 impl PatchPolicy {
     /// True when accumulated patch drift demands an authoritative frame.
     pub(crate) fn must_resync(&self) -> bool {
-        false
+        self.patched_frames_since_full >= RESYNC_AFTER_PATCHES
     }
 
     /// Records that this frame went out as patches.
-    pub(crate) fn on_patched_frame(&mut self) {}
+    pub(crate) fn on_patched_frame(&mut self) {
+        self.patched_frames_since_full = self.patched_frames_since_full.saturating_add(1);
+    }
 
     /// Records that an authoritative full frame went out (any reason:
     /// resync, over-share, over-cap, resize, budget degradation).
-    pub(crate) fn on_full_frame(&mut self) {}
+    pub(crate) fn on_full_frame(&mut self) {
+        self.patched_frames_since_full = 0;
+    }
 }
 
 #[cfg(test)]
