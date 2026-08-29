@@ -611,6 +611,11 @@ impl App {
         state: &mut AppState,
         ledger: &crate::persist::workspace_chats::WorkspaceChatLedger,
     ) {
+        // TP-CHAT-MOVE-16: the merge reads the re-homes BEFORE it runs — a
+        // chat the recency window never fetched is summoned by id and filed
+        // under its target, and the merge can only summon what it knows was
+        // re-homed. (The same map is also what "Move back" consults.)
+        state.chat_move_overrides = ledger.moves.clone();
         if let Some(dir) = crate::claude_sessions::default_claude_projects_dir() {
             state.merge_workspace_chat_rows_in(dir.as_path());
         }
@@ -635,7 +640,6 @@ impl App {
                     .map(|label| (session_id.clone(), label))
             })
             .collect();
-        state.chat_move_overrides = ledger.moves.clone();
         // TP-TAB-CHAT-02: promote any freshly detected agent session onto the
         // tab hosting it, so a new chat wires like a resumed one before its
         // name is mirrored below.

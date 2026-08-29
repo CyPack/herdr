@@ -341,6 +341,60 @@ fn read_recent_inner(
     (sessions, total)
 }
 
+/// One transcript, found by its session id wherever it stands under
+/// `projects_dir`, parsed through the same cache the drawer fetch uses.
+///
+/// TP-CHAT-MOVE-16: the drawer fetch is a recency window over one directory
+/// (`read_recent_sessions_for_project_cached`), and a chat the ledger re-homed
+/// can be older than that window in the directory it started in — then no
+/// fetch ever produces its row and the re-home has nothing to carry. This is
+/// the by-id road: the ledger knows the chat's id, the store is keyed by
+/// `<slug>/<id>.jsonl`, and the slug is the one thing the ledger does not
+/// know (a chat can be copied between project directories). So the project
+/// directories are listed once and probed for `<id>.jsonl`; the first hit in
+/// name order is parsed. The probe is one stat per project directory — a few
+/// hundred on a busy machine — and the caller runs it only for a chat that
+/// still has no row, so a store summoned once costs nothing afterwards.
+pub fn read_session_by_id_cached(
+    projects_dir: &Path,
+    session_id: &str,
+    cache: &mut SessionParseCache,
+) -> Option<ClaudeSession> {
+    // A session id names a file; a path-shaped id would name a file somewhere
+    // else. Refuse rather than probe outside the store.
+    if session_id.is_empty() || session_id.contains(['/', '\\']) || session_id.starts_with('.') {
+        return None;
+    }
+    let file_name = format!("{session_id}.jsonl");
+    let mut project_dirs: Vec<PathBuf> = fs::read_dir(projects_dir)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .collect();
+    project_dirs.sort();
+    let path = project_dirs
+        .into_iter()
+        .map(|dir| dir.join(&file_name))
+        .find(|candidate| candidate.is_file())?;
+    let key = fs::metadata(&path)
+        .map(|meta| {
+            (
+                meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+                meta.len(),
+            )
+        })
+        .unwrap_or((SystemTime::UNIX_EPOCH, 0));
+    if let Some((cached_key, session)) = cache.get(&path) {
+        if *cached_key == key {
+            return Some(session.clone());
+        }
+    }
+    let session = parse_session_file(&path)?;
+    cache.insert(path, (key, session.clone()));
+    Some(session)
+}
+
 /// Parse a single `<uuid>.jsonl` session file into a [`ClaudeSession`].
 ///
 /// Returns `None` only when the file has no usable id or cannot be read at all.

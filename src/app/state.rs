@@ -5036,6 +5036,57 @@ impl AppState {
             }
         }
 
+        // TP-CHAT-MOVE-16: a re-home summons its transcript. Everything above
+        // is a recency window — the newest few files of each OPEN directory —
+        // and a chat the ledger re-homed can be older than that window in the
+        // directory it started in. Then no fetch produced its row, and
+        // `apply_chat_moves` (rightly) carried nothing: a session nobody shows
+        // moves nothing. But such a chat is not a ghost; its transcript is on
+        // disk, one directory over. Measured 2026-08-29: `chat.seat` answered
+        // `applied: 59` for sixty chats and the drawer drew three.
+        //
+        // So every re-homed id that still has no row is fetched by id, once,
+        // and filed straight under its target — the same place the move would
+        // carry it. A ghost (an id no store holds) still makes no row, exactly
+        // as before. The lookup runs only for rows that are missing, so a
+        // store summoned once is free on every later pass: the cost follows
+        // what changed, not what exists.
+        let summoned: Vec<(String, String)> = self
+            .chat_move_overrides
+            .iter()
+            .filter(|(session_id, _)| {
+                !self
+                    .workspace_chat_rows
+                    .values()
+                    .flatten()
+                    .any(|row| row.session_id == **session_id)
+            })
+            .map(|(session_id, target)| (session_id.clone(), target.clone()))
+            .collect();
+        for (session_id, target_key) in summoned {
+            let Some(session) = crate::claude_sessions::read_session_by_id_cached(
+                projects_dir,
+                &session_id,
+                &mut self.sessions_parse_cache,
+            ) else {
+                continue;
+            };
+            if let Some(opening) = session.opening.clone() {
+                self.chat_openings.insert(session.id.clone(), opening);
+            }
+            self.workspace_chat_rows
+                .entry(target_key)
+                .or_default()
+                .push(WorkspaceChatRow {
+                    session_id: session.id.clone(),
+                    agent: "claude".to_string(),
+                    title: Some(session.title.clone()),
+                    last_seen_ms: system_time_to_ms(session.last_modified),
+                    last_modified: Some(session.last_modified),
+                    last_message_at: session.last_message_at,
+                });
+        }
+
         // TP-DRAW-04: newest first, the order the Projects tab already uses.
         // A row whose transcript was never located still sorts, on the moment
         // the ledger last saw it.
@@ -7394,6 +7445,94 @@ mod tests {
         assert_eq!(elsewhere.title, None);
         assert!(elsewhere.display_label().starts_with("elsewhe"));
 
+        let _ = std::fs::remove_dir_all(&cwd);
+    }
+
+    // TP-CHAT-MOVE-16: a re-home summons its transcript. The drawer fetch is
+    // a recency window over each OPEN directory; a chat re-homed from a
+    // directory nobody has open (or one buried under newer files) produced no
+    // row, so the move carried nothing and `chat.seat` reported a chat the
+    // sidebar never drew.
+    #[test]
+    fn a_re_home_summons_a_transcript_the_recency_window_never_fetched() {
+        let fake = FakeProjectsRoot::new("summon");
+        // The transcript stands in a directory NO workspace holds.
+        let origin = std::env::temp_dir().join("herdr-summon-origin-nobody-open");
+        fake.write_session(
+            &origin.to_string_lossy(),
+            "buried-chat",
+            &[r#"{"type":"ai-title","aiTitle":"SOR rename and MEGA"}"#],
+        );
+        let mut state = AppState::test_new();
+        let (cwd, key) = drawer_probe_workspace(&mut state, "summon");
+        state
+            .chat_move_overrides
+            .insert("buried-chat".into(), key.clone());
+
+        state.merge_workspace_chat_rows_in(&fake.root);
+
+        let rows = &state.workspace_chat_rows[&key];
+        let row = rows
+            .iter()
+            .find(|row| row.session_id == "buried-chat")
+            .expect("the re-home summoned a row the window never fetched");
+        assert_eq!(row.title.as_deref(), Some("SOR rename and MEGA"));
+        assert!(
+            row.last_modified.is_some(),
+            "a summoned row carries its age"
+        );
+        let _ = std::fs::remove_dir_all(&cwd);
+    }
+
+    // TP-CHAT-MOVE-16: a ghost stays a ghost — an id no store holds makes no
+    // row, exactly as `apply_chat_moves` always promised.
+    #[test]
+    fn a_re_home_of_a_transcript_nobody_holds_still_makes_no_row() {
+        let fake = FakeProjectsRoot::new("summon-ghost");
+        let mut state = AppState::test_new();
+        let (cwd, key) = drawer_probe_workspace(&mut state, "summon-ghost");
+        state
+            .chat_move_overrides
+            .insert("never-written".into(), key.clone());
+
+        state.merge_workspace_chat_rows_in(&fake.root);
+
+        assert!(
+            !state
+                .workspace_chat_rows
+                .values()
+                .flatten()
+                .any(|row| row.session_id == "never-written"),
+            "no store holds it, so no drawer draws it"
+        );
+        let _ = std::fs::remove_dir_all(&cwd);
+    }
+
+    // TP-CHAT-MOVE-16: summoning is idempotent — a second pass finds the row
+    // and neither re-reads the store nor doubles the row.
+    #[test]
+    fn a_summoned_row_is_not_summoned_twice() {
+        let fake = FakeProjectsRoot::new("summon-twice");
+        let origin = std::env::temp_dir().join("herdr-summon-origin-twice");
+        fake.write_session(
+            &origin.to_string_lossy(),
+            "once",
+            &[r#"{"type":"ai-title","aiTitle":"once"}"#],
+        );
+        let mut state = AppState::test_new();
+        let (cwd, key) = drawer_probe_workspace(&mut state, "summon-twice");
+        state.chat_move_overrides.insert("once".into(), key.clone());
+
+        state.merge_workspace_chat_rows_in(&fake.root);
+        state.merge_workspace_chat_rows_in(&fake.root);
+
+        let copies = state
+            .workspace_chat_rows
+            .values()
+            .flatten()
+            .filter(|row| row.session_id == "once")
+            .count();
+        assert_eq!(copies, 1, "one conversation, one row");
         let _ = std::fs::remove_dir_all(&cwd);
     }
 
