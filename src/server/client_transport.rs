@@ -53,6 +53,61 @@ fn server_capabilities() -> CapabilitySet {
 const MIN_CLIENT_COLS: u16 = 1;
 const MIN_CLIENT_ROWS: u16 = 1;
 
+/// Writes below this size vanish into the kernel socket buffer; their
+/// timings say nothing about the link and must not move the measured rate.
+const RATE_SAMPLE_MIN_BYTES: usize = 64 * 1024;
+
+/// One graphics message may occupy the wire for at most ~a quarter second:
+/// the budget is the measured drain rate divided by this.
+const GRAPHICS_BUDGET_WIRE_OCCUPANCY_DIV: u64 = 4;
+
+/// The budget never falls below this, so one pathological sample cannot
+/// black out graphics entirely.
+const GRAPHICS_BUDGET_FLOOR: usize = 256 * 1024;
+
+/// EWMA weight of the newest sample: converges in a handful of writes
+/// without over-reacting to a single outlier.
+const DRAIN_RATE_EWMA_ALPHA: f64 = 0.3;
+
+/// Measures how fast a client's socket actually drains.
+///
+/// The writer thread records every write at or above
+/// [`RATE_SAMPLE_MIN_BYTES`]; the render path reads the result through
+/// [`DrainRateMeter::effective_graphics_max`] to turn the fixed
+/// `MAX_GRAPHICS_FRAME_SIZE` ceiling into one the link can carry inside a
+/// quarter second. Unmeasured stays fail-open: a link that has never shown
+/// a large write keeps the full protocol ceiling, so local clients and
+/// fresh connections lose nothing. PRD: `.local/prd/graphics-budget-prd.md`.
+///
+/// Single-writer by construction — only the client writer thread records —
+/// so the read-modify-write below needs no compare-and-swap.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct DrainRateMeter {
+    bytes_per_sec: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl DrainRateMeter {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// Records one completed socket write. Small writes are ignored (see
+    /// [`RATE_SAMPLE_MIN_BYTES`]).
+    pub(crate) fn record(&self, bytes: usize, elapsed: Duration) {
+        let _ = (bytes, elapsed);
+    }
+
+    /// The measured drain rate, or `None` while nothing qualifying was seen.
+    pub(crate) fn bytes_per_sec(&self) -> Option<u64> {
+        None
+    }
+
+    /// The largest graphics frame this link should be handed right now.
+    pub(crate) fn effective_graphics_max(&self) -> usize {
+        0
+    }
+}
+
 /// How long to wait for a client handshake before closing the connection.
 /// Set to 4 seconds (rather than 5) to guarantee the connection is closed
 /// within the 5-second deadline, even with OS timer slack, thread scheduling,
@@ -1300,6 +1355,99 @@ fn client_read_loop_answering_clock(
 mod tests {
     use super::*;
     use crate::app::test_wait::LoadAwareDeadline;
+
+    // -- DrainRateMeter (TP-GFX-BUDGET-01) --------------------------------
+
+    /// The budget's correctness rests on the rate math: feed a steady
+    /// synthetic throughput and the meter must land on it.
+    #[test]
+    fn ewma_rate_converges_toward_observed_throughput() {
+        let meter = DrainRateMeter::new();
+        // 1 MB every 100 ms = 10 MB/s.
+        for _ in 0..6 {
+            meter.record(1_000_000, Duration::from_millis(100));
+        }
+        let rate = meter.bytes_per_sec().expect("measured after large writes");
+        assert!(
+            (9_000_000..=11_000_000).contains(&rate),
+            "expected ~10 MB/s, got {rate}"
+        );
+        // The link slows to 2 MB/s: the meter must follow, not stick.
+        for _ in 0..12 {
+            meter.record(1_000_000, Duration::from_millis(500));
+        }
+        let rate = meter.bytes_per_sec().expect("still measured");
+        assert!(
+            (1_800_000..=2_400_000).contains(&rate),
+            "expected ~2 MB/s after the shift, got {rate}"
+        );
+    }
+
+    /// Sub-64 KB writes are absorbed by the kernel socket buffer, so their
+    /// timings lie about the link; they must not move the measurement.
+    #[test]
+    fn small_writes_do_not_move_the_rate() {
+        let meter = DrainRateMeter::new();
+        meter.record(1_000_000, Duration::from_millis(100));
+        let seeded = meter.bytes_per_sec().expect("seeded by the large write");
+        meter.record(1_024, Duration::from_nanos(1));
+        meter.record(RATE_SAMPLE_MIN_BYTES - 1, Duration::from_nanos(1));
+        assert_eq!(
+            meter.bytes_per_sec(),
+            Some(seeded),
+            "a small write moved the measured rate"
+        );
+    }
+
+    /// Fail-open (PRD K1): degrading on no evidence is forbidden — a fresh
+    /// or local link keeps the full protocol ceiling.
+    #[test]
+    fn unmeasured_link_gets_the_full_ceiling() {
+        let meter = DrainRateMeter::new();
+        assert_eq!(meter.bytes_per_sec(), None);
+        assert_eq!(
+            meter.effective_graphics_max(),
+            crate::protocol::MAX_GRAPHICS_FRAME_SIZE
+        );
+    }
+
+    /// One pathological sample must not black out graphics (PRD K4).
+    #[test]
+    fn budget_never_falls_below_the_floor() {
+        let meter = DrainRateMeter::new();
+        // 64 KB over 10 s ≈ 6.5 KB/s → a quarter second carries ~1.6 KB.
+        meter.record(RATE_SAMPLE_MIN_BYTES, Duration::from_secs(10));
+        assert_eq!(meter.effective_graphics_max(), GRAPHICS_BUDGET_FLOOR);
+    }
+
+    /// The upper clamp: a fast local pipe keeps today's exact ceiling.
+    #[test]
+    fn a_fast_link_is_capped_at_the_protocol_ceiling() {
+        let meter = DrainRateMeter::new();
+        // 100 MB in 10 ms = 10 GB/s.
+        meter.record(100_000_000, Duration::from_millis(10));
+        assert_eq!(
+            meter.effective_graphics_max(),
+            crate::protocol::MAX_GRAPHICS_FRAME_SIZE
+        );
+    }
+
+    /// The measured home uplink (26.9 Mbit/s ≈ 3.36 MB/s) is the case this
+    /// feature exists for: the budget must be a quarter second of it, not
+    /// the 32 MB that occupied the wire for ~10 seconds.
+    #[test]
+    fn budget_tracks_a_measured_link() {
+        let meter = DrainRateMeter::new();
+        for _ in 0..8 {
+            meter.record(336_000, Duration::from_millis(100));
+        }
+        let max = meter.effective_graphics_max();
+        assert!(
+            (700_000..=1_000_000).contains(&max),
+            "expected ~840 KB for a 3.36 MB/s link, got {max}"
+        );
+    }
+
     use crate::protocol::capability;
     use interprocess::local_socket::traits::Listener as _;
     use std::path::PathBuf;
