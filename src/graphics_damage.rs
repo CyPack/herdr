@@ -214,6 +214,33 @@ pub(crate) fn emit_patch_escapes(
     escapes
 }
 
+/// Patches drift: a lost escape, a terminal-side rounding, an unnoticed
+/// palette change — each survives every later patch because patches only
+/// touch what WE think changed. tuios caps this with a periodic full frame
+/// (resyncAfterPatches=240); at 24 fps that is one authoritative frame
+/// every ten seconds, which also refreshes the ledger/barrier bookkeeping.
+pub(crate) const RESYNC_AFTER_PATCHES: u32 = 240;
+
+/// Decides, per streamed frame, whether patching is still allowed.
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct PatchPolicy {
+    patched_frames_since_full: u32,
+}
+
+impl PatchPolicy {
+    /// True when accumulated patch drift demands an authoritative frame.
+    pub(crate) fn must_resync(&self) -> bool {
+        false
+    }
+
+    /// Records that this frame went out as patches.
+    pub(crate) fn on_patched_frame(&mut self) {}
+
+    /// Records that an authoritative full frame went out (any reason:
+    /// resync, over-share, over-cap, resize, budget degradation).
+    pub(crate) fn on_full_frame(&mut self) {}
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -442,6 +469,23 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// tuios' drift ceiling: patch number RESYNC_AFTER_PATCHES may not be
+    /// patched — the caller must send an authoritative frame, and that
+    /// frame resets the ceiling.
+    #[test]
+    fn patches_resync_with_a_full_frame_after_the_ceiling() {
+        let mut policy = PatchPolicy::default();
+        for _ in 0..RESYNC_AFTER_PATCHES {
+            assert!(!policy.must_resync(), "ceiling fired early");
+            policy.on_patched_frame();
+        }
+        assert!(policy.must_resync(), "ceiling must fire at the limit");
+        policy.on_full_frame();
+        assert!(!policy.must_resync(), "a full frame resets the drift");
+        policy.on_patched_frame();
+        assert!(!policy.must_resync(), "counter restarts from zero");
     }
 
     /// A geometry change can never patch: the caller sends a full frame.
