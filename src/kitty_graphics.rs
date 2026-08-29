@@ -1179,6 +1179,7 @@ impl HostGraphicsCache {
         );
     }
 
+    #[cfg(test)]
     pub(crate) fn test_mark_non_empty(&mut self) {
         self.images.insert(
             HOST_IMAGE_ID_BASE,
