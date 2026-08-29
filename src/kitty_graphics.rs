@@ -489,6 +489,12 @@ pub(crate) fn encode_local_pane_graphics(
     };
     let visible = mode_ok && cell_size.is_known();
     if graphics.slots.is_empty() {
+        // TP-GFX-RESIZE-01 reseat half: a caller that just re-blitted every
+        // text cell (a full frame) wiped the pictures off the screen with the
+        // text. Its pending replay request lives in the incremental
+        // bookkeeping that clear_pane_sources resets, so it is read first and
+        // later forces the legacy path to re-display unchanged placements.
+        let replay_placements = cache.replay_placements;
         let mut bytes = cache.clear_pane_sources();
         if !visible {
             bytes.extend(cache.clear_bytes());
@@ -525,7 +531,13 @@ pub(crate) fn encode_local_pane_graphics(
         };
         let view_changed = cache.update_view(active_view_key(app));
         cache.reset_incremental_state();
-        encode_terminal_graphics_update_legacy(&mut bytes, &placements, view_changed, cache);
+        encode_terminal_graphics_update_legacy(
+            &mut bytes,
+            &placements,
+            view_changed,
+            replay_placements,
+            cache,
+        );
         return EncodedGraphics {
             bytes,
             incomplete: false,
@@ -579,6 +591,7 @@ fn encode_terminal_graphics_update_legacy(
     bytes: &mut Vec<u8>,
     placements: &[HostPlacement],
     view_changed: bool,
+    replay_placements: bool,
     cache: &mut HostGraphicsCache,
 ) {
     let current_sources = placements
@@ -644,7 +657,8 @@ fn encode_terminal_graphics_update_legacy(
         );
 
         match cache.placements.get_mut(&placement_key) {
-            Some(existing) if !view_changed && *existing == placement_signature => {}
+            Some(existing)
+                if !view_changed && !replay_placements && *existing == placement_signature => {}
             Some(existing) => {
                 encode_display_placement(
                     bytes,
@@ -1020,7 +1034,7 @@ fn encode_graphics_update(
             .map(|placement| placement.source_key.clone()),
     );
     if live.is_empty() {
-        encode_terminal_graphics_update_legacy(bytes, placements, replay, &mut cache);
+        encode_terminal_graphics_update_legacy(bytes, placements, replay, replay, &mut cache);
     } else {
         if replay {
             cache.request_placement_replay();

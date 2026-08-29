@@ -5032,6 +5032,13 @@ impl HeadlessServer {
                                     &mut next_graphics_cache,
                                 );
                             }
+                            // A full frame re-blits every text cell and
+                            // wipes the kitty placements with them; ask the
+                            // encoder to re-seat cached pictures even when
+                            // nothing about them changed (TP-GFX-RESIZE-01
+                            // reseat half — the divider-release repaint rides
+                            // this road).
+                            next_graphics_cache.request_placement_replay();
                             let graphics_started = crate::render_prof::timer();
                             let encoded = crate::kitty_graphics::encode_local_pane_graphics(
                                 &self.app.state,
@@ -7409,6 +7416,54 @@ mod tests {
             !any_delete_all(&drain_messages(&control_rx))
                 && !any_delete_all(&drain_messages(&client_rx)),
             "no delete travels for a slate the replay road owns"
+        );
+    }
+
+    // TP-GFX-RESIZE-01: a full redraw re-seats the terminal-native picture
+    // a PTY painted (the browser pane) from the terminal's own state — the
+    // road the divider-release repaint rides so the pane does not sit blank
+    // until a tab switch forces the same full render.
+    #[tokio::test]
+    async fn a_full_redraw_reseats_the_terminal_native_picture() {
+        let (mut server, control_rx, client_rx, _pane_id) =
+            resize_test_server(b"\x1b_Ga=T,f=32,t=d,i=7,s=1,v=1,q=2;/wAA/w==\x1b\\");
+        server.app.state.kitty_graphics_enabled = true;
+        server.clients.get_mut(&1).unwrap().cell_size = crate::kitty_graphics::HostCellSize {
+            width_px: 10,
+            height_px: 20,
+        };
+
+        server.render_and_stream();
+        let first: Vec<u8> = drain_messages(&control_rx)
+            .into_iter()
+            .chain(drain_messages(&client_rx))
+            .flat_map(|message| match message {
+                ServerMessage::Frame(frame) => frame.graphics,
+                ServerMessage::Graphics { bytes } => bytes,
+                _ => Vec::new(),
+            })
+            .collect();
+        assert!(
+            first.windows(4).any(|w| w == b"a=T,") || first.windows(4).any(|w| w == b"a=t,"),
+            "the first full render carries the PTY's picture"
+        );
+
+        server.app.full_redraw_pending = true;
+        server.render_and_stream();
+        let second: Vec<u8> = drain_messages(&control_rx)
+            .into_iter()
+            .chain(drain_messages(&client_rx))
+            .flat_map(|message| match message {
+                ServerMessage::Frame(frame) => frame.graphics,
+                ServerMessage::Graphics { bytes } => bytes,
+                _ => Vec::new(),
+            })
+            .collect();
+        assert!(
+            second.windows(4).any(|w| w == b"a=p,")
+                || second.windows(4).any(|w| w == b"a=T,")
+                || second.windows(4).any(|w| w == b"a=t,"),
+            "a later full render re-seats the picture instead of leaving the pane blank"
         );
     }
 
