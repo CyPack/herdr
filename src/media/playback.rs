@@ -253,7 +253,62 @@ pub struct PlaybackStats {
     pub sink_name: std::sync::Mutex<String>,
 }
 
+/// The counters at one instant, in the shape a log line can carry.
+///
+/// The client writes one of these when a stream closes: every counter above
+/// existed before and none of them reached a log, so "did it play" could only
+/// be answered by ear.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlaybackSnapshot {
+    pub open_stream: u32,
+    pub sink_name: String,
+    pub played: u64,
+    pub concealed: u64,
+    pub underruns: u64,
+    pub lost: u64,
+    pub credit: u16,
+    pub target_delay_us: u32,
+    pub sink_closed: bool,
+}
+
+impl std::fmt::Display for PlaybackSnapshot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "stream={} sink={} played={} concealed={} underruns={} lost={} credit={} target_delay_us={} sink_closed={}",
+            self.open_stream,
+            if self.sink_name.is_empty() { "-" } else { &self.sink_name },
+            self.played,
+            self.concealed,
+            self.underruns,
+            self.lost,
+            self.credit,
+            self.target_delay_us,
+            self.sink_closed,
+        )
+    }
+}
+
 impl PlaybackStats {
+    /// Reads every counter once, for a log line or a status surface.
+    pub fn snapshot(&self) -> PlaybackSnapshot {
+        PlaybackSnapshot {
+            open_stream: self.open_stream.load(Ordering::Relaxed),
+            sink_name: self
+                .sink_name
+                .lock()
+                .map(|name| name.clone())
+                .unwrap_or_default(),
+            played: self.played.load(Ordering::Relaxed),
+            concealed: self.concealed.load(Ordering::Relaxed),
+            underruns: self.underruns.load(Ordering::Relaxed),
+            lost: self.lost.load(Ordering::Relaxed),
+            credit: self.credit.load(Ordering::Relaxed),
+            target_delay_us: self.target_delay_us.load(Ordering::Relaxed),
+            sink_closed: self.sink_closed.load(Ordering::Relaxed),
+        }
+    }
+
     fn publish(&self, playback: Option<&AudioPlayback>) {
         match playback {
             Some(p) => {
@@ -675,6 +730,35 @@ mod tests {
         assert!(
             !p.push(2, pts0 + 2 * FRAME_US, packet(), pts0 as i64),
             "a closed playback refuses new chunks"
+        );
+    }
+
+    // TP-MEDIA-PLAYBACK-08
+    #[test]
+    fn the_stats_snapshot_is_one_log_line_with_every_counter_named() {
+        let stats = PlaybackStats::default();
+        stats.open_stream.store(1, Ordering::Relaxed);
+        *stats.sink_name.lock().unwrap() = "ffplay".into();
+        stats.played.store(2995, Ordering::Relaxed);
+        stats.concealed.store(3, Ordering::Relaxed);
+        stats.underruns.store(2, Ordering::Relaxed);
+        stats.lost.store(4, Ordering::Relaxed);
+        stats.credit.store(7, Ordering::Relaxed);
+        stats.target_delay_us.store(100_000, Ordering::Relaxed);
+        stats.sink_closed.store(false, Ordering::Relaxed);
+
+        let snapshot = stats.snapshot();
+        assert_eq!(
+            snapshot.to_string(),
+            "stream=1 sink=ffplay played=2995 concealed=3 underruns=2 lost=4 credit=7 target_delay_us=100000 sink_closed=false"
+        );
+
+        // A sink that never opened has no name; the line says so instead of
+        // leaving an empty field a reader cannot tell from a missing one.
+        let fresh = PlaybackStats::default().snapshot();
+        assert_eq!(
+            fresh.to_string(),
+            "stream=0 sink=- played=0 concealed=0 underruns=0 lost=0 credit=0 target_delay_us=0 sink_closed=false"
         );
     }
 

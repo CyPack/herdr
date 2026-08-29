@@ -2228,9 +2228,16 @@ async fn run_client_loop(
                     reason,
                     detail,
                 } => {
-                    debug!(stream_id, ?reason, %detail, "media stream closed");
-                    if let Some(media) = state.media.as_ref() {
-                        media.send(crate::media::playback::PlaybackCommand::Close { stream_id });
+                    // TP-MEDIA-PLAYBACK-08: the counters go out with the close,
+                    // so a listening session is judged from the log, not by ear.
+                    match state.media.as_ref() {
+                        Some(media) => {
+                            let stats = media.stats().snapshot();
+                            info!(stream_id, ?reason, %detail, %stats, "media stream closed");
+                            media
+                                .send(crate::media::playback::PlaybackCommand::Close { stream_id });
+                        }
+                        None => debug!(stream_id, ?reason, %detail, "media stream closed"),
                     }
                 }
                 ServerMessage::TimeSyncReply {
