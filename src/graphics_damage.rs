@@ -57,8 +57,88 @@ pub(crate) fn diff_rgba_frames(
     width: u32,
     height: u32,
 ) -> DamageOutcome {
-    let _ = (previous, next, width, height);
-    DamageOutcome::FullFrame
+    let frame_len = (width as usize) * (height as usize) * 4;
+    if previous.len() != frame_len || next.len() != frame_len || frame_len == 0 {
+        // A resize (or a caller bug) is never patchable.
+        return DamageOutcome::FullFrame;
+    }
+    if previous == next {
+        return DamageOutcome::Unchanged;
+    }
+
+    let tiles_x = width.div_ceil(DAMAGE_TILE_PX) as usize;
+    let tiles_y = height.div_ceil(DAMAGE_TILE_PX) as usize;
+    let mut dirty = vec![false; tiles_x * tiles_y];
+    let mut dirty_count = 0usize;
+    let row_bytes = (width as usize) * 4;
+
+    // Row-run comparison: within one pixel row a tile is DAMAGE_TILE_PX * 4
+    // contiguous bytes, so each tile-row comparison is one slice equality —
+    // memcmp, not a per-pixel loop — on a path that runs per streamed frame.
+    for (tile_y, dirty_row) in dirty.chunks_mut(tiles_x).enumerate() {
+        let y_start = tile_y * DAMAGE_TILE_PX as usize;
+        let y_end = (y_start + DAMAGE_TILE_PX as usize).min(height as usize);
+        for y in y_start..y_end {
+            let row_start = y * row_bytes;
+            let prev_row = &previous[row_start..row_start + row_bytes];
+            let next_row = &next[row_start..row_start + row_bytes];
+            if prev_row == next_row {
+                continue;
+            }
+            for (tile_x, tile_dirty) in dirty_row.iter_mut().enumerate() {
+                if *tile_dirty {
+                    continue;
+                }
+                let x_start = tile_x * DAMAGE_TILE_PX as usize * 4;
+                let x_end = (x_start + DAMAGE_TILE_PX as usize * 4).min(row_bytes);
+                if prev_row[x_start..x_end] != next_row[x_start..x_end] {
+                    *tile_dirty = true;
+                    dirty_count += 1;
+                }
+            }
+        }
+    }
+
+    if dirty_count == 0 {
+        // Byte-identical rows can still differ overall only if some row
+        // differed, so this is unreachable in practice — but a differ that
+        // could answer "changed" with zero rects would strand the caller.
+        return DamageOutcome::Unchanged;
+    }
+    let share = dirty_count as f32 / (tiles_x * tiles_y) as f32;
+    if share > MAX_DAMAGE_SHARE {
+        return DamageOutcome::FullFrame;
+    }
+
+    // Merge horizontal runs of dirty tiles per tile-row (xpra merge_rects
+    // pattern, one axis: enough to keep a scroll from becoming a storm).
+    let mut rects = Vec::new();
+    for tile_y in 0..tiles_y {
+        let mut tile_x = 0;
+        while tile_x < tiles_x {
+            if !dirty[tile_y * tiles_x + tile_x] {
+                tile_x += 1;
+                continue;
+            }
+            let run_start = tile_x;
+            while tile_x < tiles_x && dirty[tile_y * tiles_x + tile_x] {
+                tile_x += 1;
+            }
+            if rects.len() == MAX_DAMAGE_RECTS {
+                // Past the cap the escape overhead beats the savings.
+                return DamageOutcome::FullFrame;
+            }
+            let x = (run_start as u32) * DAMAGE_TILE_PX;
+            let y = (tile_y as u32) * DAMAGE_TILE_PX;
+            rects.push(DamageRect {
+                x,
+                y,
+                width: (((tile_x - run_start) as u32) * DAMAGE_TILE_PX).min(width - x),
+                height: DAMAGE_TILE_PX.min(height - y),
+            });
+        }
+    }
+    DamageOutcome::Patches(rects)
 }
 
 #[cfg(test)]
