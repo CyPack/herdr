@@ -1086,6 +1086,8 @@ impl App {
             suppressed_chat_drawers: std::collections::HashSet::new(),
             tab_branch_cache: std::collections::HashMap::new(),
             sessions_parse_cache: Default::default(),
+            codex_parse_cache: Default::default(),
+            codex_sessions_dir: crate::codex_sessions::default_codex_sessions_dir(),
             default_chat_agent,
             projects_actives_only,
             spaces_focus_only,
