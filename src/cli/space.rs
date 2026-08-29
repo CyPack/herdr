@@ -692,7 +692,7 @@ fn space_promote(args: &[String]) -> std::io::Result<i32> {
         return Ok(0);
     }
 
-    std::fs::write(&path, &updated)?;
+    crate::config::write_managed_spaces(&updated)?;
     println!(
         "promoted {} to {} ({})",
         plan.branch,
@@ -795,7 +795,7 @@ fn space_move(args: &[String]) -> std::io::Result<i32> {
         return Ok(0);
     }
 
-    std::fs::write(&path, &updated)?;
+    crate::config::write_managed_spaces(&updated)?;
     match &plan.parent {
         Some(parent) => println!("moved {} under {parent} ({})", plan.branch, plan.key),
         None => println!("moved {} to top level ({})", plan.branch, plan.key),
@@ -856,7 +856,7 @@ fn space_demote(args: &[String]) -> std::io::Result<i32> {
         return Ok(0);
     }
 
-    std::fs::write(&path, &updated)?;
+    crate::config::write_managed_spaces(&updated)?;
     println!(
         "removed {removed} managed entr{}",
         if removed == 1 { "y" } else { "ies" }
@@ -932,7 +932,7 @@ fn space_rename(args: &[String]) -> std::io::Result<i32> {
             print!("{updated}");
             return Ok(0);
         }
-        std::fs::write(&path, &updated)?;
+        crate::config::write_managed_spaces(&updated)?;
         println!("cleared the display name for {key}");
         report_reload();
         return Ok(0);
@@ -960,7 +960,7 @@ fn space_rename(args: &[String]) -> std::io::Result<i32> {
         print!("{updated}");
         return Ok(0);
     }
-    std::fs::write(&path, &updated)?;
+    crate::config::write_managed_spaces(&updated)?;
     println!("{key} now reads {name:?}");
     report_reload();
     Ok(0)

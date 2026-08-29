@@ -56,13 +56,8 @@ fn write_stored_to_path(path: &Path, stored: &StoredReleaseNotes) -> std::io::Re
     }
 
     let json = serde_json::to_string_pretty(stored).map_err(std::io::Error::other)?;
-    let tmp_path = path.with_extension(format!("json.tmp.{}", std::process::id()));
-    fs::write(&tmp_path, json)?;
-    if let Err(err) = fs::rename(&tmp_path, path) {
-        let _ = fs::remove_file(&tmp_path);
-        return Err(err);
-    }
-    Ok(())
+    // TP-PERSIST-05: the same crash-durable road every state file takes.
+    crate::persist::durable::write_atomic(path, json.as_bytes())
 }
 
 fn load_stored_from_path(path: &Path) -> Option<StoredReleaseNotes> {

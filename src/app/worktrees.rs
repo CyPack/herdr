@@ -724,7 +724,7 @@ impl App {
             let current = std::fs::read_to_string(&path).unwrap_or_default();
             match crate::cli::space::upsert_managed(&current, &plan) {
                 Ok(updated) => {
-                    if let Err(err) = std::fs::write(&path, updated) {
+                    if let Err(err) = crate::config::write_managed_spaces(&updated) {
                         tracing::warn!(error = %err, "managed overlay write failed");
                     } else {
                         self.state.reload_space_rules_from_disk();

@@ -121,19 +121,14 @@ pub(crate) fn write_history_freight(
     panes: std::collections::HashMap<u32, String>,
 ) -> io::Result<()> {
     let path = handoff_history_freight_path(socket_path);
-    let tmp = path.with_extension("history.json.tmp");
-    let file = std::fs::File::create(&tmp)?;
-    let mut writer = std::io::BufWriter::new(file);
     let freight = HandoffHistoryFreight {
         version: FREIGHT_VERSION,
         panes,
     };
-    // to_writer streams the escaping: peak memory stays at the captured
-    // histories themselves, which the exporting server already held.
-    serde_json::to_writer(&mut writer, &freight).map_err(io::Error::other)?;
-    writer.flush()?;
-    std::fs::rename(&tmp, &path)?;
-    Ok(())
+    // TP-PERSIST-05: a torn freight file would replay as garbage on the
+    // importing side, so it takes the same crash-durable road as the session.
+    let json = serde_json::to_vec(&freight).map_err(io::Error::other)?;
+    crate::persist::durable::write_atomic(&path, &json)
 }
 
 /// Read and delete the freight. One shot: whether the parse succeeds or not,

@@ -13,7 +13,7 @@ pub use self::{
     io::{
         config_diagnostic_summary, config_dir, config_path, load_live_config, managed_spaces_path,
         remove_keybinding_config_sections, remove_section_key, state_dir, upsert_section_bool,
-        upsert_section_value,
+        upsert_section_value, write_managed_spaces,
     },
     keybinds::{
         format_key_combo, normalize_key_combo, terminal_key_matches_combo, ActionKeybinds,

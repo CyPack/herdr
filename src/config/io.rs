@@ -121,6 +121,21 @@ pub fn managed_spaces_path() -> PathBuf {
     config_dir().join("spaces.managed.toml")
 }
 
+/// TP-PERSIST-05: the managed spaces overlay is written on the same
+/// crash-durable road as the session — a promote, move or "Set directory"
+/// is on disk (fsync'd, with a `.bak` of the previous document) the moment
+/// it is applied, never as a bare `fs::write` a crash can leave torn.
+pub fn write_managed_spaces(content: &str) -> std::io::Result<()> {
+    write_managed_spaces_to(&managed_spaces_path(), content)
+}
+
+pub(crate) fn write_managed_spaces_to(
+    path: &std::path::Path,
+    content: &str,
+) -> std::io::Result<()> {
+    crate::persist::durable::write_atomic(path, content.as_bytes())
+}
+
 /// Merge a `spaces.managed.toml` document into an already-loaded config.
 /// Managed entries append after user-authored ones; a broken overlay is
 /// reported and skipped, never fatal (TP-RANK-05).
@@ -553,9 +568,9 @@ pub(crate) fn persist_managed_bar_overrides(
         std::fs::create_dir_all(parent)
             .map_err(|err| format!("bars.managed.toml mkdir error: {err}"))?;
     }
-    let tmp = path.with_extension("toml.tmp");
-    std::fs::write(&tmp, next).map_err(|err| format!("bars.managed.toml write error: {err}"))?;
-    std::fs::rename(&tmp, &path).map_err(|err| format!("bars.managed.toml rename error: {err}"))
+    // TP-PERSIST-05: the same crash-durable road every state file takes.
+    crate::persist::durable::write_atomic(&path, next.as_bytes())
+        .map_err(|err| format!("bars.managed.toml write error: {err}"))
 }
 
 /// Apply the managed overlay, if one exists, to a loaded config.
@@ -2305,5 +2320,30 @@ mouse_capture = false
             "invalid projects section should produce a diagnostic: {:?}",
             loaded.diagnostics
         );
+    }
+
+    // TP-PERSIST-05
+    #[test]
+    fn the_managed_spaces_overlay_is_written_durably_with_a_backup() {
+        let dir = std::env::temp_dir().join(format!(
+            "herdr-managed-spaces-durable-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let path = dir.join("spaces.managed.toml");
+        write_managed_spaces_to(&path, "[[spaces.node]]\nkey = \"a\"\nname = \"A\"\n").unwrap();
+        write_managed_spaces_to(&path, "[[spaces.node]]\nkey = \"b\"\nname = \"B\"\n").unwrap();
+        let backup = dir.join("spaces.managed.toml.bak");
+        assert!(std::fs::read_to_string(&backup)
+            .unwrap()
+            .contains("key = \"a\""));
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("key = \"b\""));
+        assert!(!dir.join("spaces.managed.toml.tmp").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
