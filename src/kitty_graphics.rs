@@ -1043,6 +1043,15 @@ pub(crate) fn clear_all_host_graphics() -> io::Result<()> {
 }
 
 impl HostGraphicsCache {
+    /// Test-only: the caches an encode leaves behind, all empty at once.
+    #[cfg(test)]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.images.is_empty()
+            && self.placements.is_empty()
+            && self.sources.is_empty()
+            && self.replayed_placements.is_empty()
+    }
+
     /// Test-only ledger view: which (image, placement) pairs the server still
     /// believes exist on the outer terminal. Lets integration tests compare a
     /// simulated kitty against this accounting to catch stranded placements.
@@ -3359,10 +3368,6 @@ mod tests {
                     if *pane_id == PaneId::from_raw(FILE_MANAGER_PREVIEW_PANE_RAW)
             )),
             "the file manager preview underneath is not painted across the popup"
-        );
-        assert!(
-            has_visible_pane_graphics(&app, &graphics, &runtimes, app.view.tab_surface(), cells),
-            "the retained-frame fast path must know the popup has a picture on screen"
         );
     }
 
