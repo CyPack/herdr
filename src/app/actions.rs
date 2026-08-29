@@ -4966,6 +4966,39 @@ impl AppState {
         let Some(terminal_id) = self.terminal_id_for_pane(ws_idx, pane_id) else {
             return;
         };
+        // TP-WEB-LINK-02: the closing conversation's web panes go orphan now —
+        // a report must never quietly land in a dead tie. The session is the
+        // identity when the link has one; the seat number only stands in
+        // when it does not.
+        let closed_number = self
+            .workspaces
+            .get(ws_idx)
+            .and_then(|ws| ws.public_pane_number(pane_id));
+        let closed_session = self
+            .terminals
+            .get(&terminal_id)
+            .and_then(|terminal| terminal.persisted_agent_session.as_ref())
+            .map(|session| session.session_ref.value.clone());
+        for terminal in self.terminals.values_mut() {
+            let Some(link) = terminal.web_link.as_mut() else {
+                continue;
+            };
+            if !matches!(
+                link.state,
+                crate::terminal::WebLinkState::Linked | crate::terminal::WebLinkState::Stale
+            ) {
+                continue;
+            }
+            let severed = match link.agent_session.as_ref() {
+                Some(session) => {
+                    closed_session.as_deref() == Some(session.session_ref.value.as_str())
+                }
+                None => closed_number.is_some() && link.agent_pane_number == closed_number,
+            };
+            if severed {
+                link.state = crate::terminal::WebLinkState::Orphan;
+            }
+        }
         let Some(terminal) = self.terminals.get(&terminal_id) else {
             return;
         };

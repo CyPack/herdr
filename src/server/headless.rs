@@ -1017,6 +1017,15 @@ impl HeadlessServer {
             crate::render_prof::event("full_render_cause.deferred_onboarding");
         }
 
+        // TP-TAB-BROWSER-02: the state-level key road parks its ask here;
+        // the viewer drains it onto `pane.web.open` like every other road.
+        if self.app.state.request_open_web_pane {
+            self.app.state.request_open_web_pane = false;
+            self.app.open_web_pane_via_api();
+            needs_render = true;
+            crate::render_prof::event("full_render_cause.deferred_web_pane");
+        }
+
         if self.app.state.request_new_workspace {
             self.app.state.request_new_workspace = false;
             let response = self.headless_workspace_create("headless.workspace.create", None, None);
@@ -6485,6 +6494,46 @@ mod tests {
                 api::schema::EventKind::PaneCreated,
                 api::schema::EventKind::LayoutUpdated,
             ]
+        );
+        shutdown_test_runtimes(&mut server);
+    }
+
+    // TP-TAB-BROWSER-02: the key road parks its ask on the state; the viewer
+    // drains it onto `pane.web.open`, and a pane is born beside the focused
+    // one running the configured browser.
+    #[tokio::test]
+    async fn headless_deferred_web_pane_request_births_a_browser_pane() {
+        let event_hub = api::EventHub::default();
+        let mut server = test_headless_server_with_event_hub(event_hub.clone());
+        server.app.state.workspaces = vec![crate::workspace::Workspace::test_new("web")];
+        server.app.state.ensure_test_terminals();
+        server.app.state.active = Some(0);
+        server.app.state.selected = 0;
+        server.app.state.web_browser_command = vec!["/usr/bin/true".into()];
+        let panes_before = server.app.state.workspaces[0].tabs[0]
+            .layout
+            .pane_ids()
+            .len();
+
+        server.app.state.request_open_web_pane = true;
+
+        assert!(server.handle_deferred_requests_headless());
+        assert!(!server.app.state.request_open_web_pane);
+        assert_eq!(
+            server.app.state.workspaces[0].tabs[0]
+                .layout
+                .pane_ids()
+                .len(),
+            panes_before + 1,
+            "one browser pane was born"
+        );
+        assert!(
+            event_hub
+                .events_after(0)
+                .into_iter()
+                .map(|(_, event)| event.event)
+                .any(|kind| kind == api::schema::EventKind::PaneCreated),
+            "the birth was announced like any other pane's"
         );
         shutdown_test_runtimes(&mut server);
     }

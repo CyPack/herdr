@@ -383,9 +383,14 @@ mod tests {
         // Re-baselined 2026-08-22: the sidebar/stage seam became a heavy
         // peach glyph (TP-CHROME-162) — one column of new cells, structure
         // untouched.
+        //
+        // Re-baselined 2026-08-29: the strip seats a browser button left of
+        // the split pair (TP-TAB-BROWSER-01) — one more painted glyph, the
+        // ASCII profile's `w` under this fixture, rects and structure
+        // untouched. Exactly the change this digest exists to surface.
         assert_eq!(
             frame_digest(&frame),
-            "b18ce64412c97f8e05526bb06fde184268f318e433f9084184323baaad63c087"
+            "97f90d4ae1c8cf026f69343e013d2cf55d2b72068ef9a477d2d94e0703236b2e"
         );
     }
 

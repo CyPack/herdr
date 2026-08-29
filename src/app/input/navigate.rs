@@ -395,6 +395,10 @@ impl App {
                 self.split_focused_pane_via_api(crate::api::schema::SplitDirection::Down);
                 leave_navigate_mode(&mut self.state);
             }
+            NavigateAction::OpenWebPane => {
+                self.open_web_pane_via_api();
+                leave_navigate_mode(&mut self.state);
+            }
             NavigateAction::ClosePane => {
                 if !self.close_focused_pane_via_api_requires_confirmation() {
                     leave_navigate_mode(&mut self.state);
@@ -643,6 +647,27 @@ impl App {
                 cwd: None,
                 focus: true,
                 right_click: Default::default(),
+                env: Default::default(),
+            },
+        );
+    }
+
+    /// TP-TAB-BROWSER-02: the browser button, its key and the CLI verb all
+    /// ride `pane.web.open` — one road, so the pane is born the same way
+    /// however it was asked for.
+    pub(crate) fn open_web_pane_via_api(&mut self) {
+        self.runtime_pane_web_open(
+            "tui.pane.web.open",
+            crate::api::schema::PaneWebOpenParams {
+                workspace_id: None,
+                target_pane_id: None,
+                direction: None,
+                ratio: None,
+                url: None,
+                command: self.state.web_browser_command.clone(),
+                cwd: None,
+                agent: None,
+                focus: true,
                 env: Default::default(),
             },
         );
@@ -1445,6 +1470,8 @@ pub(crate) enum NavigateAction {
     SwapPaneRight,
     SplitVertical,
     SplitHorizontal,
+    /// TP-TAB-BROWSER-02: the browser button on a key.
+    OpenWebPane,
     ClosePane,
     EditScrollback,
     CopyMode,
@@ -1601,6 +1628,7 @@ fn non_indexed_action_for_key(
         (&kb.cycle_pane_previous, NavigateAction::CyclePanePrevious),
         (&kb.split_vertical, NavigateAction::SplitVertical),
         (&kb.split_horizontal, NavigateAction::SplitHorizontal),
+        (&kb.open_web_pane, NavigateAction::OpenWebPane),
         (&kb.close_pane, NavigateAction::ClosePane),
         (&kb.zoom, NavigateAction::Zoom),
         (&kb.resize_mode, NavigateAction::EnterResizeMode),
@@ -1859,6 +1887,12 @@ pub(super) fn execute_navigate_action_in_context(
         }
         NavigateAction::SplitHorizontal => {
             state.split_pane(terminal_runtimes, Direction::Vertical);
+            leave_navigate_mode(state);
+        }
+        NavigateAction::OpenWebPane => {
+            // No api dispatcher at this level: the App drains the request
+            // onto `pane.web.open` (TP-TAB-BROWSER-02), one road for all.
+            state.request_open_web_pane = true;
             leave_navigate_mode(state);
         }
         NavigateAction::ClosePane => {
@@ -3140,6 +3174,42 @@ resize_pane_left = "prefix+shift+left"
         );
 
         assert_eq!(action, Some(NavigateAction::LastPane));
+    }
+
+    // TP-TAB-BROWSER-02: the browser button on a key — unset by default, and
+    // once bound it resolves on both the prefix and the direct road to the
+    // same action the button resolves to.
+    #[test]
+    fn open_web_pane_key_asks_for_a_web_pane_on_both_roads() {
+        let config: Config = toml::from_str(
+            r#"
+[keys]
+open_web_pane = "prefix+b"
+"#,
+        )
+        .unwrap();
+        let mut state = state_with_workspaces(&["test"]);
+        state.keybinds = config.keybinds();
+        assert_eq!(
+            action_for_key(
+                &state,
+                TerminalKey::new(KeyCode::Char('b'), KeyModifiers::empty()),
+                BindingDispatch::Prefix,
+            ),
+            Some(NavigateAction::OpenWebPane)
+        );
+
+        let mut state = state_with_workspaces(&["test"]);
+        assert!(
+            state.keybinds.open_web_pane.labels().is_empty(),
+            "unset by default: no chord is taken from the user"
+        );
+        state.keybinds.open_web_pane = crate::config::ActionKeybinds::direct("alt+w");
+        let action = terminal_direct_navigation_action(
+            &state,
+            TerminalKey::new(KeyCode::Char('w'), KeyModifiers::ALT),
+        );
+        assert_eq!(action, Some(NavigateAction::OpenWebPane));
     }
 
     #[test]

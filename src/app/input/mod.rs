@@ -1044,6 +1044,7 @@ impl App {
                     MouseAction::SplitFocusedPane { direction } => {
                         self.split_focused_pane_via_api(direction);
                     }
+                    MouseAction::OpenWebPane => self.open_web_pane_via_api(),
                     MouseAction::FocusToastTarget => self.focus_toast_target_via_api(),
                     MouseAction::MoveWorkspace {
                         source_ws_idx,

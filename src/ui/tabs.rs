@@ -38,6 +38,9 @@ pub(crate) struct TabBarView {
     pub split_right_hit_area: Rect,
     /// TP-TAB-SPLIT-01: split-down button, right of the split-right button.
     pub split_down_hit_area: Rect,
+    /// TP-TAB-BROWSER-01: browser button, seated left of the split pair so
+    /// the down split still ends at the edge.
+    pub web_hit_area: Rect,
 }
 
 fn stage_tab_width(instance: AppInstanceId) -> u16 {
@@ -237,12 +240,14 @@ fn trailing_tab_controls_x(tab_hit_areas: &[Rect], fallback_x: u16) -> u16 {
         .unwrap_or(fallback_x)
 }
 
-/// The two split buttons, pinned flush to the strip's right edge — the down
-/// split ends at the edge, the right split sits just before it. `seats_width`
-/// is the free width at the edge; whole seats only (TP-MOD-35's rule: a
-/// sliver would paint as blank cells that still answer a press), and a lone
-/// seat goes to the right split, the first of the pair.
-fn pinned_split_button_hit_areas(seats_width: u16, area_right: u16, y: u16) -> (Rect, Rect) {
+/// The pinned block at the strip's right edge — browser button, right
+/// split, down split, the down split ending at the edge — three cells each.
+/// Seats are handed out tier by tier from the edge inward: nine spare cells
+/// seat all three, six seat the split pair, three seat the right split
+/// alone. The browser seat is the first one given up (TP-TAB-BROWSER-01):
+/// it is the newest control, and the split pair must keep the cells it has
+/// always had so muscle memory survives a narrower strip.
+fn pinned_button_hit_areas(seats_width: u16, area_right: u16, y: u16) -> (Rect, Rect, Rect) {
     let slot = |end: u16| {
         Rect::new(
             end.saturating_sub(SPLIT_BUTTON_WIDTH),
@@ -251,15 +256,32 @@ fn pinned_split_button_hit_areas(seats_width: u16, area_right: u16, y: u16) -> (
             1,
         )
     };
-    if seats_width >= SPLIT_BUTTON_WIDTH.saturating_mul(2) {
+    if seats_width >= SPLIT_BUTTON_WIDTH.saturating_mul(3) {
         (
+            slot(area_right.saturating_sub(SPLIT_BUTTON_WIDTH.saturating_mul(2))),
+            slot(area_right.saturating_sub(SPLIT_BUTTON_WIDTH)),
+            slot(area_right),
+        )
+    } else if seats_width >= SPLIT_BUTTON_WIDTH.saturating_mul(2) {
+        (
+            Rect::default(),
             slot(area_right.saturating_sub(SPLIT_BUTTON_WIDTH)),
             slot(area_right),
         )
     } else if seats_width >= SPLIT_BUTTON_WIDTH {
-        (slot(area_right), Rect::default())
+        (Rect::default(), slot(area_right), Rect::default())
     } else {
-        (Rect::default(), Rect::default())
+        (Rect::default(), Rect::default(), Rect::default())
+    }
+}
+
+/// TP-TAB-BROWSER-03: the browser button's label in either icon profile —
+/// the codicon browser glyph where the Nerd font is, a plain `w` where it is
+/// not — one display cell either way, padded to the three-cell seat.
+pub(crate) fn web_button_label(profile: crate::fm::entry_kind::IconProfile) -> &'static str {
+    match profile {
+        crate::fm::entry_kind::IconProfile::Nerd => " \u{eb77} ",
+        crate::fm::entry_kind::IconProfile::Ascii => " w ",
     }
 }
 
@@ -314,6 +336,7 @@ pub(crate) fn compute_tab_bar_view(
             new_tab_hit_area: Rect::default(),
             split_right_hit_area: Rect::default(),
             split_down_hit_area: Rect::default(),
+            web_hit_area: Rect::default(),
         };
     }
 
@@ -335,7 +358,14 @@ pub(crate) fn compute_tab_bar_view(
         // squeezed tab is the reservation making the strip worse. Tier by
         // tier: both buttons, the right one alone, none.
         let mut reserved_split_width = 0;
-        for candidate in [SPLIT_BUTTON_WIDTH.saturating_mul(2), SPLIT_BUTTON_WIDTH] {
+        // TP-TAB-BROWSER-01: the browser seat joins the same tiers, and is
+        // the first one given up — all three, the split pair, the right
+        // split alone, none.
+        for candidate in [
+            SPLIT_BUTTON_WIDTH.saturating_mul(3),
+            SPLIT_BUTTON_WIDTH.saturating_mul(2),
+            SPLIT_BUTTON_WIDTH,
+        ] {
             let candidate_area = Rect::new(
                 tabs_x,
                 area.y,
@@ -359,8 +389,8 @@ pub(crate) fn compute_tab_bar_view(
                 .min(NEW_TAB_WIDTH),
             1,
         );
-        let (split_right_hit_area, split_down_hit_area) =
-            pinned_split_button_hit_areas(reserved_split_width, area_right, area.y);
+        let (web_hit_area, split_right_hit_area, split_down_hit_area) =
+            pinned_button_hit_areas(reserved_split_width, area_right, area.y);
         return TabBarView {
             scroll: 0,
             tab_hit_areas: all_tabs,
@@ -370,6 +400,7 @@ pub(crate) fn compute_tab_bar_view(
             new_tab_hit_area,
             split_right_hit_area,
             split_down_hit_area,
+            web_hit_area,
         };
     }
 
@@ -380,7 +411,7 @@ pub(crate) fn compute_tab_bar_view(
     // scroll, the chrome does not.
     let reserved_trailing_width = NEW_TAB_WIDTH
         .saturating_add(TAB_SCROLL_BUTTON_WIDTH)
-        .saturating_add(SPLIT_BUTTON_WIDTH.saturating_mul(2));
+        .saturating_add(SPLIT_BUTTON_WIDTH.saturating_mul(3));
     let tab_area_right = area_right.saturating_sub(reserved_trailing_width);
     let tab_area = Rect::new(
         tab_area_x,
@@ -415,8 +446,8 @@ pub(crate) fn compute_tab_bar_view(
     // TP-TAB-SPLIT-01: pinned to the edge here too — the reserved trailing
     // chrome guarantees the seats on all but the narrowest strips.
     let split_seats = area_right.saturating_sub(new_tab_hit_area.x + new_tab_hit_area.width);
-    let (split_right_hit_area, split_down_hit_area) =
-        pinned_split_button_hit_areas(split_seats, area_right, area.y);
+    let (web_hit_area, split_right_hit_area, split_down_hit_area) =
+        pinned_button_hit_areas(split_seats, area_right, area.y);
 
     TabBarView {
         scroll,
@@ -427,6 +458,7 @@ pub(crate) fn compute_tab_bar_view(
         new_tab_hit_area,
         split_right_hit_area,
         split_down_hit_area,
+        web_hit_area,
     }
 }
 
@@ -642,6 +674,15 @@ pub(super) fn render_tab_bar(app: &AppState, frame: &mut Frame, area: Rect) {
         frame.render_widget(
             Paragraph::new(" + ").style(Style::default().fg(p.overlay1)),
             app.view.new_tab_hit_area,
+        );
+    }
+    // TP-TAB-BROWSER-01/03: the browser button wears the profile's glyph.
+    // Drawn only when its seat exists.
+    if app.mouse_capture && app.view.web_hit_area.width > 0 {
+        frame.render_widget(
+            Paragraph::new(web_button_label(app.file_icon_profile))
+                .style(Style::default().fg(p.overlay1)),
+            app.view.web_hit_area,
         );
     }
     // TP-TAB-SPLIT-01: right-half block reads "new pane on the right", lower
@@ -1356,6 +1397,94 @@ mod tests {
             Rect::default(),
             "giving the buttons up must not push the strip into overflow"
         );
+    }
+
+    // TP-TAB-BROWSER-01: the browser button joins the pinned block, seated
+    // LEFT of the split pair so the down split still ends at the edge —
+    // browser, right split, down split — and the `+` keeps trailing the tabs.
+    #[test]
+    fn the_browser_button_stands_left_of_the_split_pair() {
+        let ws = Workspace::test_new("test");
+        let view = compute_tab_bar_view(&ws, &[], Rect::new(0, 0, 80, 1), 0, true, true);
+
+        assert!(view.new_tab_hit_area.width > 0, "precondition: + is drawn");
+        assert_eq!(view.web_hit_area, Rect::new(71, 0, 3, 1));
+        assert_eq!(view.split_right_hit_area, Rect::new(74, 0, 3, 1));
+        assert_eq!(view.split_down_hit_area, Rect::new(77, 0, 3, 1));
+        assert_eq!(
+            view.new_tab_hit_area.x,
+            view.tab_hit_areas[0].x + view.tab_hit_areas[0].width,
+            "only the pinned block is pinned — the + still trails the tabs"
+        );
+    }
+
+    // TP-TAB-BROWSER-01 boundary: exactly nine spare cells seat all three
+    // buttons flat, nothing overflows.
+    #[test]
+    fn a_strip_with_exactly_nine_spare_cells_seats_all_three_buttons() {
+        let ws = Workspace::test_new("test");
+        let width = tab_width(&ws, 0) + NEW_TAB_WIDTH + SPLIT_BUTTON_WIDTH * 3;
+        let view = compute_tab_bar_view(&ws, &[], Rect::new(0, 0, width, 1), 0, true, true);
+
+        assert_eq!(view.web_hit_area, Rect::new(width - 9, 0, 3, 1));
+        assert_eq!(view.split_right_hit_area, Rect::new(width - 6, 0, 3, 1));
+        assert_eq!(view.split_down_hit_area, Rect::new(width - 3, 0, 3, 1));
+        assert_eq!(
+            view.scroll_left_hit_area,
+            Rect::default(),
+            "the reservation did not push the strip into overflow"
+        );
+    }
+
+    // TP-TAB-BROWSER-01: the browser seat is the first one given up — six
+    // spare cells still seat the split pair exactly where they always sat.
+    #[test]
+    fn a_strip_with_six_spare_cells_gives_the_browser_button_up_first() {
+        let ws = Workspace::test_new("test");
+        let width = tab_width(&ws, 0) + NEW_TAB_WIDTH + SPLIT_BUTTON_WIDTH * 2;
+        let view = compute_tab_bar_view(&ws, &[], Rect::new(0, 0, width, 1), 0, true, true);
+
+        assert_eq!(view.web_hit_area.width, 0);
+        assert_eq!(view.split_right_hit_area, Rect::new(width - 6, 0, 3, 1));
+        assert_eq!(view.split_down_hit_area, Rect::new(width - 3, 0, 3, 1));
+    }
+
+    // TP-TAB-BROWSER-01: keyboard-driven strips carry no browser button
+    // either, and overflow keeps the whole block hugging the edge.
+    #[test]
+    fn the_browser_button_follows_the_split_pair_in_overflow_and_absence() {
+        let mut ws = Workspace::test_new("test");
+        let bare = compute_tab_bar_view(&ws, &[], Rect::new(0, 0, 80, 1), 0, true, false);
+        assert_eq!(bare.web_hit_area, Rect::default());
+
+        for _ in 0..8 {
+            ws.test_add_tab(None);
+        }
+        let view = compute_tab_bar_view(&ws, &[], Rect::new(0, 0, 40, 1), 0, true, true);
+        assert!(
+            view.scroll_left_hit_area.width > 0,
+            "precondition: the strip is in overflow"
+        );
+        assert_eq!(view.web_hit_area, Rect::new(31, 0, 3, 1));
+        assert_eq!(view.split_right_hit_area, Rect::new(34, 0, 3, 1));
+        assert_eq!(view.split_down_hit_area, Rect::new(37, 0, 3, 1));
+    }
+
+    // TP-TAB-BROWSER-03: whichever profile paints it, the label fills the
+    // three-cell seat exactly — a two-cell glyph would spill into the split
+    // pair's cells.
+    #[test]
+    fn the_browser_label_fills_its_seat_in_both_profiles() {
+        for profile in [
+            crate::fm::entry_kind::IconProfile::Nerd,
+            crate::fm::entry_kind::IconProfile::Ascii,
+        ] {
+            assert_eq!(
+                display_width_u16(web_button_label(profile)),
+                SPLIT_BUTTON_WIDTH,
+                "{profile:?}"
+            );
+        }
     }
 
     // TP-TAB-NAME-01: the strip shows at most twenty cells of a name, so a

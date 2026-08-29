@@ -64,6 +64,7 @@ mod claude_sessions;
 mod cli;
 mod client;
 mod clock;
+mod codex_sessions;
 mod config;
 mod detect;
 mod events;

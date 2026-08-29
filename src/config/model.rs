@@ -913,6 +913,7 @@ pub struct Config {
     pub worktrees: WorktreesConfig,
     pub advanced: AdvancedConfig,
     pub experimental: ExperimentalConfig,
+    pub web: WebConfig,
     pub remote: RemoteConfig,
     pub projects: ProjectsConfig,
     pub spaces: SpacesConfig,
@@ -1498,6 +1499,9 @@ pub struct KeysConfig {
     pub split_vertical: BindingConfig,
     /// Split pane horizontally (stacked). Default: "prefix+minus"
     pub split_horizontal: BindingConfig,
+    /// Open a browser pane beside the focused pane — the strip's browser
+    /// button, on a key (TP-TAB-BROWSER-02). Unset by default.
+    pub open_web_pane: BindingConfig,
     /// Close the focused pane. Default: "prefix+x"
     pub close_pane: BindingConfig,
     /// Toggle zoom for the focused pane. Default: "prefix+z"
@@ -1637,6 +1641,8 @@ pub(crate) struct KeysConfigOverlay {
     #[serde(skip_serializing_if = "Option::is_none")]
     split_horizontal: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    open_web_pane: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     close_pane: Option<BindingConfig>,
     #[serde(alias = "fullscreen", skip_serializing_if = "Option::is_none")]
     zoom: Option<BindingConfig>,
@@ -1732,6 +1738,7 @@ impl<'de> Deserialize<'de> for KeysConfig {
         apply_field!(last_pane);
         apply_field!(split_vertical);
         apply_field!(split_horizontal);
+        apply_field!(open_web_pane);
         apply_field!(close_pane);
         apply_field!(zoom);
         apply_field!(resize_mode);
@@ -1840,6 +1847,7 @@ impl KeysConfig {
         copy_effective_action_field!(last_pane, keybinds.last_pane);
         copy_effective_action_field!(split_vertical, keybinds.split_vertical);
         copy_effective_action_field!(split_horizontal, keybinds.split_horizontal);
+        copy_effective_action_field!(open_web_pane, keybinds.open_web_pane);
         copy_effective_action_field!(close_pane, keybinds.close_pane);
         copy_effective_action_field!(zoom, keybinds.zoom);
         copy_effective_action_field!(resize_mode, keybinds.resize_mode);
@@ -2079,6 +2087,40 @@ impl Default for RemoteConfig {
     }
 }
 
+/// `[web]` — the browser a web pane runs (TP-TAB-BROWSER-02).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct WebConfig {
+    /// The program a web pane is born running; the page url, when one was
+    /// asked for, is appended as its last argument. Default:
+    /// `["terminal-browser", "open"]`. An empty list falls back to the same.
+    pub command: Vec<String>,
+}
+
+impl Default for WebConfig {
+    fn default() -> Self {
+        Self {
+            command: Self::default_command(),
+        }
+    }
+}
+
+impl WebConfig {
+    pub fn default_command() -> Vec<String> {
+        vec!["terminal-browser".to_string(), "open".to_string()]
+    }
+
+    /// The configured command, or the default when the list was emptied —
+    /// a pane born running nothing would be a blank seat, not a browser.
+    pub fn effective_command(&self) -> Vec<String> {
+        if self.command.is_empty() {
+            Self::default_command()
+        } else {
+            self.command.clone()
+        }
+    }
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct ExperimentalConfig {
@@ -2196,6 +2238,7 @@ impl Default for KeysConfig {
             last_pane: BindingConfig::empty(),
             split_vertical: BindingConfig::one("prefix+v"),
             split_horizontal: BindingConfig::one("prefix+minus"),
+            open_web_pane: BindingConfig::empty(),
             close_pane: BindingConfig::one("prefix+x"),
             zoom: BindingConfig::one("prefix+z"),
             resize_mode: BindingConfig::one("prefix+r"),
@@ -3635,6 +3678,28 @@ kitty_graphics_compression = false
         )
         .unwrap();
         assert_eq!(off.experimental.kitty_graphics_compression, Some(false));
+    }
+
+    // TP-TAB-BROWSER-02: `[web] command` names the browser a web pane runs;
+    // unwritten or emptied, it is terminal-browser.
+    #[test]
+    fn web_config_names_the_browser_and_defaults_to_terminal_browser() {
+        let config: Config = toml::from_str("").unwrap();
+        assert_eq!(config.web.command, ["terminal-browser", "open"]);
+        assert_eq!(config.web.effective_command(), ["terminal-browser", "open"]);
+
+        let config: Config = toml::from_str(
+            r#"
+[web]
+command = ["chromium", "--app"]
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.web.effective_command(), ["chromium", "--app"]);
+
+        let config: Config = toml::from_str("[web]\ncommand = []\n").unwrap();
+        assert!(config.web.command.is_empty());
+        assert_eq!(config.web.effective_command(), ["terminal-browser", "open"]);
     }
 
     #[test]

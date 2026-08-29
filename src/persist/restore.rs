@@ -402,6 +402,41 @@ fn restore_workspace(
         return (None, failed_imports);
     }
 
+    // TP-WEB-LINK-01: re-stamp restored web links against the agent seats
+    // that actually came back. A terminal counts as a seat when it carries a
+    // persisted agent session (the agent itself may not have respawned yet)
+    // or already reads as an agent terminal.
+    let agent_seats: Vec<(usize, Option<String>)> = tabs
+        .iter()
+        .flat_map(|tab| tab.panes.iter())
+        .filter_map(|(pane_id, pane)| {
+            let number = *public_pane_numbers.get(pane_id)?;
+            let terminal = terminals
+                .iter()
+                .find(|terminal| terminal.id == pane.attached_terminal_id)?;
+            (terminal.persisted_agent_session.is_some() || terminal.is_agent_terminal()).then(
+                || {
+                    (
+                        number,
+                        terminal
+                            .persisted_agent_session
+                            .as_ref()
+                            .map(|session| session.session_ref.value.clone()),
+                    )
+                },
+            )
+        })
+        .collect();
+    let agent_seat_refs: Vec<(usize, Option<&str>)> = agent_seats
+        .iter()
+        .map(|(number, value)| (*number, value.as_deref()))
+        .collect();
+    for terminal in &mut terminals {
+        if let Some(link) = terminal.web_link.as_mut() {
+            resolve_restored_web_link(link, &agent_seat_refs);
+        }
+    }
+
     let worktree_space =
         worktree_space_for_restore(snap.worktree_space.clone(), &snap.identity_cwd);
     let (cached_git_space, cached_auto_label, cached_git_status_key) =
@@ -528,6 +563,7 @@ fn restore_tab(
                 history
             });
         let saved_agent_session = saved_pane.and_then(|p| p.agent_session.as_ref());
+        let saved_web_link = saved_pane.and_then(|p| p.web_link.as_ref());
         let saved_history =
             old_id.and_then(|old_id| history.and_then(|history| history.panes.get(old_id)));
         let startup = {
@@ -574,6 +610,7 @@ fn restore_tab(
             if let Some(session) = restored_agent_session {
                 terminal.set_persisted_agent_session(session);
             }
+            terminal.web_link = restored_web_link_from_snapshot(saved_web_link);
             match (saved_agent_name, saved_managed_agent) {
                 (Some(agent_name), Some(agent)) => {
                     terminal.restore_managed_agent(agent_name, agent)
@@ -675,6 +712,7 @@ fn restore_tab(
                 if let Some(session) = restored_agent_session {
                     terminal.set_persisted_agent_session(session);
                 }
+                terminal.web_link = restored_web_link_from_snapshot(saved_web_link);
                 match (saved_agent_name, saved_managed_agent) {
                     (Some(agent_name), Some(agent)) if was_imported => {
                         terminal.restore_managed_agent(agent_name, agent)
@@ -879,6 +917,57 @@ fn persisted_agent_session_from_snapshot(
     )
 }
 
+/// TP-WEB-LINK-01: a captured web link rides back as-is; the resolve pass
+/// re-stamps its state against the restored workspace.
+fn restored_web_link_from_snapshot(
+    saved: Option<&crate::persist::snapshot::PaneWebLinkSnapshot>,
+) -> Option<crate::terminal::WebLink> {
+    saved.map(|link| crate::terminal::WebLink {
+        agent_pane_number: link.agent_pane_number,
+        agent_session: link
+            .agent_session
+            .as_ref()
+            .and_then(persisted_agent_session_from_snapshot),
+        url: link.url.clone(),
+        state: link.state,
+    })
+}
+
+/// TP-WEB-LINK-01: re-stamp a restored link against the agents that actually
+/// came back. The session is the strongest identity and wins over the pane
+/// number (a rearranged layout can hand a number to someone else); a number
+/// that still hosts an agent without the session is only `Stale`; a link with
+/// neither home is `Orphan`. A deliberate `Unlinked` is left alone.
+pub(crate) fn resolve_restored_web_link(
+    link: &mut crate::terminal::WebLink,
+    agents: &[(usize, Option<&str>)],
+) {
+    if link.state == crate::terminal::WebLinkState::Unlinked {
+        return;
+    }
+    let session_value = link
+        .agent_session
+        .as_ref()
+        .map(|session| session.session_ref.value.as_str());
+    if let Some(value) = session_value {
+        if let Some((number, _)) = agents
+            .iter()
+            .find(|(_, agent_session)| *agent_session == Some(value))
+        {
+            link.agent_pane_number = Some(*number);
+            link.state = crate::terminal::WebLinkState::Linked;
+            return;
+        }
+    }
+    if let Some(number) = link.agent_pane_number {
+        if agents.iter().any(|(seat, _)| *seat == number) {
+            link.state = crate::terminal::WebLinkState::Stale;
+            return;
+        }
+    }
+    link.state = crate::terminal::WebLinkState::Orphan;
+}
+
 fn restored_terminal_agent_session(
     session: Option<&PaneAgentSessionSnapshot>,
     duplicate_agent_session: bool,
@@ -1009,6 +1098,54 @@ mod tests {
     #[cfg(not(windows))]
     fn test_restore_shell() -> &'static str {
         "/bin/sh"
+    }
+
+    fn web_link(number: Option<usize>, session: Option<&str>) -> crate::terminal::WebLink {
+        crate::terminal::WebLink {
+            agent_pane_number: number,
+            agent_session: session.map(|value| crate::agent_resume::PersistedAgentSession {
+                source: "test".into(),
+                agent: "claude".into(),
+                session_ref: crate::agent_resume::AgentSessionRef::id(value)
+                    .expect("valid session id"),
+            }),
+            url: None,
+            state: crate::terminal::WebLinkState::Linked,
+        }
+    }
+
+    // TP-WEB-LINK-01: the session is the one identity a restore cannot hand
+    // to someone else, so it outranks the remembered pane number — which is
+    // corrected to the session's new seat.
+    #[test]
+    fn a_restored_link_follows_the_session_over_the_number() {
+        let mut link = web_link(Some(2), Some("sess-alpha"));
+        resolve_restored_web_link(
+            &mut link,
+            &[(7, Some("sess-alpha")), (2, Some("sess-beta"))],
+        );
+        assert_eq!(link.state, crate::terminal::WebLinkState::Linked);
+        assert_eq!(link.agent_pane_number, Some(7));
+    }
+
+    // TP-WEB-LINK-01: a number that still hosts an agent, without the
+    // session, is a weak identity — calling it Linked would carry reports
+    // into whoever sits there now.
+    #[test]
+    fn a_restored_link_without_its_session_goes_stale_on_the_number() {
+        let mut link = web_link(Some(2), Some("sess-gone"));
+        resolve_restored_web_link(&mut link, &[(2, Some("sess-other"))]);
+        assert_eq!(link.state, crate::terminal::WebLinkState::Stale);
+        assert_eq!(link.agent_pane_number, Some(2));
+    }
+
+    // TP-WEB-LINK-02: a link with neither home must surface as Orphan, never
+    // silently pass for live.
+    #[test]
+    fn a_restored_link_with_no_home_is_orphaned() {
+        let mut link = web_link(Some(9), Some("sess-gone"));
+        resolve_restored_web_link(&mut link, &[(1, None)]);
+        assert_eq!(link.state, crate::terminal::WebLinkState::Orphan);
     }
 
     #[test]
@@ -1325,6 +1462,7 @@ mod tests {
                             }),
                             launch_argv: None,
                             dormant_history: None,
+                            web_link: None,
                         },
                     )]),
                     zoomed: false,
@@ -1403,6 +1541,7 @@ mod tests {
                     }),
                     launch_argv: None,
                     dormant_history: None,
+                    web_link: None,
                 },
             )]),
             zoomed: false,
@@ -1573,6 +1712,7 @@ mod tests {
                                 agent_session: None,
                                 launch_argv: None,
                                 dormant_history: None,
+                                web_link: None,
                             },
                         ),
                         (
@@ -1585,6 +1725,7 @@ mod tests {
                                 agent_session: None,
                                 launch_argv: None,
                                 dormant_history: None,
+                                web_link: None,
                             },
                         ),
                     ]),
@@ -1642,6 +1783,7 @@ mod tests {
                     agent_session: None,
                     launch_argv: None,
                     dormant_history: None,
+                    web_link: None,
                 },
             )
         };
@@ -1658,6 +1800,7 @@ mod tests {
             }),
             launch_argv: None,
             dormant_history: None,
+            web_link: None,
         };
         let snapshot = SessionSnapshot {
             version: super::super::snapshot::SNAPSHOT_VERSION,
@@ -1813,6 +1956,7 @@ mod tests {
                             }),
                             launch_argv: None,
                             dormant_history: None,
+                            web_link: None,
                         },
                     )]),
                     zoomed: false,
@@ -2040,6 +2184,7 @@ mod tests {
                 agent_session: None,
                 launch_argv: None,
                 dormant_history: None,
+                web_link: None,
             },
         );
         let history = SessionHistorySnapshot {

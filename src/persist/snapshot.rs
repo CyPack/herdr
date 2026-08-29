@@ -362,6 +362,10 @@ pub struct PaneSnapshot {
     /// the history dormancy promised to keep.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dormant_history: Option<PathBuf>,
+    /// The web pane's agent tie. Additive: snapshots from before the field
+    /// read back with no link, and a linkless pane writes no field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_link: Option<PaneWebLinkSnapshot>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -370,6 +374,20 @@ pub struct PaneAgentSessionSnapshot {
     pub agent: String,
     pub kind: crate::agent_resume::AgentSessionRefKind,
     pub value: String,
+}
+
+/// TP-WEB-LINK-01: the captured form of a web pane's agent tie. The public
+/// pane number rides as-is (numbers survive a restore); the session is the
+/// stronger identity and wins when both are present.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaneWebLinkSnapshot {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_pane_number: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_session: Option<PaneAgentSessionSnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    pub state: crate::terminal::WebLinkState,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -635,6 +653,21 @@ fn capture_tab(
         let dormant_history = terminal
             .and_then(|terminal| terminal.dormant.as_ref())
             .and_then(|dormant| dormant.history_path.clone());
+        let web_link = terminal.and_then(|terminal| {
+            terminal.web_link.as_ref().map(|link| PaneWebLinkSnapshot {
+                agent_pane_number: link.agent_pane_number,
+                agent_session: link.agent_session.as_ref().map(|session| {
+                    PaneAgentSessionSnapshot {
+                        source: session.source.clone(),
+                        agent: session.agent.clone(),
+                        kind: session.session_ref.kind,
+                        value: session.session_ref.value.clone(),
+                    }
+                }),
+                url: link.url.clone(),
+                state: link.state,
+            })
+        });
         let agent_session = terminal.and_then(|terminal| {
             if let Some(authority) = terminal.hook_authority.as_ref() {
                 if let Some(session_ref) = authority.session_ref.as_ref() {
@@ -666,6 +699,7 @@ fn capture_tab(
                 agent_session,
                 launch_argv,
                 dormant_history,
+                web_link,
             },
         );
     }
@@ -790,6 +824,70 @@ mod tests {
     // a Files tab open, reopen it, and the tab is there in the same directory.
     // Capture and restore are covered separately elsewhere; only this one fails
     // if the two halves disagree about the file that passes between them.
+    // TP-WEB-LINK-01: capture keeps the tie — a link that does not survive
+    // the snapshot leaves every restored web pane an amnesiac.
+    #[test]
+    fn a_web_pane_snapshot_carries_its_agent_link() {
+        let mut terminals = std::collections::HashMap::new();
+        let terminal_id = crate::terminal::TerminalId::alloc();
+        let mut terminal =
+            crate::terminal::state::TerminalState::new(terminal_id.clone(), "/tmp".into());
+        terminal.web_link = Some(crate::terminal::WebLink {
+            agent_pane_number: Some(3),
+            agent_session: Some(crate::agent_resume::PersistedAgentSession {
+                source: "test".into(),
+                agent: "claude".into(),
+                session_ref: crate::agent_resume::AgentSessionRef::id("sess-keep")
+                    .expect("valid session id"),
+            }),
+            url: Some("http://localhost:3001/".into()),
+            state: crate::terminal::WebLinkState::Linked,
+        });
+        terminals.insert(terminal_id.clone(), terminal);
+        let (events, _rx) = tokio::sync::mpsc::channel(4);
+        let (layout, root_id) = crate::layout::TileLayout::new();
+        let mut panes = std::collections::HashMap::new();
+        panes.insert(root_id, crate::pane::PaneState::new(terminal_id));
+        let tab = crate::workspace::Tab {
+            custom_name: None,
+            number: 1,
+            resumed_session_id: None,
+            chat_title: None,
+            unseen: false,
+            spawned_at: None,
+            root_pane: root_id,
+            layout,
+            panes,
+            runtimes: std::collections::HashMap::new(),
+            zoomed: false,
+            events,
+            render_notify: std::sync::Arc::new(tokio::sync::Notify::new()),
+            render_dirty: std::sync::Arc::new(crate::render_signal::RenderSignal::new()),
+        };
+        let runtimes = crate::terminal::TerminalRuntimeRegistry::new();
+
+        let snap = capture_tab(&tab, &terminals, &runtimes);
+
+        let pane = snap.panes.values().next().expect("one pane");
+        let link = pane.web_link.as_ref().expect("captured web link");
+        assert_eq!(link.agent_pane_number, Some(3));
+        assert_eq!(
+            link.agent_session.as_ref().map(|s| s.value.as_str()),
+            Some("sess-keep")
+        );
+        assert_eq!(link.url.as_deref(), Some("http://localhost:3001/"));
+        assert_eq!(link.state, crate::terminal::WebLinkState::Linked);
+    }
+
+    // TP-WEB-LINK-02: a snapshot from before the field reads back clean —
+    // the tie is additive, never a migration.
+    #[test]
+    fn an_old_pane_snapshot_without_a_web_link_still_reads() {
+        let json = r#"{"cwd":"/tmp"}"#;
+        let pane: PaneSnapshot = serde_json::from_str(json).expect("old shape reads");
+        assert!(pane.web_link.is_none());
+    }
+
     #[test]
     fn a_files_tab_survives_a_full_save_and_load_cycle() {
         struct FixtureRoot(PathBuf);
@@ -1180,6 +1278,7 @@ mod tests {
                 agent_session: None,
                 launch_argv: None,
                 dormant_history: None,
+                web_link: None,
             },
         );
         panes.insert(
@@ -1192,6 +1291,7 @@ mod tests {
                 agent_session: None,
                 launch_argv: None,
                 dormant_history: None,
+                web_link: None,
             },
         );
 
@@ -2134,6 +2234,7 @@ mod tests {
                 agent_session: None,
                 launch_argv: None,
                 dormant_history: None,
+                web_link: None,
             },
         );
         panes.insert(
@@ -2148,6 +2249,7 @@ mod tests {
                 agent_session: None,
                 launch_argv: None,
                 dormant_history: None,
+                web_link: None,
             },
         );
 

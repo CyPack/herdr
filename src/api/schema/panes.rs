@@ -66,6 +66,43 @@ pub struct PaneSplitParams {
     pub env: HashMap<String, String>,
 }
 
+/// `pane.web.open` — a browser pane beside the target, born running
+/// `command` (empty means `terminal-browser open <url>`). The one road every
+/// browser button, key and CLI verb rides (TP-TAB-BROWSER-02), so the pane
+/// is born the same way however it was asked for.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PaneWebOpenParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_pane_id: Option<String>,
+    /// Where the pane goes; unwritten means to the right.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direction: Option<SplitDirection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ratio: Option<f32>,
+    /// The page to open. Unwritten opens the browser on its own start page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// What runs in the pane. Empty means `terminal-browser open <url>`; a
+    /// caller that wants another browser, or a test that wants none, names
+    /// its own argv here.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub command: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    /// The agent conversation this web pane reports into: a public pane id
+    /// or an agent name. Unwritten, the target pane's own agent is taken,
+    /// else the tab's only agent; with neither the pane opens unlinked —
+    /// a wrong guess would carry reports into the wrong conversation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    #[serde(default)]
+    pub focus: bool,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub env: HashMap<String, String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PaneInputSetParams {
     pub pane_id: String,
@@ -512,6 +549,18 @@ pub struct PaneReleaseAgentParams {
     pub seq: Option<u64>,
 }
 
+/// TP-WEB-LINK-01: a web pane's agent tie as the API reports it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PaneWebInfo {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_pane_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_session: Option<super::agents::AgentSessionInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    pub link_state: crate::terminal::WebLinkState,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PaneInfo {
     pub pane_id: String,
@@ -554,6 +603,10 @@ pub struct PaneInfo {
     #[serde(default, skip_serializing_if = "super::is_false")]
     pub alternate_screen: bool,
     pub revision: u64,
+    /// Present on every web pane — its agent tie, `unlinked` included; the
+    /// field's presence is what marks a web pane. Absent elsewhere.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web: Option<PaneWebInfo>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

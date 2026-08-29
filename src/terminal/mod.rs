@@ -11,6 +11,6 @@ pub use runtime::TerminalRuntime;
 pub(crate) use runtime_registry::TerminalRuntimeRegistry;
 pub use state::{
     AgentMetadataReport, DormantTerminal, EffectivePresentation, EffectiveStateChange,
-    TerminalState, TerminalStateMutation,
+    TerminalState, TerminalStateMutation, WebLink, WebLinkState,
 };
 pub(crate) use title::stripped_terminal_title;
