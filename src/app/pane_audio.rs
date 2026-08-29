@@ -106,7 +106,6 @@ pub(crate) fn pcm_from_f32le(bytes: &[u8]) -> Result<Vec<f32>, FrameBytesError> 
 pub(crate) struct Session {
     owner: String,
     stream_id: u32,
-    pane_id: String,
     stream: AudioStream,
     active: Option<Arc<AtomicBool>>,
     client_credit: HashMap<u64, u16>,
@@ -114,16 +113,8 @@ pub(crate) struct Session {
 }
 
 impl Session {
-    pub(crate) fn stream_id(&self) -> u32 {
-        self.stream_id
-    }
-
     pub(crate) fn owner(&self) -> &str {
         &self.owner
-    }
-
-    pub(crate) fn pane_id(&self) -> &str {
-        &self.pane_id
     }
 
     pub(crate) fn counters(&self) -> Counters {
@@ -204,7 +195,6 @@ impl Runtime {
             Session {
                 owner: owner.to_owned(),
                 stream_id,
-                pane_id: pane_id.to_owned(),
                 stream,
                 active: Some(Arc::new(AtomicBool::new(true))),
                 client_credit: HashMap::new(),
@@ -419,6 +409,7 @@ impl Runtime {
             .find(|session| session.stream_id == stream_id)
     }
 
+    #[cfg(test)]
     pub(crate) fn is_empty(&self) -> bool {
         self.sessions.is_empty()
     }
