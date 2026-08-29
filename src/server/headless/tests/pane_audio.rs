@@ -46,7 +46,8 @@ fn connect(
 
 fn decode(bytes: &[u8]) -> ServerMessage {
     let mut cursor = std::io::Cursor::new(bytes);
-    protocol::read_message(&mut cursor).expect("framed server message")
+    protocol::read_message(&mut cursor, crate::protocol::MAX_FRAME_SIZE)
+        .expect("framed server message")
 }
 
 fn open_stream(server: &mut HeadlessServer, public: &str, owner: &str) {
@@ -190,13 +191,16 @@ async fn credit_reported_by_a_client_gates_what_it_is_sent() {
 
     // A departed client is forgotten; its stale room can never send to it.
     assert!(server.handle_server_event(ServerEvent::ClientDisconnected { client_id: 2 }));
-    assert!(server
-        .app
-        .pane_audio
-        .session_for_stream(1)
-        .unwrap()
-        .subscribers()
-        .is_empty());
+    assert_eq!(
+        server
+            .app
+            .pane_audio
+            .session_for_stream(1)
+            .unwrap()
+            .subscribers(),
+        vec![1],
+        "only the departed client is forgotten"
+    );
 }
 
 // TP-MEDIA-LANE-02

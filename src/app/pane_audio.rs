@@ -446,7 +446,7 @@ mod tests {
     #[test]
     fn opening_a_stream_numbers_it_from_one_and_offers_it_to_clients() {
         let mut runtime = Runtime::default();
-        let pane = PaneId::new(3);
+        let pane = PaneId::from_raw(3);
         let id = runtime.open(pane, "w1:p3", "owner-a", 5_000).expect("open");
         assert_eq!(id, 1, "the client reserves stream 0 for 'nothing open'");
         assert_eq!(
@@ -465,7 +465,7 @@ mod tests {
     #[test]
     fn a_live_stream_refuses_a_second_opener_but_a_dead_one_is_superseded() {
         let mut runtime = Runtime::default();
-        let pane = PaneId::new(1);
+        let pane = PaneId::from_raw(1);
         runtime.open(pane, "w1:p1", "first", 0).expect("open");
         assert_eq!(
             runtime.open(pane, "w1:p1", "second", 0),
@@ -494,7 +494,7 @@ mod tests {
     #[test]
     fn a_frame_is_encoded_once_the_moment_any_client_has_room() {
         let mut runtime = Runtime::default();
-        let pane = PaneId::new(1);
+        let pane = PaneId::from_raw(1);
         runtime
             .open(pane, "w1:p1", "owner", 1_000_000)
             .expect("open");
@@ -536,7 +536,7 @@ mod tests {
     #[test]
     fn a_delivery_spends_that_client_room_and_a_refusal_only_counts() {
         let mut runtime = Runtime::default();
-        let pane = PaneId::new(1);
+        let pane = PaneId::from_raw(1);
         runtime.open(pane, "w1:p1", "owner", 0).expect("open");
         runtime.subscribe(1, 7);
         runtime.set_client_credit(1, 7, 2);
@@ -560,7 +560,7 @@ mod tests {
     #[test]
     fn the_wrong_owner_cannot_feed_or_close_a_stream() {
         let mut runtime = Runtime::default();
-        let pane = PaneId::new(1);
+        let pane = PaneId::from_raw(1);
         runtime.open(pane, "w1:p1", "owner", 0).expect("open");
         assert_eq!(
             runtime.offer(pane, "impostor", &frame(), 0),
@@ -569,7 +569,7 @@ mod tests {
         assert!(!runtime.close(pane, "impostor", MediaCloseReason::Ended, String::new()));
         assert!(runtime.session_for_pane(pane).is_some());
         assert_eq!(
-            runtime.offer(PaneId::new(9), "owner", &frame(), 0),
+            runtime.offer(PaneId::from_raw(9), "owner", &frame(), 0),
             Err(OfferError::NotOpen)
         );
     }
@@ -578,7 +578,7 @@ mod tests {
     #[test]
     fn closing_tells_the_subscribed_clients_and_is_idempotent() {
         let mut runtime = Runtime::default();
-        let pane = PaneId::new(1);
+        let pane = PaneId::from_raw(1);
         runtime.open(pane, "w1:p1", "owner", 0).expect("open");
         runtime.subscribe(1, 3);
         runtime.subscribe(1, 5);
@@ -637,8 +637,12 @@ mod tests {
     #[test]
     fn a_departed_client_is_forgotten_by_every_stream() {
         let mut runtime = Runtime::default();
-        runtime.open(PaneId::new(1), "w1:p1", "a", 0).expect("open");
-        runtime.open(PaneId::new(2), "w1:p2", "b", 0).expect("open");
+        runtime
+            .open(PaneId::from_raw(1), "w1:p1", "a", 0)
+            .expect("open");
+        runtime
+            .open(PaneId::from_raw(2), "w1:p2", "b", 0)
+            .expect("open");
         runtime.subscribe(1, 7);
         runtime.subscribe(2, 7);
         runtime.subscribe(2, 8);
