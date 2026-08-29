@@ -656,29 +656,24 @@ pub fn project_rows(
 /// stop the server from starting: the ledger is a convenience, not a
 /// dependency. Both cases return an empty ledger; only the corrupt case warns.
 pub fn load_from_path(path: &Path) -> WorkspaceChatLedger {
-    if !path.exists() {
-        return WorkspaceChatLedger::default();
-    }
-    let content = match std::fs::read_to_string(path) {
-        Ok(content) => content,
-        Err(err) => {
-            warn!(path = %path.display(), %err, "failed to read workspace chat ledger");
-            return WorkspaceChatLedger::default();
+    let parse = |content: &str| {
+        let ledger: WorkspaceChatLedger =
+            serde_json::from_str(content).map_err(|err| err.to_string())?;
+        if ledger.version == LEDGER_VERSION {
+            Ok(ledger)
+        } else {
+            Err(format!(
+                "unsupported workspace chat ledger version {} (expected {LEDGER_VERSION})",
+                ledger.version
+            ))
         }
     };
-    match serde_json::from_str::<WorkspaceChatLedger>(&content) {
-        Ok(ledger) if ledger.version == LEDGER_VERSION => ledger,
-        Ok(ledger) => {
-            warn!(
-                path = %path.display(),
-                found = ledger.version,
-                expected = LEDGER_VERSION,
-                "unsupported workspace chat ledger version; starting empty"
-            );
-            WorkspaceChatLedger::default()
-        }
-        Err(err) => {
-            warn!(path = %path.display(), %err, "failed to parse workspace chat ledger");
+    // TP-PERSIST-04: a torn or foreign file is moved aside, never overwritten.
+    match super::durable::load_or_quarantine(path, &parse) {
+        super::durable::Loaded::Value(ledger, _) => ledger,
+        super::durable::Loaded::Missing => WorkspaceChatLedger::default(),
+        super::durable::Loaded::Quarantined(quarantined) => {
+            warn!(path = %path.display(), quarantined = %quarantined.display(), "workspace chat ledger unreadable; starting empty");
             WorkspaceChatLedger::default()
         }
     }
@@ -688,24 +683,8 @@ pub fn load_from_path(path: &Path) -> WorkspaceChatLedger {
 /// file behind, because the next start would read it as corrupt and drop the
 /// entire history.
 pub fn save_to_path(path: &Path, ledger: &WorkspaceChatLedger) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
     let json = serde_json::to_string_pretty(ledger)?;
-    let tmp_path = path.with_extension("json.tmp");
-    std::fs::write(&tmp_path, json)?;
-    #[cfg(windows)]
-    if path.exists() {
-        if let Err(err) = std::fs::remove_file(path) {
-            let _ = std::fs::remove_file(&tmp_path);
-            return Err(err);
-        }
-    }
-    if let Err(err) = std::fs::rename(&tmp_path, path) {
-        let _ = std::fs::remove_file(&tmp_path);
-        return Err(err);
-    }
-    Ok(())
+    super::durable::write_atomic(path, json.as_bytes())
 }
 
 #[cfg(test)]
@@ -1537,6 +1516,26 @@ mod tests {
             gone.to_string_lossy(),
             "a missing directory keeps its raw key so its history survives"
         );
+    }
+
+    // TP-PERSIST-04: the ledger goes through the shared durable writer.
+    #[test]
+    fn a_torn_ledger_is_quarantined_and_the_previous_save_restored() {
+        let path = TempPath(temp_ledger_path("torn-ledger"));
+        let mut ledger = WorkspaceChatLedger::default();
+        ledger.record_at("/repo/a", observation("s1"), 1);
+        save_to_path(&path.0, &ledger).unwrap();
+        ledger.record_at("/repo/a", observation("s2"), 2);
+        save_to_path(&path.0, &ledger).unwrap();
+        std::fs::write(&path.0, b"").unwrap();
+
+        let restored = load_from_path(&path.0);
+        assert_eq!(
+            restored.workspaces["/repo/a"].chats.len(),
+            1,
+            "one save back is restored"
+        );
+        assert!(!path.0.exists(), "the torn file is moved aside");
     }
 }
 

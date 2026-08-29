@@ -51,13 +51,8 @@ fn save_json_to_path<T: serde::Serialize>(path: &Path, snapshot: &T) -> std::io:
         std::fs::create_dir_all(parent)?;
     }
     let json = serde_json::to_string_pretty(snapshot)?;
-    let tmp_path = target.with_extension("json.tmp");
-    std::fs::write(&tmp_path, &json)?;
-    if let Err(err) = std::fs::rename(&tmp_path, &target) {
-        let _ = std::fs::remove_file(&tmp_path);
-        return Err(err);
-    }
-    Ok(())
+    // TP-PERSIST-04: every state file herdr owns takes the same durable road.
+    super::durable::write_atomic(&target, json.as_bytes())
 }
 
 pub(super) fn save_to_paths(
@@ -111,31 +106,46 @@ pub fn clear_history() {
 }
 
 pub fn load() -> Option<SessionSnapshot> {
-    let path = session_path();
-    if !path.exists() {
-        return None;
-    }
-    let content = match std::fs::read_to_string(&path) {
-        Ok(content) => content,
-        Err(err) => {
-            warn!(err = %err, "failed to read session file");
-            return None;
+    load_from_path(&session_path())
+}
+
+/// Parse a session file, refusing (so the caller quarantines rather than
+/// overwrites) anything torn, malformed, or written by a newer herdr.
+fn parse_session_strict(content: &str) -> Result<SessionSnapshot, String> {
+    parse_snapshot(content).map_err(|err| match snapshot_file_version(content) {
+        Some(version) if version > SNAPSHOT_VERSION => {
+            format!("session file is from a newer herdr version ({version} > {SNAPSHOT_VERSION})")
         }
-    };
-    match parse_snapshot(&content) {
-        Ok(snapshot) => Some(snapshot),
-        Err(err) => {
-            if let Some(version) = snapshot_file_version(&content) {
-                if version > SNAPSHOT_VERSION {
-                    warn!(
-                        file_version = version,
-                        supported = SNAPSHOT_VERSION,
-                        "session file is from a newer herdr version, ignoring"
-                    );
-                    return None;
-                }
-            }
-            warn!(err = %err, "failed to parse session file, ignoring");
+        _ => err,
+    })
+}
+
+/// TP-PERSIST-04: a session file that does not parse is moved aside and the
+/// previous save stands in; nothing here ever overwrites a torn file.
+pub(super) fn load_from_path(path: &Path) -> Option<SessionSnapshot> {
+    match super::durable::load_or_quarantine(path, &parse_session_strict) {
+        super::durable::Loaded::Missing => None,
+        super::durable::Loaded::Value(snapshot, super::durable::Recovered::Primary) => {
+            Some(snapshot)
+        }
+        super::durable::Loaded::Value(
+            snapshot,
+            super::durable::Recovered::Backup { quarantined },
+        ) => {
+            warn!(
+                path = %path.display(),
+                quarantined = %quarantined.display(),
+                workspaces = snapshot.workspaces.len(),
+                "session restored from its backup copy"
+            );
+            Some(snapshot)
+        }
+        super::durable::Loaded::Quarantined(quarantined) => {
+            warn!(
+                path = %path.display(),
+                quarantined = %quarantined.display(),
+                "session file unreadable and no backup; starting empty"
+            );
             None
         }
     }
@@ -143,30 +153,21 @@ pub fn load() -> Option<SessionSnapshot> {
 
 pub fn load_history() -> Option<SessionHistorySnapshot> {
     let path = session_history_path();
-    if !path.exists() {
-        return None;
-    }
-    let content = match std::fs::read_to_string(&path) {
-        Ok(content) => content,
-        Err(err) => {
-            warn!(err = %err, "failed to read session history file");
-            return None;
-        }
-    };
-    match parse_history_snapshot(&content) {
-        Ok(snapshot) => Some(snapshot),
-        Err(err) => {
-            if let Some(version) = snapshot_file_version(&content) {
-                if version > SNAPSHOT_VERSION {
-                    warn!(
-                        file_version = version,
-                        supported = SNAPSHOT_VERSION,
-                        "session history file is from a newer herdr version, ignoring"
-                    );
-                    return None;
-                }
+    let parse = |content: &str| {
+        parse_history_snapshot(content).map_err(|err| match snapshot_file_version(content) {
+            Some(version) if version > SNAPSHOT_VERSION => {
+                format!(
+                    "history file is from a newer herdr version ({version} > {SNAPSHOT_VERSION})"
+                )
             }
-            warn!(err = %err, "failed to parse session history file, ignoring");
+            _ => err,
+        })
+    };
+    match super::durable::load_or_quarantine(&path, &parse) {
+        super::durable::Loaded::Value(snapshot, _) => Some(snapshot),
+        super::durable::Loaded::Missing => None,
+        super::durable::Loaded::Quarantined(quarantined) => {
+            warn!(quarantined = %quarantined.display(), "session history unreadable; ignoring");
             None
         }
     }
@@ -339,5 +340,50 @@ mod tests {
             .file_type()
             .is_symlink());
         assert!(target.exists());
+    }
+
+    // TP-PERSIST-04: the session file goes through the shared durable writer,
+    // so a corrupt copy is quarantined and the last good copy comes back.
+    #[test]
+    fn a_corrupt_session_file_is_quarantined_and_the_backup_restored() {
+        let path = temp_session_path("corrupt-session");
+        let mut first = empty_snapshot();
+        first.selected = 3;
+        save_to_path(&path, &first).unwrap();
+        let mut second = empty_snapshot();
+        second.selected = 5;
+        save_to_path(&path, &second).unwrap();
+        std::fs::write(&path, b"").unwrap();
+
+        let restored = load_from_path(&path).expect("the backup stands in for the torn file");
+        assert_eq!(restored.selected, 3);
+        assert!(
+            !path.exists(),
+            "the torn file is moved aside, not left to be overwritten"
+        );
+        let quarantined = std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .flatten()
+            .any(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("session.json.corrupt-")
+            });
+        assert!(quarantined, "the torn file survives as evidence");
+    }
+
+    // TP-PERSIST-04
+    #[test]
+    fn a_session_save_leaves_a_backup_of_the_previous_session() {
+        let path = temp_session_path("session-backup");
+        let mut first = empty_snapshot();
+        first.selected = 1;
+        save_to_path(&path, &first).unwrap();
+        let mut second = empty_snapshot();
+        second.selected = 2;
+        save_to_path(&path, &second).unwrap();
+        let backup = path.with_file_name("session.json.bak");
+        let parsed = parse_snapshot(&std::fs::read_to_string(&backup).unwrap()).unwrap();
+        assert_eq!(parsed.selected, 1);
     }
 }
