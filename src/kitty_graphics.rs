@@ -571,92 +571,6 @@ pub(crate) fn encode_local_pane_graphics(
     encode_graphics_update_incremental(cache, &placements, &live_pane_sources, transaction_budget)
 }
 
-pub(crate) fn has_visible_pane_graphics(
-    app: &AppState,
-    graphics: &crate::app::pane_graphics::Runtime,
-    terminal_runtimes: &TerminalRuntimeRegistry,
-    surface: crate::ui::TabSurfaceView<'_>,
-    cell_size: HostCellSize,
-) -> bool {
-    if app.mode != Mode::Terminal || !cell_size.is_known() {
-        return false;
-    }
-
-    let Some(ws_idx) = app.active else {
-        return false;
-    };
-    if app
-        .workspaces
-        .get(ws_idx)
-        .and_then(crate::workspace::Workspace::active_tab)
-        .is_none()
-    {
-        return false;
-    }
-
-    // While a popup is up it owns the picture layer, so it alone decides
-    // whether anything is on screen — matching the placement pass exactly.
-    if let Some(popup) = collect_popup_pane_placements(
-        app,
-        graphics,
-        terminal_runtimes,
-        cell_size,
-        &HashMap::new(),
-        false,
-    ) {
-        return popup
-            .iter()
-            .any(|placement| clipped_placement(placement).is_some());
-    }
-
-    for info in surface.pane_infos {
-        let empty_uploaded = HashMap::new();
-        if graphics.slots.iter().any(|((pane_id, layer_id), slot)| {
-            *pane_id == info.id
-                && slot.layer.as_ref().is_some_and(|layer| {
-                    clipped_placement(&pane_graphics_host_placement(
-                        info,
-                        layer_id,
-                        slot.host_image_id,
-                        cell_size,
-                        layer,
-                        &empty_uploaded,
-                        false,
-                    ))
-                    .is_some()
-                })
-        }) {
-            return true;
-        }
-
-        if let Some(runtime) = app.runtime_for_pane_in_workspace(terminal_runtimes, ws_idx, info.id)
-        {
-            let scrollback_offset = runtime
-                .scroll_metrics()
-                .map(|m| m.offset_from_bottom as u32)
-                .unwrap_or(0);
-            for placement in runtime.kitty_image_placements_with_data_filter(|_| false) {
-                let host_placement = HostPlacement {
-                    pane_id: info.id,
-                    host_image_id: None,
-                    area: info.inner_rect,
-                    cell_size,
-                    source_key: HostSourceKey::Terminal {
-                        pane_id: info.id,
-                        image_id: placement.image_id,
-                    },
-                    placement,
-                    scrollback_offset,
-                };
-                if clipped_placement(&host_placement).is_some() {
-                    return true;
-                }
-            }
-        }
-    }
-    false
-}
-
 fn encode_terminal_graphics_update_legacy(
     bytes: &mut Vec<u8>,
     placements: &[HostPlacement],
@@ -1205,10 +1119,6 @@ impl HostGraphicsCache {
         self.images.remove(&host_id);
         self.placements.retain(|(id, _), _| *id != host_id);
         self.replayed_placements.retain(|(id, _)| *id != host_id);
-    }
-
-    pub(crate) fn is_empty(&self) -> bool {
-        self.images.is_empty() && self.placements.is_empty()
     }
 
     pub(crate) fn request_placement_replay(&mut self) {
