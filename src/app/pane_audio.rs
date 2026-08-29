@@ -118,7 +118,6 @@ impl Session {
         &self.owner
     }
 
-    #[cfg(test)]
     pub(crate) fn counters(&self) -> Counters {
         self.counters
     }
@@ -267,8 +266,26 @@ impl Runtime {
                 pts_us: *pts_us,
                 data: data.clone(),
             }),
-            ChunkFate::DroppedLate { .. } => session.counters.dropped_late += 1,
-            ChunkFate::DroppedNoCredit { .. } => session.counters.dropped_no_credit += 1,
+            ChunkFate::DroppedLate { .. } => {
+                session.counters.dropped_late += 1;
+                if session.counters.dropped_late <= 3 {
+                    tracing::debug!(
+                        offered = session.counters.offered,
+                        credit = room,
+                        "audio chunk dropped late"
+                    );
+                }
+            }
+            ChunkFate::DroppedNoCredit { .. } => {
+                session.counters.dropped_no_credit += 1;
+                if session.counters.dropped_no_credit <= 3 {
+                    tracing::debug!(
+                        offered = session.counters.offered,
+                        credit = room,
+                        "audio chunk dropped for credit"
+                    );
+                }
+            }
         }
         Ok(fate)
     }

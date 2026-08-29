@@ -200,10 +200,10 @@ F1'de daha en baştan **yedi** tane çıkardı.)
 | F1.13 | Ölçüm: Opus bitrate (ffmpeg çapraz) | ✅ | araştırma §2.2.1 · 5 satır ölçüm |
 | ~~F1.2~~ | ~~`[features] media-sink`~~ | **İPTAL** | Bayrak yerine `[target.'cfg(target_os = "macos")'.dependencies] cpal` — CI'da açılamayan bayrak ölü kapı; hedef-kapılı bağımlılıkla macOS varsayılan ikilisi ses çalar |
 | **F1.7** | L3.d **çalışan** interop testi (bizim encoder → libopus) | ⬜ **YAPILMADI** | Beklenti ffmpeg ile çapalandı (§2.2.1) ama **bizim çıktımız** libopus'a verilmedi |
-| **F1.12** | L6 `pane_audio_stream` API | ⬜ **YAPILMADI** | — |
+| **F1.12** | L6 `pane.audio.stream` API | ✅ (S49-S50, master `8a25e169`) | `f33c1fc7`+`3f2d83bb`+`c16fce02`+`9cc9293e`+`8a25e169`; 24 TN → 32 test; dispatch boşluğu `48189f48` (TP-MEDIA-DISPATCH-01) |
 | **F1.13b** | TP-MEDIA-HOL-01 (32 MB yazma süresi) · FRAMESIZE-01 | ⬜ **YAPILMADI** | Mekanizma bulundu (araştırma §1.2), **sayı üretilmedi** |
 | **P1** | İstemci ses sink'i + oynatma bağlama | ✅ (22:5x) | `AudioSink` silent/ffplay/**CoreAudio(cpal, macOS-target-gated)** · `PlaybackThread` · `client/mod.rs` bağlı · darwin `cargo check` HP'de geçti · 27 test |
-| **—** | Sunucu tarafı akış açma/besleme (pane → `AudioStream`) | ⬜ **YAPILMADI** | Motor hazır, çağıranı yok |
+| **—** | Sunucu tarafı akış açma/besleme (pane → `AudioStream`) | ✅ (S49-S50) | `src/app/pane_audio.rs` Runtime + headless fan-out; C1 lab: `played=417` (ffplay, 10 s ton) |
 | F1.14 | Davranış kaydı + `just check` | ✅ kayıt (1123) · kapı koşuldu | — |
 | F1.15 | Belge + devir NN=50 | ⏳ | — |
 

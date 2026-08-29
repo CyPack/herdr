@@ -140,8 +140,11 @@ değişmez (TP-MEDIA-PRIO-01 mevcut) · C6 `just check` yeşil + registry OK · 
 
 ## 8. Görevler (defter: `.local/TASKS-30.md` `## S49`)
 
-P2.0 ✅ (§3) · P2.1 ✅ (bu belge) · P2.2 RED şema · P2.3 RED okuyucu · P2.4 GREEN · P2.5-7 RED app/fanout/kredi ·
-P2.8 GREEN · P2.9 API-02 · P2.10 kayıt+doküman · P2.11 C1 canlı · P2.12 kapı+iniş.
+P2.0-P2.10 ✅ (S49; master `8a25e169`: 24 TN → 32 test + PLAYBACK-08) · P2.11 C1 ✅ lab (S50 13:30:
+izole client + ffplay, `played=417 underruns=12` 10 s; kök neden TP-MEDIA-DISPATCH-01 — ana döngü
+grafik-inaktifken audio isteğini fan-out'suz yola sokuyordu, fix `48189f48`) · P2.12 iniş-1 ✅ 13:08
+(`8a25e169`), iniş-2 (dispatch fix) sürüyor · KALAN: P2.13 mutasyon probu · Mac kulak kanıtı (kullanıcı) ·
+P4/P8 uzun ölçüm (underruns=0 hedefi bu ölçümde kapanır).
 
 ## 9. Riskler
 

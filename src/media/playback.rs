@@ -335,7 +335,7 @@ impl PlaybackStats {
 /// The sink is built where it is used rather than handed across threads, so a
 /// native audio stream that is not `Send` — and on some platforms it is not —
 /// never has to be.
-pub type SinkFactory = Box<dyn FnOnce() -> Result<Box<dyn AudioSink>, SinkError> + Send>;
+pub type SinkFactory = Box<dyn FnMut() -> Result<Box<dyn AudioSink>, SinkError> + Send>;
 
 /// How often the thread looks for due frames while a stream is open.
 ///
@@ -381,8 +381,7 @@ impl PlaybackThread {
     }
 }
 
-fn run(rx: mpsc::Receiver<PlaybackCommand>, stats: Arc<PlaybackStats>, open_sink: SinkFactory) {
-    let mut open_sink = Some(open_sink);
+fn run(rx: mpsc::Receiver<PlaybackCommand>, stats: Arc<PlaybackStats>, mut open_sink: SinkFactory) {
     let mut sink: Option<Box<dyn AudioSink>> = None;
     let mut playback: Option<AudioPlayback> = None;
     let mut offset_us: i64 = 0;
@@ -426,18 +425,21 @@ fn run(rx: mpsc::Receiver<PlaybackCommand>, stats: Arc<PlaybackStats>, open_sink
                         sink = None;
                     }
                     if sink.is_none() {
-                        if let Some(factory) = open_sink.take() {
-                            match factory() {
-                                Ok(built) => {
-                                    if let Ok(mut name) = stats.sink_name.lock() {
-                                        *name = built.describe();
-                                    }
-                                    sink = Some(built);
+                        // The factory lives as long as the thread: every
+                        // stream may need a fresh sink, because the previous
+                        // one moved into its playback session and died with
+                        // it (an external player exits on EOF). TP-MEDIA-SINK-04
+                        match open_sink() {
+                            Ok(built) => {
+                                if let Ok(mut name) = stats.sink_name.lock() {
+                                    *name = built.describe();
                                 }
-                                Err(err) => {
-                                    tracing::warn!(%err, "no audio sink; stream declined");
-                                    stats.sink_closed.store(true, Ordering::Relaxed);
-                                }
+                                stats.sink_closed.store(false, Ordering::Relaxed);
+                                sink = Some(built);
+                            }
+                            Err(err) => {
+                                tracing::warn!(%err, "no audio sink; stream declined");
+                                stats.sink_closed.store(true, Ordering::Relaxed);
                             }
                         }
                     }
@@ -731,6 +733,58 @@ mod tests {
             !p.push(2, pts0 + 2 * FRAME_US, packet(), pts0 as i64),
             "a closed playback refuses new chunks"
         );
+    }
+
+    // TP-MEDIA-SINK-04
+    #[test]
+    fn a_second_stream_after_a_closed_one_opens_the_sink_again() {
+        // A client lives longer than one stream. The first stream closing
+        // takes its sink down with it (an external player exits on EOF), so
+        // the second stream must build a fresh sink — measured live: stream 2
+        // reported credit 0 forever and the server dropped every chunk,
+        // because the factory had been consumed by the first open.
+        use crate::app::test_wait::LoadAwareDeadline;
+        use std::sync::atomic::AtomicUsize;
+
+        static BUILDS: AtomicUsize = AtomicUsize::new(0);
+        BUILDS.store(0, Ordering::Relaxed);
+        let thread = PlaybackThread::spawn(Box::new(|| {
+            BUILDS.fetch_add(1, Ordering::Relaxed);
+            Ok(Box::new(SilentSink::new()) as Box<dyn AudioSink>)
+        }));
+        thread.send(PlaybackCommand::ClockOffset(0));
+        thread.send(PlaybackCommand::Open {
+            stream_id: 1,
+            target_latency_us: 10_000,
+        });
+        thread.send(PlaybackCommand::Close { stream_id: 1 });
+        thread.send(PlaybackCommand::Open {
+            stream_id: 2,
+            target_latency_us: 10_000,
+        });
+        let pts = now_us();
+        thread.send(PlaybackCommand::Chunk {
+            stream_id: 2,
+            seq: 0,
+            pts_us: pts,
+            data: packet(),
+        });
+
+        let deadline = LoadAwareDeadline::new(5, "the second stream to play a chunk");
+        loop {
+            let played = thread.stats().played.load(Ordering::Relaxed);
+            if played > 0 {
+                break;
+            }
+            deadline.check();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(
+            BUILDS.load(Ordering::Relaxed),
+            2,
+            "each stream opens its own sink"
+        );
+        thread.shutdown();
     }
 
     // TP-MEDIA-PLAYBACK-08
