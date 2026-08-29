@@ -163,8 +163,55 @@ pub(crate) fn emit_patch_escapes(
     image_id: u32,
     rects: &[DamageRect],
 ) -> Vec<Vec<u8>> {
-    let _ = (frame, frame_width, image_id, rects);
-    Vec::new()
+    use base64::Engine as _;
+    use std::io::Write as _;
+
+    /// Widest column band one escape can carry as a single row.
+    const MAX_BAND_PX: u32 = (PATCH_MAX_RAW_BYTES / 4) as u32;
+
+    let mut escapes = Vec::new();
+    for rect in rects {
+        if rect.width == 0 || rect.height == 0 {
+            continue;
+        }
+        // A merged run can be wider than one escape's row (a 1920 px scroll
+        // band is 7680 raw bytes): split columns first, then rows, so every
+        // emitted band obeys the single-escape limit in both axes.
+        let mut band_x = 0u32;
+        while band_x < rect.width {
+            let band_w = MAX_BAND_PX.min(rect.width - band_x);
+            let row_bytes = (band_w * 4) as usize;
+            let rows_per_escape = ((PATCH_MAX_RAW_BYTES / row_bytes).max(1)) as u32;
+            let mut band_y = 0u32;
+            while band_y < rect.height {
+                let band_h = rows_per_escape.min(rect.height - band_y);
+                let mut raw = Vec::with_capacity(row_bytes * band_h as usize);
+                for row in 0..band_h {
+                    let y = rect.y + band_y + row;
+                    let start = ((y * frame_width + rect.x + band_x) * 4) as usize;
+                    raw.extend_from_slice(&frame[start..start + row_bytes]);
+                }
+                let payload = base64::engine::general_purpose::STANDARD.encode(&raw);
+                let mut escape = Vec::with_capacity(payload.len() + 64);
+                // Writing to a Vec cannot fail; the let binding keeps the
+                // no-unwrap rule without hiding a real error path.
+                let _ = write!(
+                    escape,
+                    "\x1b_Ga=f,i={image_id},x={x},y={y},s={s},v={v},X=1,f=32;",
+                    x = rect.x + band_x,
+                    y = rect.y + band_y,
+                    s = band_w,
+                    v = band_h,
+                );
+                escape.extend_from_slice(payload.as_bytes());
+                escape.extend_from_slice(b"\x1b\\");
+                escapes.push(escape);
+                band_y += band_h;
+            }
+            band_x += band_w;
+        }
+    }
+    escapes
 }
 
 #[cfg(test)]
