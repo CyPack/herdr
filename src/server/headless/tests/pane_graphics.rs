@@ -2043,6 +2043,54 @@ async fn a_streaming_source_keeps_one_host_image_identity_across_frames() {
     );
 }
 
+// TP-GFX-RETAINED-01
+#[tokio::test]
+async fn a_video_frame_travels_the_retained_path_with_its_graphics() {
+    // With a video pane on screen the retained fast path refused to run at
+    // all (retained_fallback graphics_cache_active), so EVERY frame of the
+    // stream became a full-screen render: measured live at 15/15 full
+    // renders per second, render p95 134 ms, the server pinned at 150% CPU,
+    // typing lagging behind, and the picture blinking as each full pass
+    // re-blitted text over the placements. The fast path must carry the
+    // graphics update inside its patch frame instead of stepping aside.
+    let (mut server, rx1, pane_id) = retained_test_server_through_queue(b"video pane");
+    server.app.state.kitty_graphics_enabled = true;
+    server.clients.get_mut(&1).unwrap().cell_size = crate::kitty_graphics::HostCellSize {
+        width_px: 10,
+        height_px: 20,
+    };
+    server.sync_foreground_client_state();
+    server.resize_shared_runtime_to_effective_size();
+
+    // Seed: a full render installs the first frame and the first video
+    // frame's graphics into the client cache.
+    push_tb_frame(&mut server, pane_id, 1);
+    server.render_and_stream();
+    let mut seed = std::collections::HashSet::new();
+    collect_terminal_upload_ids_queue(&rx1, &mut seed);
+    assert!(!seed.is_empty(), "the seed render uploaded the first frame");
+
+    // The next frame arrives. The retained path must handle it — cache full
+    // and all — and its output must carry the new frame's graphics.
+    push_tb_frame(&mut server, pane_id, 2);
+    let sent = server.render_retained_pty_update_and_stream();
+    let mut uploads = std::collections::HashSet::new();
+    collect_terminal_upload_ids_queue(&rx1, &mut uploads);
+    assert!(
+        sent,
+        "a graphics-bearing screen must not force the retained path aside \
+         into a full render on every video frame"
+    );
+    assert!(
+        !uploads.is_empty(),
+        "the retained frame carries the new video frame's graphics"
+    );
+    assert_eq!(
+        uploads, seed,
+        "the stream keeps its one stable identity on the retained path too"
+    );
+}
+
 // TP-GFX-STABLE-02
 #[tokio::test]
 async fn a_lost_graphics_message_still_leaves_one_placement_on_the_terminal() {

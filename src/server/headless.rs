@@ -4582,23 +4582,8 @@ impl HeadlessServer {
         if client.deferred_render() != DeferredRender::None {
             retained_fallback!("render_pending");
         }
-        if self.app.state.kitty_graphics_enabled && !client.graphics_cache.is_empty() {
-            retained_fallback!("graphics_cache_active");
-        }
         if client.graphics_surface_reset_pending {
             retained_fallback!("graphics_surface_reset");
-        }
-        if self.app.state.kitty_graphics_enabled
-            && cell_size.is_known()
-            && crate::kitty_graphics::has_visible_pane_graphics(
-                &self.app.state,
-                &self.app.pane_graphics,
-                &self.app.terminal_runtimes,
-                self.app.state.view.tab_surface(),
-                *cell_size,
-            )
-        {
-            retained_fallback!("visible_kitty_graphics");
         }
         let Some(mut frame) = client.render_state.last_frame().cloned() else {
             retained_fallback!("no_last_frame");
@@ -4656,7 +4641,42 @@ impl HeadlessServer {
         );
         let cursor_changed = frame.cursor != previous_cursor;
 
-        if !touched && !cursor_changed {
+        // TP-GFX-RETAINED-01: the fast path CARRIES the graphics update
+        // instead of stepping aside. Refusing to run whenever a graphics
+        // cache existed turned every frame of a video pane into a
+        // full-screen render — measured live at 15/15 full renders per
+        // second, render p95 134 ms, the server pinned at 150% CPU and the
+        // picture blinking as each pass re-blitted text over the placements.
+        let mut next_graphics_cache = None;
+        if self.app.state.kitty_graphics_enabled && cell_size.is_known() {
+            let Some(client) = self.clients.get(client_id) else {
+                retained_fallback!("client_missing");
+            };
+            if client.graphics_surface_reset_pending {
+                retained_fallback!("graphics_surface_reset");
+            }
+            let mut cache = client.graphics_cache.clone();
+            let previous_viewer = self.app.state.enter_viewer(Some(*client_id));
+            let encoded = crate::kitty_graphics::encode_local_pane_graphics(
+                &self.app.state,
+                &self.app.pane_graphics,
+                &self.app.terminal_runtimes,
+                self.app.state.view.tab_surface(),
+                *cell_size,
+                Some(crate::kitty_graphics::HEADLESS_GRAPHICS_TRANSACTION_BUDGET),
+                &mut cache,
+            );
+            self.app.state.restore_viewer(previous_viewer);
+            if encoded.incomplete {
+                // An upload over the transaction budget continues on the full
+                // path, which owns the incomplete-loop bookkeeping.
+                retained_fallback!("graphics_incomplete");
+            }
+            frame.graphics.extend(encoded.bytes);
+            next_graphics_cache = Some(cache);
+        }
+
+        if !touched && !cursor_changed && frame.graphics.is_empty() {
             retained_success!("clean_no_cursor_change");
         }
 
@@ -4666,6 +4686,11 @@ impl HeadlessServer {
             self.remove_client_and_resize_if_needed(broken_client);
         }
         if sent {
+            if let (Some(cache), Some(client)) =
+                (next_graphics_cache, self.clients.get_mut(client_id))
+            {
+                client.graphics_cache = cache;
+            }
             retained_success!("sent");
         }
         retained_fallback!("send_failed");
