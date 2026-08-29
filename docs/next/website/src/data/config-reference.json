@@ -554,6 +554,12 @@
           "description": "Split pane horizontally (stacked)."
         },
         {
+          "key": "keys.open_web_pane",
+          "type": "keybinding",
+          "default": "unset",
+          "description": "Open a browser pane beside the focused pane (the tab strip's browser button, on a key). Unset by default."
+        },
+        {
           "key": "keys.close_pane",
           "type": "keybinding",
           "default": "\"prefix+x\"",
@@ -1442,6 +1448,18 @@
           "type": "integer",
           "default": "10000000",
           "description": "Maximum scrollback buffer size in bytes retained per pane terminal. The legacy key name `scrollback_lines` is accepted as an alias."
+        }
+      ]
+    },
+    {
+      "id": "web",
+      "title": "Web",
+      "keys": [
+        {
+          "key": "web.command",
+          "type": "list of strings",
+          "default": "[\"terminal-browser\", \"open\"]",
+          "description": "The program a web pane is born running (the tab strip's browser button, `[keys] open_web_pane`, `herdr pane web open`). The page url, when one was asked for, is appended as its last argument. An empty list falls back to the same default."
         }
       ]
     },

@@ -54,6 +54,9 @@ pub(super) enum MouseAction {
     SplitFocusedPane {
         direction: crate::api::schema::SplitDirection,
     },
+    /// TP-TAB-BROWSER-02: the browser-button press — a web pane beside the
+    /// focused pane, on the `pane.web.open` road.
+    OpenWebPane,
     FocusToastTarget,
     ToggleProjectsActives,
     ToggleSpacesFocus,
@@ -750,6 +753,12 @@ impl AppState {
                         self.mode = Mode::Terminal;
                     }
                     return None;
+                }
+                // TP-TAB-BROWSER-02: the browser button opens a web pane
+                // beside the focused pane, on its own api road.
+                if self.on_web_button(mouse.column, mouse.row) {
+                    self.mode = Mode::Terminal;
+                    return Some(MouseAction::OpenWebPane);
                 }
                 // TP-TAB-SPLIT-02: the buttons beside + split the focused
                 // pane, riding the same api road the keyboard split takes.
@@ -2381,6 +2390,10 @@ impl AppState {
 
     pub(super) fn on_split_down_button(&self, col: u16, row: u16) -> bool {
         rect_contains(self.view.split_down_hit_area, col, row)
+    }
+
+    pub(super) fn on_web_button(&self, col: u16, row: u16) -> bool {
+        rect_contains(self.view.web_hit_area, col, row)
     }
 
     pub(super) fn on_new_tab_button(&self, col: u16, row: u16) -> bool {
@@ -8867,6 +8880,64 @@ mod tests {
                 })
             ),
             "the down button splits downward"
+        );
+    }
+
+    // TP-TAB-BROWSER-02: a press on the browser button asks for a web pane
+    // beside the focused pane, riding the same api road the split buttons
+    // take; the split pair beside it keeps meaning split.
+    #[test]
+    fn a_click_on_the_browser_button_asks_for_a_web_pane() {
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![Workspace::test_new("one")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 120, 40));
+        let web_area = app.state.view.web_hit_area;
+        let right_area = app.state.view.split_right_hit_area;
+        assert!(
+            web_area.width > 0,
+            "precondition: the browser button is drawn"
+        );
+        assert!(
+            web_area.x + web_area.width == right_area.x,
+            "the browser button sits flush left of the split pair"
+        );
+
+        let mut registry = TerminalRuntimeRegistry::new();
+        let action = app.state.handle_mouse(
+            &mut registry,
+            crate::app::LOCAL_INPUT_SOURCE,
+            mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                web_area.x + 1,
+                web_area.y,
+            ),
+        );
+        assert!(
+            matches!(action, Some(MouseAction::OpenWebPane)),
+            "the browser button asks for a web pane"
+        );
+
+        let action = app.state.handle_mouse(
+            &mut registry,
+            crate::app::LOCAL_INPUT_SOURCE,
+            mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                right_area.x + 1,
+                right_area.y,
+            ),
+        );
+        assert!(
+            matches!(
+                action,
+                Some(MouseAction::SplitFocusedPane {
+                    direction: crate::api::schema::SplitDirection::Right
+                })
+            ),
+            "the split pair beside it still splits"
         );
     }
 

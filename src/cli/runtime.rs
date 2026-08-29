@@ -1,9 +1,10 @@
 use crate::api::schema::{
     ChatSeatParams, ChatUnseatParams, EmptyParams, Method, PaneFocusDirectionParams,
     PaneInputSetParams, PaneMoveParams, PaneRenameParams, PaneResizeParams, PaneSplitParams,
-    PaneSwapParams, PaneTarget, PaneZoomParams, Request, TabCreateParams, TabListParams,
-    TabRenameParams, TabTarget, WorkspaceCreateParams, WorkspaceRenameParams, WorkspaceTarget,
-    WorktreeCreateParams, WorktreeListParams, WorktreeOpenParams, WorktreeRemoveParams,
+    PaneSwapParams, PaneTarget, PaneWebOpenParams, PaneZoomParams, Request, TabCreateParams,
+    TabListParams, TabRenameParams, TabTarget, WorkspaceCreateParams, WorkspaceRenameParams,
+    WorkspaceTarget, WorktreeCreateParams, WorktreeListParams, WorktreeOpenParams,
+    WorktreeRemoveParams,
 };
 
 fn print_method_response(id: &'static str, method: Method) -> std::io::Result<i32> {
@@ -119,6 +120,10 @@ pub(super) fn pane_input_set(params: PaneInputSetParams) -> std::io::Result<i32>
 
 pub(super) fn pane_split(params: PaneSplitParams) -> std::io::Result<i32> {
     print_method_response("cli:pane:split", Method::PaneSplit(params))
+}
+
+pub(super) fn pane_web_open(params: PaneWebOpenParams) -> std::io::Result<i32> {
+    print_method_response("cli:pane:web:open", Method::PaneWebOpen(params))
 }
 
 pub(super) fn pane_swap(params: PaneSwapParams) -> std::io::Result<i32> {

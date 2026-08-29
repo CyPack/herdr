@@ -11,8 +11,8 @@ use crate::api::schema::{
     PaneRenameParams, PaneReportAgentParams, PaneReportAgentSessionParams,
     PaneReportMetadataParams, PaneResizeParams, PaneResizeReason, PaneResizeResult,
     PaneSendInputParams, PaneSendKeysParams, PaneSendTextParams, PaneSplitParams, PaneSwapParams,
-    PaneSwapReason, PaneSwapResult, PaneTarget, PaneZoomMode, PaneZoomParams, PaneZoomReason,
-    PaneZoomResult, ResponseResult,
+    PaneSwapReason, PaneSwapResult, PaneTarget, PaneWebOpenParams, PaneZoomMode, PaneZoomParams,
+    PaneZoomReason, PaneZoomResult, ResponseResult,
 };
 use crate::app::actions::{PaneZoomCommand, PaneZoomNoopReason};
 use crate::app::App;
@@ -123,6 +123,128 @@ impl App {
             .insert(new_pane.terminal.id.clone(), new_pane.terminal);
         self.schedule_session_save();
         let pane = self.pane_info(ws_idx, new_pane.pane_id).unwrap();
+        self.emit_event(EventEnvelope {
+            event: EventKind::PaneCreated,
+            data: EventData::PaneCreated { pane: pane.clone() },
+        });
+        self.emit_layout_updated_event(ws_idx, target_tab_idx);
+
+        encode_success(id, ResponseResult::PaneInfo { pane })
+    }
+
+    /// `pane.web.open` — the one road to a browser pane (TP-TAB-BROWSER-02).
+    /// Born beside the target running `command` (default `terminal-browser
+    /// open <url>`), with `HERDR_WEB_PANE=1` in its environment so the
+    /// program can tell it was asked for as a web pane.
+    pub(super) fn handle_pane_web_open(&mut self, id: String, params: PaneWebOpenParams) -> String {
+        let target = if let Some(target_pane_id) = params.target_pane_id.as_deref() {
+            self.parse_pane_id(target_pane_id)
+        } else if let Some(workspace_id) = params.workspace_id.as_deref() {
+            self.parse_workspace_id(workspace_id).and_then(|ws_idx| {
+                let pane_id = self.state.workspaces.get(ws_idx)?.focused_pane_id()?;
+                Some((ws_idx, pane_id))
+            })
+        } else {
+            self.state.active.and_then(|ws_idx| {
+                let pane_id = self.state.workspaces.get(ws_idx)?.focused_pane_id()?;
+                Some((ws_idx, pane_id))
+            })
+        };
+        let Some((ws_idx, target_pane_id)) = target else {
+            return encode_error(id, "pane_not_found", "pane not found");
+        };
+        let mut extra_env = match super::env::normalize_launch_env(params.env) {
+            Ok(env) => env,
+            Err((code, message)) => return encode_error(id, &code, message),
+        };
+        extra_env.push(("HERDR_WEB_PANE".to_string(), "1".to_string()));
+        // An explicit command is run verbatim; the configured browser gets
+        // the page appended, the way `terminal-browser open <url>` reads.
+        let argv: Vec<String> = if params.command.is_empty() {
+            let mut argv = if self.state.web_browser_command.is_empty() {
+                crate::config::WebConfig::default_command()
+            } else {
+                self.state.web_browser_command.clone()
+            };
+            if let Some(url) = params.url.as_deref().filter(|url| !url.is_empty()) {
+                argv.push(url.to_string());
+            }
+            argv
+        } else {
+            params.command.clone()
+        };
+        let (rows, cols) = self.state.estimate_pane_size();
+        let split_cwd = params.cwd.map(std::path::PathBuf::from).or_else(|| {
+            let follow_cwd = self.launch_cwd_for_pane_in_workspace(ws_idx, target_pane_id);
+            Some(self.resolve_new_terminal_cwd(follow_cwd))
+        });
+        let scrollback_limit_bytes = self.state.pane_scrollback_limit_bytes;
+        let host_terminal_theme = self.state.host_terminal_theme;
+        let host_terminal_appearance = self.state.host_terminal_appearance;
+        let previous_focus = self.state.current_pane_focus_target();
+        let direction = match params
+            .direction
+            .unwrap_or(crate::api::schema::SplitDirection::Right)
+        {
+            crate::api::schema::SplitDirection::Right => ratatui::layout::Direction::Horizontal,
+            crate::api::schema::SplitDirection::Down => ratatui::layout::Direction::Vertical,
+        };
+        let Some(ws) = self.state.workspaces.get_mut(ws_idx) else {
+            return encode_error(id, "pane_not_found", "pane not found");
+        };
+        // The same floors the plugin pane road uses: a pane smaller than
+        // this is one no browser can draw in.
+        let split_result = match params.ratio {
+            Some(ratio) => ws.split_pane_argv_command_with_ratio(
+                target_pane_id,
+                direction,
+                ratio,
+                rows.max(4),
+                cols.max(10),
+                split_cwd,
+                &argv,
+                extra_env,
+                scrollback_limit_bytes,
+                host_terminal_theme,
+                host_terminal_appearance,
+                params.focus,
+            ),
+            None => ws.split_pane_argv_command(
+                target_pane_id,
+                direction,
+                rows.max(4),
+                cols.max(10),
+                split_cwd,
+                &argv,
+                extra_env,
+                scrollback_limit_bytes,
+                host_terminal_theme,
+                host_terminal_appearance,
+                params.focus,
+            ),
+        };
+        let (target_tab_idx, new_pane) = match split_result {
+            Some(Ok(result)) => result,
+            Some(Err(err)) => return encode_error(id, "pane_web_open_failed", err.to_string()),
+            None => return encode_error(id, "pane_not_found", "pane not found"),
+        };
+        if params.focus {
+            self.state.switch_workspace_tab(ws_idx, target_tab_idx);
+            self.state
+                .record_pane_focus_change(previous_focus, ws_idx, new_pane.pane_id);
+            self.state.settle_terminal_mode_after_focus();
+        }
+        self.terminal_runtimes
+            .insert(new_pane.terminal.id.clone(), new_pane.runtime);
+        self.state
+            .remove_alias_shadowed_by_new_pane(new_pane.pane_id);
+        self.state
+            .terminals
+            .insert(new_pane.terminal.id.clone(), new_pane.terminal);
+        self.schedule_session_save();
+        let Some(pane) = self.pane_info(ws_idx, new_pane.pane_id) else {
+            return encode_error(id, "pane_not_found", "pane not found");
+        };
         self.emit_event(EventEnvelope {
             event: EventKind::PaneCreated,
             data: EventData::PaneCreated { pane: pane.clone() },
@@ -3883,6 +4005,91 @@ mod tests {
         assert_eq!(focus.source_pane_id, root_public.clone());
         assert_eq!(focus.focused_pane_id, Some(root_public));
         assert_eq!(app.state.workspaces[0].focused_pane_id(), Some(root));
+    }
+
+    // TP-TAB-BROWSER-02: `pane.web.open` births a pane beside the target
+    // running the given command, at the asked ratio — the road the browser
+    // button rides, driven here through the real dispatcher.
+    #[tokio::test]
+    async fn pane_web_open_births_a_pane_running_the_command_beside_the_target() {
+        let (mut app, public_pane_id) = app_with_test_workspace();
+        let response = app.handle_api_request(crate::api::schema::Request {
+            id: "web".into(),
+            method: crate::api::schema::Method::PaneWebOpen(PaneWebOpenParams {
+                workspace_id: None,
+                target_pane_id: Some(public_pane_id.clone()),
+                direction: None,
+                ratio: Some(0.45),
+                url: Some("http://127.0.0.1:1/".into()),
+                command: vec!["/usr/bin/true".into()],
+                cwd: None,
+                focus: true,
+                env: Default::default(),
+            }),
+        });
+        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+
+        assert_eq!(response["result"]["type"], "pane_info", "{response}");
+        let new_pane_id = response["result"]["pane"]["pane_id"].as_str().unwrap();
+        assert_ne!(new_pane_id, public_pane_id, "a new pane was born");
+        let splits = app.state.workspaces[0].tabs[0]
+            .layout
+            .splits(ratatui::layout::Rect::new(0, 0, 100, 20));
+        assert_eq!(splits.len(), 1, "one split beside the target");
+        assert!((splits[0].ratio - 0.45).abs() < f32::EPSILON);
+        assert!(
+            response["result"]["pane"]["focused"].as_bool().unwrap(),
+            "focus followed the new pane"
+        );
+
+        let runtimes: Vec<_> = app.terminal_runtimes.drain().collect();
+        for (_terminal_id, runtime) in runtimes {
+            runtime.shutdown();
+        }
+    }
+
+    // TP-TAB-BROWSER-02: with no command in the request, the pane runs the
+    // configured browser with the page appended.
+    #[tokio::test]
+    async fn pane_web_open_runs_the_configured_browser_when_no_command_is_given() {
+        let (mut app, public_pane_id) = app_with_test_workspace();
+        app.state.web_browser_command = vec!["/usr/bin/true".into(), "open".into()];
+        let response = app.handle_api_request(crate::api::schema::Request {
+            id: "web".into(),
+            method: crate::api::schema::Method::PaneWebOpen(PaneWebOpenParams {
+                workspace_id: None,
+                target_pane_id: Some(public_pane_id),
+                direction: Some(crate::api::schema::SplitDirection::Down),
+                ratio: None,
+                url: Some("http://127.0.0.1:1/".into()),
+                command: Vec::new(),
+                cwd: None,
+                focus: false,
+                env: Default::default(),
+            }),
+        });
+        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(response["result"]["type"], "pane_info", "{response}");
+        let new_pane_id = response["result"]["pane"]["pane_id"].as_str().unwrap();
+        let (_, new_pane) = app.parse_pane_id(new_pane_id).unwrap();
+        let terminal_id = app.state.workspaces[0]
+            .terminal_id(new_pane)
+            .unwrap()
+            .clone();
+        let argv = app.state.terminals[&terminal_id]
+            .launch_argv
+            .clone()
+            .expect("a web pane records what it was born running");
+        assert_eq!(argv, ["/usr/bin/true", "open", "http://127.0.0.1:1/"]);
+        assert!(
+            !response["result"]["pane"]["focused"].as_bool().unwrap(),
+            "focus stayed where it was"
+        );
+
+        let runtimes: Vec<_> = app.terminal_runtimes.drain().collect();
+        for (_terminal_id, runtime) in runtimes {
+            runtime.shutdown();
+        }
     }
 
     #[test]

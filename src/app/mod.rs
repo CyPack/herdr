@@ -1006,6 +1006,7 @@ impl App {
             detach_exits: no_session,
             detach_requested: false,
             request_new_workspace: false,
+            request_open_web_pane: false,
             request_revive_closed_agent: None,
             request_merge_daily_workspaces: false,
             request_module_git_init: None,
@@ -1155,6 +1156,7 @@ impl App {
                 new_tab_hit_area: Rect::default(),
                 split_right_hit_area: Rect::default(),
                 split_down_hit_area: Rect::default(),
+                web_hit_area: Rect::default(),
                 terminal_area: Rect::default(),
                 mobile_header_rect: Rect::default(),
                 mobile_header_hits: crate::ui::MobileHeaderHitAreas::default(),
@@ -1248,6 +1250,7 @@ impl App {
             shell_mode: config.terminal.shell_mode,
             new_terminal_cwd: config.terminal.new_cwd.clone(),
             pane_scrollback_limit_bytes: config.advanced.scrollback_limit_bytes,
+            web_browser_command: config.web.effective_command(),
             resource_sample_interval: resource_sample_interval(&config.shell),
             accent: crate::config::parse_color(&config.ui.accent),
             sound: config.ui.sound.clone(),
@@ -1684,6 +1687,11 @@ impl App {
                 needs_render = true;
             }
 
+            if self.state.request_open_web_pane {
+                self.state.request_open_web_pane = false;
+                self.open_web_pane_via_api();
+                needs_render = true;
+            }
             if self.state.request_new_workspace {
                 self.state.request_new_workspace = false;
                 // TP-DAILY-17: the second TUI road to "new workspace", routed
@@ -2298,6 +2306,10 @@ impl App {
                 self.state.sound = config.ui.sound.clone();
                 self.state.toast_config = config.ui.toast.clone();
             }
+        }
+
+        if !invalid_section("web") {
+            self.state.web_browser_command = config.web.effective_command();
         }
 
         if !invalid_section("experimental") {

@@ -164,6 +164,14 @@ impl App {
         self.dispatch_runtime_mutation(id, Method::PaneSplit(params))
     }
 
+    pub(crate) fn runtime_pane_web_open(
+        &mut self,
+        id: &'static str,
+        params: crate::api::schema::PaneWebOpenParams,
+    ) -> String {
+        self.dispatch_runtime_mutation(id, Method::PaneWebOpen(params))
+    }
+
     pub(crate) fn runtime_pane_zoom(&mut self, id: &'static str, params: PaneZoomParams) -> String {
         self.dispatch_runtime_mutation(id, Method::PaneZoom(params))
     }

@@ -2050,6 +2050,8 @@ pub struct ViewState {
     /// TP-TAB-SPLIT-01/02: split-right button beside `+`, then split-down.
     pub split_right_hit_area: Rect,
     pub split_down_hit_area: Rect,
+    /// TP-TAB-BROWSER-01/02: the browser button, left of the split pair.
+    pub web_hit_area: Rect,
     pub terminal_area: Rect,
     pub mobile_header_rect: Rect,
     /// The three targets the mobile header projects: a button at each edge and
@@ -3959,6 +3961,10 @@ pub struct AppState {
     /// The server's event loop checks this and handles client detach.
     pub detach_requested: bool,
     pub request_new_workspace: bool,
+    /// TP-TAB-BROWSER-02: the state-level key road asked for a web pane; the
+    /// App drains it onto `pane.web.open` on its next turn, the same way a
+    /// workspace request is drained — the state has no api dispatcher.
+    pub request_open_web_pane: bool,
     /// A ghost the graveyard menu asked to bring back (TP-AGPANEL-45).
     ///
     /// A request rather than the call itself: the `#[cfg(test)]` context-menu
@@ -4436,6 +4442,8 @@ pub struct AppState {
     pub shell_mode: crate::config::ShellModeConfig,
     pub new_terminal_cwd: NewTerminalCwdConfig,
     pub pane_scrollback_limit_bytes: usize,
+    /// `[web] command` — what a web pane is born running (TP-TAB-BROWSER-02).
+    pub web_browser_command: Vec<String>,
     /// How often a resource section re-reads the machine.
     ///
     /// Held as a `Duration` rather than the config's milliseconds because every
@@ -5555,6 +5563,7 @@ impl AppState {
             detach_exits: false,
             detach_requested: false,
             request_new_workspace: false,
+            request_open_web_pane: false,
             request_revive_closed_agent: None,
             request_merge_daily_workspaces: false,
             request_module_git_init: None,
@@ -5695,6 +5704,7 @@ impl AppState {
                 new_tab_hit_area: Rect::default(),
                 split_right_hit_area: Rect::default(),
                 split_down_hit_area: Rect::default(),
+                web_hit_area: Rect::default(),
                 terminal_area: Rect::default(),
                 mobile_header_rect: Rect::default(),
                 mobile_header_hits: crate::ui::MobileHeaderHitAreas::default(),
@@ -5782,6 +5792,7 @@ impl AppState {
             shell_mode: crate::config::ShellModeConfig::Auto,
             new_terminal_cwd: NewTerminalCwdConfig::Follow,
             pane_scrollback_limit_bytes: crate::config::DEFAULT_SCROLLBACK_LIMIT_BYTES,
+            web_browser_command: crate::config::WebConfig::default_command(),
             resource_sample_interval: std::time::Duration::from_millis(
                 crate::config::ShellConfig::resource_interval_ms_default(),
             ),

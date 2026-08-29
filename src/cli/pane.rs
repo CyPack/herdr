@@ -5,8 +5,8 @@ use crate::api::schema::{
     PaneReleaseAgentParams, PaneRenameParams, PaneReportAgentParams, PaneReportAgentSessionParams,
     PaneReportMetadataParams, PaneResizeParams, PaneRightClickTarget, PaneSendInputParams,
     PaneSendKeysParams, PaneSendTextParams, PaneSplitParams, PaneSwapParams, PaneTarget,
-    PaneWaitForOutputParams, PaneZoomMode, PaneZoomParams, ReadFormat, ReadSource, Request,
-    SplitDirection,
+    PaneWaitForOutputParams, PaneWebOpenParams, PaneZoomMode, PaneZoomParams, ReadFormat,
+    ReadSource, Request, SplitDirection,
 };
 
 pub(super) fn run_pane_command(args: &[String]) -> std::io::Result<i32> {
@@ -30,6 +30,7 @@ pub(super) fn run_pane_command(args: &[String]) -> std::io::Result<i32> {
         "rename" => pane_rename(&args[1..]),
         "input" => pane_input(&args[1..]),
         "split" => pane_split(&args[1..]),
+        "web" => pane_web(&args[1..]),
         "swap" => pane_swap(&args[1..]),
         "move" => pane_move(&args[1..]),
         "close" => pane_close(&args[1..]),
@@ -634,6 +635,144 @@ fn pane_split(args: &[String]) -> std::io::Result<i32> {
     };
 
     super::runtime::pane_split(params)
+}
+
+/// `herdr pane web open` — the strip's browser button as a verb, on the
+/// same `pane.web.open` road (TP-TAB-BROWSER-02).
+fn pane_web(args: &[String]) -> std::io::Result<i32> {
+    match args.first().map(String::as_str) {
+        Some("open") => {
+            let env_pane_id = std::env::var("HERDR_PANE_ID")
+                .ok()
+                .filter(|value| !value.trim().is_empty());
+            match parse_pane_web_open_args(&args[1..], env_pane_id.as_deref()) {
+                Ok(params) => super::runtime::pane_web_open(params),
+                Err(message) => {
+                    eprintln!("{message}");
+                    Ok(2)
+                }
+            }
+        }
+        _ => {
+            eprintln!("{}", PANE_WEB_OPEN_USAGE);
+            Ok(2)
+        }
+    }
+}
+
+const PANE_WEB_OPEN_USAGE: &str = "usage: herdr pane web open [<pane_id>|--pane ID|--current] [--url URL] [--direction right|down] [--ratio FLOAT] [--cwd PATH] [--env KEY=VALUE] [--focus] [--no-focus] [-- <command>...]";
+
+fn parse_pane_web_open_args(
+    args: &[String],
+    env_pane_id: Option<&str>,
+) -> Result<PaneWebOpenParams, String> {
+    let mut env = std::collections::HashMap::new();
+    let mut pane_id = None;
+    let mut direction = None;
+    let mut ratio = None;
+    let mut cwd = None;
+    let mut url = None;
+    let mut command = Vec::new();
+    let mut focus = true;
+
+    let mut index = 0;
+    if args
+        .first()
+        .is_some_and(|arg| !arg.as_str().starts_with("--"))
+    {
+        pane_id = args.first().map(|arg| super::normalize_pane_id(arg));
+        index = 1;
+    }
+    while index < args.len() {
+        match args[index].as_str() {
+            "--pane" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err("missing value for --pane".into());
+                };
+                pane_id = Some(super::normalize_pane_id(value));
+                index += 2;
+            }
+            "--current" => {
+                pane_id = Some(
+                    env_pane_id
+                        .map(super::normalize_pane_id)
+                        .ok_or("--current requires HERDR_PANE_ID")?,
+                );
+                index += 1;
+            }
+            "--url" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err("missing value for --url".into());
+                };
+                url = Some(value.clone());
+                index += 2;
+            }
+            "--direction" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err("missing value for --direction".into());
+                };
+                direction =
+                    Some(super::parse_split_direction(value).map_err(|err| err.to_string())?);
+                index += 2;
+            }
+            "--ratio" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err("missing value for --ratio".into());
+                };
+                let parsed = value
+                    .parse::<f32>()
+                    .map_err(|_| format!("invalid ratio: {value}"))?;
+                if !parsed.is_finite() {
+                    return Err(format!("invalid ratio: {value}"));
+                }
+                ratio = Some(parsed);
+                index += 2;
+            }
+            "--cwd" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err("missing value for --cwd".into());
+                };
+                cwd = Some(value.clone());
+                index += 2;
+            }
+            "--focus" => {
+                focus = true;
+                index += 1;
+            }
+            "--no-focus" => {
+                focus = false;
+                index += 1;
+            }
+            "--env" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err("missing value for --env".into());
+                };
+                let (key, value) = super::parse_env_assignment(value)?;
+                env.insert(key, value);
+                index += 2;
+            }
+            "--" => {
+                command = args[index + 1..].to_vec();
+                if command.is_empty() {
+                    return Err("missing command after --".into());
+                }
+                break;
+            }
+            other => return Err(format!("unknown option: {other}\n{PANE_WEB_OPEN_USAGE}")),
+        }
+    }
+
+    Ok(PaneWebOpenParams {
+        workspace_id: None,
+        target_pane_id: pane_id,
+        direction,
+        ratio,
+        url,
+        command,
+        cwd,
+        focus,
+        env,
+    })
 }
 
 fn parse_pane_split_args(
@@ -1653,6 +1792,7 @@ fn print_pane_help() {
         "  herdr pane resize --direction left|right|up|down [--amount FLOAT] [--pane ID|--current]"
     );
     eprintln!("  herdr pane zoom [<pane_id>|--pane ID|--current] [--toggle|--on|--off]");
+    eprintln!("  herdr pane web open [<pane_id>|--pane ID|--current] [--url URL] [--direction right|down] [--ratio FLOAT] [--cwd PATH] [--env KEY=VALUE] [--focus|--no-focus] [-- <command>...]");
     eprintln!("  herdr pane rename <pane_id> <label>|--clear");
     eprintln!("  herdr pane read <pane_id> [--source visible|recent|recent-unwrapped] [--lines N] [--format text|ansi] [--ansi]");
     eprintln!("  herdr pane input [<pane_id>|--pane ID|--current] --right-click herdr|pane");
@@ -1682,6 +1822,38 @@ mod tests {
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    // TP-TAB-BROWSER-02: the CLI verb builds the same request the button
+    // sends — url, ratio, an explicit command after `--`, focus on by
+    // default because a browser pane is asked for to be looked at.
+    #[test]
+    fn parse_pane_web_open_args_accepts_url_ratio_and_command() {
+        let argv = args(&[
+            "w1:p1",
+            "--url",
+            "http://127.0.0.1:3001/",
+            "--ratio",
+            "0.45",
+            "--",
+            "chromium",
+            "--app=http://127.0.0.1:3001/",
+        ]);
+        let params = parse_pane_web_open_args(&argv, None).unwrap();
+        assert_eq!(params.target_pane_id.as_deref(), Some("w1:p1"));
+        assert_eq!(params.url.as_deref(), Some("http://127.0.0.1:3001/"));
+        assert_eq!(params.ratio, Some(0.45));
+        assert_eq!(params.command, ["chromium", "--app=http://127.0.0.1:3001/"]);
+        assert!(params.focus, "a browser pane is opened to be looked at");
+        assert!(
+            params.direction.is_none(),
+            "unwritten direction means right"
+        );
+
+        let bare = parse_pane_web_open_args(&args(&["--no-focus"]), None).unwrap();
+        assert!(bare.command.is_empty(), "no command means terminal-browser");
+        assert!(!bare.focus);
+        assert!(parse_pane_web_open_args(&args(&["--"]), None).is_err());
     }
 
     #[test]

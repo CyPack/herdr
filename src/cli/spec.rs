@@ -626,6 +626,29 @@ fn pane_command() -> Command {
                 ),
         )
         .subcommand(
+            Command::new("web")
+                .about("Browser panes")
+                .subcommand(
+                    Command::new("open")
+                        .about("Open a browser pane beside a pane")
+                        .arg(Arg::new("pane_id").value_name("PANE_ID"))
+                        .args(current_pane_args())
+                        .arg(option("url", "URL"))
+                        .arg(split_direction_option())
+                        .arg(option("ratio", "FLOAT"))
+                        .arg(path_option("cwd", "PATH"))
+                        .arg(env_option())
+                        .arg(flag("focus"))
+                        .arg(flag("no-focus"))
+                        .arg(
+                            Arg::new("command")
+                                .value_name("COMMAND")
+                                .num_args(0..)
+                                .last(true),
+                        ),
+                ),
+        )
+        .subcommand(
             Command::new("split")
                 .about("Split a pane")
                 .arg(Arg::new("pane_id").value_name("PANE_ID"))
@@ -1359,6 +1382,17 @@ mod tests {
         let cmd = super::command();
         let pane_read = command_path(&cmd, &["pane", "read"]);
         assert!(has_option(pane_read, "raw"));
+    }
+
+    // TP-TAB-BROWSER-02: the spec carries the web verb with the same
+    // direction vocabulary the split carries.
+    #[test]
+    fn spec_includes_pane_web_open() {
+        let cmd = super::command();
+        let web_open = command_path(&cmd, &["pane", "web", "open"]);
+        assert!(has_option(web_open, "url"));
+        assert!(has_option(web_open, "direction"));
+        assert_eq!(option_values(web_open, "direction"), ["right", "down"]);
     }
 
     #[test]

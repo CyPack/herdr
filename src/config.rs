@@ -27,7 +27,7 @@ pub use self::{
         ShellBarSectionConfig, ShellBarsConfig, ShellConfig, ShellModeConfig,
         SidebarCollapsedModeConfig, SpaceIconsConfig, StatusIndicatorStyle, TabBarPositionConfig,
         ToastClipboardPosition, ToastConfig, ToastDelivery, ToastHerdrPosition,
-        UpdateChannelConfig, MAX_TOAST_DELAY_SECONDS, ROUTINE_CHAT_LABEL,
+        UpdateChannelConfig, WebConfig, MAX_TOAST_DELAY_SECONDS, ROUTINE_CHAT_LABEL,
     },
     sidebar::{
         AgentSidebarToken, AgentsSidebarConfig, SectionBorderConfig, SidebarConfig,

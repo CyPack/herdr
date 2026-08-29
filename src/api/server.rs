@@ -445,6 +445,7 @@ fn api_method_name(method: &Method) -> &'static str {
         Method::AgentPrompt(_) => "agent.prompt",
         Method::AgentWait(_) => "agent.wait",
         Method::PaneSplit(_) => "pane.split",
+        Method::PaneWebOpen(_) => "pane.web.open",
         Method::PaneSwap(_) => "pane.swap",
         Method::PaneMove(_) => "pane.move",
         Method::PaneZoom(_) => "pane.zoom",
