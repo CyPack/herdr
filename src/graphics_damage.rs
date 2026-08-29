@@ -141,6 +141,32 @@ pub(crate) fn diff_rgba_frames(
     DamageOutcome::Patches(rects)
 }
 
+/// Raw RGBA bytes one `a=f` patch escape may carry.
+///
+/// tuios measured (kitty 0.48.2) that `a=f` does not combine with `m=`
+/// continuation chunks: a patch must fit ONE escape. 3072 raw bytes matches
+/// the proven `KITTY_CHUNK_BYTES` and encodes to a 4096-byte base64 payload.
+/// 3072 / 4 = 768 pixels per escape, so a taller rect is emitted as
+/// row bands. No `o=z` here: at three kilobytes the deflate header and the
+/// per-frame CPU buy nothing measurable.
+pub(crate) const PATCH_MAX_RAW_BYTES: usize = 3072;
+
+/// One ready-to-write kitty escape patching a region of image `image_id`.
+///
+/// Emitted against the STABLE streaming image identity (the trunk chain
+/// that keeps one host image per streaming source) — `a=f,...,X=1` replaces
+/// the pixels of frame 1 in place, which is exactly xpra's patch shape and
+/// the protocol's own SSH-efficiency mechanism.
+pub(crate) fn emit_patch_escapes(
+    frame: &[u8],
+    frame_width: u32,
+    image_id: u32,
+    rects: &[DamageRect],
+) -> Vec<Vec<u8>> {
+    let _ = (frame, frame_width, image_id, rects);
+    Vec::new()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -239,6 +265,136 @@ mod tests {
             diff_rgba_frames(&previous, &next, width, height),
             DamageOutcome::FullFrame
         );
+    }
+
+    fn parse_escape(esc: &[u8]) -> (std::collections::HashMap<String, String>, Vec<u8>) {
+        let text = std::str::from_utf8(esc).expect("ascii escape");
+        let body = text
+            .strip_prefix("\x1b_G")
+            .and_then(|t| t.strip_suffix("\x1b\\"))
+            .expect("kitty escape frame");
+        let (control, payload) = body.split_once(';').expect("control;payload");
+        let keys = control
+            .split(',')
+            .map(|kv| {
+                let (k, v) = kv.split_once('=').expect("k=v");
+                (k.to_owned(), v.to_owned())
+            })
+            .collect();
+        let mut decoded = Vec::new();
+        let mut buffer = 0u32;
+        let mut bits = 0u32;
+        for byte in payload.bytes() {
+            let value = match byte {
+                b'A'..=b'Z' => byte - b'A',
+                b'a'..=b'z' => byte - b'a' + 26,
+                b'0'..=b'9' => byte - b'0' + 52,
+                b'+' => 62,
+                b'/' => 63,
+                b'=' => continue,
+                other => panic!("base64 dışı bayt {other}"),
+            } as u32;
+            buffer = (buffer << 6) | value;
+            bits += 6;
+            if bits >= 8 {
+                bits -= 8;
+                decoded.push((buffer >> bits) as u8);
+            }
+        }
+        (keys, decoded)
+    }
+
+    /// One small rect becomes exactly one escape whose keys and payload
+    /// reproduce the sub-image — the delta's reason to exist.
+    #[test]
+    fn a_small_rect_becomes_one_exact_patch_escape() {
+        let width = 64u32;
+        let mut frame = frame(width, 16, 0);
+        // 8x2 rect at (4,3) with recognisable bytes.
+        for y in 3..5u32 {
+            for x in 4..12u32 {
+                let i = ((y * width + x) * 4) as usize;
+                frame[i..i + 4].copy_from_slice(&[x as u8, y as u8, 0xAB, 0xFF]);
+            }
+        }
+        let rect = DamageRect {
+            x: 4,
+            y: 3,
+            width: 8,
+            height: 2,
+        };
+        let escapes = emit_patch_escapes(&frame, width, 42, &[rect]);
+        assert_eq!(escapes.len(), 1);
+        let (keys, payload) = parse_escape(&escapes[0]);
+        assert_eq!(keys["a"], "f");
+        assert_eq!(keys["i"], "42");
+        assert_eq!(keys["x"], "4");
+        assert_eq!(keys["y"], "3");
+        assert_eq!(keys["s"], "8");
+        assert_eq!(keys["v"], "2");
+        assert_eq!(keys["X"], "1");
+        assert_eq!(keys["f"], "32");
+        assert_eq!(payload.len(), 8 * 2 * 4);
+        assert_eq!(&payload[..4], &[4, 3, 0xAB, 0xFF]);
+    }
+
+    /// The tuios-measured constraint: `a=f` cannot use `m=` continuation,
+    /// so no escape may carry more than PATCH_MAX_RAW_BYTES — a tall rect
+    /// splits into row bands that reassemble exactly.
+    #[test]
+    fn a_patch_never_spans_the_escape_limit() {
+        let width = 64u32;
+        let mut frame = frame(width, 64, 0);
+        for (index, byte) in frame.iter_mut().enumerate() {
+            *byte = (index % 251) as u8;
+        }
+        let rect = DamageRect {
+            x: 0,
+            y: 0,
+            width: 32,
+            height: 32,
+        };
+        let escapes = emit_patch_escapes(&frame, width, 7, &[rect]);
+        assert!(escapes.len() > 1, "4096 ham bayt tek escape'e sığamaz");
+        let mut reassembled = vec![0u8; (32 * 32 * 4) as usize];
+        let mut covered_rows = 0u32;
+        for esc in &escapes {
+            let (keys, payload) = parse_escape(esc);
+            assert!(
+                payload.len() <= PATCH_MAX_RAW_BYTES,
+                "escape başına ham sınır"
+            );
+            assert!(keys.get("m").is_none(), "a=f ile m= birlikte YASAK");
+            let (bx, by) = (
+                keys["x"].parse::<u32>().unwrap(),
+                keys["y"].parse::<u32>().unwrap(),
+            );
+            let (bw, bh) = (
+                keys["s"].parse::<u32>().unwrap(),
+                keys["v"].parse::<u32>().unwrap(),
+            );
+            assert_eq!(bx, 0);
+            assert_eq!(bw, 32);
+            for row in 0..bh {
+                let src = (row * bw * 4) as usize;
+                let dst = (((by + row) * 32) * 4) as usize;
+                reassembled[dst..dst + (bw * 4) as usize]
+                    .copy_from_slice(&payload[src..src + (bw * 4) as usize]);
+            }
+            covered_rows += bh;
+        }
+        assert_eq!(covered_rows, 32, "bantlar tüm satırları örter");
+        for y in 0..32u32 {
+            for x in 0..32u32 {
+                let src = ((y * width + x) * 4) as usize;
+                let dst = ((y * 32 + x) * 4) as usize;
+                assert_eq!(
+                    &reassembled[dst..dst + 4],
+                    &frame[src..src + 4],
+                    "({x},{y})"
+                );
+            }
+        }
     }
 
     /// A geometry change can never patch: the caller sends a full frame.
