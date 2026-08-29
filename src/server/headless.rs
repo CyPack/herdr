@@ -7157,7 +7157,6 @@ mod tests {
     /// (single-slot render lane, Full instead of blocking) rather than the
     /// `test_render` bypass — the H49-1 requirement: the queue is driven, not
     /// simulated (H49-1).
-
     fn retained_test_server_through_queue(
         initial_screen: &[u8],
     ) -> (
