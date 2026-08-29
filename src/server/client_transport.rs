@@ -2167,6 +2167,54 @@ new_tab = "ctrl+notakey"
             .expect("handshake thread result");
     }
 
+    // TP-MEDIA-CREDIT-02
+    #[test]
+    fn a_media_credit_report_travels_to_the_main_loop_as_an_event() {
+        // The other half of the credit contract: the wire message must become
+        // `ServerEvent::ClientMediaCredit` on the read loop. The headless test
+        // drives the event by hand, so a transport that silently dropped the
+        // message — as it did before this endpoint existed — kept every test
+        // green while a real client's credit never arrived (mutation probe
+        // caught exactly that survivor).
+        let (mut client_stream, server_stream, _path) =
+            local_stream_pair("client-read-media-credit");
+        let (server_event_tx, mut server_event_rx) = mpsc::channel(4);
+        let should_quit = Arc::new(AtomicBool::new(false));
+        let read_quit = should_quit.clone();
+        let handle = std::thread::spawn(move || {
+            client_read_loop(server_stream, 9, &server_event_tx, &read_quit)
+        });
+
+        protocol::write_message(
+            &mut client_stream,
+            &ClientMessage::MediaCredit {
+                stream_id: 3,
+                chunks: 12,
+            },
+        )
+        .expect("write media credit");
+
+        match recv_server_event(&mut server_event_rx, "media credit event") {
+            ServerEvent::ClientMediaCredit {
+                client_id,
+                stream_id,
+                chunks,
+            } => {
+                assert_eq!(client_id, 9);
+                assert_eq!(stream_id, 3);
+                assert_eq!(chunks, 12);
+            }
+            other => panic!("expected ClientMediaCredit, got {other:?}"),
+        }
+
+        drop(client_stream);
+        should_quit.store(true, Ordering::Release);
+        handle
+            .join()
+            .expect("read thread join")
+            .expect("read thread result");
+    }
+
     #[test]
     fn client_read_loop_rejects_oversized_bracketed_paste_without_disconnect() {
         let (mut client_stream, server_stream, _path) = local_stream_pair("client-read-oversized");
