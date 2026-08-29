@@ -1842,14 +1842,16 @@ impl AppState {
             // daily directory, never at whatever workspace was active.
             crate::ui::MobileSwitcherTarget::DailyChat { chat_idx } => {
                 self.close_mobile_drawer();
-                if let Some(session_id) = self
-                    .daily_chat_cwd
-                    .as_ref()
-                    .map(|cwd| crate::persist::workspace_chats::ledger_key(cwd))
-                    .and_then(|key| self.workspace_chat_rows.get(&key))
-                    .and_then(|rows| rows.get(chat_idx))
-                    .map(|row| row.session_id.clone())
-                {
+                // TP-DAILY-28: the phone resolves the tapped row against the
+                // SAME filtered list the section shows, never the raw ledger —
+                // otherwise a hidden chore standing early in the map claims a
+                // visible slot and the tap opens the wrong chat (the desktop's
+                // blank-row defect, in its tap form). Bound in its own
+                // statement so the borrow of `self` ends before the resume.
+                let session_id = crate::ui::daily_chat_rows(self)
+                    .get(chat_idx)
+                    .map(|row| row.session_id.clone());
+                if let Some(session_id) = session_id {
                     self.open_daily_chat(&session_id);
                 }
             }

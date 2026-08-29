@@ -858,7 +858,7 @@ case'tir.**
 
 | Faz | Kapsam | Gerekçe |
 |---|---|---|
-| **F0** | S6 capability + S7 öncelik | Ortogonal zorunluluk (K4) — her şeyin önkoşulu |
+| **F0** ✅ | S6 capability + S7 öncelik | Ortogonal zorunluluk (K4) — her şeyin önkoşulu · **TAMAMLANDI 2026-08-28** (`feat/media-capability`): yetenekler AD tabanlı, PROTOCOL_VERSION 21→22, TP-MEDIA-CAP-01/02/03 + TP-CLIENT-WRITE-PRIO-01 kayıtlı, `just check` 5998/5998. S7'nin kesin-öncelik yarısı ZATEN uygulanmıştı (`client_transport.rs` recv) — F0 onu adlandırıp merge'e karşı kilitledi; kredi/son-kullanma F1-F2'de. |
 | **F1** | S3: P1 müzik (Opus, mevcut kanal) | En büyük değer, en küçük risk; S5'in 1. aşaması (K1) |
 | **F2** | S4: P2 film (buffer + H.264 + A/V senkron) | Aynı kanal, QUIC yok; S5'in 2. aşaması |
 | **F3** | *(ERTELENDİ)* S5 QUIC + P3 | Yalnız C5 için gerekli; C3/C4 S2 ile çözülü (K2) |

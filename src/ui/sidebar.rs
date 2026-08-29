@@ -3146,6 +3146,12 @@ pub(crate) fn compute_workspace_list_areas(app: &AppState, area: Rect) -> Worksp
     let mut daily = DailySectionAreas::default();
 
     let entries = workspace_list_entries(app);
+    // TP-DAILY-28: the section's own filtered list, resolved ONCE outside the
+    // layout loop (allocating it per row would trip the hot-path budget) and
+    // indexed by the DailyChat arm below — the same list the count, the emit
+    // and the paint read, so a row's identity can no longer come from the raw
+    // ledger a hidden chore still sits in.
+    let daily_rows = daily_chat_rows(app);
     for (entry_idx, entry) in entries.iter().enumerate().skip(scroll) {
         let Some((row_height, gap)) = entry_row_metrics(app, &entries, entry_idx, body.height)
         else {
@@ -3212,13 +3218,18 @@ pub(crate) fn compute_workspace_list_areas(app: &AppState, area: Rect) -> Worksp
                 daily.header = Some(rect);
             }
             WorkspaceListEntry::DailyChat { chat_idx } => {
-                if let Some(session_id) = app
-                    .daily_chat_cwd
-                    .as_ref()
-                    .map(|cwd| crate::persist::workspace_chats::ledger_key(cwd))
-                    .and_then(|key| app.workspace_chat_rows.get(&key))
-                    .and_then(|rows| rows.get(*chat_idx))
-                    .map(|row| row.session_id.clone())
+                // TP-DAILY-28: resolve the row's identity against the SAME
+                // filtered list the section counts, emits and paints from —
+                // `daily_chat_rows` — never the raw `workspace_chat_rows` map.
+                // A chore hidden by config still sits in the raw map, so
+                // indexing it here handed a visible slot a hidden chat's id;
+                // the paint's `find` on the filtered list then missed it and
+                // the row painted blank, while a real chat was pushed behind
+                // "… older". Emit, count, resolve and paint now share one
+                // index space, which is what TP-CHATROW-ID-01/02 already did
+                // for the workspace and module rows.
+                if let Some(session_id) =
+                    daily_rows.get(*chat_idx).map(|row| row.session_id.clone())
                 {
                     daily
                         .chats
@@ -8938,6 +8949,138 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
     fn a_section_whose_chats_are_all_hidden_has_no_chats() {
         let (app, _) = app_with_routine_daily_chats(4, 4);
         assert!(daily_chat_rows(&app).is_empty());
+    }
+
+    /// TP-DAILY-28: the laid-out daily rows carry the identities of the chats
+    /// the section actually SHOWS (the filtered list), never the raw ledger's.
+    ///
+    /// The reported defect, at the layer it lives in. `daily_chat_rows` already
+    /// drops the hidden chores (S1–S7 above prove that at the state layer), but
+    /// the AREA the renderer paints from resolved its `chat_idx` against the
+    /// RAW `workspace_chat_rows` map instead — so a chore standing early in the
+    /// ledger claimed a visible slot, the paint's `find` on the filtered list
+    /// missed it, and the row painted BLANK while a real chat was pushed behind
+    /// "… older". "state correct, screen empty", the exact class this file's
+    /// five-layers note warns about — which is why this asserts at the buffer.
+    #[test]
+    fn daily_rows_carry_the_visible_identities_not_the_raw_ledger() {
+        // Six chats, the first two of them chores hidden by config; four remain.
+        let (mut app, _) = app_with_routine_daily_chats(6, 2);
+        let area = Rect::new(0, 0, 40, 20);
+        app.view.sidebar_rect = area;
+
+        let filtered: Vec<String> = daily_chat_rows(&app)
+            .iter()
+            .map(|row| row.session_id.clone())
+            .collect();
+        assert_eq!(
+            filtered,
+            vec![
+                "daily-session-2".to_string(),
+                "daily-session-3".to_string(),
+                "daily-session-4".to_string(),
+                "daily-session-5".to_string(),
+            ],
+            "the two chores are dropped from what the section shows",
+        );
+
+        let (cards, chats, groups, projects, more, empty, daily, _) =
+            compute_workspace_list_areas(&app, area);
+
+        // The laid-out rows ARE the visible chats, in order — never a chore.
+        let laid_out: Vec<String> = daily
+            .chats
+            .iter()
+            .map(|row| row.session_id.clone())
+            .collect();
+        assert_eq!(
+            laid_out, filtered,
+            "the daily area's identities must be the section's own filtered list, not the raw ledger",
+        );
+
+        // And they paint: not one of the laid-out rows is blank, and each wears
+        // its visible chat's title rather than a chore's or nothing at all.
+        app.view.workspace_card_areas = cards;
+        app.view.workspace_chat_row_areas = chats;
+        app.view.workspace_group_header_areas = groups;
+        app.view.workspace_project_header_areas = projects;
+        app.view.workspace_more_chats_areas = more;
+        app.view.workspace_empty_module_areas = empty;
+        app.view.daily_header_area = daily.header;
+        app.view.daily_chat_row_areas = daily.chats.clone();
+        app.view.daily_more_area = daily.more;
+
+        let mut terminal = Terminal::new(TestBackend::new(40, 20)).unwrap();
+        terminal
+            .draw(|frame| render_sidebar(&app, &TerminalRuntimeRegistry::new(), frame, area))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+
+        for (row, expected) in daily.chats.iter().zip(["2", "3", "4", "5"]) {
+            let text = row_text(buffer, row.rect.y, row.rect.width);
+            assert!(
+                !text.trim().is_empty(),
+                "a laid-out daily row painted blank: {text:?}",
+            );
+            assert!(
+                text.contains(&format!("daily chat {expected}")),
+                "row should wear its visible chat's title: {text:?}",
+            );
+            assert!(
+                !text.contains("daily chat 0") && !text.contains("daily chat 1"),
+                "a hidden chore must never reach a drawn row: {text:?}",
+            );
+        }
+    }
+
+    /// TP-DAILY-28: a press on a daily row opens the chat the reader SAW, never
+    /// the chore whose slot the old raw-indexed resolution would have handed it.
+    #[test]
+    fn a_daily_press_opens_the_visible_chat_not_a_hidden_chore() {
+        let (mut app, _) = app_with_routine_daily_chats(6, 2);
+        let area = Rect::new(0, 0, 40, 20);
+        app.view.sidebar_rect = area;
+        let (_, _, _, _, _, _, daily, _) = compute_workspace_list_areas(&app, area);
+        app.view.daily_chat_row_areas = daily.chats.clone();
+
+        // The first drawn row must be the first VISIBLE chat.
+        let first = daily.chats.first().expect("a row is laid out");
+        assert_eq!(first.session_id, "daily-session-2");
+        app.open_daily_chat(&first.session_id);
+        let queued = app
+            .request_project_chat_tab
+            .as_ref()
+            .expect("a visible chat resolves to an open request");
+        assert_eq!(
+            queued.session_id.as_deref(),
+            Some("daily-session-2"),
+            "the press opens the visible chat, not the chore behind the slot",
+        );
+    }
+
+    /// TP-DAILY-28 (regression): with nothing hidden the area is byte-for-byte
+    /// the list it always was — the fix is a no-op when the filter drops nothing.
+    #[test]
+    fn with_no_hidden_chats_the_daily_area_is_unchanged() {
+        let (mut app, _) = app_with_routine_daily_chats(5, 0);
+        let area = Rect::new(0, 0, 40, 20);
+        app.view.sidebar_rect = area;
+        let (_, _, _, _, _, _, daily, _) = compute_workspace_list_areas(&app, area);
+        let laid_out: Vec<&str> = daily
+            .chats
+            .iter()
+            .map(|row| row.session_id.as_str())
+            .collect();
+        assert_eq!(
+            laid_out,
+            vec![
+                "daily-session-0",
+                "daily-session-1",
+                "daily-session-2",
+                "daily-session-3",
+                "daily-session-4",
+            ],
+        );
     }
 
     /// The shape the machine actually had: a workspace born in the daily

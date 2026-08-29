@@ -181,29 +181,24 @@ pub fn derive_from_chat_rows(
 /// A graveyard that refuses to load is worse than an empty one: it would take
 /// the panel down with it on a path that runs at every startup.
 pub fn load_from_path(path: &Path) -> ClosedAgentStore {
-    if !path.exists() {
-        return ClosedAgentStore::default();
-    }
-    let content = match std::fs::read_to_string(path) {
-        Ok(content) => content,
-        Err(err) => {
-            warn!(path = %path.display(), %err, "failed to read closed agent store");
-            return ClosedAgentStore::default();
+    let parse = |content: &str| {
+        let store: ClosedAgentStore =
+            serde_json::from_str(content).map_err(|err| err.to_string())?;
+        if store.version == CLOSED_AGENTS_VERSION {
+            Ok(store)
+        } else {
+            Err(format!(
+                "closed agent store version {} (expected {CLOSED_AGENTS_VERSION})",
+                store.version
+            ))
         }
     };
-    match serde_json::from_str::<ClosedAgentStore>(&content) {
-        Ok(store) if store.version == CLOSED_AGENTS_VERSION => store,
-        Ok(store) => {
-            warn!(
-                path = %path.display(),
-                found = store.version,
-                expected = CLOSED_AGENTS_VERSION,
-                "closed agent store version mismatch; starting empty"
-            );
-            ClosedAgentStore::default()
-        }
-        Err(err) => {
-            warn!(path = %path.display(), %err, "closed agent store is unreadable; starting empty");
+    // TP-PERSIST-04: a torn or foreign file is moved aside, never overwritten.
+    match super::durable::load_or_quarantine(path, &parse) {
+        super::durable::Loaded::Value(store, _) => store,
+        super::durable::Loaded::Missing => ClosedAgentStore::default(),
+        super::durable::Loaded::Quarantined(quarantined) => {
+            warn!(path = %path.display(), quarantined = %quarantined.display(), "closed agent store unreadable; starting empty");
             ClosedAgentStore::default()
         }
     }
@@ -213,20 +208,8 @@ pub fn load_from_path(path: &Path) -> ClosedAgentStore {
 /// file behind, because the next start would read it as corrupt and drop the
 /// whole graveyard.
 pub fn save_to_path(path: &Path, store: &ClosedAgentStore) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
     let json = serde_json::to_string_pretty(store)?;
-    let tmp_path = path.with_extension("json.tmp");
-    std::fs::write(&tmp_path, json)?;
-    #[cfg(windows)]
-    if path.exists() {
-        if let Err(err) = std::fs::remove_file(path) {
-            let _ = std::fs::remove_file(&tmp_path);
-            return Err(err);
-        }
-    }
-    std::fs::rename(&tmp_path, path)
+    super::durable::write_atomic(path, json.as_bytes())
 }
 
 #[cfg(test)]
@@ -517,5 +500,21 @@ mod tests {
     fn a_missing_store_is_an_empty_one() {
         let path = temp_path("absent");
         assert_eq!(load_from_path(&path), ClosedAgentStore::default());
+    }
+
+    // TP-PERSIST-04: the graveyard goes through the shared durable writer.
+    #[test]
+    fn a_torn_graveyard_is_quarantined_and_the_previous_save_restored() {
+        let path = temp_path("torn-graveyard");
+        let store = ClosedAgentStore {
+            version: CLOSED_AGENTS_VERSION,
+            ..Default::default()
+        };
+        save_to_path(&path, &store).unwrap();
+        save_to_path(&path, &store).unwrap();
+        std::fs::write(&path, b"{").unwrap();
+        let restored = load_from_path(&path);
+        assert_eq!(restored.version, CLOSED_AGENTS_VERSION);
+        assert!(!path.exists(), "the torn file is moved aside");
     }
 }

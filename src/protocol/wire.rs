@@ -14,6 +14,15 @@ use serde::{Deserialize, Serialize};
 
 /// Current protocol version. Bumped when wire format changes incompatibly.
 ///
+/// 22, not 21: the handshake now carries a capability announcement
+/// (`Hello.capabilities` / `Welcome.accepted`), which changes the frame shape
+/// once. It is meant to be the **last** media-driven bump: capabilities are
+/// names, so a future audio or video feature adds a name and leaves this
+/// number alone. Reaching for a bump because "media needs a new field" is the
+/// mistake this field was added to retire — see `docs/patterns/
+/// remote-media-transport.md` RA7, and the 20 -> 21 bump below, which cost the
+/// whole client fleet for one boolean.
+///
 /// 21, not 20: protocol 20 is already published in the preview channel, and
 /// `Hello` now carries the client's pixel-mouse capability. The check below is
 /// exact-match, so reusing 20 would let a released client speak a different
@@ -22,7 +31,7 @@ use serde::{Deserialize, Serialize};
 /// 20, not 19: the latest released tag (preview-2026-08-04) already shipped a
 /// wire that calls itself 19 while this source line said 18. Numbers are
 /// cheap; collisions are not.
-pub const PROTOCOL_VERSION: u32 = 21;
+pub const PROTOCOL_VERSION: u32 = 22;
 
 /// Maximum allowed frame payload size (2 MB). Frames larger than this are
 /// rejected to prevent denial-of-service via oversized length prefixes.
@@ -38,6 +47,223 @@ pub const MAX_CLIPBOARD_IMAGE_PAYLOAD: usize = 16 * 1024 * 1024;
 
 /// Length of the u32 little-endian length prefix in bytes.
 const LENGTH_PREFIX_BYTES: usize = 4;
+
+// ---------------------------------------------------------------------------
+// Capability negotiation
+// ---------------------------------------------------------------------------
+
+/// Well-known capability names.
+///
+/// Names, not enum variants, and that is the whole point. `bincode` is not
+/// self-describing: an unknown enum discriminant does not skip a field, it
+/// fails the decode of the entire message. So a capability enum would make
+/// every new media feature a wire change, and every wire change a
+/// `PROTOCOL_VERSION` bump — the exact loop this negotiation exists to end.
+/// A name list stays the same shape forever; a reader that has never heard of
+/// a name simply never asks for it.
+///
+/// This is the shape SSH (RFC 4253 §7.1, algorithm name lists), TLS
+/// (RFC 8446 §4.2, "clients MUST ignore unrecognized extensions") and HTTP/2
+/// (RFC 9113 §6.5.2, unknown SETTINGS identifiers MUST be ignored) all
+/// converged on independently.
+pub mod capability {
+    // The names exist before their first consumer on purpose: F0 builds the
+    // negotiation and F1 is the phase that announces `MEDIA_STREAMS` and
+    // `AUDIO_SINK` for real. Defining them here keeps every later phase from
+    // inventing its own spelling of the same name, which is the failure two
+    // herdr-browser plugins already produced independently.
+    #![allow(dead_code)]
+
+    /// Client can receive timestamped media streams and take part in clock sync.
+    pub const MEDIA_STREAMS: &str = "media.streams";
+    /// Client has a local audio sink. Values are the codecs it can decode.
+    pub const AUDIO_SINK: &str = "media.audio.sink";
+    /// Client can decode video and draw it itself. Values are the codecs.
+    pub const VIDEO_DECODE: &str = "media.video.decode";
+    /// Client can open a second transport for media. Values are the kinds.
+    pub const SIDE_CHANNEL: &str = "media.side_channel";
+}
+
+/// Codec names, shared by the capability values and the wire.
+///
+/// One vocabulary, not two. `AUDIO_SINK`'s values are drawn from here and so
+/// is `MediaOpen::codec`, which is what makes the handshake's answer directly
+/// usable as the stream's codec without a translation table nobody maintains.
+pub mod codec {
+    #![allow(dead_code)]
+
+    /// Opus, the only real-time audio codec both clients decode natively.
+    /// 48 kHz, 20 ms frames, 64-128 kbps (canonical design L3).
+    pub const OPUS: &str = "opus";
+    /// Uncompressed little-endian signed 16-bit PCM. Local and debugging use;
+    /// 32x the bytes of Opus at the same quality, measured, not estimated.
+    pub const PCM_S16LE: &str = "pcm-s16le";
+}
+
+/// Stream parameters, one variant per media kind.
+///
+/// Audio is the only kind F1 carries. Video appends a variant in F2 — appends,
+/// because a variant inserted before this one would re-tag every stream that
+/// is already open on a released client.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MediaParams {
+    /// Sample rate and channel count of an audio stream.
+    Audio { sample_rate_hz: u32, channels: u8 },
+}
+
+/// Why a media stream ended.
+///
+/// Deliberately two values and a free-form detail, rather than a growing list
+/// of reasons: a receiver that meets an unknown discriminant cannot decode the
+/// message at all, so the closed set carries the meaning and the string carries
+/// the specifics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MediaCloseReason {
+    /// The source finished normally.
+    Ended,
+    /// The stream stopped because something went wrong. `detail` says what.
+    Failed,
+}
+
+/// One announced capability: a name plus its parameter values.
+///
+/// Values are free-form strings whose meaning belongs to the name (codec ids
+/// for [`capability::AUDIO_SINK`], transport kinds for
+/// [`capability::SIDE_CHANNEL`]). Keeping them untyped here is deliberate: a
+/// typed payload would put the forward-compatibility problem back into the
+/// wire format, one level down.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityEntry {
+    /// Capability name. See [`capability`] for the well-known ones.
+    pub name: String,
+    /// Parameter values, in the announcer's order of preference.
+    pub values: Vec<String>,
+}
+
+impl CapabilityEntry {
+    // Constructors are used by tests and by the phases that announce real
+    // capabilities; production code in F0 only ever passes empty lists.
+    #![allow(dead_code)]
+
+    /// A capability with no parameters.
+    pub fn flag(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            values: Vec::new(),
+        }
+    }
+
+    /// A capability carrying ordered parameter values.
+    pub fn with_values<I, S>(name: impl Into<String>, values: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        Self {
+            name: name.into(),
+            values: values.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+/// A read-only view over announced capabilities.
+///
+/// The reading contract is the negotiation's safety property: asking about a
+/// name nobody announced is an ordinary `false`, never an error, so a peer
+/// speaking a richer dialect costs this side nothing. TP-MEDIA-CAP-02
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CapabilitySet {
+    entries: Vec<CapabilityEntry>,
+}
+
+impl CapabilitySet {
+    // `has` and `values_of` are the reading half of the contract. F0 negotiates
+    // and stores; F1 is the first phase that asks. Keeping them beside
+    // `intersect` means the reading rule is written and tested once, not
+    // rediscovered by whichever feature needs it first.
+    #![allow(dead_code)]
+
+    /// Builds a set from announced entries.
+    ///
+    /// A repeated name keeps its first announcement: a malformed or hostile
+    /// peer must not be able to make the handshake ambiguous.
+    pub fn from_entries(entries: impl IntoIterator<Item = CapabilityEntry>) -> Self {
+        let mut kept: Vec<CapabilityEntry> = Vec::new();
+        for entry in entries {
+            if !kept.iter().any(|existing| existing.name == entry.name) {
+                kept.push(entry);
+            }
+        }
+        Self { entries: kept }
+    }
+
+    /// Whether `name` was announced.
+    pub fn has(&self, name: &str) -> bool {
+        self.entries.iter().any(|entry| entry.name == name)
+    }
+
+    /// Values announced for `name`, or an empty slice when absent.
+    pub fn values_of(&self, name: &str) -> &[String] {
+        self.entries
+            .iter()
+            .find(|entry| entry.name == name)
+            .map_or(&[], |entry| entry.values.as_slice())
+    }
+
+    /// The value both sides agreed on for `name`, if there is one.
+    ///
+    /// The question `has` cannot answer. `intersect` keeps a name whose values
+    /// do not overlap — it has to, because a flag capability has no values and
+    /// an empty list is therefore not evidence of disagreement. That leaves
+    /// `has(AUDIO_SINK) == true` with no codec in common, which is exactly the
+    /// state where opening a stream produces silence and no error.
+    ///
+    /// So valued capabilities ask this instead, and flags keep asking `has`.
+    /// `None` here means "no usable agreement", never "not supported".
+    pub fn negotiated_value(&self, name: &str) -> Option<&str> {
+        self.values_of(name).first().map(String::as_str)
+    }
+
+    /// The capabilities both sides support.
+    ///
+    /// Names present on only one side are dropped, and the surviving values are
+    /// the ones both sides named, in `self`'s announced order. Reflecting an
+    /// announcement back instead would accept capabilities this side cannot
+    /// serve — and would leave every test green while doing it.
+    pub fn intersect(&self, other: &Self) -> Self {
+        let entries = self
+            .entries
+            .iter()
+            .filter_map(|entry| {
+                let theirs = other
+                    .entries
+                    .iter()
+                    .find(|candidate| candidate.name == entry.name)?;
+                let values = entry
+                    .values
+                    .iter()
+                    .filter(|value| theirs.values.contains(value))
+                    .cloned()
+                    .collect();
+                Some(CapabilityEntry {
+                    name: entry.name.clone(),
+                    values,
+                })
+            })
+            .collect();
+        Self { entries }
+    }
+
+    /// The announced entries, for putting back on the wire.
+    pub fn entries(&self) -> &[CapabilityEntry] {
+        &self.entries
+    }
+
+    /// Consumes the set into its entries.
+    pub fn into_entries(self) -> Vec<CapabilityEntry> {
+        self.entries
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Client → Server messages
@@ -374,6 +600,12 @@ pub enum ClientMessage {
         /// relayed transports, while a pixel mouse report only widens numbers already present in
         /// every mouse event.
         pixel_mouse: bool,
+        /// Optional capabilities this client announces (see [`capability`]).
+        ///
+        /// An empty list is the ordinary case and means "behave exactly as
+        /// before". Names the server does not know are ignored, which is what
+        /// lets later media features ship without touching this shape again.
+        capabilities: Vec<CapabilityEntry>,
     },
 
     /// Raw input bytes read from the client's stdin.
@@ -464,6 +696,17 @@ pub enum ClientMessage {
 
     /// The direct command was written and flushed; terminal response timing starts now.
     GraphicsTransmissionStarted { transfer_id: u64, image_id: u32 },
+
+    // -- Media streams (F1) -------------------------------------------------
+    /// How many further chunks the client can hold for this stream.
+    ///
+    /// Without it a slow client grows the server's memory instead of its own
+    /// queue, and the first sign of trouble is the server, not the playback.
+    MediaCredit { stream_id: u32, chunks: u16 },
+
+    /// Clock-sync probe. The client stamps it and the server answers with
+    /// `ServerMessage::TimeSyncReply`.
+    TimeSync { client_send_us: u64 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -698,6 +941,13 @@ pub enum ServerMessage {
         /// If present, the handshake failed and this describes why.
         /// The client should exit with a clear error message.
         error: Option<String>,
+        /// Capabilities the server accepted for this connection.
+        ///
+        /// This is the intersection of what the client announced and what this
+        /// server supports — never a reflection of the client's list. The
+        /// server uses nothing outside it, so an empty list is exactly the
+        /// pre-negotiation behaviour.
+        accepted: Vec<CapabilityEntry>,
     },
 
     /// A rendered frame to be displayed by a semantic-frame client.
@@ -798,6 +1048,57 @@ pub enum ServerMessage {
 
     /// Suppress a direct command that expired before terminal delivery.
     GraphicsTransmissionRetired { transfer_id: u64, image_id: u32 },
+
+    // -- Media streams (F1) -------------------------------------------------
+    //
+    // Appended, and every later media message appends too. `Graphics` stays
+    // exactly as it is: a one-shot picture is the right primitive for a TUI
+    // drawing a cover, and it costs nothing. These carry *continuous* sources.
+    /// A media stream opened for one pane.
+    MediaOpen {
+        /// Identifies the stream for its whole life. Bound to the pane, not to
+        /// a frame: waypipe's measured mistake was binding a stream to the
+        /// buffer, which made surfaces flicker as buffers rotated.
+        stream_id: u32,
+        pane_id: String,
+        /// Codec name from `codec`, drawn from what the handshake agreed on.
+        codec: String,
+        params: MediaParams,
+        /// How long after `pts_us` the client should play a chunk. The server's
+        /// opening suggestion; the client raises it as it measures jitter.
+        target_latency_us: u32,
+    },
+
+    /// One chunk of an open stream.
+    MediaChunk {
+        stream_id: u32,
+        /// Monotonic per stream. A gap is a loss, and the client conceals it
+        /// rather than stalling — stalling turns a lost packet into silence.
+        seq: u64,
+        /// Presentation time in the server's clock. The only thing A/V sync
+        /// rests on, and the reason audio and video need no separate alignment.
+        pts_us: u64,
+        data: Vec<u8>,
+    },
+
+    /// A stream ended.
+    MediaClose {
+        stream_id: u32,
+        reason: MediaCloseReason,
+        /// Free-form specifics. Empty for a normal end.
+        detail: String,
+    },
+
+    /// Answer to `ClientMessage::TimeSync`, carrying the server's two stamps.
+    ///
+    /// Three stamps travel and the client takes the fourth on arrival: the
+    /// NTP four-timestamp shape, which is what lets the client separate the
+    /// clock offset from the round trip instead of confusing the two.
+    TimeSyncReply {
+        client_send_us: u64,
+        server_recv_us: u64,
+        server_send_us: u64,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -1098,6 +1399,168 @@ mod tests {
         }
     }
 
+    // -- Capability negotiation (F0) ---------------------------------------
+    //
+    // These pin the one promise the whole design rests on: a capability the
+    // reader has never heard of must cost nothing. If that breaks, every later
+    // media feature needs a protocol bump again, which is the trap this fork
+    // already fell into once (PROTOCOL_VERSION 20 -> 21 for a single bool).
+
+    #[test]
+    fn capability_entries_survive_a_hello_roundtrip() {
+        let msg = ClientMessage::Hello {
+            version: PROTOCOL_VERSION,
+            cols: 80,
+            rows: 24,
+            cell_width_px: 8,
+            cell_height_px: 16,
+            requested_encoding: RenderEncoding::SemanticFrame,
+            keybindings: ClientKeybindings::Server,
+            launch_mode: ClientLaunchMode::App,
+            pixel_mouse: true,
+            capabilities: vec![
+                CapabilityEntry::flag(capability::MEDIA_STREAMS),
+                CapabilityEntry::with_values(capability::AUDIO_SINK, ["opus", "pcm_s16"]),
+            ],
+        };
+        let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
+        let (decoded, _): (ClientMessage, _) =
+            bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
+        assert_eq!(msg, decoded);
+    }
+
+    #[test]
+    fn an_empty_capability_announcement_survives_a_roundtrip() {
+        // A client that announces nothing is the "behaves exactly like today"
+        // case, so it has to be representable and stable on the wire.
+        let msg = ServerMessage::Welcome {
+            version: PROTOCOL_VERSION,
+            encoding: RenderEncoding::SemanticFrame,
+            error: None,
+            accepted: Vec::new(),
+        };
+        let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
+        let (decoded, _): (ServerMessage, _) =
+            bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
+        assert_eq!(msg, decoded);
+        match decoded {
+            ServerMessage::Welcome { accepted, .. } => assert!(accepted.is_empty()),
+            other => panic!("expected Welcome, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_unknown_capability_name_is_ignored_rather_than_fatal() {
+        let set = CapabilitySet::from_entries(vec![
+            CapabilityEntry::flag("future.thing.nobody.here.knows"),
+            CapabilityEntry::flag(capability::MEDIA_STREAMS),
+        ]);
+        assert!(set.has(capability::MEDIA_STREAMS));
+        assert!(!set.has(capability::AUDIO_SINK));
+        // The unknown name is carried, not rejected: a reader that does not know
+        // it simply never asks for it.
+        assert!(!set.has("something.else.entirely"));
+    }
+
+    #[test]
+    fn capability_values_are_read_in_announced_order() {
+        let set = CapabilitySet::from_entries(vec![CapabilityEntry::with_values(
+            capability::AUDIO_SINK,
+            ["opus", "pcm_s16", "flac"],
+        )]);
+        assert_eq!(
+            set.values_of(capability::AUDIO_SINK),
+            ["opus", "pcm_s16", "flac"]
+        );
+        // An absent capability yields no values instead of panicking.
+        assert!(set.values_of(capability::VIDEO_DECODE).is_empty());
+    }
+
+    #[test]
+    fn a_repeated_capability_name_keeps_the_first_announcement() {
+        // A malformed or hostile client must not be able to make the handshake
+        // ambiguous; first announcement wins and nothing panics.
+        let set = CapabilitySet::from_entries(vec![
+            CapabilityEntry::with_values(capability::AUDIO_SINK, ["opus"]),
+            CapabilityEntry::with_values(capability::AUDIO_SINK, ["mp3"]),
+        ]);
+        assert_eq!(set.values_of(capability::AUDIO_SINK), ["opus"]);
+    }
+
+    #[test]
+    fn capability_intersection_drops_what_only_one_side_offers() {
+        // This is the rule the server's handshake depends on: reflecting the
+        // client's announcement back would silently accept capabilities the
+        // server cannot serve, and every test would still be green.
+        let client = CapabilitySet::from_entries(vec![
+            CapabilityEntry::flag(capability::MEDIA_STREAMS),
+            CapabilityEntry::with_values(capability::AUDIO_SINK, ["opus"]),
+            CapabilityEntry::flag("client.only.extension"),
+        ]);
+        let server = CapabilitySet::from_entries(vec![
+            CapabilityEntry::with_values(capability::AUDIO_SINK, ["opus", "pcm_s16"]),
+            CapabilityEntry::flag(capability::MEDIA_STREAMS),
+            CapabilityEntry::flag("server.only.extension"),
+        ]);
+
+        let accepted = client.intersect(&server);
+
+        assert!(accepted.has(capability::MEDIA_STREAMS));
+        assert!(accepted.has(capability::AUDIO_SINK));
+        assert!(!accepted.has("client.only.extension"));
+        assert!(!accepted.has("server.only.extension"));
+        // The values that survive are the ones both sides named, in the
+        // client's announced order: the client cannot be handed a codec it
+        // never claimed to decode.
+        assert_eq!(accepted.values_of(capability::AUDIO_SINK), ["opus"]);
+    }
+
+    #[test]
+    fn adding_a_capability_does_not_shift_the_wire_shape() {
+        // Guards the promise directly: more capabilities must only make the
+        // frame longer, never move the enum tag or the fields around it.
+        // (A variant-ordering slip cost this repo a 9.4s test timeout once.)
+        let hello = |caps: Vec<CapabilityEntry>| ClientMessage::Hello {
+            version: PROTOCOL_VERSION,
+            cols: 80,
+            rows: 24,
+            cell_width_px: 8,
+            cell_height_px: 16,
+            requested_encoding: RenderEncoding::SemanticFrame,
+            keybindings: ClientKeybindings::Server,
+            launch_mode: ClientLaunchMode::App,
+            pixel_mouse: false,
+            capabilities: caps,
+        };
+
+        let one = bincode::serde::encode_to_vec(
+            hello(vec![CapabilityEntry::flag(capability::MEDIA_STREAMS)]),
+            bincode::config::standard(),
+        )
+        .unwrap();
+        let three = bincode::serde::encode_to_vec(
+            hello(vec![
+                CapabilityEntry::flag(capability::MEDIA_STREAMS),
+                CapabilityEntry::with_values(capability::AUDIO_SINK, ["opus"]),
+                CapabilityEntry::flag("third.name"),
+            ]),
+            bincode::config::standard(),
+        )
+        .unwrap();
+
+        assert_eq!(one.first(), three.first(), "enum tag must not move");
+        assert!(
+            three.len() > one.len(),
+            "more capabilities means more bytes"
+        );
+        // Both must decode with the same reader.
+        for encoded in [&one, &three] {
+            let (_decoded, _): (ClientMessage, _) =
+                bincode::serde::decode_from_slice(encoded, bincode::config::standard())
+                    .expect("both announcements decode with one reader");
+        }
+    }
+
     #[test]
     fn client_hello_roundtrip() {
         let msg = ClientMessage::Hello {
@@ -1110,6 +1573,7 @@ mod tests {
             keybindings: ClientKeybindings::Server,
             launch_mode: ClientLaunchMode::App,
             pixel_mouse: true,
+            capabilities: Vec::new(),
         };
         let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
         let (decoded, _): (ClientMessage, _) =
@@ -1148,6 +1612,7 @@ mod tests {
                 keybindings: ClientKeybindings::Server,
                 launch_mode: ClientLaunchMode::App,
                 pixel_mouse: true,
+                capabilities: Vec::new(),
             }),
             0
         );
@@ -1451,6 +1916,7 @@ mod tests {
             version: PROTOCOL_VERSION,
             encoding: RenderEncoding::SemanticFrame,
             error: None,
+            accepted: Vec::new(),
         };
         let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
         let (decoded, _): (ServerMessage, _) =
@@ -1464,6 +1930,7 @@ mod tests {
             version: PROTOCOL_VERSION,
             encoding: RenderEncoding::SemanticFrame,
             error: Some("incompatible version".to_owned()),
+            accepted: Vec::new(),
         };
         let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
         let (decoded, _): (ServerMessage, _) =
@@ -1730,6 +2197,7 @@ mod tests {
             keybindings: ClientKeybindings::Server,
             launch_mode: ClientLaunchMode::App,
             pixel_mouse: true,
+            capabilities: Vec::new(),
         };
         let mut buf = Vec::new();
         write_message(&mut buf, &msg).unwrap();
@@ -1805,6 +2273,7 @@ mod tests {
                     keybindings: ClientKeybindings::Server,
                     launch_mode: ClientLaunchMode::App,
                     pixel_mouse: true,
+                    capabilities: Vec::new(),
                 },
                 1 => ClientMessage::Input {
                     data: vec![(i % 256) as u8; (i as usize % 50) + 1],
@@ -1969,11 +2438,13 @@ mod tests {
                 version: PROTOCOL_VERSION,
                 encoding: RenderEncoding::SemanticFrame,
                 error: None,
+                accepted: Vec::new(),
             },
             VersionCheck::Incompatible(reason) => ServerMessage::Welcome {
                 version: PROTOCOL_VERSION,
                 encoding: RenderEncoding::SemanticFrame,
                 error: Some(reason),
+                accepted: Vec::new(),
             },
         };
 
@@ -2242,6 +2713,7 @@ mod tests {
             keybindings: ClientKeybindings::Server,
             launch_mode: ClientLaunchMode::App,
             pixel_mouse: true,
+            capabilities: Vec::new(),
         };
         let mut buf = Vec::new();
         write_message(&mut buf, &msg).unwrap();
@@ -2279,6 +2751,7 @@ mod tests {
                 keybindings: ClientKeybindings::Server,
                 launch_mode: ClientLaunchMode::App,
                 pixel_mouse: true,
+                capabilities: Vec::new(),
             },
             ClientMessage::Input {
                 data: b"hello world".to_vec(),
@@ -2340,6 +2813,319 @@ mod tests {
             buf[..to_read].copy_from_slice(&self.data[self.pos..self.pos + to_read]);
             self.pos += to_read;
             Ok(to_read)
+        }
+    }
+    // TP-MEDIA-CAP-06
+    #[test]
+    fn a_shared_name_with_no_shared_value_is_not_a_usable_capability() {
+        // The trap this exists to close: `intersect` keeps a name whose values
+        // do not overlap, because a flag capability legitimately has no values
+        // and the set cannot tell the two apart. So after negotiating "audio
+        // sink: opus" against "audio sink: pcm", `has` answers true and
+        // `values_of` answers empty — and a caller that asks the first question
+        // opens a stream the far side cannot decode a single byte of.
+        //
+        // Nothing about that failure is loud. The handshake succeeds, the
+        // stream opens, chunks flow, and the only symptom is silence.
+        let client = CapabilitySet::from_entries(vec![CapabilityEntry::with_values(
+            capability::AUDIO_SINK,
+            ["opus"],
+        )]);
+        let server = CapabilitySet::from_entries(vec![CapabilityEntry::with_values(
+            capability::AUDIO_SINK,
+            ["pcm-s16le"],
+        )]);
+
+        let accepted = client.intersect(&server);
+
+        assert!(
+            accepted.has(capability::AUDIO_SINK),
+            "the name survives — this is the trap, not a bug"
+        );
+        assert!(accepted.values_of(capability::AUDIO_SINK).is_empty());
+        assert_eq!(
+            accepted.negotiated_value(capability::AUDIO_SINK),
+            None,
+            "the question a caller should be asking answers no"
+        );
+    }
+
+    // TP-MEDIA-CAP-06
+    #[test]
+    fn a_negotiated_value_is_the_first_the_client_named() {
+        // Order is preference. `intersect` keeps the announcing side's order,
+        // and the announcing side of a sink is the client, so the first
+        // surviving value is the client's favourite codec that the server can
+        // also produce. Reversing this picks a codec both sides support and
+        // neither prefers, silently and forever.
+        let client = CapabilitySet::from_entries(vec![CapabilityEntry::with_values(
+            capability::AUDIO_SINK,
+            [codec::OPUS, codec::PCM_S16LE],
+        )]);
+        let server = CapabilitySet::from_entries(vec![CapabilityEntry::with_values(
+            capability::AUDIO_SINK,
+            [codec::PCM_S16LE, codec::OPUS],
+        )]);
+
+        let accepted = client.intersect(&server);
+
+        assert_eq!(
+            accepted.values_of(capability::AUDIO_SINK),
+            [codec::OPUS, codec::PCM_S16LE]
+        );
+        assert_eq!(
+            accepted.negotiated_value(capability::AUDIO_SINK),
+            Some(codec::OPUS)
+        );
+    }
+
+    // TP-MEDIA-CAP-06
+    #[test]
+    fn a_flag_capability_has_no_negotiated_value_and_that_is_not_a_failure() {
+        // The other half of the same distinction: `media.streams` carries no
+        // values by design, so `negotiated_value` answering None must not be
+        // read as "not supported". `has` is the question for a flag; the two
+        // are not interchangeable and this pins which is which.
+        let both =
+            CapabilitySet::from_entries(vec![CapabilityEntry::flag(capability::MEDIA_STREAMS)]);
+        let accepted = both.intersect(&both);
+
+        assert!(accepted.has(capability::MEDIA_STREAMS));
+        assert_eq!(accepted.negotiated_value(capability::MEDIA_STREAMS), None);
+    }
+
+    // -- Media streams (F1) ------------------------------------------------
+    //
+    // Everything below guards one property: a media message must not be able
+    // to move an existing message's wire tag, and must not be able to carry a
+    // value the reader cannot survive. bincode is not self-describing — the
+    // variant's position IS the tag — so an insertion in the middle of either
+    // enum re-labels every message after it. That failure is silent: it
+    // compiles, and the wrong variant decodes as a neighbour.
+
+    /// The leading varint of a bincode-encoded enum is its discriminant.
+    /// Values below 251 are a single byte, which is every tag we have.
+    fn wire_tag(encoded: &[u8]) -> u8 {
+        assert!(
+            encoded[0] < 251,
+            "tag {} left the single-byte varint range; this helper needs to grow",
+            encoded[0]
+        );
+        encoded[0]
+    }
+
+    fn server_tag(msg: &ServerMessage) -> u8 {
+        wire_tag(&bincode::serde::encode_to_vec(msg, bincode::config::standard()).unwrap())
+    }
+
+    fn client_tag(msg: &ClientMessage) -> u8 {
+        wire_tag(&bincode::serde::encode_to_vec(msg, bincode::config::standard()).unwrap())
+    }
+
+    fn sample_media_open() -> ServerMessage {
+        ServerMessage::MediaOpen {
+            stream_id: 7,
+            pane_id: "w1:p3".to_string(),
+            codec: codec::OPUS.to_string(),
+            params: MediaParams::Audio {
+                sample_rate_hz: 48_000,
+                channels: 2,
+            },
+            target_latency_us: 120_000,
+        }
+    }
+
+    // TP-MEDIA-WIRE-01
+    #[test]
+    fn media_variants_are_appended_after_every_existing_one() {
+        // The tags below are not a wish list: they are what the wire already
+        // says. Adding a variant anywhere but the end changes one of these,
+        // and this test is the only thing that notices before a released
+        // client decodes a Graphics frame as something else.
+        assert_eq!(
+            server_tag(&ServerMessage::ReloadSoundConfig),
+            8,
+            "an existing ServerMessage tag moved"
+        );
+        assert_eq!(
+            server_tag(&ServerMessage::GraphicsTransmissionRetired {
+                transfer_id: 1,
+                image_id: 2,
+            }),
+            15,
+            "GraphicsTransmissionRetired was the last variant before media"
+        );
+        assert_eq!(server_tag(&sample_media_open()), 16);
+        assert_eq!(
+            server_tag(&ServerMessage::MediaChunk {
+                stream_id: 7,
+                seq: 1,
+                pts_us: 2,
+                data: vec![9],
+            }),
+            17
+        );
+        assert_eq!(
+            server_tag(&ServerMessage::MediaClose {
+                stream_id: 7,
+                reason: MediaCloseReason::Ended,
+                detail: String::new(),
+            }),
+            18
+        );
+        assert_eq!(
+            server_tag(&ServerMessage::TimeSyncReply {
+                client_send_us: 1,
+                server_recv_us: 2,
+                server_send_us: 3,
+            }),
+            19
+        );
+
+        assert_eq!(
+            client_tag(&ClientMessage::Detach),
+            4,
+            "an existing ClientMessage tag moved"
+        );
+        assert_eq!(
+            client_tag(&ClientMessage::GraphicsTransmissionStarted {
+                transfer_id: 1,
+                image_id: 2,
+            }),
+            12,
+            "GraphicsTransmissionStarted was the last variant before media"
+        );
+        assert_eq!(
+            client_tag(&ClientMessage::MediaCredit {
+                stream_id: 7,
+                chunks: 4,
+            }),
+            13
+        );
+        assert_eq!(
+            client_tag(&ClientMessage::TimeSync { client_send_us: 1 }),
+            14
+        );
+    }
+
+    // TP-MEDIA-WIRE-01
+    #[test]
+    fn media_messages_survive_the_wire_field_for_field() {
+        let open = sample_media_open();
+        let encoded = bincode::serde::encode_to_vec(&open, bincode::config::standard()).unwrap();
+        let (decoded, _): (ServerMessage, _) =
+            bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
+        match decoded {
+            ServerMessage::MediaOpen {
+                stream_id,
+                pane_id,
+                codec,
+                params,
+                target_latency_us,
+            } => {
+                assert_eq!(stream_id, 7);
+                assert_eq!(pane_id, "w1:p3");
+                assert_eq!(codec, codec::OPUS);
+                assert_eq!(
+                    params,
+                    MediaParams::Audio {
+                        sample_rate_hz: 48_000,
+                        channels: 2,
+                    }
+                );
+                assert_eq!(target_latency_us, 120_000);
+            }
+            other => panic!("expected MediaOpen, got {other:?}"),
+        }
+
+        for msg in [
+            ServerMessage::MediaChunk {
+                stream_id: 7,
+                seq: u64::MAX,
+                pts_us: 1_234_567,
+                data: vec![1, 2, 3],
+            },
+            ServerMessage::MediaClose {
+                stream_id: 7,
+                reason: MediaCloseReason::Failed,
+                detail: "encoder gone".to_string(),
+            },
+            ServerMessage::TimeSyncReply {
+                client_send_us: 10,
+                server_recv_us: 20,
+                server_send_us: 30,
+            },
+        ] {
+            let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
+            let (decoded, _): (ServerMessage, _) =
+                bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
+            assert_eq!(decoded, msg);
+        }
+
+        for msg in [
+            ClientMessage::MediaCredit {
+                stream_id: 7,
+                chunks: 3,
+            },
+            ClientMessage::TimeSync { client_send_us: 99 },
+        ] {
+            let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
+            let (decoded, _): (ClientMessage, _) =
+                bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
+            assert_eq!(decoded, msg);
+        }
+    }
+
+    // TP-MEDIA-WIRE-01
+    #[test]
+    fn an_audio_chunk_larger_than_a_control_frame_is_refused_not_decoded() {
+        // A 20 ms Opus packet is roughly 160 bytes. A megabyte-sized "audio
+        // chunk" is a malformed or hostile peer, and the reader must answer
+        // with a framing error rather than allocating whatever the header
+        // claims. MAX_FRAME_SIZE, not MAX_GRAPHICS_FRAME_SIZE, is the ceiling
+        // that applies here: media is not a graphics frame.
+        let msg = ServerMessage::MediaChunk {
+            stream_id: 1,
+            seq: 0,
+            pts_us: 0,
+            data: vec![0u8; MAX_FRAME_SIZE + 1],
+        };
+        let mut buf = Vec::new();
+        write_message(&mut buf, &msg).unwrap();
+
+        let err = read_message::<_, ServerMessage>(&mut buf.as_slice(), MAX_FRAME_SIZE)
+            .expect_err("an oversized media chunk must not decode");
+        assert!(
+            matches!(err, FramingError::Oversized { .. }),
+            "expected Oversized, got {err:?}"
+        );
+    }
+
+    // TP-MEDIA-WIRE-01
+    #[test]
+    fn an_unknown_codec_name_decodes_instead_of_killing_the_message() {
+        // The codec travels as a name for the same reason capabilities do: a
+        // bincode enum cannot decode a discriminant it has never seen, and the
+        // whole message dies with it — a connection-level failure for what
+        // should be one refusable stream. With a name, an old client decodes
+        // the open, does not recognise the codec, and can decline the stream.
+        let msg = ServerMessage::MediaOpen {
+            stream_id: 1,
+            pane_id: "w1:p1".to_string(),
+            codec: "a-codec-from-2030".to_string(),
+            params: MediaParams::Audio {
+                sample_rate_hz: 48_000,
+                channels: 2,
+            },
+            target_latency_us: 0,
+        };
+        let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
+        let (decoded, _): (ServerMessage, _) =
+            bincode::serde::decode_from_slice(&encoded, bincode::config::standard())
+                .expect("an unknown codec name must still decode");
+        match decoded {
+            ServerMessage::MediaOpen { codec, .. } => assert_eq!(codec, "a-codec-from-2030"),
+            other => panic!("expected MediaOpen, got {other:?}"),
         }
     }
 }

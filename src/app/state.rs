@@ -711,6 +711,31 @@ pub(crate) fn system_time_to_ms(time: std::time::SystemTime) -> u64 {
         .unwrap_or(0)
 }
 
+/// The Claude chat session LIVE-detected running in a terminal, if any — the
+/// id a tab hosting a fresh chat should bind to (TP-TAB-CHAT-02).
+///
+/// The live hook authority ONLY, never the persisted session. Restore sets a
+/// terminal's `persisted_agent_session` on a plain-shell tab whose claude is
+/// already gone, while deliberately leaving that tab's wiring empty — binding
+/// from the persisted session would re-introduce exactly what restore avoids:
+/// focusing a dead shell and blocking a re-resume of the chat. Binding only on
+/// the live authority means a tab wires when its agent is actually running,
+/// and a dead shell stays unwired until (if ever) one runs in it again.
+///
+/// Restricted to Claude sessions carried as an ID: `resumed_session_id` is
+/// resumed with `claude --resume <id>` and the chat drawer keys on Claude
+/// session ids, so a path-kind ref or another agent's session would wire a tab
+/// to a chat no drawer can show and no resume can reopen.
+pub(crate) fn detected_claude_session_id(
+    terminal: &crate::terminal::TerminalState,
+) -> Option<String> {
+    let authority = terminal.hook_authority.as_ref()?;
+    let session_ref = authority.session_ref.as_ref()?;
+    (authority.agent_label == "claude"
+        && session_ref.kind == crate::agent_resume::AgentSessionRefKind::Id)
+        .then(|| session_ref.value.clone())
+}
+
 impl WorkspaceChatRow {
     /// Label for the row: the resolved title, else a short id plus the agent.
     ///
@@ -5103,6 +5128,101 @@ impl AppState {
         self.find_resumed_chat_tab(session_id).is_none()
     }
 
+    /// TP-TAB-CHAT-02: bind a tab hosting a freshly started chat to the agent
+    /// session detected running in it, so a new chat wires exactly like a
+    /// resumed one — the drawer marks it, a click focuses it instead of
+    /// spawning a twin, and `sync_bound_tab_titles` gives it the chat's name.
+    ///
+    /// Only a tab with no session of its own is a candidate: a resume's own id
+    /// always wins and is never overwritten. Only a Claude session detected in
+    /// the tab's ROOT pane counts (`detected_claude_session_id`), so a plain
+    /// shell leaves the tab unbound and a split pane's second agent does not
+    /// hijack the tab's identity. Runs on the chat-row sync cadence, reading
+    /// one scalar per root terminal — never per frame, never per pane.
+    pub(crate) fn bind_unwired_tabs_to_detected_sessions(&mut self) {
+        // Two-phase: read the detected sessions (borrowing `terminals`) into an
+        // owned list, then bind (borrowing `workspaces` mutably).
+        let mut binds: Vec<(usize, usize, String)> = Vec::new();
+        for (ws_idx, ws) in self.workspaces.iter().enumerate() {
+            for (tab_idx, tab) in ws.tabs.iter().enumerate() {
+                if tab.resumed_session_id.is_some() {
+                    continue;
+                }
+                let Some(pane) = tab.panes.get(&tab.root_pane) else {
+                    continue;
+                };
+                let Some(terminal) = self.terminals.get(&pane.attached_terminal_id) else {
+                    continue;
+                };
+                if let Some(session) = detected_claude_session_id(terminal) {
+                    binds.push((ws_idx, tab_idx, session));
+                }
+            }
+        }
+        for (ws_idx, tab_idx, session) in binds {
+            if let Some(tab) = self
+                .workspaces
+                .get_mut(ws_idx)
+                .and_then(|ws| ws.tabs.get_mut(tab_idx))
+            {
+                tab.resumed_session_id = Some(session);
+            }
+        }
+    }
+
+    /// TP-TAB-CHAT-01: mirror each bound tab's chat title onto the tab, so
+    /// its display name follows the conversation it hosts.
+    ///
+    /// The binding is the tab's resumed session (a chat it resumed, or one
+    /// promoted from the agent detected running in it — see
+    /// [`AppState::bind_unwired_tabs_to_detected_sessions`]). A chat renamed
+    /// ANYWHERE
+    /// reaches the tab through this one path: an external Claude `/rename`
+    /// lands in `row.title` via the transcript merge, and Herdr's own rename
+    /// verb is overlaid onto the same field by `apply_chat_names` — both run
+    /// before this in the sync, so by here `row.title` is the authoritative
+    /// name. A withdrawn (empty) title leaves the tab's current name alone
+    /// rather than blanking it: the row falls back to its derived title, and
+    /// the tab keeps whatever it was wearing (the TP-CHAT-NAME-02 posture).
+    ///
+    /// Runs on every chat-row sync and at every startup/handoff, which is why
+    /// `chat_title` need not be persisted — it is re-derived here.
+    pub(crate) fn sync_bound_tab_titles(&mut self) {
+        // Session id -> current title, taken owned so no borrow of the rows
+        // outlives the tab mutation below. Rows are keyed by directory and a
+        // bound session may sit under any key; the first non-empty title for
+        // an id wins, matching the drawer's own one-row-per-chat rule.
+        let mut titles: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        for rows in self.workspace_chat_rows.values() {
+            for row in rows {
+                let Some(title) = row.title.as_deref().map(str::trim) else {
+                    continue;
+                };
+                if !title.is_empty() {
+                    titles
+                        .entry(row.session_id.clone())
+                        .or_insert_with(|| title.to_string());
+                }
+            }
+        }
+        if titles.is_empty() {
+            return;
+        }
+        for workspace in &mut self.workspaces {
+            for tab in &mut workspace.tabs {
+                let Some(session) = tab.resumed_session_id.as_deref() else {
+                    continue;
+                };
+                if let Some(title) = titles.get(session) {
+                    if tab.chat_title.as_deref() != Some(title.as_str()) {
+                        tab.chat_title = Some(title.clone());
+                    }
+                }
+            }
+        }
+    }
+
     pub(crate) fn refresh_project_sessions_in(&mut self, projects_dir: &std::path::Path) {
         // Parse only slightly more than the sidebar can show: opening a
         // session file reads it whole, and busy projects hold hundreds of
@@ -6584,6 +6704,204 @@ mod tests {
         state.workspaces.push(workspace);
         let key = crate::persist::workspace_chats::ledger_key(&cwd);
         (cwd, key)
+    }
+
+    // TP-TAB-CHAT-01: a tab bound to a chat wears that chat's title, follows a
+    // rename of it (the shape an external `/rename` takes — `row.title`
+    // changes and a resync runs), yields to an explicit tab rename, and never
+    // touches a tab bound to nothing.
+    #[test]
+    fn a_bound_tab_wears_its_chats_title_and_follows_a_rename() {
+        let mut state = AppState::test_new();
+        let mut ws = crate::workspace::Workspace::test_new("a");
+        let bound = ws.active_tab_index();
+        ws.tabs[bound].resumed_session_id = Some("sess-1".to_string());
+        // A second, unbound tab must stay a number throughout.
+        let unbound = ws.test_add_tab(None);
+        state.workspaces = vec![ws];
+
+        let key = crate::persist::workspace_chats::ledger_key(std::path::Path::new(
+            "/herdr-test-nonexistent/chat-dir",
+        ));
+        state.workspace_chat_rows.insert(
+            key.clone(),
+            vec![WorkspaceChatRow {
+                session_id: "sess-1".to_string(),
+                agent: "claude".to_string(),
+                title: Some("Fix login bug".to_string()),
+                last_seen_ms: 1,
+                last_modified: None,
+                last_message_at: None,
+            }],
+        );
+
+        state.sync_bound_tab_titles();
+        assert_eq!(
+            state.workspaces[0].tab_display_name(bound).as_deref(),
+            Some("Fix login bug"),
+            "the bound tab wears its chat's title",
+        );
+        assert_eq!(
+            state.workspaces[0].tab_display_name(unbound),
+            Some((unbound + 1).to_string()),
+            "an unbound tab stays a number",
+        );
+
+        // The chat is renamed: the transcript's title changes, a resync runs.
+        state.workspace_chat_rows.get_mut(&key).expect("rows")[0].title =
+            Some("Fix logout bug".to_string());
+        state.sync_bound_tab_titles();
+        assert_eq!(
+            state.workspaces[0].tab_display_name(bound).as_deref(),
+            Some("Fix logout bug"),
+            "a chat rename reaches the bound tab",
+        );
+
+        // An explicit tab rename outranks the derived chat title.
+        state.workspaces[0].tabs[bound].custom_name = Some("my tab".to_string());
+        state.sync_bound_tab_titles();
+        assert_eq!(
+            state.workspaces[0].tab_display_name(bound).as_deref(),
+            Some("my tab"),
+            "an explicit rename wins over the derived chat title",
+        );
+    }
+
+    /// Wire the tab's root pane to a fresh terminal. `live` is a (agent, id)
+    /// LIVE-detected through the hook authority — the shape a new chat leaves
+    /// once its agent is running in the pane. `persisted_only` is a (agent, id)
+    /// that is merely remembered, with no live authority — the shape a restored
+    /// dead shell has, which must NEVER bind.
+    fn wire_root_terminal(
+        state: &mut AppState,
+        ws_idx: usize,
+        tab_idx: usize,
+        live: Option<(&str, &str)>,
+        persisted_only: Option<(&str, &str)>,
+    ) {
+        let pane = state.workspaces[ws_idx].tabs[tab_idx].root_pane;
+        let id = state.workspaces[ws_idx].terminal_id(pane).unwrap().clone();
+        let mut terminal = crate::terminal::state::TerminalState::new(id.clone(), "/tmp".into());
+        if let Some((agent, value)) = persisted_only {
+            terminal.set_persisted_agent_session(crate::agent_resume::PersistedAgentSession {
+                source: format!("herdr:{agent}"),
+                agent: agent.to_string(),
+                session_ref: crate::agent_resume::AgentSessionRef::id(value).unwrap(),
+            });
+        }
+        if let Some((agent, value)) = live {
+            terminal.set_hook_authority_with_session_ref(
+                format!("herdr:{agent}"),
+                agent.to_string(),
+                crate::detect::AgentState::Working,
+                None,
+                crate::agent_resume::AgentSessionRef::id(value),
+                Some(1),
+            );
+        }
+        state.terminals.insert(id, terminal);
+    }
+
+    // TP-TAB-CHAT-02: a tab hosting a freshly started chat binds to the agent
+    // session detected running in it, so a new chat wires like a resumed one.
+    #[test]
+    fn a_new_chat_tab_binds_to_its_detected_claude_session() {
+        let mut state = AppState::test_new();
+        state.workspaces = vec![crate::workspace::Workspace::test_new("a")];
+        let tab_idx = state.workspaces[0].active_tab_index();
+        wire_root_terminal(&mut state, 0, tab_idx, Some(("claude", "sess-live")), None);
+        assert!(state.workspaces[0].tabs[tab_idx]
+            .resumed_session_id
+            .is_none());
+
+        state.bind_unwired_tabs_to_detected_sessions();
+        assert_eq!(
+            state.workspaces[0].tabs[tab_idx]
+                .resumed_session_id
+                .as_deref(),
+            Some("sess-live"),
+            "a new chat's tab binds to the agent detected running in it",
+        );
+    }
+
+    // TP-TAB-CHAT-02: a plain shell leaves the tab unbound — only an agent
+    // session is an identity worth wiring.
+    #[test]
+    fn a_shell_tab_with_no_agent_stays_unbound() {
+        let mut state = AppState::test_new();
+        state.workspaces = vec![crate::workspace::Workspace::test_new("a")];
+        let tab_idx = state.workspaces[0].active_tab_index();
+        wire_root_terminal(&mut state, 0, tab_idx, None, None);
+        state.bind_unwired_tabs_to_detected_sessions();
+        assert!(
+            state.workspaces[0].tabs[tab_idx]
+                .resumed_session_id
+                .is_none(),
+            "a plain shell leaves the tab unbound",
+        );
+    }
+
+    // TP-TAB-CHAT-02: a restored dead shell — a tab whose claude is gone but
+    // whose terminal still REMEMBERS the session (restore sets that, while
+    // deliberately leaving the tab unwired) — must NOT bind. Binding it would
+    // focus a dead shell and block re-resuming the chat, the exact hazard
+    // `restored_resumed_session_id` guards against.
+    #[test]
+    fn a_dead_shell_with_only_a_remembered_session_does_not_bind() {
+        let mut state = AppState::test_new();
+        state.workspaces = vec![crate::workspace::Workspace::test_new("a")];
+        let tab_idx = state.workspaces[0].active_tab_index();
+        wire_root_terminal(
+            &mut state,
+            0,
+            tab_idx,
+            None,
+            Some(("claude", "remembered-1")),
+        );
+        state.bind_unwired_tabs_to_detected_sessions();
+        assert!(
+            state.workspaces[0].tabs[tab_idx]
+                .resumed_session_id
+                .is_none(),
+            "a remembered (not live) session leaves the tab unbound",
+        );
+    }
+
+    // TP-TAB-CHAT-02: a resume's own id wins and is never overwritten by a
+    // later detection.
+    #[test]
+    fn a_resumed_tab_keeps_its_own_session_over_the_detected_one() {
+        let mut state = AppState::test_new();
+        state.workspaces = vec![crate::workspace::Workspace::test_new("a")];
+        let tab_idx = state.workspaces[0].active_tab_index();
+        state.workspaces[0].tabs[tab_idx].resumed_session_id = Some("resumed-1".to_string());
+        wire_root_terminal(&mut state, 0, tab_idx, Some(("claude", "detected-2")), None);
+        state.bind_unwired_tabs_to_detected_sessions();
+        assert_eq!(
+            state.workspaces[0].tabs[tab_idx]
+                .resumed_session_id
+                .as_deref(),
+            Some("resumed-1"),
+            "a resume's own id is never overwritten by detection",
+        );
+    }
+
+    // TP-TAB-CHAT-02: only a Claude session binds — the chat drawer keys on
+    // Claude ids and a resume is `claude --resume`, so another agent's session
+    // would wire a tab to a chat no drawer can show and no resume can reopen.
+    #[test]
+    fn a_non_claude_agent_does_not_bind_the_tab() {
+        let mut state = AppState::test_new();
+        state.workspaces = vec![crate::workspace::Workspace::test_new("a")];
+        let tab_idx = state.workspaces[0].active_tab_index();
+        wire_root_terminal(&mut state, 0, tab_idx, Some(("codex", "codex-1")), None);
+        state.bind_unwired_tabs_to_detected_sessions();
+        assert!(
+            state.workspaces[0].tabs[tab_idx]
+                .resumed_session_id
+                .is_none(),
+            "only a Claude session binds the tab",
+        );
     }
 
     // TP-DRAW-01: the drawer lists what the agent's own store holds, not only

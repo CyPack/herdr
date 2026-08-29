@@ -18,10 +18,32 @@ use tracing::{debug, warn};
 
 use crate::ipc::LocalStream;
 use crate::protocol::{
-    self, AttachScrollDirection, AttachScrollSource, ClientInputEvent, ClientKeybindings,
-    ClientLaunchMode, ClientMessage, RenderEncoding, ServerMessage, MAX_CLIPBOARD_IMAGE_PAYLOAD,
-    MAX_FRAME_SIZE, MAX_GRAPHICS_FRAME_SIZE, PROTOCOL_VERSION,
+    self, AttachScrollDirection, AttachScrollSource, CapabilityEntry, CapabilitySet,
+    ClientInputEvent, ClientKeybindings, ClientLaunchMode, ClientMessage, RenderEncoding,
+    ServerMessage, MAX_CLIPBOARD_IMAGE_PAYLOAD, MAX_FRAME_SIZE, MAX_GRAPHICS_FRAME_SIZE,
+    PROTOCOL_VERSION,
 };
+
+/// Capabilities this server can actually serve.
+///
+/// Deliberately empty of media entries for now: F0 builds the negotiation, not
+/// the media path, and announcing something the server cannot deliver is the
+/// one failure this whole mechanism exists to prevent. Each later phase adds
+/// its name here once the code behind it works.
+fn server_capabilities() -> CapabilitySet {
+    // The server announces what it has code for, which is now the media
+    // vocabulary: it can carry timestamped streams and take part in the clock
+    // probe, and it can produce Opus for a client that has somewhere to play
+    // it. Announcing a name it cannot serve would be the exact failure the
+    // intersection exists to prevent, one level up.
+    CapabilitySet::from_entries(vec![
+        CapabilityEntry::flag(crate::protocol::capability::MEDIA_STREAMS),
+        CapabilityEntry::with_values(
+            crate::protocol::capability::AUDIO_SINK,
+            [crate::protocol::codec::OPUS],
+        ),
+    ])
+}
 
 /// Minimum accepted attached client size.
 ///
@@ -51,6 +73,14 @@ pub(crate) struct ClientWriter {
     pub(crate) control: ClientControlWriter,
     /// Droppable render messages. Capacity is one so slow clients cannot build lag.
     pub(crate) render: ClientRenderWriter,
+    /// Media chunks. Last in priority and bounded, so a stream can never make
+    /// the interface slower than it was before the stream existed.
+    ///
+    /// Unused until the encoder lands: the lane is built first so that the
+    /// ordering guarantee is in place, and tested, before there is anything
+    /// able to break it.
+    #[allow(dead_code)]
+    pub(crate) media: ClientMediaWriter,
 }
 
 impl ClientWriter {
@@ -76,17 +106,21 @@ impl ClientWriter {
         let queue = ClientWriterQueue::new();
         let drain = queue.clone();
         let control_writer = ClientControlWriter::queue(queue.clone());
+        let media_writer = ClientMediaWriter::queue(queue.clone());
         let mut render_writer = ClientRenderWriter::queue(queue);
         render_writer.test_render = Some(render.clone());
         let writer = Self {
             control: control_writer,
             render: render_writer,
+            media: media_writer,
         };
         std::thread::spawn(move || {
             while let Some(item) = drain.recv() {
                 let sent = match item {
                     ClientWriteItem::Control(data) => control.send(data).is_ok(),
-                    ClientWriteItem::Render(data) => render.send(data).is_ok(),
+                    ClientWriteItem::Render(data) | ClientWriteItem::Media(data) => {
+                        render.send(data).is_ok()
+                    }
                 };
                 if !sent {
                     break;
@@ -95,6 +129,88 @@ impl ClientWriter {
             drain.close_writer();
         });
         writer
+    }
+
+    /// A writer backed by the real queue with **no drain thread**.
+    ///
+    /// `test_channel` starts a thread that forwards every item into an
+    /// unbounded channel, which means a lane is emptied the moment it fills:
+    /// `Full`, `send_ordered`'s displacement of the render slot, and the
+    /// priority order between lanes are never exercised by anything built on
+    /// it. Tests that care about queue behaviour — rather than about what the
+    /// far end eventually receives — need the queue itself and a consumer they
+    /// control.
+    ///
+    /// The drain is non-blocking on purpose: `ClientWriterQueue::recv` parks on
+    /// a condvar, so a single-threaded test that called it on an empty queue
+    /// would hang instead of fail.
+    #[cfg(test)]
+    pub(crate) fn test_channel_through_queue() -> (Self, TestQueueDrain) {
+        let queue = ClientWriterQueue::new();
+        let writer = Self {
+            control: ClientControlWriter::queue(queue.clone()),
+            render: ClientRenderWriter::queue(queue.clone()),
+            media: ClientMediaWriter::queue(queue.clone()),
+        };
+        (writer, TestQueueDrain { queue })
+    }
+}
+
+/// Test-side consumer of a real [`ClientWriterQueue`], reporting which lane
+/// each item came from.
+#[cfg(test)]
+pub(crate) struct TestQueueDrain {
+    queue: Arc<ClientWriterQueue>,
+}
+
+#[cfg(test)]
+impl TestQueueDrain {
+    /// Pops the highest-priority queued item, or `None` when every lane is
+    /// empty. Never blocks.
+    pub(crate) fn try_recv(&self) -> Option<(WriteLane, Vec<u8>)> {
+        let mut state = self.queue.lock_state();
+        ClientWriterQueue::try_pop(&mut state)
+    }
+
+    /// Drains every lane in priority order. The returned order is exactly the
+    /// order the writer thread would have written.
+    pub(crate) fn drain(&self) -> Vec<(WriteLane, Vec<u8>)> {
+        let mut out = Vec::new();
+        while let Some(item) = self.try_recv() {
+            out.push(item);
+        }
+        out
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct ClientMediaWriter {
+    queue: Arc<ClientWriterQueue>,
+    #[cfg(test)]
+    test_render: Option<std::sync::mpsc::SyncSender<Vec<u8>>>,
+}
+
+impl ClientMediaWriter {
+    // The lane exists a phase before its producer; see the field's note.
+    #![allow(dead_code)]
+
+    fn queue(queue: Arc<ClientWriterQueue>) -> Self {
+        queue.add_sender();
+        Self {
+            queue,
+            #[cfg(test)]
+            test_render: None,
+        }
+    }
+
+    /// Queues one media chunk, refusing when the lane is full.
+    ///
+    /// Refusing rather than growing is the whole point: an unbounded media lane
+    /// turns a slow link into an ever-growing delay that never recovers, which
+    /// is bufferbloat. The caller answers a refusal by dropping the chunk at
+    /// the source, where it still knows the chunk's deadline.
+    pub(crate) fn try_send(&self, data: Vec<u8>) -> Result<(), TrySendError<Vec<u8>>> {
+        self.queue.try_send_media(data)
     }
 }
 
@@ -133,6 +249,7 @@ macro_rules! writer_handle {
 }
 writer_handle!(ClientControlWriter);
 writer_handle!(ClientRenderWriter);
+writer_handle!(ClientMediaWriter);
 
 impl ClientControlWriter {
     fn queue(queue: Arc<ClientWriterQueue>) -> Self {
@@ -183,14 +300,40 @@ struct ClientWriterQueueState {
     control: VecDeque<Vec<u8>>,
     ordered: VecDeque<Vec<u8>>,
     render: Option<Vec<u8>>,
+    media: VecDeque<Vec<u8>>,
     senders: usize,
     writer_alive: bool,
 }
+
+/// How many media chunks may wait for the writer before the source is told to
+/// drop instead.
+///
+/// At the 20 ms Opus frame the design specifies this is about 1.3 seconds of
+/// audio — comfortably more than any jitter buffer will ask to hold, and far
+/// less than the point where a backlog would be worth writing out. The bound
+/// exists so that a stalled link produces *loss*, which the client conceals,
+/// rather than *delay*, which it cannot.
+#[allow(dead_code)]
+const MEDIA_LANE_CAPACITY: usize = 64;
 
 #[derive(Debug, PartialEq, Eq)]
 enum ClientWriteItem {
     Control(Vec<u8>),
     Render(Vec<u8>),
+    Media(Vec<u8>),
+}
+
+/// Which lane an item came out of.
+///
+/// Named separately from [`ClientWriteItem`] because the writer treats ordered
+/// and coalesced renders identically while a reader of the queue's behaviour
+/// needs to tell them apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WriteLane {
+    Control,
+    Ordered,
+    Render,
+    Media,
 }
 
 impl ClientWriterQueue {
@@ -238,6 +381,20 @@ impl ClientWriterQueue {
         Ok(())
     }
 
+    #[allow(dead_code)]
+    fn try_send_media(&self, data: Vec<u8>) -> Result<(), TrySendError<Vec<u8>>> {
+        let mut state = self.lock_state();
+        if !state.writer_alive {
+            return Err(TrySendError::Disconnected(data));
+        }
+        if state.media.len() >= MEDIA_LANE_CAPACITY {
+            return Err(TrySendError::Full(data));
+        }
+        state.media.push_back(data);
+        self.ready.notify_one();
+        Ok(())
+    }
+
     fn send_ordered(&self, data: Vec<u8>) -> Result<(), TrySendError<Vec<u8>>> {
         let mut state = self.lock_state();
         if !state.writer_alive {
@@ -258,24 +415,57 @@ impl ClientWriterQueue {
         let mut state = self.lock_state();
         state.render = None;
         state.ordered.clear();
+        // Cleanup replaces everything droppable with one authoritative frame.
+        // Media queued before it belongs to a picture that no longer exists.
+        state.media.clear();
         if state.writer_alive {
             state.control.push_back(data);
             self.ready.notify_one();
         }
     }
 
+    /// Pops the highest-priority queued item, or `None` when every lane is
+    /// empty. Never blocks and never waits on senders.
+    ///
+    /// The one place the priority order is written. `recv` blocks on top of
+    /// this and the tests read it directly, so a test cannot agree with an
+    /// order the writer thread does not actually use.
+    /// TP-CLIENT-WRITE-PRIO-01, TP-MEDIA-PRIO-01
+    fn try_pop(state: &mut ClientWriterQueueState) -> Option<(WriteLane, Vec<u8>)> {
+        if let Some(data) = state.control.pop_front() {
+            return Some((WriteLane::Control, data));
+        }
+        if let Some(data) = state.ordered.pop_front() {
+            return Some((WriteLane::Ordered, data));
+        }
+        if let Some(data) = state.render.take() {
+            return Some((WriteLane::Render, data));
+        }
+        // Media last, always. A chunk that waits behind a repaint is late by
+        // one frame; a repaint that waits behind a chunk is an interface that
+        // got slower the moment a stream opened, which is the one outcome this
+        // phase is not allowed to produce.
+        if let Some(data) = state.media.pop_front() {
+            return Some((WriteLane::Media, data));
+        }
+        None
+    }
+
+    /// Drains in strict priority order: control, then ordered renders, then the
+    /// newest render, then media. TP-CLIENT-WRITE-PRIO-01, TP-MEDIA-PRIO-01
     fn recv(&self) -> Option<ClientWriteItem> {
         let mut state = self.lock_state();
         loop {
-            if let Some(data) = state.control.pop_front() {
-                return Some(ClientWriteItem::Control(data));
-            }
-            if let Some(data) = state.ordered.pop_front() {
-                self.ready.notify_one();
-                return Some(ClientWriteItem::Render(data));
-            }
-            if let Some(data) = state.render.take() {
-                return Some(ClientWriteItem::Render(data));
+            if let Some((lane, data)) = Self::try_pop(&mut state) {
+                if lane == WriteLane::Ordered {
+                    // A sender may be waiting for the ordered lane to clear.
+                    self.ready.notify_one();
+                }
+                return Some(match lane {
+                    WriteLane::Control => ClientWriteItem::Control(data),
+                    WriteLane::Ordered | WriteLane::Render => ClientWriteItem::Render(data),
+                    WriteLane::Media => ClientWriteItem::Media(data),
+                });
             }
             if state.senders == 0 {
                 return None;
@@ -292,6 +482,7 @@ impl ClientWriterQueue {
         state.writer_alive = false;
         state.render = None;
         state.ordered.clear();
+        state.media.clear();
         self.ready.notify_all();
     }
 
@@ -318,6 +509,11 @@ pub(crate) enum ServerEvent {
         direct_graphics: bool,
         /// Client can report sub-cell (DECSET 1016) mouse positions.
         pixel_mouse: bool,
+        /// Capabilities the handshake accepted for this connection.
+        ///
+        /// Exactly what the client was told in `Welcome.accepted`: the session
+        /// must not believe it may use more than the client agreed to.
+        capabilities: Vec<CapabilityEntry>,
         writer: ClientWriter,
     },
     /// A client sent an input message.
@@ -519,10 +715,32 @@ fn set_client_recv_timeout(
 /// Reads the `Hello` message, validates the version, sends `Welcome`,
 /// and then enters a read loop forwarding messages to the server event channel.
 pub(crate) fn handle_client_handshake(
+    stream: LocalStream,
+    client_id: u64,
+    server_event_tx: &mpsc::Sender<ServerEvent>,
+    should_quit: &Arc<AtomicBool>,
+) -> io::Result<()> {
+    handle_client_handshake_offering(
+        stream,
+        client_id,
+        server_event_tx,
+        should_quit,
+        &server_capabilities(),
+    )
+}
+
+/// The handshake with the server's capability set passed in.
+///
+/// Split out so the negotiation can be exercised over the real path with a
+/// non-empty offer: F0 deliberately ships an empty one, and a test that could
+/// only ever compare two empty lists would not notice the accepted set failing
+/// to reach the session at all.
+fn handle_client_handshake_offering(
     mut stream: LocalStream,
     client_id: u64,
     server_event_tx: &mpsc::Sender<ServerEvent>,
     should_quit: &Arc<AtomicBool>,
+    offered: &CapabilitySet,
 ) -> io::Result<()> {
     if should_quit.load(Ordering::Acquire) {
         return Ok(());
@@ -566,6 +784,7 @@ pub(crate) fn handle_client_handshake(
         direct_attach_requested,
         direct_graphics,
         pixel_mouse,
+        accepted_capabilities,
     ) = match hello {
         ClientMessage::Hello {
             version,
@@ -577,6 +796,7 @@ pub(crate) fn handle_client_handshake(
             keybindings,
             launch_mode,
             pixel_mouse,
+            capabilities,
         } => {
             // Version check.
             match protocol::check_client_version(version) {
@@ -587,6 +807,7 @@ pub(crate) fn handle_client_handshake(
                         version: PROTOCOL_VERSION,
                         encoding: RenderEncoding::SemanticFrame,
                         error: Some(reason),
+                        accepted: Vec::new(),
                     };
                     let _ = protocol::write_message(&mut stream, &welcome);
                     return Ok(());
@@ -600,11 +821,18 @@ pub(crate) fn handle_client_handshake(
                         version: PROTOCOL_VERSION,
                         encoding: RenderEncoding::SemanticFrame,
                         error: Some(error),
+                        accepted: Vec::new(),
                     };
                     let _ = protocol::write_message(&mut stream, &welcome);
                     return Ok(());
                 }
             };
+
+            // Only what both sides named survives. Reflecting the client's
+            // announcement back here would promise capabilities this server has
+            // no code for, and nothing downstream would catch it.
+            // TP-MEDIA-CAP-01, TP-MEDIA-CAP-03
+            let accepted = CapabilitySet::from_entries(capabilities).intersect(offered);
 
             // Clamp size.
             let (clamped_cols, clamped_rows) = clamp_terminal_size(cols, rows);
@@ -618,6 +846,7 @@ pub(crate) fn handle_client_handshake(
                 launch_mode == ClientLaunchMode::TerminalAttach,
                 launch_mode == ClientLaunchMode::AppDirectGraphics,
                 pixel_mouse,
+                accepted,
             )
         }
         _ => {
@@ -627,6 +856,7 @@ pub(crate) fn handle_client_handshake(
                 version: PROTOCOL_VERSION,
                 encoding: RenderEncoding::SemanticFrame,
                 error: Some("expected Hello as first message".to_owned()),
+                accepted: Vec::new(),
             };
             let _ = protocol::write_message(&mut stream, &welcome);
             return Ok(());
@@ -642,6 +872,7 @@ pub(crate) fn handle_client_handshake(
         version: PROTOCOL_VERSION,
         encoding: render_encoding,
         error: None,
+        accepted: accepted_capabilities.entries().to_vec(),
     };
     protocol::write_message(&mut stream, &welcome).map_err(|e| io::Error::other(e.to_string()))?;
 
@@ -657,6 +888,7 @@ pub(crate) fn handle_client_handshake(
     let writer = ClientWriter {
         control: ClientControlWriter::queue(writer_queue.clone()),
         render: ClientRenderWriter::queue(writer_queue.clone()),
+        media: ClientMediaWriter::queue(writer_queue.clone()),
     };
 
     // Spawn a writer thread that forwards messages from the channels to the stream.
@@ -672,6 +904,9 @@ pub(crate) fn handle_client_handshake(
     }
 
     // Notify the main loop about the new client.
+    // Cloned before the event takes ownership of the writer: the clock
+    // probe is answered on the reading thread, which never sees the event.
+    let clock_writer = writer.control.clone();
     let connected = ServerEvent::ClientConnected {
         client_id,
         cols: client_cols,
@@ -683,6 +918,7 @@ pub(crate) fn handle_client_handshake(
         direct_attach_requested,
         direct_graphics,
         pixel_mouse,
+        capabilities: accepted_capabilities.into_entries(),
         writer,
     };
     if let Err(err) = server_event_tx.blocking_send(connected) {
@@ -692,7 +928,13 @@ pub(crate) fn handle_client_handshake(
     }
 
     // Enter read loop — read client messages and forward to main loop.
-    client_read_loop(stream, client_id, server_event_tx, should_quit)
+    client_read_loop_answering_clock(
+        stream,
+        client_id,
+        server_event_tx,
+        should_quit,
+        Some(&clock_writer),
+    )
 }
 
 fn send_shutdown_to_unregistered_client(writer: &ClientWriter) {
@@ -724,6 +966,11 @@ fn client_writer_loop(
                     server_event_tx.blocking_send(ServerEvent::ClientWriterDrained { client_id });
                 write_framed_bytes(&mut stream, &data)
             }
+            // No drained event: that signal means "the render slot is free
+            // again", and the media lane does not have one. Sending it here
+            // would make the server offer a repaint every time a 20 ms audio
+            // chunk went out.
+            ClientWriteItem::Media(data) => write_framed_bytes(&mut stream, &data),
         };
         if !written {
             let _ = server_event_tx.blocking_send(ServerEvent::ClientDisconnected { client_id });
@@ -747,11 +994,31 @@ fn write_framed_bytes(stream: &mut LocalStream, data: &[u8]) -> bool {
 }
 
 /// The client read loop — reads messages from the client and forwards to the server event channel.
+/// The read loop with no clock writer.
+///
+/// Only tests call it now — the production path always has a writer — but it
+/// stays as the shape those tests were written against, and as the case that
+/// proves a probe with nowhere to reply is dropped rather than panicking.
+#[cfg(test)]
 fn client_read_loop(
+    stream: LocalStream,
+    client_id: u64,
+    server_event_tx: &mpsc::Sender<ServerEvent>,
+    should_quit: &Arc<AtomicBool>,
+) -> io::Result<()> {
+    client_read_loop_answering_clock(stream, client_id, server_event_tx, should_quit, None)
+}
+
+/// The read loop, with the writer it answers clock probes on.
+///
+/// Separated so the existing tests keep their signature and so a test can drive
+/// the loop with no writer at all; the production path always passes one.
+fn client_read_loop_answering_clock(
     mut stream: LocalStream,
     client_id: u64,
     server_event_tx: &mpsc::Sender<ServerEvent>,
     should_quit: &Arc<AtomicBool>,
+    clock_writer: Option<&ClientControlWriter>,
 ) -> io::Result<()> {
     while !should_quit.load(Ordering::Acquire) {
         let msg: ClientMessage = match protocol::read_message(&mut stream, MAX_GRAPHICS_FRAME_SIZE)
@@ -980,6 +1247,38 @@ fn client_read_loop(
                 // Duplicate Hello — ignore.
                 continue;
             }
+            // Answered here, on the reading thread, rather than forwarded to
+            // the event loop. A clock probe that queued behind application
+            // work would measure the event loop's backlog and report it as
+            // network delay — the client would then size its buffer for a
+            // number that has nothing to do with the link.
+            // TP-MEDIA-CLOCK-02
+            ClientMessage::TimeSync { client_send_us } => {
+                let server_recv_us = crate::media::now_us();
+                if let Some(writer) = clock_writer {
+                    let reply = ServerMessage::TimeSyncReply {
+                        client_send_us,
+                        server_recv_us,
+                        // Taken again rather than reused: the gap between the
+                        // two stamps is the server's own processing time, and
+                        // reporting it as zero would fold it into the client's
+                        // estimate of the network.
+                        server_send_us: crate::media::now_us(),
+                    };
+                    let mut framed = Vec::new();
+                    if protocol::write_message(&mut framed, &reply).is_ok() {
+                        let _ = writer.send(framed);
+                    }
+                }
+                continue;
+            }
+            // Credit belongs to a stream, and no stream can be open yet. It is
+            // dropped rather than half-handled: the stream bookkeeping arrives
+            // with the streams themselves.
+            ClientMessage::MediaCredit { .. } => {
+                debug!(client_id, "media credit for a stream that is not open");
+                continue;
+            }
         };
 
         if server_event_tx.blocking_send(event).is_err() {
@@ -995,6 +1294,7 @@ fn client_read_loop(
 mod tests {
     use super::*;
     use crate::app::test_wait::LoadAwareDeadline;
+    use crate::protocol::capability;
     use interprocess::local_socket::traits::Listener as _;
     use std::path::PathBuf;
 
@@ -1065,6 +1365,7 @@ mod tests {
             ClientWriter {
                 control: ClientControlWriter::queue(queue.clone()),
                 render: ClientRenderWriter::queue(queue.clone()),
+                media: ClientMediaWriter::queue(queue.clone()),
             },
             queue,
         )
@@ -1155,6 +1456,209 @@ mod tests {
 
         drop(writer);
         handle.join().expect("writer exits after senders drop");
+    }
+
+    // TP-MEDIA-CAP-04
+    #[test]
+    fn the_server_announces_the_media_vocabulary_it_can_serve() {
+        // F0 shipped this function returning nothing, with an assertion saying
+        // so, precisely so that the phase which adds the code has to come here
+        // and change it on purpose. This is that change.
+        let offered = server_capabilities();
+        assert!(offered.has(capability::MEDIA_STREAMS));
+        assert_eq!(
+            offered.negotiated_value(capability::AUDIO_SINK),
+            Some(crate::protocol::codec::OPUS),
+            "the server produces Opus and says which codec, not merely that it has one"
+        );
+        // Not video: nothing here encodes it, and a name without code behind it
+        // is the failure the intersection exists to prevent one level up.
+        assert!(!offered.has(capability::VIDEO_DECODE));
+        assert!(!offered.has(capability::SIDE_CHANNEL));
+    }
+
+    // TP-MEDIA-CAP-04
+    #[test]
+    fn a_client_with_no_sink_is_not_granted_one() {
+        // The handshake's whole job in one case. The server can produce Opus
+        // and says so; a client that cannot play it does not claim a sink; the
+        // intersection therefore grants streams and not audio. Get this wrong
+        // in the permissive direction and the server encodes for a listener who
+        // will never hear it — healthy at both ends, silent in the middle.
+        let client =
+            CapabilitySet::from_entries(vec![CapabilityEntry::flag(capability::MEDIA_STREAMS)]);
+        let accepted = client.intersect(&server_capabilities());
+
+        assert!(accepted.has(capability::MEDIA_STREAMS));
+        assert!(!accepted.has(capability::AUDIO_SINK));
+    }
+
+    // TP-MEDIA-CLOCK-02
+    #[test]
+    fn a_clock_probe_is_answered_on_the_reading_thread() {
+        // Answered where it is read, not forwarded to the event loop. A probe
+        // that queued behind application work would measure the loop's backlog
+        // and report it as network delay, and the client would size its buffer
+        // for a number with nothing to do with the link. Nothing about that is
+        // visible: the reply arrives, the arithmetic works, the answer is wrong.
+        //
+        // The event channel is deliberately left unread here, which is what a
+        // busy server looks like. The reply still has to appear.
+        let (mut client_stream, server_stream, _path) = local_stream_pair("client-clock-probe");
+        let (server_event_tx, _server_event_rx) = mpsc::channel(1);
+        let should_quit = Arc::new(AtomicBool::new(false));
+        let read_quit = should_quit.clone();
+        let (writer, drain) = ClientWriter::test_channel_through_queue();
+        let clock_writer = writer.control.clone();
+
+        let handle = std::thread::spawn(move || {
+            client_read_loop_answering_clock(
+                server_stream,
+                7,
+                &server_event_tx,
+                &read_quit,
+                Some(&clock_writer),
+            )
+        });
+
+        let mut framed = Vec::new();
+        protocol::write_message(
+            &mut framed,
+            &ClientMessage::TimeSync {
+                client_send_us: 12_345,
+            },
+        )
+        .expect("frame probe");
+        client_stream.write_all(&framed).expect("send probe");
+        client_stream.flush().expect("flush probe");
+
+        let deadline = LoadAwareDeadline::new(5, "a clock reply");
+        let reply = loop {
+            if let Some((lane, bytes)) = drain.try_recv() {
+                assert_eq!(lane, WriteLane::Control, "a clock reply is control traffic");
+                break protocol::read_message::<_, ServerMessage>(
+                    &mut bytes.as_slice(),
+                    MAX_FRAME_SIZE,
+                )
+                .expect("decode reply");
+            }
+            deadline.check();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
+
+        match reply {
+            ServerMessage::TimeSyncReply {
+                client_send_us,
+                server_recv_us,
+                server_send_us,
+            } => {
+                assert_eq!(client_send_us, 12_345, "the client's stamp travels back");
+                assert!(
+                    server_send_us >= server_recv_us,
+                    "the server's own two stamps must not run backwards"
+                );
+            }
+            other => panic!("expected TimeSyncReply, got {other:?}"),
+        }
+
+        should_quit.store(true, Ordering::Release);
+        drop(client_stream);
+        let _ = handle.join();
+    }
+
+    // -- Media lane (F1) ----------------------------------------------------
+
+    // TP-MEDIA-PRIO-01
+    #[test]
+    fn the_media_lane_drains_after_every_other_lane() {
+        // The regression gate of the whole phase: media must never delay a
+        // keystroke or a repaint. Priority is the only structural guarantee of
+        // that — a scheduler that merely tries to be fair would make the gate
+        // a measurement instead of a property.
+        //
+        // This drives the real queue with no writer thread on purpose. A drain
+        // thread empties each lane the instant it fills, so two lanes are never
+        // occupied at once and the order is never actually exercised: the test
+        // would pass against any priority at all.
+        let (writer, drain) = ClientWriter::test_channel_through_queue();
+
+        writer.control.send(b"control".to_vec()).expect("control");
+        writer
+            .render
+            .send_ordered(b"ordered".to_vec())
+            .expect("ordered");
+        writer.render.try_send(b"render".to_vec()).expect("render");
+        writer.media.try_send(b"media".to_vec()).expect("media");
+
+        let drained = drain.drain();
+        let lanes: Vec<WriteLane> = drained.iter().map(|(lane, _)| *lane).collect();
+        assert_eq!(
+            lanes,
+            vec![
+                WriteLane::Control,
+                WriteLane::Ordered,
+                WriteLane::Render,
+                WriteLane::Media
+            ],
+            "media must come last and the other three must keep their order"
+        );
+        let payloads: Vec<&[u8]> = drained.iter().map(|(_, data)| data.as_slice()).collect();
+        assert_eq!(
+            payloads,
+            vec![
+                b"control".as_slice(),
+                b"ordered".as_slice(),
+                b"render".as_slice(),
+                b"media".as_slice()
+            ]
+        );
+    }
+
+    // TP-MEDIA-PRIO-01
+    #[test]
+    fn a_full_media_lane_still_lets_control_through_first() {
+        // The empty-queue case proves ordering; this proves it under the only
+        // condition that matters. A backlog of audio is exactly when a slow
+        // link is also when the user is most likely to press a key.
+        let (writer, drain) = ClientWriter::test_channel_through_queue();
+        for i in 0..MEDIA_LANE_CAPACITY {
+            writer
+                .media
+                .try_send(vec![i as u8])
+                .expect("media lane accepts up to its capacity");
+        }
+        assert!(
+            matches!(
+                writer.media.try_send(b"one too many".to_vec()),
+                Err(TrySendError::Full(_))
+            ),
+            "a full media lane must refuse rather than grow: an unbounded lane \
+             is bufferbloat with extra steps"
+        );
+
+        writer.control.send(b"keystroke".to_vec()).expect("control");
+
+        let (lane, data) = drain.try_recv().expect("something is queued");
+        assert_eq!(lane, WriteLane::Control);
+        assert_eq!(data, b"keystroke");
+    }
+
+    // TP-MEDIA-PRIO-01
+    #[test]
+    fn closing_the_writer_clears_the_media_lane_too() {
+        // A lane that survives close keeps bytes for a client that is gone, and
+        // the queue is freed only when the last handle drops. The other lanes
+        // are already cleared here; the new one has to be as well or it becomes
+        // the leak the others were written to avoid.
+        let (writer, drain) = ClientWriter::test_channel_through_queue();
+        writer.media.try_send(b"media".to_vec()).expect("media");
+        writer.test_close();
+
+        assert!(drain.try_recv().is_none(), "close must drop queued media");
+        assert!(matches!(
+            writer.media.try_send(b"after close".to_vec()),
+            Err(TrySendError::Disconnected(_))
+        ));
     }
 
     #[test]
@@ -1320,6 +1824,190 @@ new_tab = "ctrl+notakey"
             .any(|binding| binding.label == "prefix+n"));
     }
 
+    /// Drives one handshake with the given announcement and returns the
+    /// `Welcome` the server sent plus the `ClientConnected` event it raised.
+    fn handshake_with_capabilities(
+        label: &str,
+        announced: Vec<CapabilityEntry>,
+        offered: CapabilitySet,
+    ) -> (ServerMessage, ServerEvent) {
+        let (mut client_stream, server_stream, _path) = local_stream_pair(label);
+        let (server_event_tx, mut server_event_rx) = mpsc::channel(4);
+        let should_quit = Arc::new(AtomicBool::new(false));
+        let handshake_quit = should_quit.clone();
+        let handle = std::thread::spawn(move || {
+            handle_client_handshake_offering(
+                server_stream,
+                7,
+                &server_event_tx,
+                &handshake_quit,
+                &offered,
+            )
+        });
+
+        protocol::write_message(
+            &mut client_stream,
+            &ClientMessage::Hello {
+                version: PROTOCOL_VERSION,
+                cols: 80,
+                rows: 24,
+                cell_width_px: 8,
+                cell_height_px: 16,
+                requested_encoding: RenderEncoding::SemanticFrame,
+                keybindings: ClientKeybindings::Server,
+                launch_mode: ClientLaunchMode::App,
+                pixel_mouse: false,
+                capabilities: announced,
+            },
+        )
+        .expect("write hello");
+
+        let welcome: ServerMessage =
+            protocol::read_message(&mut client_stream, MAX_FRAME_SIZE).expect("read welcome");
+        let event = server_event_rx
+            .blocking_recv()
+            .expect("client connected event");
+
+        drop(client_stream);
+        should_quit.store(true, Ordering::Release);
+        handle
+            .join()
+            .expect("handshake thread join")
+            .expect("handshake thread result");
+
+        (welcome, event)
+    }
+
+    fn welcome_accepted(welcome: &ServerMessage) -> CapabilitySet {
+        match welcome {
+            ServerMessage::Welcome { accepted, .. } => {
+                CapabilitySet::from_entries(accepted.clone())
+            }
+            other => panic!("expected Welcome, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_handshake_accepts_only_capabilities_both_sides_support() {
+        // The silent failure this pins: reflecting the client's announcement
+        // back instead of intersecting it. The connection would look healthy,
+        // every existing test would stay green, and the server would have
+        // promised something it cannot do.
+        // The server here offers one real name; the client also asks for one the
+        // server has never heard of.
+        let offered =
+            CapabilitySet::from_entries(vec![CapabilityEntry::flag(capability::MEDIA_STREAMS)]);
+        let (welcome, _event) = handshake_with_capabilities(
+            "client-handshake-caps-intersect",
+            vec![
+                CapabilityEntry::flag(capability::MEDIA_STREAMS),
+                CapabilityEntry::flag("client.invented.this.one"),
+            ],
+            offered.clone(),
+        );
+
+        let accepted = welcome_accepted(&welcome);
+        assert!(
+            !accepted.has("client.invented.this.one"),
+            "the server must not accept a capability it does not implement"
+        );
+        assert!(
+            accepted.has(capability::MEDIA_STREAMS),
+            "a name both sides offered must survive"
+        );
+        for entry in accepted.entries() {
+            assert!(
+                offered.has(&entry.name),
+                "accepted {} which is not in the server's own set",
+                entry.name
+            );
+        }
+    }
+
+    #[test]
+    fn a_client_announcing_only_unknown_capabilities_still_connects() {
+        let (welcome, _event) = handshake_with_capabilities(
+            "client-handshake-caps-unknown",
+            vec![
+                CapabilityEntry::flag("totally.unknown.name"),
+                CapabilityEntry::with_values("another.unknown", ["v1"]),
+            ],
+            CapabilitySet::from_entries(vec![CapabilityEntry::flag(capability::MEDIA_STREAMS)]),
+        );
+
+        match &welcome {
+            ServerMessage::Welcome { error, .. } => {
+                assert_eq!(*error, None, "unknown names must not fail the handshake")
+            }
+            other => panic!("expected Welcome, got {other:?}"),
+        }
+        assert!(welcome_accepted(&welcome).entries().is_empty());
+    }
+
+    #[test]
+    fn accepted_capabilities_travel_with_the_connected_event() {
+        // Without this the client believes a capability was granted while the
+        // session has no memory of it. Nothing fails at handshake time; it
+        // fails later, in whichever feature first tries to use it.
+        // Driven with an injected offer rather than the shipped one: F0 offers
+        // nothing yet, and two empty lists would compare equal even if the
+        // accepted set never reached the session at all.
+        let offered = CapabilitySet::from_entries(vec![
+            CapabilityEntry::flag(capability::MEDIA_STREAMS),
+            CapabilityEntry::with_values(capability::AUDIO_SINK, ["opus"]),
+        ]);
+        let announced: Vec<CapabilityEntry> = offered.entries().to_vec();
+
+        let (welcome, event) =
+            handshake_with_capabilities("client-handshake-caps-event", announced, offered);
+        let accepted = welcome_accepted(&welcome);
+
+        match event {
+            ServerEvent::ClientConnected {
+                capabilities,
+                writer,
+                ..
+            } => {
+                assert_eq!(
+                    CapabilitySet::from_entries(capabilities),
+                    accepted,
+                    "the session must carry exactly what the client was told"
+                );
+                drop(writer);
+            }
+            other => panic!("expected ClientConnected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_empty_announcement_is_accepted_as_the_pre_negotiation_case() {
+        let (welcome, event) = handshake_with_capabilities(
+            "client-handshake-caps-empty",
+            Vec::new(),
+            server_capabilities(),
+        );
+
+        match &welcome {
+            ServerMessage::Welcome { error, .. } => assert_eq!(*error, None),
+            other => panic!("expected Welcome, got {other:?}"),
+        }
+        assert!(welcome_accepted(&welcome).entries().is_empty());
+        match event {
+            ServerEvent::ClientConnected {
+                capabilities,
+                writer,
+                ..
+            } => {
+                assert!(
+                    capabilities.is_empty(),
+                    "an empty announcement must stay empty end to end"
+                );
+                drop(writer);
+            }
+            other => panic!("expected ClientConnected, got {other:?}"),
+        }
+    }
+
     #[test]
     fn handshake_negotiates_terminal_ansi_encoding() {
         let (mut client_stream, server_stream, _path) = local_stream_pair("client-handshake-ansi");
@@ -1342,6 +2030,7 @@ new_tab = "ctrl+notakey"
                 keybindings: ClientKeybindings::Server,
                 launch_mode: ClientLaunchMode::App,
                 pixel_mouse: true,
+                capabilities: Vec::new(),
             },
         )
         .expect("write hello");
@@ -1353,7 +2042,9 @@ new_tab = "ctrl+notakey"
                 version,
                 encoding,
                 error,
+                accepted,
             } => {
+                assert!(accepted.is_empty());
                 assert_eq!(version, PROTOCOL_VERSION);
                 assert_eq!(encoding, RenderEncoding::TerminalAnsi);
                 assert_eq!(error, None);
@@ -1373,6 +2064,7 @@ new_tab = "ctrl+notakey"
                 cell_height_px,
                 render_encoding,
                 keybindings,
+                capabilities: _,
                 direct_attach_requested,
                 direct_graphics,
                 pixel_mouse,
@@ -1424,6 +2116,7 @@ new_tab = "ctrl+notakey"
                 keybindings: ClientKeybindings::Server,
                 launch_mode: ClientLaunchMode::TerminalAttach,
                 pixel_mouse: false,
+                capabilities: Vec::new(),
             },
         )
         .expect("write hello");
@@ -1435,7 +2128,9 @@ new_tab = "ctrl+notakey"
                 version,
                 encoding,
                 error,
+                accepted,
             } => {
+                assert!(accepted.is_empty());
                 assert_eq!(version, PROTOCOL_VERSION);
                 assert_eq!(encoding, RenderEncoding::TerminalAnsi);
                 assert_eq!(error, None);

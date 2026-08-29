@@ -10,6 +10,7 @@
 
 pub mod chat_worklog;
 pub mod closed_agents;
+mod durable;
 mod io;
 pub mod plugin_registry;
 mod restore;

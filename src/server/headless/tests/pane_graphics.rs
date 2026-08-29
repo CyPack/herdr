@@ -403,6 +403,7 @@ fn direct_eligibility_is_installed_with_the_client_connection() {
         direct_graphics: true,
         pixel_mouse: true,
         writer,
+        capabilities: Vec::new(),
     }));
 
     let client = server.clients.get(&7).expect("connected client");

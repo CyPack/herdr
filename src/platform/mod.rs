@@ -322,6 +322,36 @@ pub(crate) fn begin_cli_output() {}
 #[cfg(not(unix))]
 pub(crate) fn end_cli_output() {}
 
+/// Opens this platform's native audio output, when it has one wired.
+///
+/// `None` means "no native path on this platform", which is different from
+/// `Some(Err)`: the first sends the caller straight to an external player, the
+/// second is a device that exists and declined, worth a line in the log.
+#[cfg(target_os = "macos")]
+pub(crate) fn native_audio_sink(
+) -> Option<Result<Box<dyn crate::media::sink::AudioSink>, crate::media::sink::SinkError>> {
+    Some(macos::audio::open())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn native_audio_sink(
+) -> Option<Result<Box<dyn crate::media::sink::AudioSink>, crate::media::sink::SinkError>> {
+    None
+}
+
+/// Whether a native output device exists, without opening it. Read at the
+/// handshake, where opening a device for a stream nobody has sent would be
+/// both slow and presumptuous.
+#[cfg(target_os = "macos")]
+pub(crate) fn native_audio_sink_available() -> bool {
+    macos::audio::probe()
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn native_audio_sink_available() -> bool {
+    false
+}
+
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]

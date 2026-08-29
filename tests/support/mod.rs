@@ -17,9 +17,10 @@ const WATCHDOG_SCAN_INTERVAL: Duration = Duration::from_secs(1);
 const RUNTIME_OWNER_MARKER: &str = ".herdr-test-owner-pid";
 // Mirrors `src/protocol/wire.rs::PROTOCOL_VERSION` by hand, because the bin
 // crate exposes no lib for tests to import. The wire's own comment explains
-// why 19 was skipped. If this drifts, the protocol fixture tests fail fast —
-// which is exactly how the drift gets noticed.
-pub const CURRENT_PROTOCOL: u32 = 21;
+// why 19 was skipped, and why 22 carries the capability announcement. If this
+// drifts, the protocol fixture tests fail fast — which is exactly how the
+// drift gets noticed.
+pub const CURRENT_PROTOCOL: u32 = 22;
 
 pub fn register_spawned_herdr_pid(pid: Option<u32>) {
     let Some(pid) = pid else {
@@ -268,6 +269,23 @@ fn decode_welcome(payload: &[u8]) -> Result<(u32, Option<String>), String> {
         None
     };
 
+    // The accepted capability list follows. A hand-encoded fixture is the only
+    // reader here that would notice the field silently vanishing from the wire,
+    // so it is decoded rather than left as trailing bytes.
+    let (accepted_len, consumed) = decode_varint_u32(payload, offset)?;
+    offset += consumed;
+    if accepted_len != 0 {
+        return Err(format!(
+            "expected no accepted capabilities for an empty announcement, got {accepted_len}"
+        ));
+    }
+    if offset != payload.len() {
+        return Err(format!(
+            "unexpected trailing bytes in Welcome: {} left",
+            payload.len() - offset
+        ));
+    }
+
     Ok((version, error))
 }
 
@@ -293,6 +311,10 @@ pub fn client_handshake(
             &encode_varint_u32(0),  // ClientKeybindings::Server
             &encode_varint_u32(0),  // ClientLaunchMode::App
             &[1u8],                 // pixel_mouse: true (bincode bool = one byte)
+            // capabilities: an empty Vec is a single varint length of zero.
+            // This fixture is deliberately hand-encoded, so it is also the
+            // check that an empty announcement really is the cheap default.
+            &encode_varint_u32(0),
         ],
     );
     let framed = frame_message(&hello_payload);

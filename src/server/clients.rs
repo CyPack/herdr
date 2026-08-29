@@ -59,6 +59,12 @@ pub(crate) struct ClientConnection {
     pub(crate) direct_graphics: bool,
     /// Whether this frontend preserves exact SGR pixel reports.
     pub(crate) pixel_mouse: bool,
+    /// Capabilities the handshake accepted for this client.
+    ///
+    /// The server may use nothing outside this set: it is exactly what the
+    /// client was told in `Welcome.accepted`, so an empty set is a client that
+    /// gets the behaviour it would have had before any negotiation existed.
+    pub(crate) capabilities: crate::protocol::CapabilitySet,
     /// Whether the next graphics frame must clear and rebuild host-side Kitty state.
     pub(crate) graphics_surface_reset_pending: bool,
     /// Whether an ordinary render was skipped because the render channel was full.
@@ -134,6 +140,7 @@ impl ClientConnection {
             graphics_cache: crate::kitty_graphics::HostGraphicsCache::default(),
             direct_graphics: false,
             pixel_mouse: false,
+            capabilities: crate::protocol::CapabilitySet::default(),
             // Born armed: the outer terminal may still be showing images from a
             // previous life this server never tracked. TP-GFX-RESET-01
             graphics_surface_reset_pending: true,
