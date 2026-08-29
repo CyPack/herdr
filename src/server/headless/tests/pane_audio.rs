@@ -209,13 +209,11 @@ async fn a_full_media_lane_drops_the_chunk_and_control_still_leaves_first() {
     let (mut server, _pane, public) = audio_test_server();
     let drain = connect(&mut server, 1, Some(codec::OPUS));
     open_stream(&mut server, &public, "owner");
-    assert!(
-        server.handle_server_event(ServerEvent::ClientMediaCredit {
-            client_id: 1,
-            stream_id: 1,
-            chunks: u16::MAX,
-        }) == false
-    );
+    assert!(!server.handle_server_event(ServerEvent::ClientMediaCredit {
+        client_id: 1,
+        stream_id: 1,
+        chunks: u16::MAX,
+    }));
 
     // 64 fit the lane; the 65th is refused and counted, not queued.
     for _ in 0..65 {
