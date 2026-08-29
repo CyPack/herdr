@@ -1955,6 +1955,71 @@ async fn the_live_render_plan_with_a_second_display_never_strands_a_placement() 
     }
 }
 
+fn drain_sound_notifies_queue(drain: &crate::server::client_transport::TestQueueDrain) -> usize {
+    let mut sounds = 0;
+    while let Some((_lane, bytes)) = drain.try_recv() {
+        if let ServerMessage::Notify {
+            kind: crate::protocol::NotifyKind::Sound,
+            ..
+        } = read_server_message(bytes)
+        {
+            sounds += 1;
+        }
+    }
+    sounds
+}
+
+// TP-NOTIFY-SOUND-01
+#[tokio::test]
+async fn an_agent_sound_reaches_every_app_client_not_only_the_foreground_one() {
+    // Two displays watch one session — a laptop in front of the user and a
+    // Mac across the room. The agent finishes; only the foreground display
+    // heard the chime, the other stayed silent although its player was
+    // ready (measured 2026-08-29: afplay never invoked on the Mac because no
+    // Notify ever reached that client). A sound is per listener, not per
+    // foreground.
+    let (mut server, rx1, pane_id) = retained_test_server_through_queue(b"agent pane");
+    let (writer, rx2) = ClientWriter::test_channel_through_queue();
+    server.clients.insert(
+        2,
+        ClientConnection::new(
+            (80, 24),
+            crate::kitty_graphics::HostCellSize::default(),
+            crate::terminal_theme::TerminalTheme::default(),
+            None,
+            2,
+            RenderEncoding::SemanticFrame,
+            Some(writer),
+        ),
+    );
+    server.sync_foreground_client_state();
+    server.render_and_stream();
+    drain_sound_notifies_queue(&rx1);
+    drain_sound_notifies_queue(&rx2);
+
+    server.forward_agent_notification_delivery(&crate::app::state::AgentNotificationDelivery {
+        pane_id,
+        workspace_id: "w1".to_owned(),
+        agent_label: "claude".to_owned(),
+        known_agent: None,
+        kind: crate::app::state::ToastKind::Finished,
+        toast: None,
+        client_notification: None,
+        sound: Some(crate::sound::Sound::Done),
+    });
+
+    assert_eq!(
+        drain_sound_notifies_queue(&rx1),
+        1,
+        "the foreground display hears the chime"
+    );
+    assert_eq!(
+        drain_sound_notifies_queue(&rx2),
+        1,
+        "the second display hears it too — a sound is per listener, not per foreground"
+    );
+}
+
 // TP-GFX-LEDGER-02
 fn collect_terminal_upload_ids_queue(
     drain: &crate::server::client_transport::TestQueueDrain,
