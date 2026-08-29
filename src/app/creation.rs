@@ -598,6 +598,29 @@ impl App {
             dormant: terminal.dormant.is_some(),
             alternate_screen,
             revision: terminal.revision,
+            web: terminal.web_link.as_ref().map(|link| {
+                let agent_pane_id = link.agent_pane_number.and_then(|number| {
+                    let seat = ws
+                        .public_pane_numbers
+                        .iter()
+                        .find(|(_, seat_number)| **seat_number == number)
+                        .map(|(pane_id, _)| *pane_id)?;
+                    self.public_pane_id(ws_idx, seat)
+                });
+                crate::api::schema::PaneWebInfo {
+                    agent_pane_id,
+                    agent_session: link.agent_session.as_ref().map(|session| {
+                        crate::api::schema::AgentSessionInfo {
+                            source: session.source.clone(),
+                            agent: session.agent.clone(),
+                            kind: session.session_ref.kind,
+                            value: session.session_ref.value.clone(),
+                        }
+                    }),
+                    url: link.url.clone(),
+                    link_state: link.state,
+                }
+            }),
         })
     }
 

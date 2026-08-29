@@ -103,7 +103,7 @@ Raw socket method names use dot notation:
 | Workspace | `workspace.create`, `workspace.list`, `workspace.get`, `workspace.focus`, `workspace.rename`, `workspace.move`, `workspace.move_block`, `workspace.report_metadata`, `workspace.close` |
 | Worktree | `worktree.list`, `worktree.create`, `worktree.open`, `worktree.remove` |
 | Tab | `tab.create`, `tab.list`, `tab.get`, `tab.focus`, `tab.rename`, `tab.move`, `tab.close` |
-| Pane | `pane.split`, `pane.swap`, `pane.move`, `pane.zoom`, `pane.layout`, `pane.process_info`, `pane.neighbor`, `pane.edges`, `pane.focus_direction`, `pane.resize`, `pane.list`, `pane.current`, `pane.get`, `pane.rename`, `pane.send_text`, `pane.send_keys`, `pane.send_input`, `pane.read`, `pane.graphics.info`, `pane.graphics.set`, `pane.graphics.clear`, `pane.graphics.stream`, `pane.audio.stream`, `pane.report_agent`, `pane.report_agent_session`, `pane.report_metadata`, `pane.clear_agent_authority`, `pane.release_agent`, `pane.close`, `pane.sleep`, `pane.wait_for_output` |
+| Pane | `pane.split`, `pane.web.open`, `pane.swap`, `pane.move`, `pane.zoom`, `pane.layout`, `pane.process_info`, `pane.neighbor`, `pane.edges`, `pane.focus_direction`, `pane.resize`, `pane.list`, `pane.current`, `pane.get`, `pane.rename`, `pane.send_text`, `pane.send_keys`, `pane.send_input`, `pane.read`, `pane.graphics.info`, `pane.graphics.set`, `pane.graphics.clear`, `pane.graphics.stream`, `pane.audio.stream`, `pane.report_agent`, `pane.report_agent_session`, `pane.report_metadata`, `pane.clear_agent_authority`, `pane.release_agent`, `pane.close`, `pane.sleep`, `pane.wait_for_output` |
 | Popup | `popup.close` |
 | Layout | `layout.export`, `layout.apply`, `layout.set_split_ratio` |
 | Agent | `agent.list`, `agent.get`, `agent.read`, `agent.explain`, `agent.send_keys`, `agent.prompt`, `agent.wait`, `agent.rename`, `agent.focus`, `agent.start`, `agent.view.set`, `agent.view.clear` |
@@ -168,6 +168,19 @@ pane.
 is the default. `pane` forwards unmodified right-click hold and drag gestures
 when the application requests terminal mouse reporting; otherwise Herdr falls
 back to its pane menu. Right-clicking the pane frame always opens Herdr's menu.
+`pane.web.open` splits like `pane.split` but births the new pane running a
+program — `command` (default `terminal-browser open <url>`) — with
+`HERDR_WEB_PANE=1` in its environment. It takes the same `workspace_id`,
+`target_pane_id`, `direction`, `ratio`, `cwd`, `focus` and `env` fields plus `url`,
+`command` and `agent` — the conversation the pane reports into, named by public
+pane id or agent name; unwritten, the target pane's own agent is taken, else the
+tab's only agent, else the pane opens unlinked. The reply's `pane_info` (and
+every web pane in `pane.list`) carries a `web` object — `agent_pane_id`,
+`agent_session`, `url`, `link_state` (`linked`/`stale`/`orphan`/`unlinked`) — and
+the pane's environment names the tie as `HERDR_WEB_LINKED_AGENT` and
+`HERDR_WEB_SESSION`. The strip's browser button, its key binding and the CLI all
+ride this one method.
+
 `pane.split` accepts the same optional `right_click` value for the newly created
 pane.
 

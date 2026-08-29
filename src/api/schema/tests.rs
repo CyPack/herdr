@@ -815,6 +815,7 @@ fn worktree_request_and_response_round_trip() {
                 dormant: false,
                 alternate_screen: false,
                 revision: 0,
+                web: None,
             },
             worktree: WorktreeInfo {
                 path: "/worktrees/herdr/worktree-api".into(),
@@ -1246,6 +1247,7 @@ fn create_response_round_trips_with_root_pane() {
                 dormant: false,
                 alternate_screen: false,
                 revision: 0,
+                web: None,
             },
         },
     };

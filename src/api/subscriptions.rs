@@ -682,6 +682,7 @@ mod tests {
             dormant: false,
             alternate_screen: false,
             revision: 0,
+            web: None,
         }
     }
 

@@ -125,6 +125,32 @@ pub struct DormantTerminal {
 /// Pure state for a server-owned terminal.
 ///
 /// During the migration this is still one-to-one with a pane-backed PTY, but
+/// A web pane's tie to the agent conversation it reports into. The public
+/// pane number survives a restore unchanged, so it needs no id remap; the
+/// session outranks it because a rearranged layout can hand a number to
+/// someone else. TP-WEB-LINK-01.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebLink {
+    pub agent_pane_number: Option<usize>,
+    pub agent_session: Option<crate::agent_resume::PersistedAgentSession>,
+    pub url: Option<String>,
+    pub state: WebLinkState,
+}
+
+/// Where a web pane's agent tie stands. `Unlinked` is a deliberate state,
+/// not an absence: a web pane always carries a link record, so the API can
+/// tell "web pane without an agent" apart from "not a web pane at all".
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum WebLinkState {
+    Linked,
+    Stale,
+    Orphan,
+    Unlinked,
+}
+
 /// pane/view state no longer owns terminal identity, cwd, labels, or agent
 /// metadata.
 pub struct TerminalState {
@@ -138,6 +164,7 @@ pub struct TerminalState {
     pub agent_metadata: HashMap<String, AgentMetadata>,
     pub metadata_tokens: crate::metadata_tokens::MetadataTokens,
     pub persisted_agent_session: Option<crate::agent_resume::PersistedAgentSession>,
+    pub web_link: Option<WebLink>,
     pub terminal_title: Option<String>,
     pub manual_label: Option<String>,
     pub agent_name: Option<String>,
@@ -177,6 +204,7 @@ impl TerminalState {
             agent_metadata: HashMap::new(),
             metadata_tokens: crate::metadata_tokens::MetadataTokens::default(),
             persisted_agent_session: None,
+            web_link: None,
             terminal_title: None,
             manual_label: None,
             agent_name: None,

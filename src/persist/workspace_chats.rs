@@ -492,7 +492,9 @@ pub fn apply_chat_moves(
             });
         }
         // A session nobody shows moves nothing; the map never learns keys
-        // for ghosts.
+        // for ghosts. A chat that is merely unfetched is not a ghost: the
+        // merge summons it by id before this runs (TP-CHAT-MOVE-16), so what
+        // reaches here without a row truly has no transcript anywhere.
         let Some(moved) = best else {
             continue;
         };
@@ -1341,6 +1343,7 @@ mod tests {
             }),
             launch_argv: None,
             dormant_history: None,
+            web_link: None,
         }
     }
 

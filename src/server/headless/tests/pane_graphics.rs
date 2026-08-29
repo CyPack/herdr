@@ -1955,7 +1955,6 @@ async fn the_live_render_plan_with_a_second_display_never_strands_a_placement() 
     }
 }
 
-// TP-GFX-LEDGER-02
 fn drain_sound_notifies_queue(drain: &crate::server::client_transport::TestQueueDrain) -> usize {
     let mut sounds = 0;
     while let Some((_lane, bytes)) = drain.try_recv() {
@@ -2021,6 +2020,143 @@ async fn an_agent_sound_reaches_every_app_client_not_only_the_foreground_one() {
     );
 }
 
+// TP-GFX-LEDGER-02
+fn collect_terminal_upload_ids_queue(
+    drain: &crate::server::client_transport::TestQueueDrain,
+    ids: &mut std::collections::HashSet<String>,
+) {
+    // Collect the HOST image id of every upload (a=T/a=t) that travels the
+    // wire for a terminal-side source. Pane-layer ids live in the upper half
+    // of the id space; the < 0x8000_0000 filter keeps only terminal images,
+    // the same split the lost-message test relies on.
+    while let Some((_lane, bytes)) = drain.try_recv() {
+        let graphics = match read_server_message(bytes) {
+            ServerMessage::Frame(frame) => String::from_utf8_lossy(&frame.graphics).into_owned(),
+            ServerMessage::Graphics { bytes } => String::from_utf8_lossy(&bytes).into_owned(),
+            _ => continue,
+        };
+        let mut rest = graphics.as_str();
+        while let Some(start) = rest.find("\u{1b}_G") {
+            let tail = &rest[start + 3..];
+            let end = tail.find('\u{1b}').unwrap_or(tail.len());
+            let head = tail[..end].split(';').next().unwrap_or("");
+            let mut action = "";
+            let mut image = "";
+            for part in head.split(',') {
+                if let Some((k, v)) = part.split_once('=') {
+                    match k {
+                        "a" => action = v,
+                        "i" => image = v,
+                        _ => {}
+                    }
+                }
+            }
+            if matches!(action, "T" | "t") && image.parse::<u64>().is_ok_and(|id| id < 0x8000_0000)
+            {
+                ids.insert(image.to_owned());
+            }
+            rest = &rest[start + 3..];
+        }
+    }
+}
+
+// TP-GFX-STABLE-01
+#[tokio::test]
+async fn a_streaming_source_keeps_one_host_image_identity_across_frames() {
+    // A streaming pane repaints the SAME kitty image id with new pixels every
+    // frame. Content-hashing that into a fresh host image id per frame is what
+    // makes every lost delete a permanent stranded placement (the 2026-08-29
+    // live residue: an old frame pinned to the right of the screen on two
+    // clients at once). Identity must follow the SOURCE, not the content: one
+    // (pane, guest image) pair maps to one host image id for its whole life,
+    // and a content change becomes a retransmit of that same id.
+    let (mut server, rx1, pane_id) = retained_test_server_through_queue(b"video pane");
+    server.app.state.kitty_graphics_enabled = true;
+    server.clients.get_mut(&1).unwrap().cell_size = crate::kitty_graphics::HostCellSize {
+        width_px: 10,
+        height_px: 20,
+    };
+    server.sync_foreground_client_state();
+    server.resize_shared_runtime_to_effective_size();
+    server.render_and_stream();
+    let mut uploads = std::collections::HashSet::new();
+    collect_terminal_upload_ids_queue(&rx1, &mut uploads);
+    assert!(
+        uploads.is_empty(),
+        "no terminal image exists before the stream starts: {uploads:?}"
+    );
+
+    for turn in 0..4u8 {
+        push_tb_frame(&mut server, pane_id, turn + 1);
+        match server.render_retained_graphics_update_and_stream() {
+            RetainedGraphicsOutcome::Sent => {}
+            _ => server.render_and_stream(),
+        }
+        collect_terminal_upload_ids_queue(&rx1, &mut uploads);
+    }
+
+    assert!(
+        !uploads.is_empty(),
+        "four frames were pushed but nothing was uploaded — the run never exercised the stream"
+    );
+    assert_eq!(
+        uploads.len(),
+        1,
+        "a streaming source must keep ONE host image identity across frames so a lost \
+         delete can only leave the picture stale, never stranded; these ids reached the \
+         wire: {uploads:?}"
+    );
+}
+
+// TP-GFX-RETAINED-01
+#[tokio::test]
+async fn a_video_frame_travels_the_retained_path_with_its_graphics() {
+    // With a video pane on screen the retained fast path refused to run at
+    // all (retained_fallback graphics_cache_active), so EVERY frame of the
+    // stream became a full-screen render: measured live at 15/15 full
+    // renders per second, render p95 134 ms, the server pinned at 150% CPU,
+    // typing lagging behind, and the picture blinking as each full pass
+    // re-blitted text over the placements. The fast path must carry the
+    // graphics update inside its patch frame instead of stepping aside.
+    let (mut server, rx1, pane_id) = retained_test_server_through_queue(b"video pane");
+    server.app.state.kitty_graphics_enabled = true;
+    server.clients.get_mut(&1).unwrap().cell_size = crate::kitty_graphics::HostCellSize {
+        width_px: 10,
+        height_px: 20,
+    };
+    server.sync_foreground_client_state();
+    server.resize_shared_runtime_to_effective_size();
+
+    // Seed: a full render installs the first frame and the first video
+    // frame's graphics into the client cache.
+    push_tb_frame(&mut server, pane_id, 1);
+    server.render_and_stream();
+    let mut seed = std::collections::HashSet::new();
+    collect_terminal_upload_ids_queue(&rx1, &mut seed);
+    assert!(!seed.is_empty(), "the seed render uploaded the first frame");
+
+    // The next frame arrives. The retained path must handle it — cache full
+    // and all — and its output must carry the new frame's graphics.
+    push_tb_frame(&mut server, pane_id, 2);
+    let sent = server.render_retained_pty_update_and_stream();
+    let mut uploads = std::collections::HashSet::new();
+    collect_terminal_upload_ids_queue(&rx1, &mut uploads);
+    assert!(
+        sent,
+        "a graphics-bearing screen must not force the retained path aside \
+         into a full render on every video frame"
+    );
+    assert!(
+        !uploads.is_empty(),
+        "the retained frame carries the new video frame's graphics"
+    );
+    assert_eq!(
+        uploads, seed,
+        "the stream keeps its one stable identity on the retained path too"
+    );
+}
+
+// TP-GFX-STABLE-02
 #[tokio::test]
 async fn a_lost_graphics_message_still_leaves_one_placement_on_the_terminal() {
     // Every frame of a streaming pane is content-hashed into a NEW host image
@@ -2119,8 +2255,6 @@ fn blank_graphics_layer(
     );
 }
 
-// No marker yet: this is a hypothesis under test, not a behaviour being
-// claimed. It earns a TP id once the outcome is known.
 #[tokio::test]
 async fn a_hidden_turn_does_not_lose_the_delete_for_the_frame_before_it() {
     // The wire signature of the live defect is "displayed once, never

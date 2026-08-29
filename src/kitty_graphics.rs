@@ -571,92 +571,6 @@ pub(crate) fn encode_local_pane_graphics(
     encode_graphics_update_incremental(cache, &placements, &live_pane_sources, transaction_budget)
 }
 
-pub(crate) fn has_visible_pane_graphics(
-    app: &AppState,
-    graphics: &crate::app::pane_graphics::Runtime,
-    terminal_runtimes: &TerminalRuntimeRegistry,
-    surface: crate::ui::TabSurfaceView<'_>,
-    cell_size: HostCellSize,
-) -> bool {
-    if app.mode != Mode::Terminal || !cell_size.is_known() {
-        return false;
-    }
-
-    let Some(ws_idx) = app.active else {
-        return false;
-    };
-    if app
-        .workspaces
-        .get(ws_idx)
-        .and_then(crate::workspace::Workspace::active_tab)
-        .is_none()
-    {
-        return false;
-    }
-
-    // While a popup is up it owns the picture layer, so it alone decides
-    // whether anything is on screen — matching the placement pass exactly.
-    if let Some(popup) = collect_popup_pane_placements(
-        app,
-        graphics,
-        terminal_runtimes,
-        cell_size,
-        &HashMap::new(),
-        false,
-    ) {
-        return popup
-            .iter()
-            .any(|placement| clipped_placement(placement).is_some());
-    }
-
-    for info in surface.pane_infos {
-        let empty_uploaded = HashMap::new();
-        if graphics.slots.iter().any(|((pane_id, layer_id), slot)| {
-            *pane_id == info.id
-                && slot.layer.as_ref().is_some_and(|layer| {
-                    clipped_placement(&pane_graphics_host_placement(
-                        info,
-                        layer_id,
-                        slot.host_image_id,
-                        cell_size,
-                        layer,
-                        &empty_uploaded,
-                        false,
-                    ))
-                    .is_some()
-                })
-        }) {
-            return true;
-        }
-
-        if let Some(runtime) = app.runtime_for_pane_in_workspace(terminal_runtimes, ws_idx, info.id)
-        {
-            let scrollback_offset = runtime
-                .scroll_metrics()
-                .map(|m| m.offset_from_bottom as u32)
-                .unwrap_or(0);
-            for placement in runtime.kitty_image_placements_with_data_filter(|_| false) {
-                let host_placement = HostPlacement {
-                    pane_id: info.id,
-                    host_image_id: None,
-                    area: info.inner_rect,
-                    cell_size,
-                    source_key: HostSourceKey::Terminal {
-                        pane_id: info.id,
-                        image_id: placement.image_id,
-                    },
-                    placement,
-                    scrollback_offset,
-                };
-                if clipped_placement(&host_placement).is_some() {
-                    return true;
-                }
-            }
-        }
-    }
-    false
-}
-
 fn encode_terminal_graphics_update_legacy(
     bytes: &mut Vec<u8>,
     placements: &[HostPlacement],
@@ -677,7 +591,9 @@ fn encode_terminal_graphics_update_legacy(
         let Some((clipped, format_code)) = clipped_placement(placement) else {
             continue;
         };
-        let host_id = host_image_id(placement.pane_id, &placement.placement);
+        let host_id = placement
+            .host_image_id
+            .unwrap_or_else(|| host_image_id(placement.pane_id, &placement.placement));
         let placement_id = host_placement_id(&placement.source_key, &placement.placement);
         let image_signature = image_signature(placement, format_code);
         let placement_signature =
@@ -688,15 +604,20 @@ fn encode_terminal_graphics_update_legacy(
         match cache.images.get(&host_id).copied() {
             Some(existing) if existing == image_signature => {}
             Some(_) => {
-                encode_delete_image(bytes, host_id);
-                cache.placements.retain(|(image_id, id), _| {
-                    if *image_id == host_id {
-                        current_placements.remove(&(*image_id, *id));
-                        false
-                    } else {
-                        true
-                    }
-                });
+                // An assigned identity is refreshed in place: kitty replaces
+                // the image when the same id is retransmitted, and a delete
+                // here blanks the live picture between frames.
+                if placement.host_image_id.is_none() {
+                    encode_delete_image(bytes, host_id);
+                    cache.placements.retain(|(image_id, id), _| {
+                        if *image_id == host_id {
+                            current_placements.remove(&(*image_id, *id));
+                            false
+                        } else {
+                            true
+                        }
+                    });
+                }
                 if !encode_upload_image(bytes, placement, format_code, host_id) {
                     continue;
                 }
@@ -989,7 +910,8 @@ fn encode_placement_update(
     let mut displayed = false;
     if !image_current {
         if cache.images.contains_key(&host_id)
-            && matches!(placement.source_key, HostSourceKey::PaneLayer { .. })
+            && (placement.host_image_id.is_some()
+                || matches!(placement.source_key, HostSourceKey::PaneLayer { .. }))
         {
             if !encode_transmit_and_display(
                 &mut bytes,
@@ -1121,6 +1043,15 @@ pub(crate) fn clear_all_host_graphics() -> io::Result<()> {
 }
 
 impl HostGraphicsCache {
+    /// Test-only: the caches an encode leaves behind, all empty at once.
+    #[cfg(test)]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.images.is_empty()
+            && self.placements.is_empty()
+            && self.sources.is_empty()
+            && self.replayed_placements.is_empty()
+    }
+
     /// Test-only ledger view: which (image, placement) pairs the server still
     /// believes exist on the outer terminal. Lets integration tests compare a
     /// simulated kitty against this accounting to catch stranded placements.
@@ -1197,10 +1128,6 @@ impl HostGraphicsCache {
         self.images.remove(&host_id);
         self.placements.retain(|(id, _), _| *id != host_id);
         self.replayed_placements.retain(|(id, _)| *id != host_id);
-    }
-
-    pub(crate) fn is_empty(&self) -> bool {
-        self.images.is_empty() && self.placements.is_empty()
     }
 
     pub(crate) fn request_placement_replay(&mut self) {
@@ -1346,11 +1273,11 @@ fn collect_popup_pane_placements(
         }
         let format_code = kitty_format_code(descriptor.format);
         let signature = image_signature_from_descriptor(descriptor, format_code);
-        let host_id = host_image_id_for_signature(popup.pane_id, signature);
+        let host_id = stream_host_image_id(popup.pane_id, descriptor.image_id);
         uploaded_images.get(&host_id).copied() != Some(signature)
     }) {
         placements.push(HostPlacement {
-            host_image_id: None,
+            host_image_id: Some(stream_host_image_id(popup.pane_id, placement.image_id)),
             pane_id: popup.pane_id,
             area: inner,
             cell_size,
@@ -1434,7 +1361,7 @@ fn collect_visible_placements(
         for placement in runtime.kitty_image_placements_with_data_filter(|descriptor| {
             let format_code = kitty_format_code(descriptor.format);
             let signature = image_signature_from_descriptor(descriptor, format_code);
-            let host_id = host_image_id_for_signature(info.id, signature);
+            let host_id = stream_host_image_id(info.id, descriptor.image_id);
             uploaded_images.get(&host_id).copied() != Some(signature)
         }) {
             let scrollback_offset = runtime
@@ -1443,7 +1370,7 @@ fn collect_visible_placements(
                 .unwrap_or(0);
             placements.push(HostPlacement {
                 pane_id: info.id,
-                host_image_id: None,
+                host_image_id: Some(stream_host_image_id(info.id, placement.image_id)),
                 area: info.inner_rect,
                 cell_size,
                 source_key: HostSourceKey::Terminal {
@@ -1582,6 +1509,20 @@ fn host_image_id_for_signature(pane_id: PaneId, signature: ImageSignature) -> u3
     let mut hasher = DefaultHasher::new();
     pane_id.raw().hash(&mut hasher);
     signature.hash(&mut hasher);
+    HOST_IMAGE_ID_BASE + ((hasher.finish() as u32) % 900_000)
+}
+
+fn stream_host_image_id(pane_id: PaneId, guest_image_id: u32) -> u32 {
+    // TP-GFX-STABLE-01: identity follows the SOURCE, not the content. A
+    // streaming pane repaints one guest image id with new pixels every frame;
+    // content-hashing that into a fresh host id per frame made every lost
+    // delete a permanently stranded placement. One (pane, guest image) pair
+    // keeps one host image id for its whole life, and a content change is a
+    // retransmit of that same id.
+    let mut hasher = DefaultHasher::new();
+    "stream.stable".hash(&mut hasher);
+    pane_id.raw().hash(&mut hasher);
+    guest_image_id.hash(&mut hasher);
     HOST_IMAGE_ID_BASE + ((hasher.finish() as u32) % 900_000)
 }
 
@@ -3428,10 +3369,6 @@ mod tests {
             )),
             "the file manager preview underneath is not painted across the popup"
         );
-        assert!(
-            has_visible_pane_graphics(&app, &graphics, &runtimes, app.view.tab_surface(), cells),
-            "the retained-frame fast path must know the popup has a picture on screen"
-        );
     }
 
     #[test]
@@ -3731,6 +3668,52 @@ mod tests {
     }
 
     // H49-4 (V4.TN-3): a source that leaves a shared image and comes back.
+    // TP-GFX-STABLE-01
+    #[test]
+    fn a_streaming_retransmit_never_deletes_the_image_on_screen() {
+        // The stable-identity fix made every new frame a retransmit of the
+        // SAME host image id — but the encoder's refresh path deleted the
+        // image before uploading the replacement, so the live picture blinked
+        // off for the gap between delete and display on every single frame
+        // (the 2026-08-29 16:2x live report: the pane "opens and closes"
+        // continuously). Kitty replaces an image in place when the same id is
+        // retransmitted; a delete must never travel between frames of a live
+        // streaming source.
+        fn frame(fingerprint: u64) -> HostPlacement {
+            let mut frame = test_placement(3, 3);
+            frame.placement.image_id = 9;
+            frame.placement.placement_id = 2;
+            frame.placement.data_fingerprint = fingerprint;
+            frame.host_image_id = Some(510_000);
+            frame.source_key = HostSourceKey::Terminal {
+                pane_id: frame.pane_id,
+                image_id: frame.placement.image_id,
+            };
+            frame
+        }
+
+        let mut cache = HostGraphicsCache::default();
+        let live = HashSet::new();
+
+        let bytes = drain_graphics_updates(&mut cache, &[frame(1)], &live);
+        let first = String::from_utf8_lossy(&bytes);
+        assert!(first.contains("i=510000"), "first frame uploads: {first}");
+
+        let bytes = drain_graphics_updates(&mut cache, &[frame(2)], &live);
+        let update = String::from_utf8_lossy(&bytes);
+        assert!(
+            !update.contains("a=d,d=I,i=510000"),
+            "a retransmit must replace the image in place, never delete it \
+             from the screen first: {update}"
+        );
+        assert!(
+            update.contains("i=510000"),
+            "the new content still travels: {update}"
+        );
+        assert_eq!(cache.images.len(), 1, "one image, refreshed in place");
+        assert_eq!(cache.placements.len(), 1, "the placement survives");
+    }
+
     #[test]
     fn a_source_returning_to_a_shared_image_displays_its_placement_again() {
         // Two sources share one content-hashed image. One moves to new

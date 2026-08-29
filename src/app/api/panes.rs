@@ -11,8 +11,8 @@ use crate::api::schema::{
     PaneRenameParams, PaneReportAgentParams, PaneReportAgentSessionParams,
     PaneReportMetadataParams, PaneResizeParams, PaneResizeReason, PaneResizeResult,
     PaneSendInputParams, PaneSendKeysParams, PaneSendTextParams, PaneSplitParams, PaneSwapParams,
-    PaneSwapReason, PaneSwapResult, PaneTarget, PaneZoomMode, PaneZoomParams, PaneZoomReason,
-    PaneZoomResult, ResponseResult,
+    PaneSwapReason, PaneSwapResult, PaneTarget, PaneWebOpenParams, PaneZoomMode, PaneZoomParams,
+    PaneZoomReason, PaneZoomResult, ResponseResult,
 };
 use crate::app::actions::{PaneZoomCommand, PaneZoomNoopReason};
 use crate::app::App;
@@ -26,7 +26,7 @@ use super::super::api_helpers::{
 };
 #[cfg(test)]
 use super::super::api_helpers::{METADATA_SOURCE_MAX_CHARS, METADATA_TTL_MAX_MS};
-use super::responses::{encode_error, encode_success};
+use super::responses::{encode_error, encode_error_body, encode_success};
 
 impl App {
     pub(super) fn handle_pane_split(&mut self, id: String, params: PaneSplitParams) -> String {
@@ -123,6 +123,232 @@ impl App {
             .insert(new_pane.terminal.id.clone(), new_pane.terminal);
         self.schedule_session_save();
         let pane = self.pane_info(ws_idx, new_pane.pane_id).unwrap();
+        self.emit_event(EventEnvelope {
+            event: EventKind::PaneCreated,
+            data: EventData::PaneCreated { pane: pane.clone() },
+        });
+        self.emit_layout_updated_event(ws_idx, target_tab_idx);
+
+        encode_success(id, ResponseResult::PaneInfo { pane })
+    }
+
+    /// `pane.web.open` — the one road to a browser pane (TP-TAB-BROWSER-02).
+    /// Born beside the target running `command` (default `terminal-browser
+    /// open <url>`), with `HERDR_WEB_PANE=1` in its environment so the
+    /// program can tell it was asked for as a web pane.
+    pub(super) fn handle_pane_web_open(&mut self, id: String, params: PaneWebOpenParams) -> String {
+        let target = if let Some(target_pane_id) = params.target_pane_id.as_deref() {
+            self.parse_pane_id(target_pane_id)
+        } else if let Some(workspace_id) = params.workspace_id.as_deref() {
+            self.parse_workspace_id(workspace_id).and_then(|ws_idx| {
+                let pane_id = self.state.workspaces.get(ws_idx)?.focused_pane_id()?;
+                Some((ws_idx, pane_id))
+            })
+        } else {
+            self.state.active.and_then(|ws_idx| {
+                let pane_id = self.state.workspaces.get(ws_idx)?.focused_pane_id()?;
+                Some((ws_idx, pane_id))
+            })
+        };
+        let Some((ws_idx, target_pane_id)) = target else {
+            return encode_error(id, "pane_not_found", "pane not found");
+        };
+        let mut extra_env = match super::env::normalize_launch_env(params.env) {
+            Ok(env) => env,
+            Err((code, message)) => return encode_error(id, &code, message),
+        };
+        extra_env.push(("HERDR_WEB_PANE".to_string(), "1".to_string()));
+        // TP-WEB-LINK-01/02: resolve the agent tie before the split so the
+        // pane's environment can carry it. Explicit `agent` first (agents
+        // only, this workspace), else the target pane's own agent, else the
+        // tab's only agent; with none the pane opens unlinked — a guessed
+        // tie would carry reports into the wrong conversation.
+        let link_seat: Option<(crate::layout::PaneId, crate::terminal::TerminalId)> =
+            if let Some(agent) = params.agent.as_deref() {
+                match self.resolve_agent_target(agent) {
+                    Ok(resolved) => {
+                        if resolved.ws_idx != ws_idx {
+                            return encode_error(
+                                id,
+                                "agent_not_in_workspace",
+                                "the named agent lives in another workspace",
+                            );
+                        }
+                        let terminal_id = self
+                            .state
+                            .terminal_id_for_pane(resolved.ws_idx, resolved.pane_id);
+                        match terminal_id {
+                            Some(terminal_id) => Some((resolved.pane_id, terminal_id)),
+                            None => {
+                                return encode_error(id, "agent_not_found", "agent pane not found")
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        return encode_error_body(id, self.agent_target_error_body(err));
+                    }
+                }
+            } else {
+                let target_terminal_id = self.state.terminal_id_for_pane(ws_idx, target_pane_id);
+                let target_is_agent = target_terminal_id
+                    .as_ref()
+                    .and_then(|terminal_id| self.state.terminals.get(terminal_id))
+                    .is_some_and(crate::terminal::TerminalState::is_agent_terminal);
+                if target_is_agent {
+                    target_terminal_id.map(|terminal_id| (target_pane_id, terminal_id))
+                } else {
+                    self.state.workspaces.get(ws_idx).and_then(|ws| {
+                        let tab_idx = ws.find_tab_index_for_pane(target_pane_id)?;
+                        let mut agents =
+                            ws.tabs[tab_idx].panes.iter().filter_map(|(pane_id, pane)| {
+                                let terminal =
+                                    self.state.terminals.get(&pane.attached_terminal_id)?;
+                                terminal
+                                    .is_agent_terminal()
+                                    .then(|| (*pane_id, pane.attached_terminal_id.clone()))
+                            });
+                        let only = agents.next();
+                        if agents.next().is_some() {
+                            None
+                        } else {
+                            only
+                        }
+                    })
+                }
+            };
+        let web_link = match link_seat {
+            Some((agent_pane_id, agent_terminal_id)) => {
+                let agent_pane_number = self
+                    .state
+                    .workspaces
+                    .get(ws_idx)
+                    .and_then(|ws| ws.public_pane_number(agent_pane_id));
+                let agent_terminal = self.state.terminals.get(&agent_terminal_id);
+                // The conversation's own reported session outranks the
+                // remembered one — the capture path's precedence.
+                let agent_session = agent_terminal.and_then(|terminal| {
+                    if let Some(authority) = terminal.hook_authority.as_ref() {
+                        if let Some(session_ref) = authority.session_ref.as_ref() {
+                            return Some(crate::agent_resume::PersistedAgentSession {
+                                source: authority.source.clone(),
+                                agent: authority.agent_label.clone(),
+                                session_ref: session_ref.clone(),
+                            });
+                        }
+                    }
+                    terminal.persisted_agent_session.clone()
+                });
+                if let Some(public_id) = self.public_pane_id(ws_idx, agent_pane_id) {
+                    extra_env.push(("HERDR_WEB_LINKED_AGENT".to_string(), public_id));
+                }
+                if let Some(session) = agent_session.as_ref() {
+                    extra_env.push((
+                        "HERDR_WEB_SESSION".to_string(),
+                        session.session_ref.value.clone(),
+                    ));
+                }
+                crate::terminal::WebLink {
+                    agent_pane_number,
+                    agent_session,
+                    url: params.url.clone(),
+                    state: crate::terminal::WebLinkState::Linked,
+                }
+            }
+            None => crate::terminal::WebLink {
+                agent_pane_number: None,
+                agent_session: None,
+                url: params.url.clone(),
+                state: crate::terminal::WebLinkState::Unlinked,
+            },
+        };
+        // An explicit command is run verbatim; the configured browser gets
+        // the page appended, the way `terminal-browser open <url>` reads.
+        let argv: Vec<String> = if params.command.is_empty() {
+            let mut argv = if self.state.web_browser_command.is_empty() {
+                crate::config::WebConfig::default_command()
+            } else {
+                self.state.web_browser_command.clone()
+            };
+            if let Some(url) = params.url.as_deref().filter(|url| !url.is_empty()) {
+                argv.push(url.to_string());
+            }
+            argv
+        } else {
+            params.command.clone()
+        };
+        let (rows, cols) = self.state.estimate_pane_size();
+        let split_cwd = params.cwd.map(std::path::PathBuf::from).or_else(|| {
+            let follow_cwd = self.launch_cwd_for_pane_in_workspace(ws_idx, target_pane_id);
+            Some(self.resolve_new_terminal_cwd(follow_cwd))
+        });
+        let scrollback_limit_bytes = self.state.pane_scrollback_limit_bytes;
+        let host_terminal_theme = self.state.host_terminal_theme;
+        let host_terminal_appearance = self.state.host_terminal_appearance;
+        let previous_focus = self.state.current_pane_focus_target();
+        let direction = match params
+            .direction
+            .unwrap_or(crate::api::schema::SplitDirection::Right)
+        {
+            crate::api::schema::SplitDirection::Right => ratatui::layout::Direction::Horizontal,
+            crate::api::schema::SplitDirection::Down => ratatui::layout::Direction::Vertical,
+        };
+        let Some(ws) = self.state.workspaces.get_mut(ws_idx) else {
+            return encode_error(id, "pane_not_found", "pane not found");
+        };
+        // The same floors the plugin pane road uses: a pane smaller than
+        // this is one no browser can draw in.
+        let split_result = match params.ratio {
+            Some(ratio) => ws.split_pane_argv_command_with_ratio(
+                target_pane_id,
+                direction,
+                ratio,
+                rows.max(4),
+                cols.max(10),
+                split_cwd,
+                &argv,
+                extra_env,
+                scrollback_limit_bytes,
+                host_terminal_theme,
+                host_terminal_appearance,
+                params.focus,
+            ),
+            None => ws.split_pane_argv_command(
+                target_pane_id,
+                direction,
+                rows.max(4),
+                cols.max(10),
+                split_cwd,
+                &argv,
+                extra_env,
+                scrollback_limit_bytes,
+                host_terminal_theme,
+                host_terminal_appearance,
+                params.focus,
+            ),
+        };
+        let (target_tab_idx, mut new_pane) = match split_result {
+            Some(Ok(result)) => result,
+            Some(Err(err)) => return encode_error(id, "pane_web_open_failed", err.to_string()),
+            None => return encode_error(id, "pane_not_found", "pane not found"),
+        };
+        new_pane.terminal.web_link = Some(web_link);
+        if params.focus {
+            self.state.switch_workspace_tab(ws_idx, target_tab_idx);
+            self.state
+                .record_pane_focus_change(previous_focus, ws_idx, new_pane.pane_id);
+            self.state.settle_terminal_mode_after_focus();
+        }
+        self.terminal_runtimes
+            .insert(new_pane.terminal.id.clone(), new_pane.runtime);
+        self.state
+            .remove_alias_shadowed_by_new_pane(new_pane.pane_id);
+        self.state
+            .terminals
+            .insert(new_pane.terminal.id.clone(), new_pane.terminal);
+        self.schedule_session_save();
+        let Some(pane) = self.pane_info(ws_idx, new_pane.pane_id) else {
+            return encode_error(id, "pane_not_found", "pane not found");
+        };
         self.emit_event(EventEnvelope {
             event: EventKind::PaneCreated,
             data: EventData::PaneCreated { pane: pane.clone() },
@@ -3885,6 +4111,341 @@ mod tests {
         assert_eq!(app.state.workspaces[0].focused_pane_id(), Some(root));
     }
 
+    // TP-TAB-BROWSER-02: `pane.web.open` births a pane beside the target
+    // running the given command, at the asked ratio — the road the browser
+    // button rides, driven here through the real dispatcher.
+    #[tokio::test]
+    async fn pane_web_open_births_a_pane_running_the_command_beside_the_target() {
+        let (mut app, public_pane_id) = app_with_test_workspace();
+        let response = app.handle_api_request(crate::api::schema::Request {
+            id: "web".into(),
+            method: crate::api::schema::Method::PaneWebOpen(PaneWebOpenParams {
+                workspace_id: None,
+                target_pane_id: Some(public_pane_id.clone()),
+                direction: None,
+                ratio: Some(0.45),
+                url: Some("http://127.0.0.1:1/".into()),
+                command: vec!["/usr/bin/true".into()],
+                cwd: None,
+                agent: None,
+                focus: true,
+                env: Default::default(),
+            }),
+        });
+        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+
+        assert_eq!(response["result"]["type"], "pane_info", "{response}");
+        let new_pane_id = response["result"]["pane"]["pane_id"].as_str().unwrap();
+        assert_ne!(new_pane_id, public_pane_id, "a new pane was born");
+        let splits = app.state.workspaces[0].tabs[0]
+            .layout
+            .splits(ratatui::layout::Rect::new(0, 0, 100, 20));
+        assert_eq!(splits.len(), 1, "one split beside the target");
+        assert!((splits[0].ratio - 0.45).abs() < f32::EPSILON);
+        assert!(
+            response["result"]["pane"]["focused"].as_bool().unwrap(),
+            "focus followed the new pane"
+        );
+
+        let runtimes: Vec<_> = app.terminal_runtimes.drain().collect();
+        for (_terminal_id, runtime) in runtimes {
+            runtime.shutdown();
+        }
+    }
+
+    // TP-TAB-BROWSER-02: with no command in the request, the pane runs the
+    // configured browser with the page appended.
+    #[tokio::test]
+    async fn pane_web_open_runs_the_configured_browser_when_no_command_is_given() {
+        let (mut app, public_pane_id) = app_with_test_workspace();
+        app.state.web_browser_command = vec!["/usr/bin/true".into(), "open".into()];
+        let response = app.handle_api_request(crate::api::schema::Request {
+            id: "web".into(),
+            method: crate::api::schema::Method::PaneWebOpen(PaneWebOpenParams {
+                workspace_id: None,
+                target_pane_id: Some(public_pane_id),
+                direction: Some(crate::api::schema::SplitDirection::Down),
+                ratio: None,
+                url: Some("http://127.0.0.1:1/".into()),
+                command: Vec::new(),
+                cwd: None,
+                agent: None,
+                focus: false,
+                env: Default::default(),
+            }),
+        });
+        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(response["result"]["type"], "pane_info", "{response}");
+        let new_pane_id = response["result"]["pane"]["pane_id"].as_str().unwrap();
+        let (_, new_pane) = app.parse_pane_id(new_pane_id).unwrap();
+        let terminal_id = app.state.workspaces[0]
+            .terminal_id(new_pane)
+            .unwrap()
+            .clone();
+        let argv = app.state.terminals[&terminal_id]
+            .launch_argv
+            .clone()
+            .expect("a web pane records what it was born running");
+        assert_eq!(argv, ["/usr/bin/true", "open", "http://127.0.0.1:1/"]);
+        assert!(
+            !response["result"]["pane"]["focused"].as_bool().unwrap(),
+            "focus stayed where it was"
+        );
+
+        let runtimes: Vec<_> = app.terminal_runtimes.drain().collect();
+        for (_terminal_id, runtime) in runtimes {
+            runtime.shutdown();
+        }
+    }
+
+    fn seat_agent(app: &mut App, pane_id: crate::layout::PaneId, name: &str, session: &str) {
+        let tid = app.state.workspaces[0].tabs[0]
+            .panes
+            .get(&pane_id)
+            .unwrap()
+            .attached_terminal_id
+            .clone();
+        let terminal = app.state.terminals.get_mut(&tid).unwrap();
+        terminal.set_agent_name(name.to_string());
+        terminal.set_persisted_agent_session(crate::agent_resume::PersistedAgentSession {
+            source: "test".into(),
+            agent: "claude".into(),
+            session_ref: crate::agent_resume::AgentSessionRef::id(session).unwrap(),
+        });
+    }
+
+    fn open_web_pane(app: &mut App, params: PaneWebOpenParams) -> serde_json::Value {
+        let response = app.handle_api_request(crate::api::schema::Request {
+            id: "web".into(),
+            method: crate::api::schema::Method::PaneWebOpen(params),
+        });
+        serde_json::from_str(&response).unwrap()
+    }
+
+    fn web_open_params(target: &str) -> PaneWebOpenParams {
+        PaneWebOpenParams {
+            workspace_id: None,
+            target_pane_id: Some(target.to_string()),
+            direction: None,
+            ratio: None,
+            url: Some("http://127.0.0.1:1/".into()),
+            command: vec!["/usr/bin/true".into()],
+            cwd: None,
+            agent: None,
+            focus: false,
+            env: Default::default(),
+        }
+    }
+
+    fn web_link_of(app: &App, public_pane_id: &str) -> crate::terminal::WebLink {
+        let (ws_idx, pane_id) = app.parse_pane_id(public_pane_id).expect("pane resolves");
+        let tid = app.state.workspaces[ws_idx]
+            .pane_state(pane_id)
+            .unwrap()
+            .attached_terminal_id
+            .clone();
+        app.state
+            .terminals
+            .get(&tid)
+            .unwrap()
+            .web_link
+            .clone()
+            .expect("web link recorded")
+    }
+
+    fn drain_runtimes(app: &mut App) {
+        let runtimes: Vec<_> = app.terminal_runtimes.drain().collect();
+        for (_terminal_id, runtime) in runtimes {
+            runtime.shutdown();
+        }
+    }
+
+    // TP-WEB-LINK-01 — TN-WB-8a: a web pane opened beside an agent pane ties
+    // itself to that conversation, and the API says so.
+    #[tokio::test]
+    async fn pane_web_open_links_the_target_agent_pane() {
+        let (mut app, root_public) = app_with_test_workspace();
+        let root = app.state.workspaces[0].focused_pane_id().unwrap();
+        seat_agent(&mut app, root, "solver", "sess-solver");
+
+        let response = open_web_pane(&mut app, web_open_params(&root_public));
+
+        assert_eq!(response["result"]["type"], "pane_info", "{response}");
+        let web = &response["result"]["pane"]["web"];
+        assert_eq!(web["link_state"], "linked", "{response}");
+        assert_eq!(web["agent_pane_id"], root_public.as_str(), "{response}");
+        assert_eq!(web["agent_session"]["value"], "sess-solver", "{response}");
+        let new_public = response["result"]["pane"]["pane_id"].as_str().unwrap();
+        let link = web_link_of(&app, new_public);
+        assert_eq!(link.state, crate::terminal::WebLinkState::Linked);
+        assert_eq!(
+            link.agent_pane_number,
+            app.state.workspaces[0].public_pane_number(root)
+        );
+        drain_runtimes(&mut app);
+    }
+
+    // TP-WEB-LINK-02 — TN-WB-8c: beside a plain shell with no agent in the
+    // tab, the pane opens unlinked — a guessed tie would carry reports into
+    // the wrong conversation.
+    #[tokio::test]
+    async fn pane_web_open_stays_unlinked_beside_a_plain_shell() {
+        let (mut app, root_public) = app_with_test_workspace();
+
+        let response = open_web_pane(&mut app, web_open_params(&root_public));
+
+        let web = &response["result"]["pane"]["web"];
+        assert_eq!(web["link_state"], "unlinked", "{response}");
+        assert!(web.get("agent_pane_id").is_none(), "{response}");
+        let new_public = response["result"]["pane"]["pane_id"].as_str().unwrap();
+        assert_eq!(
+            web_link_of(&app, new_public).state,
+            crate::terminal::WebLinkState::Unlinked
+        );
+        drain_runtimes(&mut app);
+    }
+
+    // TP-WEB-LINK-01 — TN-WB-8b: `agent` names the conversation outright, by
+    // agent name here, and the tie follows the name not the target.
+    #[tokio::test]
+    async fn pane_web_open_links_the_named_agent() {
+        let (mut app, root_public) = app_with_test_workspace();
+        let split = app.handle_api_request(crate::api::schema::Request {
+            id: "split".into(),
+            method: crate::api::schema::Method::PaneSplit(crate::api::schema::PaneSplitParams {
+                workspace_id: None,
+                target_pane_id: Some(root_public.clone()),
+                direction: crate::api::schema::SplitDirection::Right,
+                ratio: None,
+                cwd: None,
+                focus: false,
+                right_click: Default::default(),
+                env: Default::default(),
+            }),
+        });
+        let split: serde_json::Value = serde_json::from_str(&split).unwrap();
+        let second_public = split["result"]["pane"]["pane_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let second = app.parse_pane_id(&second_public).unwrap().1;
+        seat_agent(&mut app, second, "reviewer", "sess-reviewer");
+
+        let mut params = web_open_params(&root_public);
+        params.agent = Some("reviewer".into());
+        let response = open_web_pane(&mut app, params);
+
+        let web = &response["result"]["pane"]["web"];
+        assert_eq!(web["link_state"], "linked", "{response}");
+        assert_eq!(web["agent_pane_id"], second_public.as_str(), "{response}");
+        drain_runtimes(&mut app);
+    }
+
+    // TP-WEB-LINK-01 — TN-WB-8d: with a plain-shell target but exactly one
+    // agent in the tab, the pane adopts that agent.
+    #[tokio::test]
+    async fn pane_web_open_adopts_the_tabs_only_agent() {
+        let (mut app, root_public) = app_with_test_workspace();
+        let split = app.handle_api_request(crate::api::schema::Request {
+            id: "split".into(),
+            method: crate::api::schema::Method::PaneSplit(crate::api::schema::PaneSplitParams {
+                workspace_id: None,
+                target_pane_id: Some(root_public.clone()),
+                direction: crate::api::schema::SplitDirection::Right,
+                ratio: None,
+                cwd: None,
+                focus: false,
+                right_click: Default::default(),
+                env: Default::default(),
+            }),
+        });
+        let split: serde_json::Value = serde_json::from_str(&split).unwrap();
+        let second_public = split["result"]["pane"]["pane_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let second = app.parse_pane_id(&second_public).unwrap().1;
+        seat_agent(&mut app, second, "lone", "sess-lone");
+
+        let response = open_web_pane(&mut app, web_open_params(&root_public));
+
+        let web = &response["result"]["pane"]["web"];
+        assert_eq!(web["link_state"], "linked", "{response}");
+        assert_eq!(web["agent_pane_id"], second_public.as_str(), "{response}");
+        drain_runtimes(&mut app);
+    }
+
+    // TP-WEB-LINK-01 — TN-WB-9m: two web panes named at two agents keep
+    // their ties apart — the N:N seed the five-by-five world grows from.
+    #[tokio::test]
+    async fn two_web_panes_keep_their_own_agents_apart() {
+        let (mut app, root_public) = app_with_test_workspace();
+        let root = app.state.workspaces[0].focused_pane_id().unwrap();
+        seat_agent(&mut app, root, "alpha", "sess-alpha");
+        let split = app.handle_api_request(crate::api::schema::Request {
+            id: "split".into(),
+            method: crate::api::schema::Method::PaneSplit(crate::api::schema::PaneSplitParams {
+                workspace_id: None,
+                target_pane_id: Some(root_public.clone()),
+                direction: crate::api::schema::SplitDirection::Right,
+                ratio: None,
+                cwd: None,
+                focus: false,
+                right_click: Default::default(),
+                env: Default::default(),
+            }),
+        });
+        let split: serde_json::Value = serde_json::from_str(&split).unwrap();
+        let second_public = split["result"]["pane"]["pane_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let second = app.parse_pane_id(&second_public).unwrap().1;
+        seat_agent(&mut app, second, "beta", "sess-beta");
+
+        let mut first_params = web_open_params(&root_public);
+        first_params.agent = Some("alpha".into());
+        let first = open_web_pane(&mut app, first_params);
+        let mut second_params = web_open_params(&root_public);
+        second_params.agent = Some("beta".into());
+        let second_response = open_web_pane(&mut app, second_params);
+
+        assert_eq!(
+            first["result"]["pane"]["web"]["agent_session"]["value"],
+            "sess-alpha"
+        );
+        assert_eq!(
+            second_response["result"]["pane"]["web"]["agent_session"]["value"],
+            "sess-beta"
+        );
+        drain_runtimes(&mut app);
+    }
+
+    // TP-WEB-LINK-02 — TN-WB-11: when the agent conversation closes, its web
+    // panes go orphan — a report must never quietly land in a dead tie.
+    #[tokio::test]
+    async fn an_agents_close_orphans_its_web_panes() {
+        let (mut app, root_public) = app_with_test_workspace();
+        let root = app.state.workspaces[0].focused_pane_id().unwrap();
+        seat_agent(&mut app, root, "closer", "sess-closer");
+        let response = open_web_pane(&mut app, web_open_params(&root_public));
+        let new_public = response["result"]["pane"]["pane_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(
+            web_link_of(&app, new_public.as_str()).state,
+            crate::terminal::WebLinkState::Linked
+        );
+
+        app.state.note_agent_closed(0, root);
+
+        assert_eq!(
+            web_link_of(&app, new_public.as_str()).state,
+            crate::terminal::WebLinkState::Orphan
+        );
+        drain_runtimes(&mut app);
+    }
     #[test]
     fn pane_metadata_tokens_patch_and_clear_through_dispatcher() {
         let (mut app, pane_id) = app_with_test_workspace();

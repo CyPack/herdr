@@ -1017,6 +1017,15 @@ impl HeadlessServer {
             crate::render_prof::event("full_render_cause.deferred_onboarding");
         }
 
+        // TP-TAB-BROWSER-02: the state-level key road parks its ask here;
+        // the viewer drains it onto `pane.web.open` like every other road.
+        if self.app.state.request_open_web_pane {
+            self.app.state.request_open_web_pane = false;
+            self.app.open_web_pane_via_api();
+            needs_render = true;
+            crate::render_prof::event("full_render_cause.deferred_web_pane");
+        }
+
         if self.app.state.request_new_workspace {
             self.app.state.request_new_workspace = false;
             let response = self.headless_workspace_create("headless.workspace.create", None, None);
@@ -4582,23 +4591,8 @@ impl HeadlessServer {
         if client.deferred_render() != DeferredRender::None {
             retained_fallback!("render_pending");
         }
-        if self.app.state.kitty_graphics_enabled && !client.graphics_cache.is_empty() {
-            retained_fallback!("graphics_cache_active");
-        }
         if client.graphics_surface_reset_pending {
             retained_fallback!("graphics_surface_reset");
-        }
-        if self.app.state.kitty_graphics_enabled
-            && cell_size.is_known()
-            && crate::kitty_graphics::has_visible_pane_graphics(
-                &self.app.state,
-                &self.app.pane_graphics,
-                &self.app.terminal_runtimes,
-                self.app.state.view.tab_surface(),
-                *cell_size,
-            )
-        {
-            retained_fallback!("visible_kitty_graphics");
         }
         let Some(mut frame) = client.render_state.last_frame().cloned() else {
             retained_fallback!("no_last_frame");
@@ -4656,7 +4650,42 @@ impl HeadlessServer {
         );
         let cursor_changed = frame.cursor != previous_cursor;
 
-        if !touched && !cursor_changed {
+        // TP-GFX-RETAINED-01: the fast path CARRIES the graphics update
+        // instead of stepping aside. Refusing to run whenever a graphics
+        // cache existed turned every frame of a video pane into a
+        // full-screen render — measured live at 15/15 full renders per
+        // second, render p95 134 ms, the server pinned at 150% CPU and the
+        // picture blinking as each pass re-blitted text over the placements.
+        let mut next_graphics_cache = None;
+        if self.app.state.kitty_graphics_enabled && cell_size.is_known() {
+            let Some(client) = self.clients.get(client_id) else {
+                retained_fallback!("client_missing");
+            };
+            if client.graphics_surface_reset_pending {
+                retained_fallback!("graphics_surface_reset");
+            }
+            let mut cache = client.graphics_cache.clone();
+            let previous_viewer = self.app.state.enter_viewer(Some(*client_id));
+            let encoded = crate::kitty_graphics::encode_local_pane_graphics(
+                &self.app.state,
+                &self.app.pane_graphics,
+                &self.app.terminal_runtimes,
+                self.app.state.view.tab_surface(),
+                *cell_size,
+                Some(crate::kitty_graphics::HEADLESS_GRAPHICS_TRANSACTION_BUDGET),
+                &mut cache,
+            );
+            self.app.state.restore_viewer(previous_viewer);
+            if encoded.incomplete {
+                // An upload over the transaction budget continues on the full
+                // path, which owns the incomplete-loop bookkeeping.
+                retained_fallback!("graphics_incomplete");
+            }
+            frame.graphics.extend(encoded.bytes);
+            next_graphics_cache = Some(cache);
+        }
+
+        if !touched && !cursor_changed && frame.graphics.is_empty() {
             retained_success!("clean_no_cursor_change");
         }
 
@@ -4666,6 +4695,11 @@ impl HeadlessServer {
             self.remove_client_and_resize_if_needed(broken_client);
         }
         if sent {
+            if let (Some(cache), Some(client)) =
+                (next_graphics_cache, self.clients.get_mut(client_id))
+            {
+                client.graphics_cache = cache;
+            }
             retained_success!("sent");
         }
         retained_fallback!("send_failed");
@@ -6460,6 +6494,46 @@ mod tests {
                 api::schema::EventKind::PaneCreated,
                 api::schema::EventKind::LayoutUpdated,
             ]
+        );
+        shutdown_test_runtimes(&mut server);
+    }
+
+    // TP-TAB-BROWSER-02: the key road parks its ask on the state; the viewer
+    // drains it onto `pane.web.open`, and a pane is born beside the focused
+    // one running the configured browser.
+    #[tokio::test]
+    async fn headless_deferred_web_pane_request_births_a_browser_pane() {
+        let event_hub = api::EventHub::default();
+        let mut server = test_headless_server_with_event_hub(event_hub.clone());
+        server.app.state.workspaces = vec![crate::workspace::Workspace::test_new("web")];
+        server.app.state.ensure_test_terminals();
+        server.app.state.active = Some(0);
+        server.app.state.selected = 0;
+        server.app.state.web_browser_command = vec!["/usr/bin/true".into()];
+        let panes_before = server.app.state.workspaces[0].tabs[0]
+            .layout
+            .pane_ids()
+            .len();
+
+        server.app.state.request_open_web_pane = true;
+
+        assert!(server.handle_deferred_requests_headless());
+        assert!(!server.app.state.request_open_web_pane);
+        assert_eq!(
+            server.app.state.workspaces[0].tabs[0]
+                .layout
+                .pane_ids()
+                .len(),
+            panes_before + 1,
+            "one browser pane was born"
+        );
+        assert!(
+            event_hub
+                .events_after(0)
+                .into_iter()
+                .map(|(_, event)| event.event)
+                .any(|kind| kind == api::schema::EventKind::PaneCreated),
+            "the birth was announced like any other pane's"
         );
         shutdown_test_runtimes(&mut server);
     }
@@ -13910,38 +13984,6 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
                 .expect("retained frame with kitty enabled"),
         );
         assert!(retained.cells.iter().any(|cell| cell.symbol == "Z"));
-    }
-
-    #[tokio::test]
-    async fn retained_pty_update_declines_when_graphics_cache_has_content() {
-        let (mut server, client_rx, pane_id) = retained_test_server(b"aaaa");
-        server.app.state.kitty_graphics_enabled = true;
-        let client = server.clients.get_mut(&1).unwrap();
-        client.cell_size = crate::kitty_graphics::HostCellSize {
-            width_px: 10,
-            height_px: 20,
-        };
-
-        server.render_and_stream();
-        let _ = client_rx
-            .recv_timeout(Duration::from_millis(100))
-            .expect("initial frame");
-        server
-            .clients
-            .get_mut(&1)
-            .unwrap()
-            .graphics_cache
-            .test_mark_non_empty();
-
-        let runtime = server
-            .app
-            .state
-            .runtime_for_pane_in_workspace(&server.app.terminal_runtimes, 0, pane_id)
-            .expect("runtime");
-        runtime.test_process_pty_bytes(b"\rZ");
-
-        assert!(!server.render_retained_pty_update_and_stream());
-        assert!(client_rx.recv_timeout(Duration::from_millis(50)).is_err());
     }
 
     #[tokio::test]
