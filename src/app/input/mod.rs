@@ -1061,6 +1061,9 @@ impl App {
                     MouseAction::SetSplitRatio { path, ratio } => {
                         self.set_split_ratio_via_api(path, ratio)
                     }
+                    MouseAction::SplitDividerReleased => {
+                        self.request_repaint();
+                    }
                     MouseAction::RenameModal(action) => {
                         self.apply_rename_mouse_action_via_api(action)
                     }

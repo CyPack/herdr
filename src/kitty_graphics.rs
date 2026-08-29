@@ -1176,6 +1176,23 @@ impl HostGraphicsCache {
                 data_fingerprint: 1,
             },
         );
+        self.placements.insert(
+            (HOST_IMAGE_ID_BASE, 1),
+            PlacementSignature {
+                x: 0,
+                y: 0,
+                cols: 1,
+                rows: 1,
+                source_x: 0,
+                source_y: 0,
+                source_width: 1,
+                source_height: 1,
+                x_offset: 0,
+                y_offset: 0,
+                z: 0,
+                scrollback_offset: 0,
+            },
+        );
     }
 
     /// TP-GFX-RESIZE-01: a geometry change sweeps only the pictures a

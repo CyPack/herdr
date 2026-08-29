@@ -76,6 +76,12 @@ pub(super) enum MouseAction {
         path: Vec<bool>,
         ratio: f32,
     },
+    /// The divider was let go: ask for one clean full paint. The drag's
+    /// preview frames wiped the terminal-native pictures with the
+    /// interaction mode, and only a full render seats them again —
+    /// without this the browser pane sits blank until the next tab
+    /// switch happens to force one.
+    SplitDividerReleased,
     RenameModal(ModalAction),
     ConfirmCloseAccept,
     ContextMenu {
@@ -1582,6 +1588,11 @@ impl AppState {
                         target: DragTarget::SidebarDivider,
                     }) => {
                         self.commit_sidebar_resize();
+                    }
+                    Some(DragState {
+                        target: DragTarget::PaneSplit { .. },
+                    }) => {
+                        return Some(MouseAction::SplitDividerReleased);
                     }
                     Some(_) => {}
                     None => return self.chrome_press_action(workspace_press, tab_press),
