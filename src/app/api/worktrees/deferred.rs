@@ -438,7 +438,7 @@ impl App {
             self.state.name_input_replace_on_type = false;
             self.state.mode = crate::app::Mode::Terminal;
         }
-        self.state.mark_session_dirty();
+        self.state.mark_session_dirty_now();
         if created_workspace {
             self.emit_workspace_open_events(ws_idx);
         }

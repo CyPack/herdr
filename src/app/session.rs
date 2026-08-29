@@ -37,7 +37,11 @@ impl App {
     pub(crate) fn sync_session_save_schedule(&mut self) {
         if self.state.session_dirty {
             self.state.session_dirty = false;
-            self.schedule_session_save_debounced();
+            if std::mem::take(&mut self.state.session_dirty_now) {
+                self.schedule_session_save();
+            } else {
+                self.schedule_session_save_debounced();
+            }
         }
     }
 

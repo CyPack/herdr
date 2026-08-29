@@ -4498,6 +4498,9 @@ pub struct AppState {
     pub(crate) host_cell_size: crate::kitty_graphics::HostCellSize,
     /// Set when a persisted session snapshot would change.
     pub session_dirty: bool,
+    /// TP-PERSIST-07: a structural change asked for the save NOW, not after
+    /// the debounce — set beside `session_dirty`, consumed with it.
+    pub session_dirty_now: bool,
     /// Terminal runtimes that should be shut down by the app/runtime layer
     /// after state has detached their terminal metadata.
     pub(crate) terminal_runtime_shutdowns: Vec<crate::terminal::TerminalId>,
@@ -4812,6 +4815,13 @@ impl AppState {
                     .values()
                     .find_map(|s| showing(&s.stage))
             })
+    }
+
+    /// TP-PERSIST-07: something was created, closed, moved or renamed —
+    /// the person's rule is that it exists on disk the moment it exists.
+    pub(crate) fn mark_session_dirty_now(&mut self) {
+        self.session_dirty = true;
+        self.session_dirty_now = true;
     }
 
     pub(crate) fn mark_session_dirty(&mut self) {
@@ -5819,6 +5829,7 @@ impl AppState {
             host_terminal_theme: TerminalTheme::default(),
             host_cell_size: crate::kitty_graphics::HostCellSize::default(),
             session_dirty: false,
+            session_dirty_now: false,
             terminal_runtime_shutdowns: Vec::new(),
         }
     }

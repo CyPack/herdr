@@ -1279,6 +1279,7 @@ impl App {
             host_cell_size: crate::kitty_graphics::HostCellSize::default(),
             host_mouse_pixels: None,
             session_dirty: false,
+            session_dirty_now: false,
             terminal_runtime_shutdowns: Vec::new(),
             workspace_press: Default::default(),
             tab_press: Default::default(),
@@ -2129,7 +2130,7 @@ impl App {
         }
 
         self.state.integration_recommendations = crate::integration::integration_recommendations();
-        self.state.mark_session_dirty();
+        self.state.mark_session_dirty_now();
     }
 
     pub(crate) fn reload_config(&mut self) -> crate::config::ConfigReloadReport {
@@ -6437,6 +6438,22 @@ mod tests {
         assert_eq!(app.state.mode, Mode::ConfirmClose);
         assert_eq!(app.state.selected, 0);
         assert_eq!(app.state.workspaces.len(), 2);
+    }
+
+    // TP-PERSIST-07
+    #[test]
+    fn closing_a_workspace_asks_for_the_save_now_and_the_scheduler_obeys() {
+        let mut app = test_app();
+        app.no_session = false;
+        app.state.workspaces.push(Workspace::test_new("doomed"));
+        app.state.selected = 0;
+        app.state.close_selected_workspace();
+        assert!(app.state.session_dirty_now, "a close is structural");
+        let before = Instant::now();
+        app.sync_session_save_schedule();
+        assert!(!app.state.session_dirty && !app.state.session_dirty_now);
+        let deadline = app.session_save_deadline.expect("scheduled");
+        assert!(deadline <= before + Duration::from_millis(50));
     }
 
     // TP-PERSIST-06

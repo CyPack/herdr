@@ -147,7 +147,7 @@ impl App {
                 });
             }
         }
-        self.state.mark_session_dirty();
+        self.state.mark_session_dirty_now();
         if created_workspace {
             self.emit_workspace_open_events(ws_idx);
         }
@@ -463,7 +463,7 @@ impl App {
             false
         };
         if changed {
-            self.state.mark_session_dirty();
+            self.state.mark_session_dirty_now();
             if emit_update {
                 self.emit_workspace_updated(ws_idx);
             }

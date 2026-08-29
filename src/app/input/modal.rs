@@ -560,7 +560,7 @@ pub(super) fn apply_closed_agent_action(state: &mut AppState, agent_id: String, 
             // scanning the arms would never look for one.
             let removed = state.closed_agents.forget(&agent_id);
             if removed {
-                state.mark_session_dirty();
+                state.mark_session_dirty_now();
             }
         }
         _ => {}
@@ -743,7 +743,7 @@ pub(super) fn apply_rename_action(state: &mut AppState, action: ModalAction) {
                     let workspace_id = state.workspaces[state.selected].id.clone();
                     state.workspaces[state.selected].set_custom_name(new_name);
                     crate::logging::workspace_renamed(&workspace_id);
-                    state.mark_session_dirty();
+                    state.mark_session_dirty_now();
                 }
                 Mode::RenameTab if state.creating_new_tab => {
                     state.request_new_tab = true;
@@ -780,7 +780,7 @@ pub(super) fn apply_rename_action(state: &mut AppState, action: ModalAction) {
                                         })
                                         .unwrap_or_else(|| workspace_id.clone());
                                     crate::logging::tab_renamed(&workspace_id, &tab_id);
-                                    state.mark_session_dirty();
+                                    state.mark_session_dirty_now();
                                 }
                             }
                         }
@@ -794,7 +794,7 @@ pub(super) fn apply_rename_action(state: &mut AppState, action: ModalAction) {
                                 let terminal_id = pane.attached_terminal_id.clone();
                                 if let Some(terminal) = state.terminals.get_mut(&terminal_id) {
                                     terminal.set_manual_label(new_name);
-                                    state.mark_session_dirty();
+                                    state.mark_session_dirty_now();
                                 }
                             }
                         }
@@ -1301,12 +1301,12 @@ pub(super) fn apply_context_menu_action(
         }
         (ContextMenuKind::SpaceHeader { space_key, .. }, Some("Collapse")) => {
             state.collapsed_space_keys.insert(space_key);
-            state.mark_session_dirty();
+            state.mark_session_dirty_now();
             leave_modal(state);
         }
         (ContextMenuKind::SpaceHeader { space_key, .. }, Some("Expand")) => {
             state.collapsed_space_keys.remove(&space_key);
-            state.mark_session_dirty();
+            state.mark_session_dirty_now();
             leave_modal(state);
         }
         // TP-MOD-34: the bucket's rename walks the same road the module's
@@ -1458,7 +1458,7 @@ pub(super) fn apply_context_menu_action(
                 } else {
                     state.collapsed_space_keys.insert(key);
                 }
-                state.mark_session_dirty();
+                state.mark_session_dirty_now();
             }
             leave_modal(state);
         }
@@ -1532,7 +1532,7 @@ pub(super) fn apply_context_menu_action(
                     let terminal_id = pane.attached_terminal_id.clone();
                     if let Some(terminal) = state.terminals.get_mut(&terminal_id) {
                         terminal.clear_manual_label();
-                        state.mark_session_dirty();
+                        state.mark_session_dirty_now();
                     }
                 }
             }
@@ -1559,7 +1559,7 @@ pub(super) fn apply_context_menu_action(
                 {
                     if tab.layout.swap_panes(source_pane_id, pane_id) {
                         tab.layout.focus_pane(source_pane_id);
-                        state.mark_session_dirty();
+                        state.mark_session_dirty_now();
                     }
                 }
             }
@@ -2221,12 +2221,12 @@ impl App {
             }
             (ContextMenuKind::SpaceHeader { space_key, .. }, Some("Collapse")) => {
                 self.state.collapsed_space_keys.insert(space_key);
-                self.state.mark_session_dirty();
+                self.state.mark_session_dirty_now();
                 leave_modal(&mut self.state);
             }
             (ContextMenuKind::SpaceHeader { space_key, .. }, Some("Expand")) => {
                 self.state.collapsed_space_keys.remove(&space_key);
-                self.state.mark_session_dirty();
+                self.state.mark_session_dirty_now();
                 leave_modal(&mut self.state);
             }
             // TP-MOD-34: the production twin of the bucket rename. Menu verbs
@@ -2377,7 +2377,7 @@ impl App {
                     } else {
                         self.state.collapsed_space_keys.insert(key);
                     }
-                    self.state.mark_session_dirty();
+                    self.state.mark_session_dirty_now();
                 }
                 leave_modal(&mut self.state);
             }
