@@ -10077,11 +10077,21 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
 
     #[test]
     fn a_workspaces_chat_drawer_is_closed_until_it_is_opened() {
-        let (mut app, key) = app_with_chat_drawer(2);
-        assert_eq!(entry_kinds(&app), vec!["workspace"]);
+        // TP-DRAW-16 revised this surface: closed is a PREVIEW (newest three
+        // and the way in), open is the glance surface (five and older).
+        let (mut app, key) = app_with_chat_drawer(4);
+        assert_eq!(
+            entry_kinds(&app),
+            vec!["workspace", "chat", "chat", "chat", "more"],
+            "closed previews three and offers the rest"
+        );
 
         app.expanded_chat_workspaces.insert(key);
-        assert_eq!(entry_kinds(&app), vec!["workspace", "chat", "chat"]);
+        assert_eq!(
+            entry_kinds(&app),
+            vec!["workspace", "chat", "chat", "chat", "chat"],
+            "opened, all four fit inside the glance surface"
+        );
     }
 
     // TP-WSCHAT-16: an open drawer with nothing to show says so. An empty gap
