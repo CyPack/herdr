@@ -690,15 +690,20 @@ fn encode_terminal_graphics_update_legacy(
         match cache.images.get(&host_id).copied() {
             Some(existing) if existing == image_signature => {}
             Some(_) => {
-                encode_delete_image(bytes, host_id);
-                cache.placements.retain(|(image_id, id), _| {
-                    if *image_id == host_id {
-                        current_placements.remove(&(*image_id, *id));
-                        false
-                    } else {
-                        true
-                    }
-                });
+                // An assigned identity is refreshed in place: kitty replaces
+                // the image when the same id is retransmitted, and a delete
+                // here blanks the live picture between frames.
+                if placement.host_image_id.is_none() {
+                    encode_delete_image(bytes, host_id);
+                    cache.placements.retain(|(image_id, id), _| {
+                        if *image_id == host_id {
+                            current_placements.remove(&(*image_id, *id));
+                            false
+                        } else {
+                            true
+                        }
+                    });
+                }
                 if !encode_upload_image(bytes, placement, format_code, host_id) {
                     continue;
                 }
@@ -991,7 +996,8 @@ fn encode_placement_update(
     let mut displayed = false;
     if !image_current {
         if cache.images.contains_key(&host_id)
-            && matches!(placement.source_key, HostSourceKey::PaneLayer { .. })
+            && (placement.host_image_id.is_some()
+                || matches!(placement.source_key, HostSourceKey::PaneLayer { .. }))
         {
             if !encode_transmit_and_display(
                 &mut bytes,
@@ -3747,6 +3753,52 @@ mod tests {
     }
 
     // H49-4 (V4.TN-3): a source that leaves a shared image and comes back.
+    // TP-GFX-STABLE-01
+    #[test]
+    fn a_streaming_retransmit_never_deletes_the_image_on_screen() {
+        // The stable-identity fix made every new frame a retransmit of the
+        // SAME host image id — but the encoder's refresh path deleted the
+        // image before uploading the replacement, so the live picture blinked
+        // off for the gap between delete and display on every single frame
+        // (the 2026-08-29 16:2x live report: the pane "opens and closes"
+        // continuously). Kitty replaces an image in place when the same id is
+        // retransmitted; a delete must never travel between frames of a live
+        // streaming source.
+        fn frame(fingerprint: u64) -> HostPlacement {
+            let mut frame = test_placement(3, 3);
+            frame.placement.image_id = 9;
+            frame.placement.placement_id = 2;
+            frame.placement.data_fingerprint = fingerprint;
+            frame.host_image_id = Some(510_000);
+            frame.source_key = HostSourceKey::Terminal {
+                pane_id: frame.pane_id,
+                image_id: frame.placement.image_id,
+            };
+            frame
+        }
+
+        let mut cache = HostGraphicsCache::default();
+        let live = HashSet::new();
+
+        let bytes = drain_graphics_updates(&mut cache, &[frame(1)], &live);
+        let first = String::from_utf8_lossy(&bytes);
+        assert!(first.contains("i=510000"), "first frame uploads: {first}");
+
+        let bytes = drain_graphics_updates(&mut cache, &[frame(2)], &live);
+        let update = String::from_utf8_lossy(&bytes);
+        assert!(
+            !update.contains("a=d,d=I,i=510000"),
+            "a retransmit must replace the image in place, never delete it \
+             from the screen first: {update}"
+        );
+        assert!(
+            update.contains("i=510000"),
+            "the new content still travels: {update}"
+        );
+        assert_eq!(cache.images.len(), 1, "one image, refreshed in place");
+        assert_eq!(cache.placements.len(), 1, "the placement survives");
+    }
+
     #[test]
     fn a_source_returning_to_a_shared_image_displays_its_placement_again() {
         // Two sources share one content-hashed image. One moves to new
