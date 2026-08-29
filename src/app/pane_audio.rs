@@ -113,10 +113,12 @@ pub(crate) struct Session {
 }
 
 impl Session {
+    #[cfg(test)]
     pub(crate) fn owner(&self) -> &str {
         &self.owner
     }
 
+    #[cfg(test)]
     pub(crate) fn counters(&self) -> Counters {
         self.counters
     }
@@ -127,6 +129,7 @@ impl Session {
             .is_some_and(|active| active.load(Ordering::Acquire))
     }
 
+    #[cfg(test)]
     pub(crate) fn credit_of(&self, client_id: u64) -> u16 {
         self.client_credit.get(&client_id).copied().unwrap_or(0)
     }
@@ -393,6 +396,7 @@ impl Runtime {
         std::mem::take(&mut self.outbound)
     }
 
+    #[cfg(test)]
     pub(crate) fn session_for_pane(&self, pane: PaneId) -> Option<&Session> {
         self.sessions.get(&pane)
     }
