@@ -2199,11 +2199,7 @@ impl HeadlessServer {
                     update.agent_label.as_deref(),
                 )
             {
-                self.send_notify_to_foreground_client(
-                    protocol::NotifyKind::Sound,
-                    sound_notify_message(sound),
-                    None,
-                );
+                self.send_notify_sound_to_app_clients(sound_notify_message(sound));
             }
         }
 
@@ -2248,11 +2244,7 @@ impl HeadlessServer {
         delivery: &crate::app::state::AgentNotificationDelivery,
     ) {
         if let Some(sound) = delivery.sound {
-            self.send_notify_to_foreground_client(
-                protocol::NotifyKind::Sound,
-                sound_notify_message(sound),
-                None,
-            );
+            self.send_notify_sound_to_app_clients(sound_notify_message(sound));
         }
 
         if should_forward_toast_to_clients(self.app.state.toast_config.delivery) {
@@ -2264,6 +2256,30 @@ impl HeadlessServer {
                     non_empty_body(&toast.context),
                 );
             }
+        }
+    }
+
+    /// TP-NOTIFY-SOUND-01: a sound is per listener, not per foreground. Every
+    /// app client with a writer hears it — the second display across the
+    /// room stayed silent for the whole of 2026-08-29 because sounds only
+    /// ever went to the foreground client while its own player sat ready.
+    fn send_notify_sound_to_app_clients(&mut self, message: impl Into<String>) {
+        let message = message.into();
+        let targets: Vec<u64> = self
+            .clients
+            .iter()
+            .filter(|(_, client)| client.is_full_app_client() && client.writer.is_some())
+            .map(|(client_id, _)| *client_id)
+            .collect();
+        for client_id in targets {
+            self.send_to_client(
+                client_id,
+                ServerMessage::Notify {
+                    kind: protocol::NotifyKind::Sound,
+                    message: message.clone(),
+                    body: None,
+                },
+            );
         }
     }
 
@@ -2491,11 +2507,7 @@ impl HeadlessServer {
         let Some(sound) = sound.to_sound() else {
             return;
         };
-        self.send_notify_to_foreground_client(
-            protocol::NotifyKind::Sound,
-            sound_notify_message(sound),
-            None,
-        );
+        self.send_notify_sound_to_app_clients(sound_notify_message(sound));
     }
 
     /// Handles a single internal event with forwarding logic for clipboard,
@@ -2588,11 +2600,7 @@ impl HeadlessServer {
                             next_agent_label.as_deref(),
                         )
                     {
-                        self.send_notify_to_foreground_client(
-                            protocol::NotifyKind::Sound,
-                            sound_notify_message(sound),
-                            None,
-                        );
+                        self.send_notify_sound_to_app_clients(sound_notify_message(sound));
                     }
                 }
 
@@ -2686,11 +2694,7 @@ impl HeadlessServer {
                             next_agent_label.as_deref(),
                         )
                     {
-                        self.send_notify_to_foreground_client(
-                            protocol::NotifyKind::Sound,
-                            sound_notify_message(sound),
-                            None,
-                        );
+                        self.send_notify_sound_to_app_clients(sound_notify_message(sound));
                     }
                 }
 
@@ -4263,11 +4267,7 @@ impl HeadlessServer {
                     )
                 {
                     debug!(sound = ?sound, "forwarding sound notification from API request");
-                    self.send_notify_to_foreground_client(
-                        protocol::NotifyKind::Sound,
-                        sound_notify_message(sound),
-                        None,
-                    );
+                    self.send_notify_sound_to_app_clients(sound_notify_message(sound));
                 }
             }
         }
