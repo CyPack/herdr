@@ -650,6 +650,31 @@ impl App {
         state.sync_bound_tab_titles();
     }
 
+    /// Adopt the persisted chat history into a handed-off app: the ledger and
+    /// the work log are read from disk, the rows are projected, and — the
+    /// load-bearing half — the ledger becomes `self.workspace_chat_ledger`.
+    ///
+    /// TP-LEDGER-ADOPT-01: `new_from_handoff` builds on `new(no_session =
+    /// true)`, which correctly leaves the ledger FIELD at its empty default;
+    /// the restore then read the ledger into a local, projected rows from it,
+    /// and returned — the field stayed empty. Every later mutation saved that
+    /// empty ledger over the file. Measured 2026-08-29 21:10→21:19: a delivery
+    /// handoff, then one `chat.seat`, and 318 persisted re-homes became 1.
+    /// The adopting step exists so the field and the file can never diverge
+    /// again, and takes its paths as arguments so a test never reads the
+    /// machine's real ledger (the TP-DRAW-13 lesson).
+    #[cfg(unix)] // its only caller, `new_from_handoff`, is unix-only (fd-passing handoff)
+    fn adopt_persisted_chat_history(
+        app: &mut Self,
+        ledger_path: &std::path::Path,
+        worklog_path: &std::path::Path,
+    ) {
+        let ledger = crate::persist::workspace_chats::load_from_path(ledger_path);
+        app.state.workspace_chat_rows = crate::persist::workspace_chats::project_rows(&ledger);
+        app.state.chat_worklog = crate::persist::chat_worklog::load_from_path(worklog_path);
+        app.workspace_chat_ledger = ledger;
+    }
+
     /// Load the graveyard from disk and seed it from the transcript rows.
     ///
     /// TP-AGPANEL-40: extracted because this codebase has more than one
@@ -1568,14 +1593,12 @@ impl App {
         // outlives every handoff. Read here because `new` skipped it: the flag
         // this constructor passes means "not the session file", and the drawer
         // came back empty when it was read as "nothing at all".
-        let ledger = crate::persist::workspace_chats::load_from_path(
+        Self::adopt_persisted_chat_history(
+            &mut app,
             &crate::persist::workspace_chats::default_ledger_path(),
-        );
-        app.state.workspace_chat_rows = crate::persist::workspace_chats::project_rows(&ledger);
-        app.state.chat_worklog = crate::persist::chat_worklog::load_from_path(
             &crate::persist::chat_worklog::default_worklog_path(),
         );
-        Self::load_chat_history(&mut app.state, &ledger);
+        Self::load_chat_history(&mut app.state, &app.workspace_chat_ledger);
         Self::seed_closed_agents(&mut app.state);
         Ok(app)
     }
@@ -3700,6 +3723,50 @@ mod tests {
         let app = App::new(&config, true, None, api_rx, crate::api::EventHub::default());
 
         assert!(app.state.sidebar_collapsed);
+    }
+
+    // TP-LEDGER-ADOPT-01: a handed-off app KEEPS the ledger it read. The
+    // field used to stay at its no-session default while the rows were
+    // projected from a local — and the next save truncated the file (318
+    // re-homes became 1, measured 2026-08-29).
+    #[test]
+    #[cfg(unix)]
+    fn a_handed_off_app_adopts_the_ledger_it_read() {
+        use std::io::Write as _;
+        let dir = std::env::temp_dir().join(format!("herdr-ledger-adopt-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let ledger_path = dir.join("workspace-chats.json");
+        let mut file = std::fs::File::create(&ledger_path).expect("ledger file");
+        write!(
+            file,
+            r#"{{"version":1,"workspaces":{{}},"moves":{{"chat-1":"/somewhere"}},"names":{{}},"labels":{{}},"move_sources":{{}},"seat_extras":{{}}}}"#
+        )
+        .expect("write ledger");
+
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        assert!(
+            app.workspace_chat_ledger.moves.is_empty(),
+            "no_session leaves the field empty — the state this test guards against keeping"
+        );
+
+        App::adopt_persisted_chat_history(&mut app, &ledger_path, &dir.join("worklog.json"));
+
+        assert_eq!(
+            app.workspace_chat_ledger
+                .moves
+                .get("chat-1")
+                .map(String::as_str),
+            Some("/somewhere"),
+            "the field carries what the file said; a later save cannot truncate it"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
