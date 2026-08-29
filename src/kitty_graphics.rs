@@ -3730,6 +3730,77 @@ mod tests {
         assert_eq!(sources.len(), 1);
     }
 
+    // H49-4 (V4.TN-3): a source that leaves a shared image and comes back.
+    #[test]
+    fn a_source_returning_to_a_shared_image_displays_its_placement_again() {
+        // Two sources share one content-hashed image. One moves to new
+        // content and then returns to the old. Driven through the
+        // INCREMENTAL encoder (the live path) — the test-shim helper routes
+        // terminal-only frames to the legacy encoder, which the wire proved
+        // dead (d=i count zero), so the cache is built by hand here.
+        fn twin(fingerprint: u64) -> HostPlacement {
+            let mut twin = test_placement(5, 5);
+            twin.placement.image_id = 8;
+            twin.placement.placement_id = 4;
+            twin.placement.data_fingerprint = fingerprint;
+            twin.source_key = HostSourceKey::Terminal {
+                pane_id: twin.pane_id,
+                image_id: twin.placement.image_id,
+            };
+            twin
+        }
+
+        let mut cache = HostGraphicsCache::default();
+        let live = HashSet::new();
+
+        // Turn 1: both sources on the shared image.
+        let bytes = drain_graphics_updates(&mut cache, &[test_placement(0, 0), twin(42)], &live);
+        let update = String::from_utf8_lossy(&bytes);
+        assert_eq!(cache.images.len(), 1, "one shared host image: {update}");
+        let shared_host_id = *cache.images.keys().next().expect("uploaded host image");
+        assert_eq!(cache.placements.len(), 2, "both placements live: {update}");
+
+        // Turn 2: the twin moves to new content — its old placement on the
+        // shared image must be deleted (d=i), the shared image must survive.
+        let bytes = drain_graphics_updates(&mut cache, &[test_placement(0, 0), twin(43)], &live);
+        let update = String::from_utf8_lossy(&bytes);
+        let twin_pid = host_placement_id(&twin(42).source_key, &twin(42).placement);
+        assert!(
+            update.contains(&format!("a=d,d=i,i={shared_host_id},p={twin_pid}")),
+            "the twin's old placement on the shared image is deleted: {update}"
+        );
+        assert!(
+            !update.contains(&format!("a=d,d=I,i={shared_host_id}")),
+            "the shared image itself survives, the survivor still uses it: {update}"
+        );
+        assert_eq!(
+            cache.images.len(),
+            2,
+            "shared image plus the twin's new one"
+        );
+
+        // Turn 3: the twin returns to the original content. Turn 2 removed
+        // (shared_id, 4) from the cache, so the display must be emitted
+        // again; a skipped display here is exactly a stranded blank/stale
+        // cell on the terminal.
+        let bytes = drain_graphics_updates(&mut cache, &[test_placement(0, 0), twin(42)], &live);
+        let update = String::from_utf8_lossy(&bytes);
+        assert!(
+            update.contains(&format!("i={shared_host_id},p={twin_pid}")) && update.contains("a=p"),
+            "the returning source's placement is displayed again: {update}"
+        );
+        assert_eq!(
+            cache.placements.len(),
+            2,
+            "both placements live again: {update}"
+        );
+        assert_eq!(
+            cache.images.len(),
+            1,
+            "the twin's abandoned image is released: {update}"
+        );
+    }
+
     #[test]
     fn stale_placement_deletes_placement_not_image_immediately() {
         let mut images = HashMap::new();
