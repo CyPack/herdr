@@ -660,7 +660,7 @@ fn pane_web(args: &[String]) -> std::io::Result<i32> {
     }
 }
 
-const PANE_WEB_OPEN_USAGE: &str = "usage: herdr pane web open [<pane_id>|--pane ID|--current] [--url URL] [--direction right|down] [--ratio FLOAT] [--cwd PATH] [--env KEY=VALUE] [--focus] [--no-focus] [-- <command>...]";
+const PANE_WEB_OPEN_USAGE: &str = "usage: herdr pane web open [<pane_id>|--pane ID|--current] [--url URL] [--direction right|down] [--ratio FLOAT] [--agent A] [--cwd PATH] [--env KEY=VALUE] [--focus] [--no-focus] [-- <command>...]";
 
 fn parse_pane_web_open_args(
     args: &[String],
@@ -671,6 +671,7 @@ fn parse_pane_web_open_args(
     let mut direction = None;
     let mut ratio = None;
     let mut cwd = None;
+    let mut agent: Option<String> = None;
     let mut url = None;
     let mut command = Vec::new();
     let mut focus = true;
@@ -735,6 +736,13 @@ fn parse_pane_web_open_args(
                 cwd = Some(value.clone());
                 index += 2;
             }
+            "--agent" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err("missing value for --agent".into());
+                };
+                agent = Some(value.clone());
+                index += 2;
+            }
             "--focus" => {
                 focus = true;
                 index += 1;
@@ -770,6 +778,7 @@ fn parse_pane_web_open_args(
         url,
         command,
         cwd,
+        agent,
         focus,
         env,
     })

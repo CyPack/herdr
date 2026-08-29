@@ -171,9 +171,15 @@ back to its pane menu. Right-clicking the pane frame always opens Herdr's menu.
 `pane.web.open` splits like `pane.split` but births the new pane running a
 program — `command` (default `terminal-browser open <url>`) — with
 `HERDR_WEB_PANE=1` in its environment. It takes the same `workspace_id`,
-`target_pane_id`, `direction`, `ratio`, `cwd`, `focus` and `env` fields plus `url`
-and `command`, and answers with the new `pane_info`. The strip's browser button,
-its key binding and the CLI all ride this one method.
+`target_pane_id`, `direction`, `ratio`, `cwd`, `focus` and `env` fields plus `url`,
+`command` and `agent` — the conversation the pane reports into, named by public
+pane id or agent name; unwritten, the target pane's own agent is taken, else the
+tab's only agent, else the pane opens unlinked. The reply's `pane_info` (and
+every web pane in `pane.list`) carries a `web` object — `agent_pane_id`,
+`agent_session`, `url`, `link_state` (`linked`/`stale`/`orphan`/`unlinked`) — and
+the pane's environment names the tie as `HERDR_WEB_LINKED_AGENT` and
+`HERDR_WEB_SESSION`. The strip's browser button, its key binding and the CLI all
+ride this one method.
 
 `pane.split` accepts the same optional `right_click` value for the newly created
 pane.

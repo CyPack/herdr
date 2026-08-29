@@ -1341,6 +1341,7 @@ mod tests {
             }),
             launch_argv: None,
             dormant_history: None,
+            web_link: None,
         }
     }
 

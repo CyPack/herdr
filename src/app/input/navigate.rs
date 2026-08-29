@@ -666,6 +666,7 @@ impl App {
                 url: None,
                 command: self.state.web_browser_command.clone(),
                 cwd: None,
+                agent: None,
                 focus: true,
                 env: Default::default(),
             },

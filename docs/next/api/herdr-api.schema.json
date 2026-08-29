@@ -930,6 +930,17 @@
               },
               "type": "object"
             },
+            "web": {
+              "anyOf": [
+                {
+                  "$ref": "#/schemas/event/$defs/PaneWebInfo"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Present on every web pane — its agent tie, `unlinked` included; the\nfield's presence is what marks a web pane. Absent elsewhere."
+            },
             "workspace_id": {
               "type": "string"
             }
@@ -1096,6 +1107,40 @@
           ],
           "type": "object"
         },
+        "PaneWebInfo": {
+          "description": "TP-WEB-LINK-01: a web pane's agent tie as the API reports it.",
+          "properties": {
+            "agent_pane_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "agent_session": {
+              "anyOf": [
+                {
+                  "$ref": "#/schemas/event/$defs/AgentSessionInfo"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "link_state": {
+              "$ref": "#/schemas/event/$defs/WebLinkState"
+            },
+            "url": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "link_state"
+          ],
+          "type": "object"
+        },
         "SplitDirection": {
           "enum": [
             "right",
@@ -1141,6 +1186,16 @@
             "agent_status"
           ],
           "type": "object"
+        },
+        "WebLinkState": {
+          "description": "Where a web pane's agent tie stands. `Unlinked` is a deliberate state,\nnot an absence: a web pane always carries a link record, so the API can\ntell \"web pane without an agent\" apart from \"not a web pane at all\".",
+          "enum": [
+            "linked",
+            "stale",
+            "orphan",
+            "unlinked"
+          ],
+          "type": "string"
         },
         "WorkspaceInfo": {
           "properties": {
@@ -3344,6 +3399,13 @@
         "PaneWebOpenParams": {
           "description": "`pane.web.open` — a browser pane beside the target, born running\n`command` (empty means `terminal-browser open <url>`). The one road every\nbrowser button, key and CLI verb rides (TP-TAB-BROWSER-02), so the pane\nis born the same way however it was asked for.",
           "properties": {
+            "agent": {
+              "description": "The agent conversation this web pane reports into: a public pane id\nor an agent name. Unwritten, the target pane's own agent is taken,\nelse the tab's only agent; with neither the pane opens unlinked —\na wrong guess would carry reports into the wrong conversation.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "command": {
               "description": "What runs in the pane. Empty means `terminal-browser open <url>`; a\ncaller that wants another browser, or a test that wants none, names\nits own argv here.",
               "items": {
@@ -7940,6 +8002,17 @@
               },
               "type": "object"
             },
+            "web": {
+              "anyOf": [
+                {
+                  "$ref": "#/schemas/success_response/$defs/PaneWebInfo"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Present on every web pane — its agent tie, `unlinked` included; the\nfield's presence is what marks a web pane. Absent elsewhere."
+            },
             "workspace_id": {
               "type": "string"
             }
@@ -8433,6 +8506,40 @@
             "source_pane_id",
             "focused_pane_id",
             "layout"
+          ],
+          "type": "object"
+        },
+        "PaneWebInfo": {
+          "description": "TP-WEB-LINK-01: a web pane's agent tie as the API reports it.",
+          "properties": {
+            "agent_pane_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "agent_session": {
+              "anyOf": [
+                {
+                  "$ref": "#/schemas/success_response/$defs/AgentSessionInfo"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "link_state": {
+              "$ref": "#/schemas/success_response/$defs/WebLinkState"
+            },
+            "url": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "link_state"
           ],
           "type": "object"
         },
@@ -10453,6 +10560,16 @@
             "agent_status"
           ],
           "type": "object"
+        },
+        "WebLinkState": {
+          "description": "Where a web pane's agent tie stands. `Unlinked` is a deliberate state,\nnot an absence: a web pane always carries a link record, so the API can\ntell \"web pane without an agent\" apart from \"not a web pane at all\".",
+          "enum": [
+            "linked",
+            "stale",
+            "orphan",
+            "unlinked"
+          ],
+          "type": "string"
         },
         "WorkspaceInfo": {
           "properties": {
