@@ -7067,6 +7067,49 @@ mod tests {
         (server, client_rx, pane_id)
     }
 
+    /// `retained_test_server`, but the client hangs off the REAL writer queue
+    /// (single-slot render lane, Full instead of blocking) rather than the
+    /// `test_render` bypass — the H49-1 requirement: the queue is driven, not
+    /// simulated (H49-1).
+    fn retained_test_server_through_queue(
+        initial_screen: &[u8],
+    ) -> (
+        HeadlessServer,
+        crate::server::client_transport::TestQueueDrain,
+        crate::layout::PaneId,
+    ) {
+        let mut server = test_headless_server();
+        let mut workspace = crate::workspace::Workspace::test_new("test");
+        let pane_id = workspace.focused_pane_id().expect("focused pane");
+        workspace.insert_test_runtime(
+            pane_id,
+            crate::terminal::TerminalRuntime::test_with_screen_bytes(80, 24, initial_screen),
+        );
+        server.app.state.workspaces = vec![workspace];
+        server.app.state.active = Some(0);
+        server.app.state.selected = 0;
+        server.app.state.mode = crate::app::Mode::Terminal;
+
+        let (client_tx, drain) = ClientWriter::test_channel_through_queue();
+        server.clients.insert(
+            1,
+            ClientConnection::new(
+                (80, 24),
+                crate::kitty_graphics::HostCellSize::default(),
+                crate::terminal_theme::TerminalTheme::default(),
+                None,
+                1,
+                RenderEncoding::SemanticFrame,
+                Some(client_tx),
+            ),
+        );
+        server.foreground_client_id = Some(1);
+        server.sync_foreground_client_state();
+        server.resize_shared_runtime_to_effective_size();
+
+        (server, drain, pane_id)
+    }
+
     fn hidden_pty_visibility_test_server(
         client_sizes: &[(u16, u16)],
     ) -> (HeadlessServer, crate::layout::PaneId) {

@@ -1599,6 +1599,36 @@ async fn resizing_a_streaming_terminal_pane_leaves_no_orphan_placements() {
     );
 }
 
+fn drain_alive_fast_queue(
+    drain: &crate::server::client_transport::TestQueueDrain,
+    feed: &mut std::collections::HashMap<(String, String), u32>,
+) -> usize {
+    // Same model as `drain_alive_fast`, but reading the real writer queue —
+    // every lane, in the order the writer thread itself would see.
+    let mut messages = 0;
+    while let Some((_lane, bytes)) = drain.try_recv() {
+        messages += 1;
+        match read_server_message(bytes) {
+            ServerMessage::Frame(frame) => {
+                alive_placements(feed, &String::from_utf8_lossy(&frame.graphics));
+            }
+            ServerMessage::Graphics { bytes } => {
+                alive_placements(feed, &String::from_utf8_lossy(&bytes));
+            }
+            _ => {}
+        }
+    }
+    messages
+}
+
+fn drop_pending_messages_queue(drain: &crate::server::client_transport::TestQueueDrain) -> usize {
+    let mut dropped = 0;
+    while drain.try_recv().is_some() {
+        dropped += 1;
+    }
+    dropped
+}
+
 fn drain_alive_fast(
     rx: &std::sync::mpsc::Receiver<Vec<u8>>,
     feed: &mut std::collections::HashMap<(String, String), u32>,
@@ -1648,7 +1678,7 @@ async fn alternating_render_paths_never_strand_a_terminal_placement() {
     ];
     for path_mask in 0..256u32 {
         for drain_mask in [0xFFFu32, 0xAAA, 0x555, 0x0F0, 0x000] {
-            let (mut server, rx1, pane_id) = retained_test_server(b"video pane");
+            let (mut server, rx1, pane_id) = retained_test_server_through_queue(b"video pane");
             server.app.state.kitty_graphics_enabled = true;
             server.clients.get_mut(&1).unwrap().cell_size = crate::kitty_graphics::HostCellSize {
                 width_px: 10,
@@ -1661,7 +1691,7 @@ async fn alternating_render_paths_never_strand_a_terminal_placement() {
             set_graphics_layer(&mut server, neighbour, vec![7, 7, 7, 7]);
             server.render_and_stream();
             let mut kitty = std::collections::HashMap::new();
-            drain_alive_fast(&rx1, &mut kitty);
+            drain_alive_fast_queue(&rx1, &mut kitty);
 
             let area = server.app.state.view.terminal_area;
             for (turn, step) in gesture.iter().enumerate() {
@@ -1686,15 +1716,15 @@ async fn alternating_render_paths_never_strand_a_terminal_placement() {
                     server.render_and_stream();
                 }
                 if drain_mask & (1 << turn) != 0 {
-                    drain_alive_fast(&rx1, &mut kitty);
+                    drain_alive_fast_queue(&rx1, &mut kitty);
                 }
             }
             for _ in 0..6 {
                 server.render_and_stream();
                 let _ = server.render_retained_graphics_update_and_stream();
-                drain_alive_fast(&rx1, &mut kitty);
+                drain_alive_fast_queue(&rx1, &mut kitty);
             }
-            drain_alive_fast(&rx1, &mut kitty);
+            drain_alive_fast_queue(&rx1, &mut kitty);
 
             let ledger: std::collections::HashSet<(u32, u32)> = server
                 .clients
@@ -1797,7 +1827,8 @@ async fn the_live_render_plan_with_a_second_display_never_strands_a_placement() 
         for drain_mask in [0xFFFu32, 0xAAA, 0x249, 0x000] {
             for redraw_mask in [0x000u32, 0x044, 0x420] {
                 for drain_second in [false, true] {
-                    let (mut server, rx1, pane_id) = retained_test_server(b"video pane");
+                    let (mut server, rx1, pane_id) =
+                        retained_test_server_through_queue(b"video pane");
                     server.app.state.kitty_graphics_enabled = true;
                     server.clients.get_mut(&1).unwrap().cell_size =
                         crate::kitty_graphics::HostCellSize {
@@ -1811,7 +1842,7 @@ async fn the_live_render_plan_with_a_second_display_never_strands_a_placement() 
                     set_graphics_layer(&mut server, neighbour, vec![7, 7, 7, 7]);
                     let mut rx2 = None;
                     if let Some(size) = second_client {
-                        let (writer, _control_rx, render_rx) = test_client_writer();
+                        let (writer, render_rx) = ClientWriter::test_channel_through_queue();
                         server.clients.insert(
                             2,
                             ClientConnection::new(
@@ -1831,10 +1862,10 @@ async fn the_live_render_plan_with_a_second_display_never_strands_a_placement() 
                     }
                     server.render_and_stream();
                     let mut kitty = std::collections::HashMap::new();
-                    drain_alive_fast(&rx1, &mut kitty);
+                    drain_alive_fast_queue(&rx1, &mut kitty);
                     let mut kitty2 = std::collections::HashMap::new();
                     if let Some(rx2) = rx2.as_ref() {
-                        drain_alive_fast(rx2, &mut kitty2);
+                        drain_alive_fast_queue(rx2, &mut kitty2);
                     }
 
                     let area = server.app.state.view.terminal_area;
@@ -1859,11 +1890,11 @@ async fn the_live_render_plan_with_a_second_display_never_strands_a_placement() 
                             }
                         }
                         if drain_mask & (1 << turn) != 0 {
-                            drain_alive_fast(&rx1, &mut kitty);
+                            drain_alive_fast_queue(&rx1, &mut kitty);
                         }
                         if drain_second {
                             if let Some(rx2) = rx2.as_ref() {
-                                drain_alive_fast(rx2, &mut kitty2);
+                                drain_alive_fast_queue(rx2, &mut kitty2);
                             }
                         }
                     }
@@ -1872,12 +1903,12 @@ async fn the_live_render_plan_with_a_second_display_never_strands_a_placement() 
                             RetainedGraphicsOutcome::Sent => {}
                             _ => server.render_and_stream(),
                         }
-                        drain_alive_fast(&rx1, &mut kitty);
+                        drain_alive_fast_queue(&rx1, &mut kitty);
                         if let Some(rx2) = rx2.as_ref() {
-                            drain_alive_fast(rx2, &mut kitty2);
+                            drain_alive_fast_queue(rx2, &mut kitty2);
                         }
                     }
-                    drain_alive_fast(&rx1, &mut kitty);
+                    drain_alive_fast_queue(&rx1, &mut kitty);
 
                     let ledger: std::collections::HashSet<(u32, u32)> = server
                         .clients
@@ -1954,7 +1985,7 @@ async fn a_lost_graphics_message_still_leaves_one_placement_on_the_terminal() {
     // those roles; sweeping them all is what actually asks the question.
     for lose_turn in 0..12usize {
         let mut lost_messages = 0;
-        let (mut server, rx1, pane_id) = retained_test_server(b"video pane");
+        let (mut server, rx1, pane_id) = retained_test_server_through_queue(b"video pane");
         server.app.state.kitty_graphics_enabled = true;
         server.clients.get_mut(&1).unwrap().cell_size = crate::kitty_graphics::HostCellSize {
             width_px: 10,
@@ -1967,7 +1998,7 @@ async fn a_lost_graphics_message_still_leaves_one_placement_on_the_terminal() {
         set_graphics_layer(&mut server, neighbour, vec![7, 7, 7, 7]);
         server.render_and_stream();
         let mut kitty = std::collections::HashMap::new();
-        drain_alive_fast(&rx1, &mut kitty);
+        drain_alive_fast_queue(&rx1, &mut kitty);
 
         for turn in 0..12usize {
             push_tb_frame(&mut server, pane_id, turn as u8 + 1);
@@ -1976,9 +2007,9 @@ async fn a_lost_graphics_message_still_leaves_one_placement_on_the_terminal() {
                 _ => server.render_and_stream(),
             }
             if turn == lose_turn {
-                lost_messages += drop_pending_messages(&rx1);
+                lost_messages += drop_pending_messages_queue(&rx1);
             } else {
-                drain_alive_fast(&rx1, &mut kitty);
+                drain_alive_fast_queue(&rx1, &mut kitty);
             }
         }
         for _ in 0..6 {
@@ -1986,7 +2017,7 @@ async fn a_lost_graphics_message_still_leaves_one_placement_on_the_terminal() {
                 RetainedGraphicsOutcome::Sent => {}
                 _ => server.render_and_stream(),
             }
-            drain_alive_fast(&rx1, &mut kitty);
+            drain_alive_fast_queue(&rx1, &mut kitty);
         }
 
         let pane_alive: Vec<_> = kitty
