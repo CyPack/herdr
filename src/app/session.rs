@@ -11,16 +11,33 @@ enum SessionSaveJob {
 }
 
 impl App {
+    /// TP-PERSIST-06: a structural change — a workspace, tab, pane or
+    /// worktree created, closed, moved or renamed — is written on the very
+    /// next loop turn. The user's rule: nothing that was made exists only in
+    /// memory. A crash a few seconds after "new workspace" must not undo it.
     pub(super) fn schedule_session_save(&mut self) {
         if !self.no_session {
-            self.session_save_deadline = Some(Instant::now() + SESSION_SAVE_DEBOUNCE);
+            self.session_save_deadline = Some(Instant::now());
+        }
+    }
+
+    /// The debounced road for the frequent, non-structural dirt (cwd drift,
+    /// foreground process, scroll) that `mark_session_dirty` raises: a save
+    /// already scheduled sooner is never pushed later.
+    pub(super) fn schedule_session_save_debounced(&mut self) {
+        if !self.no_session {
+            let later = Instant::now() + SESSION_SAVE_DEBOUNCE;
+            self.session_save_deadline = Some(match self.session_save_deadline {
+                Some(existing) if existing < later => existing,
+                _ => later,
+            });
         }
     }
 
     pub(crate) fn sync_session_save_schedule(&mut self) {
         if self.state.session_dirty {
             self.state.session_dirty = false;
-            self.schedule_session_save();
+            self.schedule_session_save_debounced();
         }
     }
 

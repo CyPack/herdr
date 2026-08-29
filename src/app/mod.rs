@@ -6439,6 +6439,41 @@ mod tests {
         assert_eq!(app.state.workspaces.len(), 2);
     }
 
+    // TP-PERSIST-06
+    #[test]
+    fn a_structural_change_schedules_the_save_now_not_after_the_debounce() {
+        let mut app = test_app();
+        app.no_session = false;
+        let before = Instant::now();
+        app.schedule_session_save();
+        let deadline = app.session_save_deadline.expect("a save is scheduled");
+        assert!(
+            deadline <= before + Duration::from_millis(50),
+            "a created workspace is written on the next loop turn, not {SESSION_SAVE_DEBOUNCE:?} later"
+        );
+    }
+
+    // TP-PERSIST-06
+    #[test]
+    fn debounced_dirt_never_pushes_a_sooner_save_later() {
+        let mut app = test_app();
+        app.no_session = false;
+        app.schedule_session_save();
+        let soon = app.session_save_deadline.expect("scheduled");
+        app.state.session_dirty = true;
+        app.sync_session_save_schedule();
+        assert_eq!(app.session_save_deadline, Some(soon));
+    }
+
+    // TP-PERSIST-06
+    #[test]
+    fn a_no_session_run_schedules_nothing_even_for_structural_changes() {
+        let mut app = test_app();
+        app.no_session = true;
+        app.schedule_session_save();
+        assert!(app.session_save_deadline.is_none());
+    }
+
     #[test]
     fn session_dirty_flag_schedules_debounced_save() {
         let mut app = test_app();

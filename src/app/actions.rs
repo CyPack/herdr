@@ -2109,7 +2109,7 @@ impl AppState {
         }
         match crate::cli::space::upsert_managed(&current, &plan) {
             Ok(updated) => {
-                if let Err(err) = std::fs::write(&path, updated) {
+                if let Err(err) = crate::config::write_managed_spaces(&updated) {
                     tracing::warn!(error = %err, "managed overlay write failed");
                     return;
                 }
@@ -2497,7 +2497,7 @@ impl AppState {
         let current = std::fs::read_to_string(&path).unwrap_or_default();
         match crate::cli::space::upsert_managed_node(&current, &node) {
             Ok(updated) => {
-                if let Err(err) = std::fs::write(&path, updated) {
+                if let Err(err) = crate::config::write_managed_spaces(&updated) {
                     tracing::warn!(error = %err, "managed overlay write failed");
                     return;
                 }
@@ -2545,7 +2545,7 @@ impl AppState {
         let current = std::fs::read_to_string(&path).unwrap_or_default();
         match crate::cli::space::upsert_managed_node(&current, &node) {
             Ok(updated) => {
-                if let Err(err) = std::fs::write(&path, updated) {
+                if let Err(err) = crate::config::write_managed_spaces(&updated) {
                     tracing::warn!(error = %err, "managed overlay write failed");
                     return;
                 }
@@ -2565,7 +2565,7 @@ impl AppState {
         let current = std::fs::read_to_string(&path).unwrap_or_default();
         match crate::cli::space::upsert_managed(&current, &plan) {
             Ok(updated) => {
-                if let Err(err) = std::fs::write(&path, updated) {
+                if let Err(err) = crate::config::write_managed_spaces(&updated) {
                     tracing::warn!(error = %err, "managed overlay write failed");
                     return;
                 }
@@ -2591,7 +2591,7 @@ impl AppState {
         let current = std::fs::read_to_string(&path).unwrap_or_default();
         match crate::cli::space::upsert_managed_display_name(&current, &key, name) {
             Ok(updated) => {
-                if let Err(err) = std::fs::write(&path, updated) {
+                if let Err(err) = crate::config::write_managed_spaces(&updated) {
                     tracing::warn!(error = %err, "managed overlay write failed");
                     return;
                 }
@@ -2692,7 +2692,7 @@ impl AppState {
                 tracing::info!("no managed rule matches; a config.toml rule needs a hand-edit");
             }
             Ok((updated, _)) => {
-                if let Err(err) = std::fs::write(&path, updated) {
+                if let Err(err) = crate::config::write_managed_spaces(&updated) {
                     tracing::warn!(error = %err, "managed overlay write failed");
                     return;
                 }
