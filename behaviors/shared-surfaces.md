@@ -192,6 +192,7 @@ else, and turns a burst of frames into input lag.
 | ID | Behavior | Breaks if lost | Verified by |
 |---|---|---|---|
 | TP-CLIENT-WRITE-PRIO-01 | The client writer queue is strictly prioritised: a queued control frame is always drained before any render, and a render that was dropped for a newer one is reported rather than silently lost. | Control traffic queues behind presentation frames, so resize, shutdown and notification messages arrive late or out of order behind a redraw burst — and the drop of a stale render becomes invisible. | `client_writer_prioritizes_control_and_reports_render_drain` |
+| TP-CLIENT-CELL-01 | The client's measured host cell size travels in the handshake whenever the host reports one, independently of the kitty-graphics flag; the flag only gates direct-graphics eligibility (`exact`) and the fallback guess. | A remote client that measured 17x33 but sent zeros (graphics flag off by default) left the server with no pixel information: freshly spawned pane PTYs carried 0x0 pixels (giant-block drawing in the pane) and `cell_size.is_known()` stayed false, so that client never received any graphics at all — the 2026-08-29 Mac session. | `the_measured_cell_size_travels_even_with_graphics_disabled` · `no_measurement_and_no_graphics_still_sends_zeros` · `graphics_enabled_keeps_the_exact_flag_and_fallback` |
 
 ## Handshake capability negotiation
 

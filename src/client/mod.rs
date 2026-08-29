@@ -2980,19 +2980,30 @@ fn current_terminal_geometry(
 /// Reads terminal geometry before the handshake. Direct graphics is eligible
 /// only when the host supplied exact pixel dimensions through the ioctl.
 fn initial_terminal_geometry(kitty_graphics_enabled: bool) -> (u16, u16, u32, u32, bool) {
+    initial_terminal_geometry_with(kitty_graphics_enabled, ioctl_cell_size)
+}
+
+/// The cell size always travels when the host reports one: the server sizes
+/// pane PTYs and gates graphics encoding on it, so a remote client that
+/// measured 17x33 but sent zeros produced giant-block drawing on freshly
+/// spawned panes and no graphics at all on its own screen (2026-08-29 Mac).
+/// The graphics flag only decides direct-graphics ELIGIBILITY (`exact`),
+/// never whether the measurement is reported.
+fn initial_terminal_geometry_with(
+    kitty_graphics_enabled: bool,
+    cell_probe: impl Fn() -> Option<(u32, u32)>,
+) -> (u16, u16, u32, u32, bool) {
     let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
-    if !kitty_graphics_enabled {
-        return (cols, rows, 0, 0, false);
-    }
-    match ioctl_cell_size() {
-        Some((width, height)) => (cols, rows, width, height, true),
-        None => (
+    match cell_probe() {
+        Some((width, height)) => (cols, rows, width, height, kitty_graphics_enabled),
+        None if kitty_graphics_enabled => (
             cols,
             rows,
             DEFAULT_CELL_WIDTH_PX,
             DEFAULT_CELL_HEIGHT_PX,
             false,
         ),
+        None => (cols, rows, 0, 0, false),
     }
 }
 
@@ -3194,6 +3205,38 @@ mod tests {
         assert!(!outcome
             .accepted
             .has(crate::protocol::capability::AUDIO_SINK));
+    }
+
+    // TP-CLIENT-CELL-01
+    #[test]
+    fn the_measured_cell_size_travels_even_with_graphics_disabled() {
+        // The Mac remote client measured 17x33 from its host terminal and
+        // still sent zeros because the graphics flag was off — the server
+        // then sized pane PTYs with no pixel information (giant blocks) and
+        // never encoded graphics for that client at all.
+        let (_, _, w, h, exact) = initial_terminal_geometry_with(false, || Some((17, 33)));
+        assert_eq!((w, h), (17, 33), "the measurement is reported as-is");
+        assert!(
+            !exact,
+            "graphics-off never claims direct-graphics eligibility"
+        );
+    }
+
+    // TP-CLIENT-CELL-01
+    #[test]
+    fn no_measurement_and_no_graphics_still_sends_zeros() {
+        let (_, _, w, h, exact) = initial_terminal_geometry_with(false, || None);
+        assert_eq!((w, h, exact), (0, 0, false));
+    }
+
+    // TP-CLIENT-CELL-01
+    #[test]
+    fn graphics_enabled_keeps_the_exact_flag_and_fallback() {
+        let (_, _, w, h, exact) = initial_terminal_geometry_with(true, || Some((10, 20)));
+        assert_eq!((w, h, exact), (10, 20, true));
+        let (_, _, w, h, exact) = initial_terminal_geometry_with(true, || None);
+        assert_eq!((w, h), (DEFAULT_CELL_WIDTH_PX, DEFAULT_CELL_HEIGHT_PX));
+        assert!(!exact);
     }
 
     #[test]
