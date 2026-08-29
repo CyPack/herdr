@@ -19,7 +19,7 @@ FAZ-M: motor ✓ (CoreAudioSink platform/macos.rs:1322; köprü media/sink.rs:28
 ## FAZ-M görev/TN
 | görev | ne | TN | beklenen + NEDEN |
 |---|---|---|---|
-| M1 | Kullanıcı Mac'te: `~/herdr --remote ayaz@100.75.115.68` | TN-M1 | server log `client connected ... SemanticFrame` (App-mode şart: TerminalAnsi is_full_app_client=false → sese giremez) |
+| M1 | Kullanıcı Mac'te: `~/herdr --remote ayaz@100.x.x.x` | TN-M1 | server log `client connected ... SemanticFrame` (App-mode şart: TerminalAnsi is_full_app_client=false → sese giremez) |
 | M2 | Müzakere kanıtı | TN-M2 | Mac `~/.config/herdr/herdr-client.log`: media satırı/`negotiated`; declined ise kök CoreAudio probe (macos.rs:1313) |
 | M3 | P3: `pane-audio-source.py --pane w1:p10` + tb sink-input MUTE (pactl) | TN-M3 | P3 log: sink-input eşleşti + kare sayacı akıyor; mute=çift-ses önlemi (tb lokal pulse'a da çalıyor) |
 | M4 | KULAK — Mac hoparlörü | TN-M4 | tek geçerli son kanıt (kullanıcı) |
