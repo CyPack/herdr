@@ -1849,6 +1849,27 @@ impl HeadlessServer {
         }
     }
 
+    /// TP-GFX-RESIZE-01: the resize sweep. Unlike the detach cleanup this
+    /// must not replace the queue — the pane-layer frames waiting there
+    /// still describe a picture the replay road will re-seat — so the
+    /// deletes ride the control lane as an ordinary message.
+    fn send_client_terminal_graphics_sweep(&mut self, client_id: u64) {
+        let Some(client) = self.clients.get_mut(&client_id) else {
+            return;
+        };
+        let bytes = client.graphics_cache.clear_terminal_native_bytes();
+        if bytes.is_empty() {
+            return;
+        }
+        let Some(writer) = client.writer.as_ref() else {
+            return;
+        };
+        let Ok(serialized) = Self::frame_server_message(&ServerMessage::Graphics { bytes }) else {
+            return;
+        };
+        let _ = writer.control.send(serialized);
+    }
+
     fn send_client_graphics_cleanup(&mut self, client_id: u64) {
         let (writer, bytes) = match self.clients.get_mut(&client_id) {
             Some(client) => {
@@ -3566,12 +3587,13 @@ impl HeadlessServer {
                     }
                 }
                 if geometry_changed {
-                    // TP-GFX-RESIZE-01: every placement on the terminal was
-                    // computed with the old geometry; wipe the slate there
-                    // too, or the ghosts stay at the old coordinates. The
-                    // next full paint rebuilds what still belongs. A resize
-                    // that changes nothing moves no bytes.
-                    self.send_client_graphics_cleanup(client_id);
+                    // TP-GFX-RESIZE-01: the terminal-native pictures were
+                    // placed with the old geometry and no repaint can
+                    // rebuild them — sweep those; the pane-layer stream
+                    // stays, its road replays placements without a
+                    // retransmit. A resize that changes nothing moves no
+                    // bytes.
+                    self.send_client_terminal_graphics_sweep(client_id);
                 }
                 self.promote_client_to_foreground(client_id);
                 self.resize_shared_runtime_to_effective_size();
@@ -7351,6 +7373,42 @@ mod tests {
             !any_delete_all(&drain_messages(&control_rx))
                 || any_delete_all(&drain_messages(&client_rx)),
             "no change, no bytes"
+        );
+    }
+
+    // TP-GFX-RESIZE-01: the sweep is a scalpel — the pane-layer stream's
+    // entries survive a resize untouched, because that road replays its
+    // placements without retransmitting and a delete here would force the
+    // full upload the road exists to avoid.
+    #[tokio::test]
+    async fn a_resize_leaves_the_pane_layer_stream_alone() {
+        let (mut server, control_rx, client_rx, _pane_id) = resize_test_server(b"aaaa");
+        server.app.state.kitty_graphics_enabled = true;
+        {
+            let client = server.clients.get_mut(&1).unwrap();
+            client.cell_size = crate::kitty_graphics::HostCellSize {
+                width_px: 10,
+                height_px: 20,
+            };
+            client.graphics_cache.test_mark_pane_layer_entry();
+        }
+
+        server.handle_server_event(ServerEvent::ClientResize {
+            client_id: 1,
+            cols: 100,
+            rows: 30,
+            cell_width_px: 10,
+            cell_height_px: 20,
+        });
+
+        assert!(
+            !server.clients.get(&1).unwrap().graphics_cache.is_empty(),
+            "the stream entry keeps its seat"
+        );
+        assert!(
+            !any_delete_all(&drain_messages(&control_rx))
+                && !any_delete_all(&drain_messages(&client_rx)),
+            "no delete travels for a slate the replay road owns"
         );
     }
 

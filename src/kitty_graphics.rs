@@ -30,6 +30,10 @@ const KITTY_COMPRESSION_LEVEL: u32 = 1;
 pub(crate) const HEADLESS_GRAPHICS_TRANSACTION_BUDGET: usize =
     crate::protocol::MAX_GRAPHICS_FRAME_SIZE - crate::protocol::MAX_FRAME_SIZE;
 const HOST_IMAGE_ID_BASE: u32 = 10_000;
+/// Host ids at or above this floor belong to the pane-layer stream road;
+/// below it live the terminal-native pictures (a PTY drawing kitty itself).
+/// The wire-level tests key on the same split.
+pub(crate) const PANE_LAYER_HOST_ID_FLOOR: u32 = 0x8000_0000;
 const FILE_MANAGER_PREVIEW_PANE_RAW: u32 = u32::MAX;
 const FILE_MANAGER_PREVIEW_IMAGE_ID: u32 = 1;
 const FILE_MANAGER_PREVIEW_PLACEMENT_ID: u32 = 1;
@@ -1148,6 +1152,19 @@ impl HostGraphicsCache {
     }
 
     #[cfg(test)]
+    pub(crate) fn test_mark_pane_layer_entry(&mut self) {
+        self.images.insert(
+            PANE_LAYER_HOST_ID_FLOOR + 1,
+            ImageSignature {
+                image_width: 1,
+                image_height: 1,
+                format_code: 32,
+                data_len: 4,
+                data_fingerprint: 2,
+            },
+        );
+    }
+
     pub(crate) fn test_mark_non_empty(&mut self) {
         self.images.insert(
             HOST_IMAGE_ID_BASE,
@@ -1159,6 +1176,35 @@ impl HostGraphicsCache {
                 data_fingerprint: 1,
             },
         );
+    }
+
+    /// TP-GFX-RESIZE-01: a geometry change sweeps only the pictures a
+    /// repaint cannot rebuild — the terminal-native ones, below the
+    /// pane-layer floor. Stream entries stay: their road replays placements
+    /// without retransmitting, and deleting them here would force the very
+    /// retransmit that road exists to avoid.
+    pub(crate) fn clear_terminal_native_bytes(&mut self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        let native: Vec<u32> = self
+            .images
+            .keys()
+            .copied()
+            .filter(|id| *id < PANE_LAYER_HOST_ID_FLOOR)
+            .collect();
+        for id in native {
+            encode_delete_image(&mut bytes, id);
+            self.images.remove(&id);
+            self.placements.retain(|(image, _), _| *image != id);
+            self.sources.retain(|_, host| *host != id);
+        }
+        if self
+            .continuation
+            .as_ref()
+            .is_some_and(|(_, id, _)| *id < PANE_LAYER_HOST_ID_FLOOR)
+        {
+            self.continuation = None;
+        }
+        bytes
     }
 
     pub(crate) fn clear_bytes(&mut self) -> Vec<u8> {
