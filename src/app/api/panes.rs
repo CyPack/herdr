@@ -563,7 +563,7 @@ impl App {
                         self.state.switch_workspace_tab(ws_idx, tab_idx);
                         self.state
                             .record_pane_focus_change(previous_focus, ws_idx, source_pane_id);
-                        self.state.mark_session_dirty();
+                        self.state.mark_session_dirty_now();
                         self.schedule_session_save();
                     }
                 }
@@ -960,7 +960,7 @@ impl App {
         };
 
         self.state.remove_alias_shadowed_by_new_pane(moved_pane_id);
-        self.state.mark_session_dirty();
+        self.state.mark_session_dirty_now();
         self.schedule_session_save();
         let Some(pane) = self.pane_info(target_ws_idx, moved_pane_id) else {
             return encode_error(id, "pane_move_failed", "moved pane is unavailable");
@@ -1079,7 +1079,7 @@ impl App {
             }
             self.state.workspaces.insert(insert_idx, workspace);
         }
-        self.state.mark_session_dirty();
+        self.state.mark_session_dirty_now();
         self.schedule_session_save();
     }
 
@@ -1180,7 +1180,7 @@ impl App {
             Some(label) if !label.is_empty() => terminal.set_manual_label(label),
             _ => terminal.clear_manual_label(),
         }
-        self.state.mark_session_dirty();
+        self.state.mark_session_dirty_now();
         let pane = self.pane_info(ws_idx, pane_id).unwrap();
 
         encode_success(id, ResponseResult::PaneInfo { pane })

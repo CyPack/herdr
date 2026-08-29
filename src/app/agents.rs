@@ -56,7 +56,7 @@ impl App {
             .get_mut(&terminal_id)
             .is_some_and(|terminal| terminal.reconcile_managed_agent_at(Instant::now(), false));
         if changed {
-            self.state.mark_session_dirty();
+            self.state.mark_session_dirty_now();
             self.schedule_session_save();
             self.emit_pane_updated(resolved.ws_idx, resolved.pane_id);
         }
@@ -132,7 +132,7 @@ impl App {
             Some(name) => terminal.set_agent_name(name),
             None => terminal.clear_agent_name(),
         }
-        self.state.mark_session_dirty();
+        self.state.mark_session_dirty_now();
         self.schedule_session_save();
         self.emit_pane_updated(resolved.ws_idx, resolved.pane_id);
         self.agent_info(resolved.ws_idx, resolved.pane_id)
@@ -218,7 +218,7 @@ impl App {
             terminal.clear_agent_name();
             return Err(AgentStartError::InputFailed(err.to_string()));
         }
-        self.state.mark_session_dirty();
+        self.state.mark_session_dirty_now();
         self.schedule_session_save();
 
         let agent = self

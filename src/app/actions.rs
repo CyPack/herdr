@@ -3127,7 +3127,7 @@ impl AppState {
             return false;
         }
 
-        self.mark_session_dirty();
+        self.mark_session_dirty_now();
 
         let active_id = self.active.map(|idx| self.workspaces[idx].id.clone());
         let selected_id = self
@@ -3198,7 +3198,7 @@ impl AppState {
             .map(|(index, id)| (id.clone(), index))
             .collect::<std::collections::HashMap<_, _>>();
 
-        self.mark_session_dirty();
+        self.mark_session_dirty_now();
         self.workspaces.sort_by_key(|workspace| {
             desired_positions
                 .get(&workspace.id)
@@ -3432,7 +3432,7 @@ impl AppState {
         }
         self.selection = None;
         self.selection_autoscroll = None;
-        self.mark_session_dirty();
+        self.mark_session_dirty_now();
         let close_indices = self
             .workspaces
             .get(self.selected)
@@ -3807,7 +3807,7 @@ impl AppState {
 
         self.selection = None;
         self.selection_autoscroll = None;
-        self.mark_session_dirty();
+        self.mark_session_dirty_now();
         let terminal_ids = active
             .and_then(|i| {
                 self.workspaces
@@ -3854,7 +3854,7 @@ impl AppState {
 
         self.selection = None;
         self.selection_autoscroll = None;
-        self.mark_session_dirty();
+        self.mark_session_dirty_now();
         let should_close_workspace = self
             .active
             .and_then(|i| self.workspaces.get(i))
@@ -5316,7 +5316,7 @@ impl AppState {
             let ws = &mut self.workspaces[ws_idx];
             ws.remove_pane(pane_id)
         };
-        self.mark_session_dirty();
+        self.mark_session_dirty_now();
 
         if should_close_workspace {
             let active_workspace_id = self

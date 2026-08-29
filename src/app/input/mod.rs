@@ -1603,7 +1603,7 @@ impl AppState {
                 self.terminals
                     .insert(new_pane.terminal.id.clone(), new_pane.terminal);
                 self.record_pane_focus_change(previous_focus, ws_idx, new_id);
-                self.mark_session_dirty();
+                self.mark_session_dirty_now();
                 self.mode = Mode::Terminal;
             }
         }
