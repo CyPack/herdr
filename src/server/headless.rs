@@ -3548,15 +3548,26 @@ impl HeadlessServer {
                     render_state.request_repaint();
                     return true;
                 }
+                let mut geometry_changed = false;
                 if let Some(client) = self.clients.get_mut(&client_id) {
-                    client.terminal_size = (cols, rows);
                     let observed = crate::kitty_graphics::HostCellSize {
                         width_px: cell_width_px,
                         height_px: cell_height_px,
                     };
+                    geometry_changed = client.terminal_size != (cols, rows)
+                        || (observed.is_known() && observed != client.cell_size);
+                    client.terminal_size = (cols, rows);
                     if observed.is_known() {
                         client.cell_size = observed;
                     }
+                }
+                if geometry_changed {
+                    // TP-GFX-RESIZE-01: every placement on the terminal was
+                    // computed with the old geometry; wipe the slate there
+                    // too, or the ghosts stay at the old coordinates. The
+                    // next full paint rebuilds what still belongs. A resize
+                    // that changes nothing moves no bytes.
+                    self.send_client_graphics_cleanup(client_id);
                 }
                 self.promote_client_to_foreground(client_id);
                 self.resize_shared_runtime_to_effective_size();
@@ -7146,6 +7157,7 @@ mod tests {
     /// (single-slot render lane, Full instead of blocking) rather than the
     /// `test_render` bypass — the H49-1 requirement: the queue is driven, not
     /// simulated (H49-1).
+
     fn retained_test_server_through_queue(
         initial_screen: &[u8],
     ) -> (
@@ -7183,6 +7195,164 @@ mod tests {
         server.resize_shared_runtime_to_effective_size();
 
         (server, drain, pane_id)
+    }
+
+    /// `retained_test_server`, plus the control-lane receiver — the resize
+    /// sweep travels as a cleanup on the control lane, and a test that only
+    /// listens to the render lane calls a working sweep silent.
+    fn resize_test_server(
+        initial_screen: &[u8],
+    ) -> (
+        HeadlessServer,
+        std::sync::mpsc::Receiver<Vec<u8>>,
+        std::sync::mpsc::Receiver<Vec<u8>>,
+        crate::layout::PaneId,
+    ) {
+        let mut server = test_headless_server();
+        let mut workspace = crate::workspace::Workspace::test_new("test");
+        let pane_id = workspace.focused_pane_id().expect("focused pane");
+        workspace.insert_test_runtime(
+            pane_id,
+            crate::terminal::TerminalRuntime::test_with_screen_bytes(80, 24, initial_screen),
+        );
+        server.app.state.workspaces = vec![workspace];
+        server.app.state.active = Some(0);
+        server.app.state.selected = 0;
+        server.app.state.mode = crate::app::Mode::Terminal;
+
+        let (client_tx, control_rx, client_rx) = test_client_writer();
+        server.clients.insert(
+            1,
+            ClientConnection::new(
+                (80, 24),
+                crate::kitty_graphics::HostCellSize::default(),
+                crate::terminal_theme::TerminalTheme::default(),
+                None,
+                1,
+                RenderEncoding::SemanticFrame,
+                Some(client_tx),
+            ),
+        );
+        server.foreground_client_id = Some(1);
+        server.sync_foreground_client_state();
+        server.resize_shared_runtime_to_effective_size();
+
+        (server, control_rx, client_rx, pane_id)
+    }
+
+    fn drain_messages(rx: &std::sync::mpsc::Receiver<Vec<u8>>) -> Vec<ServerMessage> {
+        let mut out = Vec::new();
+        while let Ok(bytes) = rx.try_recv() {
+            out.push(read_server_message(bytes));
+        }
+        out
+    }
+
+    fn any_delete_all(messages: &[ServerMessage]) -> bool {
+        messages.iter().any(|message| match message {
+            ServerMessage::Graphics { bytes } => bytes.windows(3).any(|w| w == b"a=d"),
+            ServerMessage::Frame(frame) => frame.graphics.windows(3).any(|w| w == b"a=d"),
+            _ => false,
+        })
+    }
+
+    // TP-GFX-RESIZE-01: a resize breaks every placement's geometry — the
+    // client's graphics slate is wiped (a=d reaches the terminal) so the next
+    // paint rebuilds clean instead of leaving ghosts at the old coordinates.
+    #[tokio::test]
+    async fn a_client_resize_sweeps_the_stale_graphics_off_the_terminal() {
+        let (mut server, control_rx, client_rx, _pane_id) = resize_test_server(b"aaaa");
+        server.app.state.kitty_graphics_enabled = true;
+        {
+            let client = server.clients.get_mut(&1).unwrap();
+            client.cell_size = crate::kitty_graphics::HostCellSize {
+                width_px: 10,
+                height_px: 20,
+            };
+            client.graphics_cache.test_mark_non_empty();
+        }
+
+        assert!(server.handle_server_event(ServerEvent::ClientResize {
+            client_id: 1,
+            cols: 100,
+            rows: 30,
+            cell_width_px: 10,
+            cell_height_px: 20,
+        }));
+
+        assert!(
+            server.clients.get(&1).unwrap().graphics_cache.is_empty(),
+            "the slate is wiped with the geometry that placed it"
+        );
+        assert!(
+            any_delete_all(&drain_messages(&control_rx))
+                || any_delete_all(&drain_messages(&client_rx)),
+            "the delete reaches the terminal, not only the ledger"
+        );
+    }
+
+    // TP-GFX-RESIZE-01: a cell-size change (retina to external display)
+    // invalidates every pixel computation the placements were made with.
+    #[tokio::test]
+    async fn a_cell_size_change_sweeps_the_graphics_too() {
+        let (mut server, control_rx, client_rx, _pane_id) = resize_test_server(b"aaaa");
+        server.app.state.kitty_graphics_enabled = true;
+        {
+            let client = server.clients.get_mut(&1).unwrap();
+            client.cell_size = crate::kitty_graphics::HostCellSize {
+                width_px: 10,
+                height_px: 20,
+            };
+            client.graphics_cache.test_mark_non_empty();
+        }
+
+        assert!(server.handle_server_event(ServerEvent::ClientResize {
+            client_id: 1,
+            cols: 80,
+            rows: 24,
+            cell_width_px: 16,
+            cell_height_px: 32,
+        }));
+
+        assert!(server.clients.get(&1).unwrap().graphics_cache.is_empty());
+        assert!(
+            any_delete_all(&drain_messages(&control_rx))
+                || any_delete_all(&drain_messages(&client_rx))
+        );
+    }
+
+    // TP-GFX-RESIZE-01: a resize that changes nothing moves no bytes — the
+    // slate stays, the wire stays quiet (bytes follow change, not events).
+    #[tokio::test]
+    async fn a_no_op_resize_leaves_the_graphics_alone() {
+        let (mut server, control_rx, client_rx, _pane_id) = resize_test_server(b"aaaa");
+        server.app.state.kitty_graphics_enabled = true;
+        {
+            let client = server.clients.get_mut(&1).unwrap();
+            client.cell_size = crate::kitty_graphics::HostCellSize {
+                width_px: 10,
+                height_px: 20,
+            };
+            client.graphics_cache.test_mark_non_empty();
+        }
+
+        server.handle_server_event(ServerEvent::ClientResize {
+            client_id: 1,
+            cols: 80,
+            rows: 24,
+            cell_width_px: 10,
+            cell_height_px: 20,
+        });
+
+        assert!(
+            !server.clients.get(&1).unwrap().graphics_cache.is_empty(),
+            "an unchanged geometry keeps its slate"
+        );
+        assert!(
+            !any_delete_all(&drain_messages(&control_rx))
+                || any_delete_all(&drain_messages(&client_rx)),
+            "no change, no bytes"
+        );
     }
 
     fn hidden_pty_visibility_test_server(
