@@ -54,7 +54,14 @@ fn run_shell_hook_with_env(
 
     let server = thread::spawn(move || {
         listener.set_nonblocking(true).unwrap();
-        let deadline = Instant::now() + Duration::from_millis(700);
+        // This is the wall for a hook that never connects, not the time a
+        // working one is expected to take: a successful accept returns
+        // immediately, so a generous budget costs a passing run nothing. The
+        // old 700 ms was smaller than the test's own measured duration (727 ms
+        // on an idle box), which made it a load meter rather than a deadline —
+        // under a full parallel suite the bash spawn alone outran it and the
+        // test failed for reasons no diff could explain. TP-TEST-HOOK-01
+        let deadline = Instant::now() + Duration::from_secs(30);
         while Instant::now() < deadline {
             match listener.accept() {
                 Ok((mut stream, _)) => {
