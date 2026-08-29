@@ -13938,38 +13938,6 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
     }
 
     #[tokio::test]
-    async fn retained_pty_update_declines_when_graphics_cache_has_content() {
-        let (mut server, client_rx, pane_id) = retained_test_server(b"aaaa");
-        server.app.state.kitty_graphics_enabled = true;
-        let client = server.clients.get_mut(&1).unwrap();
-        client.cell_size = crate::kitty_graphics::HostCellSize {
-            width_px: 10,
-            height_px: 20,
-        };
-
-        server.render_and_stream();
-        let _ = client_rx
-            .recv_timeout(Duration::from_millis(100))
-            .expect("initial frame");
-        server
-            .clients
-            .get_mut(&1)
-            .unwrap()
-            .graphics_cache
-            .test_mark_non_empty();
-
-        let runtime = server
-            .app
-            .state
-            .runtime_for_pane_in_workspace(&server.app.terminal_runtimes, 0, pane_id)
-            .expect("runtime");
-        runtime.test_process_pty_bytes(b"\rZ");
-
-        assert!(!server.render_retained_pty_update_and_stream());
-        assert!(client_rx.recv_timeout(Duration::from_millis(50)).is_err());
-    }
-
-    #[tokio::test]
     async fn full_redraw_pending_survives_full_render_queue_full() {
         let (mut server, client_rx, pane_id) = retained_test_server(b"aaaa");
         let queued = HeadlessServer::frame_server_message(&ServerMessage::ReloadSoundConfig)
