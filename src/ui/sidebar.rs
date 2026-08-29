@@ -1168,6 +1168,12 @@ pub(crate) enum WorkspaceListEntry {
 /// single "older" row. The sidebar is a glance surface, not an archive.
 pub(crate) const WORKSPACE_CHAT_ROW_LIMIT: usize = 5;
 
+/// TP-DRAW-16: a CLOSED drawer still shows its newest three — the module
+/// dropdown answers "what was I doing here" for every branch under it at a
+/// glance, without a click per branch. Three, not five: the closed state is
+/// a preview, not the drawer.
+pub(crate) const CHAT_PREVIEW_ROW_LIMIT: usize = 3;
+
 /// What the daily section calls itself. One constant so the screen, the tests
 /// and the phone drawer can never disagree about the words.
 pub(crate) const DAILY_SECTION_TITLE: &str = "daily chats";
@@ -1596,6 +1602,21 @@ pub(crate) fn daily_workspace_order(app: &AppState, owned: &[usize]) -> Vec<usiz
 /// Append a workspace's chat drawer rows, if it is open.
 fn push_chat_drawer(app: &AppState, entries: &mut Vec<WorkspaceListEntry>, ws_idx: usize) {
     if workspace_chat_drawer_collapsed(app, ws_idx) {
+        // TP-DRAW-16: closed is a preview, not an absence. The newest three
+        // chats are drawn under every branch the tree shows, and the "more"
+        // row is the way into the real drawer. A branch with no chats stays
+        // exactly as bare as it was — the preview never earns a placeholder.
+        let chats = workspace_chat_rows_for(app, ws_idx);
+        let shown = chats.len().min(CHAT_PREVIEW_ROW_LIMIT);
+        for chat_idx in 0..shown {
+            entries.push(WorkspaceListEntry::Chat { ws_idx, chat_idx });
+        }
+        if chats.len() > shown {
+            entries.push(WorkspaceListEntry::MoreChats {
+                ws_idx,
+                expanded: false,
+            });
+        }
         return;
     }
     let chats = workspace_chat_rows_for(app, ws_idx);
@@ -1717,8 +1738,19 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
     }
     let grouped_keys = members_by_key
         .iter()
-        .filter(|(_, members)| {
-            members.len() >= 2
+        .filter(|(key, members)| {
+            // TP-NODE-05 (revised): a parented bucket KEEPS its header even
+            // with one member. The person filed the branch into a named
+            // module — "Mobil", "Admin" — and the name is the point; eliding
+            // it made the module read as missing the moment it held exactly
+            // one branch. An unparented single-member group still folds into
+            // its row: there the header would repeat the row below it.
+            let single_parented_bucket = members.len() == 1
+                && app
+                    .space_split_rules
+                    .iter()
+                    .any(|rule| rule.key == **key && rule.parent.is_some());
+            (members.len() >= 2 || single_parented_bucket)
                 && members.iter().any(|idx| {
                     effective_space(app, *idx).is_some_and(|space| space.is_parent_candidate)
                 })
@@ -4493,6 +4525,11 @@ fn render_workspace_more_chats_rows(app: &AppState, frame: &mut Frame, list_bott
         let total = workspace_chat_rows_for(app, row.ws_idx).len();
         let label = if workspace_chat_drawer_expanded(app, row.ws_idx) {
             "   … fewer".to_string()
+        } else if workspace_chat_drawer_collapsed(app, row.ws_idx) {
+            // TP-DRAW-16: under a closed drawer's three-row preview the count
+            // is against the preview, and the verb is "more" — this row OPENS
+            // the drawer rather than deepening an open one.
+            format!("   … {} more", total.saturating_sub(CHAT_PREVIEW_ROW_LIMIT))
         } else {
             format!(
                 "   … {} older",
@@ -11614,8 +11651,8 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         app.workspaces = vec![
             worktree_on_branch("alpha", "feat/t4f-alpha"),
             worktree_on_branch("beta", "feat/t4f-beta"),
-            // Two members, so the child bucket keeps its own header —
-            // a single-member parented bucket folds into the row (TP-NODE-05).
+            // Two members; since TP-NODE-05's revision a parented bucket
+            // keeps its header with one member too.
             worktree_on_branch("probe", "probe/one"),
             worktree_on_branch("probe2", "probe/two"),
         ];
@@ -11808,6 +11845,29 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             _ => None,
         });
         (chats, more)
+    }
+
+    // TP-DRAW-16: closed is a preview, not an absence — the newest three and
+    // a "more" row that opens the drawer. Opening it hands over to TP-DRAW-10.
+    #[test]
+    fn a_closed_drawer_previews_its_newest_three_and_offers_the_rest() {
+        let mut app = app_with_a_deep_drawer(9);
+        app.chat_drawer_mode = crate::app::state::ChatDrawerMode::Manual;
+        app.expanded_chat_workspaces.clear();
+        assert!(app.chat_drawer_collapsed(0), "the fixture drawer is closed");
+
+        assert_eq!(
+            drawer_rows(&app, 0),
+            (CHAT_PREVIEW_ROW_LIMIT, Some(false)),
+            "closed shows three and the way in"
+        );
+
+        app.toggle_chat_drawer(0);
+        assert_eq!(
+            drawer_rows(&app, 0),
+            (WORKSPACE_CHAT_ROW_LIMIT, Some(false)),
+            "opened, the glance surface takes over"
+        );
     }
 
     // TP-DRAW-10: the drawer is a glance surface until asked otherwise — five
@@ -12301,11 +12361,12 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         );
     }
 
-    // TP-NODE-05: a parented bucket with one member needs no header of its
-    // own — the checkout hangs straight under the node, indented, so "move
-    // this branch under X" reads as exactly that.
+    // TP-NODE-05 (revised): a parented bucket KEEPS its header even with one
+    // member — the person filed the branch into a named module and the name
+    // is the point. Measured 2026-08-29: "Mobil" vanished the moment it held
+    // exactly one branch, and the module read as missing.
     #[test]
-    fn a_single_member_parented_bucket_hangs_its_member_under_the_node() {
+    fn a_single_member_parented_bucket_keeps_its_header() {
         let mut app = app_with_node_chain();
         app.workspaces.truncate(1);
 
@@ -12326,9 +12387,8 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
 
         assert!(
             shape.contains(&"node(node:ui)".to_string())
-                && shape.contains(&"ws(0,true)".to_string())
-                && !shape.iter().any(|s| s.starts_with("bucket(")),
-            "one member, no bucket header, member indented under the node: {shape:?}"
+                && shape.iter().any(|s| s.starts_with("bucket(")),
+            "one member, and the bucket still wears its name under the node: {shape:?}"
         );
     }
 
