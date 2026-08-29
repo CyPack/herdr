@@ -103,6 +103,13 @@ impl HeadlessServer {
             return;
         };
         let (capable, declined) = self.audio_capable_clients();
+        tracing::debug!(
+            stream_id,
+            clients = self.clients.len(),
+            capable = capable.len(),
+            declined,
+            "audio stream fan-out"
+        );
         for client_id in capable {
             let sent = self
                 .clients

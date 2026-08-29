@@ -3834,6 +3834,19 @@ impl HeadlessServer {
     /// trigger internal events that may set toast state or would normally
     /// play sounds — in headless mode we forward these to clients instead.
     fn handle_api_request_with_shutdown_check(&mut self, msg: api::ApiRequestMessage) -> bool {
+        // The main loop only reaches `handle_api_request_with_render_impact` while a
+        // graphics runtime is active; every other request lands here. Audio streaming
+        // has nothing to do with graphics, so route it to the same handler either way —
+        // otherwise a stream opens, the API answers ok, and its frames reach the
+        // fan-out on no path at all. TP-MEDIA-DISPATCH-01
+        if matches!(
+            &msg.request.method,
+            api::schema::Method::PaneAudioStreamOpen(_)
+                | api::schema::Method::PaneAudioStreamChunk(_)
+                | api::schema::Method::PaneAudioStreamClose(_)
+        ) {
+            return self.handle_pane_audio_stream_request(msg) != RenderImpact::None;
+        }
         self.handle_api_request_with_shutdown_check_inner(msg, false)
     }
 

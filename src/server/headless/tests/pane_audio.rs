@@ -86,6 +86,48 @@ fn feed_frame(server: &mut HeadlessServer, public: &str, owner: &str) {
     server.flush_pane_audio_outbound();
 }
 
+// TP-MEDIA-DISPATCH-01
+#[test]
+fn an_audio_request_off_the_graphics_path_still_reaches_the_fan_out() {
+    // The main loop routes an API request through `handle_api_request_with_shutdown_check`
+    // whenever no graphics runtime is active — which, for an audio-only session, is
+    // always. That path used to skip the audio fan-out entirely: the stream opened,
+    // the API answered ok, and no client was ever offered it. This drives the real
+    // request path, not the app handler the other tests call directly.
+    let (mut server, _pane, public) = audio_test_server();
+    let opus = connect(&mut server, 1, Some(codec::OPUS));
+    let (tx, _rx) = std::sync::mpsc::channel();
+    server.handle_api_request_with_shutdown_check(api::ApiRequestMessage {
+        request: api::schema::Request {
+            id: "open".into(),
+            method: api::schema::Method::PaneAudioStreamOpen(api::schema::PaneAudioStreamParams {
+                pane_id: public.clone(),
+                sample_rate_hz: 48_000,
+                channels: 2,
+                format: "f32le".into(),
+                owner: "owner".into(),
+            }),
+        },
+        respond_to: tx,
+        response_write_complete: None,
+        stream_active: None,
+    });
+    let items = opus.drain();
+    assert_eq!(items.len(), 1, "the opus client is offered the stream");
+    assert_eq!(
+        items[0].0,
+        WriteLane::Control,
+        "open rides the reliable lane"
+    );
+    assert!(
+        matches!(
+            decode(&items[0].1),
+            ServerMessage::MediaOpen { stream_id: 1, .. }
+        ),
+        "the offer is a MediaOpen for the first stream"
+    );
+}
+
 // TP-MEDIA-CAP-07
 #[tokio::test]
 async fn a_stream_is_offered_only_to_clients_that_negotiated_an_opus_sink() {
