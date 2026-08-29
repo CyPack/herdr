@@ -705,6 +705,18 @@ pub struct WorkspaceChatRow {
 ///
 /// The ledger and the transcript store answer "when" in different units, and
 /// the drawer has to order them together; this is the one place they meet.
+/// A drawer row for a Codex conversation (TP-CODEX-STORE-01).
+fn codex_row(session: &crate::codex_sessions::CodexSession) -> WorkspaceChatRow {
+    WorkspaceChatRow {
+        session_id: session.id.clone(),
+        agent: "codex".to_string(),
+        title: Some(session.title.clone()),
+        last_seen_ms: system_time_to_ms(session.last_modified),
+        last_modified: Some(session.last_modified),
+        last_message_at: session.last_message_at,
+    }
+}
+
 pub(crate) fn system_time_to_ms(time: std::time::SystemTime) -> u64 {
     time.duration_since(std::time::UNIX_EPOCH)
         .map(|since| since.as_millis().min(u64::MAX as u128) as u64)
@@ -4237,6 +4249,12 @@ pub struct AppState {
     /// session files ((mtime, size) key) are never re-read, so refreshes cost
     /// only the diff.
     pub sessions_parse_cache: crate::claude_sessions::SessionParseCache,
+    /// TP-CODEX-STORE-01: the Codex rollouts, cached the same way.
+    pub codex_parse_cache: crate::codex_sessions::CodexParseCache,
+    /// Where the Codex store stands; `None` reads no Codex store at all — the
+    /// test constructor's value, so a fixture never reads the live machine
+    /// (the TP-DRAW-13 lesson, paid once already).
+    pub codex_sessions_dir: Option<std::path::PathBuf>,
     /// Agent CLI id used when opening a NEW chat from the Projects tab
     /// (`[projects] default_chat_agent`, one of `projects::CHAT_AGENTS`).
     /// Resuming existing chats always uses claude regardless of this value.
@@ -5002,6 +5020,42 @@ impl AppState {
             }
         }
 
+        // TP-CODEX-STORE-01: the Codex store, read for the same keys with the
+        // same window. A rollout is filed by the cwd its meta line records,
+        // never by the directory it sits in (the store is dated, not keyed).
+        if let Some(codex_dir) = self.codex_sessions_dir.clone() {
+            for (key, cwd) in &keys {
+                let limit = if self.fully_open_chat_drawers.contains(key) {
+                    DRAWER_FETCH_LIMIT_FULL
+                } else {
+                    DRAWER_FETCH_LIMIT
+                };
+                let sessions = crate::codex_sessions::read_recent_sessions_for_cwd_cached(
+                    &codex_dir,
+                    std::path::Path::new(cwd),
+                    limit,
+                    &mut self.codex_parse_cache,
+                );
+                for session in &sessions {
+                    if let Some(opening) = session.opening.clone() {
+                        self.chat_openings.insert(session.id.clone(), opening);
+                    }
+                }
+                let rows = self.workspace_chat_rows.entry(key.clone()).or_default();
+                for session in &sessions {
+                    match rows.iter_mut().find(|row| row.session_id == session.id) {
+                        Some(row) => {
+                            row.agent = "codex".to_string();
+                            row.title = Some(session.title.clone());
+                            row.last_modified = Some(session.last_modified);
+                            row.last_message_at = session.last_message_at;
+                        }
+                        None => rows.push(codex_row(session)),
+                    }
+                }
+            }
+        }
+
         // TP-DRAW-06: a chat the ledger saw but this workspace's own directory
         // does not hold lives under whichever directory it started in. Look for
         // it in the other open workspaces' directories rather than leaving the
@@ -5042,6 +5096,76 @@ impl AppState {
                     row.last_message_at = session.last_message_at;
                 }
             }
+        }
+
+        // TP-CHAT-MOVE-16: a re-home summons its transcript. Everything above
+        // is a recency window — the newest few files of each OPEN directory —
+        // and a chat the ledger re-homed can be older than that window in the
+        // directory it started in. Then no fetch produced its row, and
+        // `apply_chat_moves` (rightly) carried nothing: a session nobody shows
+        // moves nothing. But such a chat is not a ghost; its transcript is on
+        // disk, one directory over. Measured 2026-08-29: `chat.seat` answered
+        // `applied: 59` for sixty chats and the drawer drew three.
+        //
+        // So every re-homed id that still has no row is fetched by id, once,
+        // and filed straight under its target — the same place the move would
+        // carry it. A ghost (an id no store holds) still makes no row, exactly
+        // as before. The lookup runs only for rows that are missing, so a
+        // store summoned once is free on every later pass: the cost follows
+        // what changed, not what exists.
+        let summoned: Vec<(String, String)> = self
+            .chat_move_overrides
+            .iter()
+            .filter(|(session_id, _)| {
+                !self
+                    .workspace_chat_rows
+                    .values()
+                    .flatten()
+                    .any(|row| row.session_id == **session_id)
+            })
+            .map(|(session_id, target)| (session_id.clone(), target.clone()))
+            .collect();
+        for (session_id, target_key) in summoned {
+            // Claude's store first, then Codex's (TP-CODEX-STORE-02): the
+            // ledger keys a chat by id alone and never says which agent held
+            // it, and the two stores cannot collide — Claude ids are v4
+            // uuids, Codex ids are v7 — so the first store that answers is
+            // the right one.
+            let (row, opening) = if let Some(session) =
+                crate::claude_sessions::read_session_by_id_cached(
+                    projects_dir,
+                    &session_id,
+                    &mut self.sessions_parse_cache,
+                ) {
+                (
+                    WorkspaceChatRow {
+                        session_id: session.id.clone(),
+                        agent: "claude".to_string(),
+                        title: Some(session.title.clone()),
+                        last_seen_ms: system_time_to_ms(session.last_modified),
+                        last_modified: Some(session.last_modified),
+                        last_message_at: session.last_message_at,
+                    },
+                    session.opening,
+                )
+            } else if let Some(session) = self.codex_sessions_dir.as_deref().and_then(|dir| {
+                crate::codex_sessions::read_session_by_id_cached(
+                    dir,
+                    &session_id,
+                    &mut self.codex_parse_cache,
+                )
+            }) {
+                (codex_row(&session), session.opening)
+            } else {
+                continue;
+            };
+            if let Some(opening) = opening {
+                self.chat_openings.insert(row.session_id.clone(), opening);
+            }
+            self.workspace_chat_rows
+                .entry(target_key)
+                .or_default()
+                .push(row);
         }
 
         // TP-DRAW-04: newest first, the order the Projects tab already uses.
@@ -5639,6 +5763,8 @@ impl AppState {
             suppressed_chat_drawers: std::collections::HashSet::new(),
             tab_branch_cache: std::collections::HashMap::new(),
             sessions_parse_cache: Default::default(),
+            codex_parse_cache: Default::default(),
+            codex_sessions_dir: None,
             default_chat_agent: "claude".to_string(),
             // Test fixtures exercise the full (unfiltered) Projects list;
             // the production default (ON) comes from the config path in
@@ -7406,6 +7532,201 @@ mod tests {
         assert!(elsewhere.display_label().starts_with("elsewhe"));
 
         let _ = std::fs::remove_dir_all(&cwd);
+    }
+
+    // TP-CHAT-MOVE-16: a re-home summons its transcript. The drawer fetch is
+    // a recency window over each OPEN directory; a chat re-homed from a
+    // directory nobody has open (or one buried under newer files) produced no
+    // row, so the move carried nothing and `chat.seat` reported a chat the
+    // sidebar never drew.
+    #[test]
+    fn a_re_home_summons_a_transcript_the_recency_window_never_fetched() {
+        let fake = FakeProjectsRoot::new("summon");
+        // The transcript stands in a directory NO workspace holds.
+        let origin = std::env::temp_dir().join("herdr-summon-origin-nobody-open");
+        fake.write_session(
+            &origin.to_string_lossy(),
+            "buried-chat",
+            &[r#"{"type":"ai-title","aiTitle":"SOR rename and MEGA"}"#],
+        );
+        let mut state = AppState::test_new();
+        let (cwd, key) = drawer_probe_workspace(&mut state, "summon");
+        state
+            .chat_move_overrides
+            .insert("buried-chat".into(), key.clone());
+
+        state.merge_workspace_chat_rows_in(&fake.root);
+
+        let rows = &state.workspace_chat_rows[&key];
+        let row = rows
+            .iter()
+            .find(|row| row.session_id == "buried-chat")
+            .expect("the re-home summoned a row the window never fetched");
+        assert_eq!(row.title.as_deref(), Some("SOR rename and MEGA"));
+        assert!(
+            row.last_modified.is_some(),
+            "a summoned row carries its age"
+        );
+        let _ = std::fs::remove_dir_all(&cwd);
+    }
+
+    // TP-CHAT-MOVE-16: a ghost stays a ghost — an id no store holds makes no
+    // row, exactly as `apply_chat_moves` always promised.
+    #[test]
+    fn a_re_home_of_a_transcript_nobody_holds_still_makes_no_row() {
+        let fake = FakeProjectsRoot::new("summon-ghost");
+        let mut state = AppState::test_new();
+        let (cwd, key) = drawer_probe_workspace(&mut state, "summon-ghost");
+        state
+            .chat_move_overrides
+            .insert("never-written".into(), key.clone());
+
+        state.merge_workspace_chat_rows_in(&fake.root);
+
+        assert!(
+            !state
+                .workspace_chat_rows
+                .values()
+                .flatten()
+                .any(|row| row.session_id == "never-written"),
+            "no store holds it, so no drawer draws it"
+        );
+        let _ = std::fs::remove_dir_all(&cwd);
+    }
+
+    // TP-CHAT-MOVE-16: summoning is idempotent — a second pass finds the row
+    // and neither re-reads the store nor doubles the row.
+    #[test]
+    fn a_summoned_row_is_not_summoned_twice() {
+        let fake = FakeProjectsRoot::new("summon-twice");
+        let origin = std::env::temp_dir().join("herdr-summon-origin-twice");
+        fake.write_session(
+            &origin.to_string_lossy(),
+            "once",
+            &[r#"{"type":"ai-title","aiTitle":"once"}"#],
+        );
+        let mut state = AppState::test_new();
+        let (cwd, key) = drawer_probe_workspace(&mut state, "summon-twice");
+        state.chat_move_overrides.insert("once".into(), key.clone());
+
+        state.merge_workspace_chat_rows_in(&fake.root);
+        state.merge_workspace_chat_rows_in(&fake.root);
+
+        let copies = state
+            .workspace_chat_rows
+            .values()
+            .flatten()
+            .filter(|row| row.session_id == "once")
+            .count();
+        assert_eq!(copies, 1, "one conversation, one row");
+        let _ = std::fs::remove_dir_all(&cwd);
+    }
+
+    /// A throwaway Codex store: `<root>/2026/08/29/rollout-<stamp>-<id>.jsonl`.
+    struct FakeCodexStore {
+        root: std::path::PathBuf,
+    }
+
+    impl FakeCodexStore {
+        fn new(tag: &str) -> Self {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static COUNTER: AtomicU64 = AtomicU64::new(0);
+            let root = std::env::temp_dir().join(format!(
+                "herdr-state-codex-{}-{}-{}",
+                std::process::id(),
+                tag,
+                COUNTER.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(root.join("2026/08/29")).expect("codex store dirs");
+            Self { root }
+        }
+
+        fn write_rollout(&self, cwd: &std::path::Path, id: &str, turn: &str) {
+            use std::io::Write as _;
+            let path = self
+                .root
+                .join("2026/08/29")
+                .join(format!("rollout-2026-08-29T10-00-00-{id}.jsonl"));
+            let mut file = std::fs::File::create(&path).expect("rollout");
+            writeln!(
+                file,
+                r#"{{"timestamp":"2026-08-29T10:00:00.000Z","type":"session_meta","payload":{{"id":"{id}","cwd":"{}"}}}}"#,
+                cwd.display()
+            )
+            .unwrap();
+            writeln!(
+                file,
+                r#"{{"timestamp":"2026-08-29T10:00:02.000Z","type":"event_msg","payload":{{"type":"user_message","message":"{turn}"}}}}"#
+            )
+            .unwrap();
+        }
+    }
+
+    impl Drop for FakeCodexStore {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    const CODEX_ID: &str = "019cbcf7-7800-7002-a7e4-562e4595cb84";
+
+    // TP-CODEX-STORE-01: a Codex conversation that stood in a workspace's
+    // directory is a row of that workspace's drawer, wearing the person's
+    // first turn as its title and `codex` as its agent — the way a Claude
+    // chat has always been.
+    #[test]
+    fn codex_rollouts_in_a_workspaces_directory_become_drawer_rows() {
+        let fake = FakeProjectsRoot::new("codex-rows");
+        let codex = FakeCodexStore::new("codex-rows");
+        let mut state = AppState::test_new();
+        let (cwd, key) = drawer_probe_workspace(&mut state, "codex-rows");
+        codex.write_rollout(&cwd, CODEX_ID, "mobil task listesini bitir");
+        state.codex_sessions_dir = Some(codex.root.clone());
+
+        state.merge_workspace_chat_rows_in(&fake.root);
+
+        let rows = &state.workspace_chat_rows[&key];
+        let row = rows
+            .iter()
+            .find(|row| row.session_id == CODEX_ID)
+            .expect("the rollout became a row");
+        assert_eq!(row.agent, "codex");
+        assert_eq!(row.title.as_deref(), Some("mobil task listesini bitir"));
+        let _ = std::fs::remove_dir_all(&cwd);
+    }
+
+    // TP-CODEX-STORE-02: a re-home summons a Codex transcript too — the
+    // ledger keys by id alone, and the second store answers when the first
+    // does not.
+    #[test]
+    fn a_re_home_summons_a_codex_transcript_by_id() {
+        let fake = FakeProjectsRoot::new("codex-summon");
+        let codex = FakeCodexStore::new("codex-summon");
+        let origin = std::env::temp_dir().join("herdr-codex-origin-nobody-open");
+        codex.write_rollout(&origin, CODEX_ID, "SOR rename ve MEGA");
+        let mut state = AppState::test_new();
+        let (cwd, key) = drawer_probe_workspace(&mut state, "codex-summon");
+        state.codex_sessions_dir = Some(codex.root.clone());
+        state
+            .chat_move_overrides
+            .insert(CODEX_ID.into(), key.clone());
+
+        state.merge_workspace_chat_rows_in(&fake.root);
+
+        let row = state.workspace_chat_rows[&key]
+            .iter()
+            .find(|row| row.session_id == CODEX_ID)
+            .expect("summoned from the Codex store");
+        assert_eq!(row.agent, "codex");
+        assert_eq!(row.title.as_deref(), Some("SOR rename ve MEGA"));
+        let _ = std::fs::remove_dir_all(&cwd);
+    }
+
+    // TP-CODEX-STORE-01: the test constructor reads NO Codex store, so no
+    // fixture can drift on the live machine's rollouts.
+    #[test]
+    fn the_test_constructor_reads_no_codex_store() {
+        assert!(AppState::test_new().codex_sessions_dir.is_none());
     }
 
     // P3: refresh reads the reader for each pinned path, aligned and newest-first.
