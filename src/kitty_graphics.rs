@@ -677,7 +677,9 @@ fn encode_terminal_graphics_update_legacy(
         let Some((clipped, format_code)) = clipped_placement(placement) else {
             continue;
         };
-        let host_id = host_image_id(placement.pane_id, &placement.placement);
+        let host_id = placement
+            .host_image_id
+            .unwrap_or_else(|| host_image_id(placement.pane_id, &placement.placement));
         let placement_id = host_placement_id(&placement.source_key, &placement.placement);
         let image_signature = image_signature(placement, format_code);
         let placement_signature =
@@ -1346,11 +1348,11 @@ fn collect_popup_pane_placements(
         }
         let format_code = kitty_format_code(descriptor.format);
         let signature = image_signature_from_descriptor(descriptor, format_code);
-        let host_id = host_image_id_for_signature(popup.pane_id, signature);
+        let host_id = stream_host_image_id(popup.pane_id, descriptor.image_id);
         uploaded_images.get(&host_id).copied() != Some(signature)
     }) {
         placements.push(HostPlacement {
-            host_image_id: None,
+            host_image_id: Some(stream_host_image_id(popup.pane_id, placement.image_id)),
             pane_id: popup.pane_id,
             area: inner,
             cell_size,
@@ -1434,7 +1436,7 @@ fn collect_visible_placements(
         for placement in runtime.kitty_image_placements_with_data_filter(|descriptor| {
             let format_code = kitty_format_code(descriptor.format);
             let signature = image_signature_from_descriptor(descriptor, format_code);
-            let host_id = host_image_id_for_signature(info.id, signature);
+            let host_id = stream_host_image_id(info.id, descriptor.image_id);
             uploaded_images.get(&host_id).copied() != Some(signature)
         }) {
             let scrollback_offset = runtime
@@ -1443,7 +1445,7 @@ fn collect_visible_placements(
                 .unwrap_or(0);
             placements.push(HostPlacement {
                 pane_id: info.id,
-                host_image_id: None,
+                host_image_id: Some(stream_host_image_id(info.id, placement.image_id)),
                 area: info.inner_rect,
                 cell_size,
                 source_key: HostSourceKey::Terminal {
@@ -1582,6 +1584,20 @@ fn host_image_id_for_signature(pane_id: PaneId, signature: ImageSignature) -> u3
     let mut hasher = DefaultHasher::new();
     pane_id.raw().hash(&mut hasher);
     signature.hash(&mut hasher);
+    HOST_IMAGE_ID_BASE + ((hasher.finish() as u32) % 900_000)
+}
+
+fn stream_host_image_id(pane_id: PaneId, guest_image_id: u32) -> u32 {
+    // TP-GFX-STABLE-01: identity follows the SOURCE, not the content. A
+    // streaming pane repaints one guest image id with new pixels every frame;
+    // content-hashing that into a fresh host id per frame made every lost
+    // delete a permanently stranded placement. One (pane, guest image) pair
+    // keeps one host image id for its whole life, and a content change is a
+    // retransmit of that same id.
+    let mut hasher = DefaultHasher::new();
+    "stream.stable".hash(&mut hasher);
+    pane_id.raw().hash(&mut hasher);
+    guest_image_id.hash(&mut hasher);
     HOST_IMAGE_ID_BASE + ((hasher.finish() as u32) % 900_000)
 }
 
