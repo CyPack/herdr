@@ -6,6 +6,7 @@ mod chats;
 mod env;
 mod integrations;
 mod layouts;
+mod pane_audio;
 mod pane_graphics;
 mod panes;
 pub(crate) mod plugins;
@@ -1240,6 +1241,22 @@ impl App {
             }
             Method::PaneGraphicsStreamClose(params) => {
                 return self.handle_pane_graphics_stream_close(request.id, params);
+            }
+            Method::PaneAudioStream(_) => {
+                return responses::encode_error(
+                    request.id,
+                    "stream_transport_required",
+                    "pane.audio.stream requires the streaming socket transport",
+                );
+            }
+            Method::PaneAudioStreamOpen(params) => {
+                return self.handle_pane_audio_stream_open(request.id, params);
+            }
+            Method::PaneAudioStreamChunk(params) => {
+                return self.handle_pane_audio_stream_chunk(request.id, params);
+            }
+            Method::PaneAudioStreamClose(params) => {
+                return self.handle_pane_audio_stream_close(request.id, params);
             }
             Method::PaneReportAgent(params) => {
                 return self.handle_pane_report_agent(request.id, params);

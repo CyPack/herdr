@@ -7,6 +7,7 @@ mod subscriptions;
 mod wait;
 
 pub use event_hub::EventHub;
+pub(crate) use server::cancel_inactive_pane_audio_streams;
 pub(crate) use server::cancel_inactive_pane_graphics_streams;
 pub(crate) use server::start_server_with_stop_control;
 pub use server::{start_server_with_capabilities, ServerHandle};

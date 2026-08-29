@@ -200,6 +200,18 @@ pub enum Method {
     #[serde(skip)]
     #[schemars(skip)]
     PaneGraphicsStreamClose(PaneGraphicsStreamParams),
+    #[serde(rename = "pane.audio.stream")]
+    #[schemars(skip)]
+    PaneAudioStream(PaneAudioStreamParams),
+    #[serde(skip)]
+    #[schemars(skip)]
+    PaneAudioStreamOpen(PaneAudioStreamParams),
+    #[serde(skip)]
+    #[schemars(skip)]
+    PaneAudioStreamChunk(PaneAudioChunkParams),
+    #[serde(skip)]
+    #[schemars(skip)]
+    PaneAudioStreamClose(PaneAudioStreamCloseParams),
     #[serde(rename = "pane.report_agent")]
     PaneReportAgent(PaneReportAgentParams),
     #[serde(rename = "pane.report_agent_session")]

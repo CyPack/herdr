@@ -589,6 +589,12 @@ pub(crate) enum ServerEvent {
     ClientDetach { client_id: u64 },
     /// A client connection was lost.
     ClientDisconnected { client_id: u64 },
+    /// A client reported how many further chunks of a media stream it can hold.
+    ClientMediaCredit {
+        client_id: u64,
+        stream_id: u32,
+        chunks: u16,
+    },
     /// A client writer drained its render slot and can accept another render.
     ClientWriterDrained { client_id: u64 },
     /// Ctrl+C or external shutdown signal received.
@@ -1272,13 +1278,13 @@ fn client_read_loop_answering_clock(
                 }
                 continue;
             }
-            // Credit belongs to a stream, and no stream can be open yet. It is
-            // dropped rather than half-handled: the stream bookkeeping arrives
-            // with the streams themselves.
-            ClientMessage::MediaCredit { .. } => {
-                debug!(client_id, "media credit for a stream that is not open");
-                continue;
-            }
+            // Credit is a level the client reports for one stream; the session
+            // that owns the stream applies it. TP-MEDIA-CREDIT-02
+            ClientMessage::MediaCredit { stream_id, chunks } => ServerEvent::ClientMediaCredit {
+                client_id,
+                stream_id,
+                chunks,
+            },
         };
 
         if server_event_tx.blocking_send(event).is_err() {

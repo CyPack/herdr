@@ -63,6 +63,7 @@ use crate::server::socket_paths::{
 };
 use crate::server::terminal_attach::paste_payload_for_runtime;
 
+mod pane_audio;
 mod pane_graphics;
 
 use crate::protocol::MAX_GRAPHICS_FRAME_SIZE;
@@ -754,6 +755,7 @@ impl HeadlessServer {
             }
 
             self.cancel_inactive_pane_graphics_streams();
+            self.tick_pane_audio();
 
             self.drain_client_config_reload_request();
             self.sync_immediate_pty_sources();
@@ -3554,13 +3556,27 @@ impl HeadlessServer {
             ServerEvent::ClientDetach { client_id } => {
                 info!(client_id, "client detached");
                 self.send_terminal_stream_detach_shutdown(client_id);
+                self.app.pane_audio.forget_client(client_id);
                 self.remove_client_and_resize_if_needed(client_id);
                 true
             }
             ServerEvent::ClientDisconnected { client_id } => {
                 info!(client_id, "client disconnected");
+                self.app.pane_audio.forget_client(client_id);
                 self.remove_client_and_resize_if_needed(client_id);
                 true
+            }
+            // A level, applied to the session that owns the stream; nothing
+            // to draw. TP-MEDIA-CREDIT-02
+            ServerEvent::ClientMediaCredit {
+                client_id,
+                stream_id,
+                chunks,
+            } => {
+                self.app
+                    .pane_audio
+                    .set_client_credit(stream_id, client_id, chunks);
+                false
             }
             ServerEvent::ClientWriterDrained { client_id } => {
                 let Some(client) = self.clients.get_mut(&client_id) else {
@@ -3832,6 +3848,14 @@ impl HeadlessServer {
         ) {
             return self.handle_pane_graphics_stream_frame(msg);
         }
+        if matches!(
+            &msg.request.method,
+            api::schema::Method::PaneAudioStreamOpen(_)
+                | api::schema::Method::PaneAudioStreamChunk(_)
+                | api::schema::Method::PaneAudioStreamClose(_)
+        ) {
+            return self.handle_pane_audio_stream_request(msg);
+        }
         if self.handle_api_request_with_shutdown_check_inner(msg, false) {
             RenderImpact::Full
         } else {
@@ -3873,6 +3897,10 @@ impl HeadlessServer {
         let metadata_expired = self.app.expire_due_metadata(Instant::now());
         let stream_open = match &msg.request.method {
             api::schema::Method::PaneGraphicsStreamOpen(params) => Some(params.clone()),
+            _ => None,
+        };
+        let audio_stream_open = match &msg.request.method {
+            api::schema::Method::PaneAudioStreamOpen(params) => Some(params.clone()),
             _ => None,
         };
         let stream_active = msg.stream_active.clone();
@@ -4058,9 +4086,13 @@ impl HeadlessServer {
                 }
             }
         }
-        if let (Some(params), Some(active)) = (stream_open.as_ref(), stream_active) {
+        if let (Some(params), Some(active)) = (stream_open.as_ref(), stream_active.clone()) {
             self.app
                 .attach_pane_graphics_stream_active(params, active, &response);
+        }
+        if let (Some(params), Some(active)) = (audio_stream_open.as_ref(), stream_active) {
+            self.app
+                .attach_pane_audio_stream_active(params, active, &response);
         }
         if let Some(spec) = alt_screen_read_spec {
             if let Ok(success) = serde_json::from_str::<api::schema::SuccessResponse>(&response) {
@@ -5919,6 +5951,8 @@ mod tests {
     use crate::protocol::{CellData, CursorState};
     use unicode_width::UnicodeWidthStr;
 
+    #[path = "pane_audio.rs"]
+    mod pane_audio_tests;
     #[path = "pane_graphics.rs"]
     mod pane_graphics_tests;
 

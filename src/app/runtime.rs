@@ -62,6 +62,10 @@ impl App {
             crate::api::schema::Method::PaneGraphicsStreamOpen(params) => Some(params.clone()),
             _ => None,
         };
+        let audio_stream_open = match &msg.request.method {
+            crate::api::schema::Method::PaneAudioStreamOpen(params) => Some(params.clone()),
+            _ => None,
+        };
         let stream_active = msg.stream_active.clone();
         let mut changed = self.expire_due_metadata(Instant::now());
         changed |= crate::api::request_changes_ui(&msg.request);
@@ -85,9 +89,15 @@ impl App {
             return changed | deferred_changed;
         }
         let response = self.handle_api_request(msg.request);
-        if let (Some(params), Some(active)) = (stream_open.as_ref(), stream_active) {
+        if let (Some(params), Some(active)) = (stream_open.as_ref(), stream_active.clone()) {
             self.attach_pane_graphics_stream_active(params, active, &response);
         }
+        if let (Some(params), Some(active)) = (audio_stream_open.as_ref(), stream_active) {
+            self.attach_pane_audio_stream_active(params, active, &response);
+        }
+        // The embedded app has no remote clients to play to; what a stream
+        // produces here is dropped rather than left to accumulate.
+        let _ = self.pane_audio.take_outbound();
         if !skip_default_workspace {
             changed |= self.ensure_default_workspace();
         }

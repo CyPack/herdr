@@ -36,6 +36,7 @@ mod git_refresh;
 mod ids;
 mod image_preview_worker;
 mod input;
+pub(crate) mod pane_audio;
 pub(crate) mod pane_graphics;
 
 /// One unclaimed pointer press, queued by the input layer and drained into a
@@ -141,6 +142,7 @@ impl PaneClickState {
 pub struct App {
     pub state: AppState,
     pub(crate) pane_graphics: pane_graphics::Runtime,
+    pub(crate) pane_audio: pane_audio::Runtime,
     pub(crate) pane_graphics_files: Arc<crate::pane_graphics_files::FileStore>,
     pub(crate) direct_graphics_available: bool,
     pub(crate) pixel_mouse_available: bool,
@@ -1372,6 +1374,7 @@ impl App {
             last_api_notification_at: None,
             state,
             pane_graphics: pane_graphics::Runtime::default(),
+            pane_audio: pane_audio::Runtime::default(),
             pane_graphics_files: Arc::new(crate::pane_graphics_files::FileStore::default()),
             direct_graphics_available: false,
             pixel_mouse_available: false,

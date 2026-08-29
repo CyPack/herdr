@@ -10,6 +10,30 @@ pub(crate) const PANE_GRAPHICS_MAX_LAYERS_TOTAL: usize = 64;
 pub(crate) const PANE_GRAPHICS_MAX_INLINE_BYTES_TOTAL: usize = 64 * 1024 * 1024;
 pub(crate) const PANE_GRAPHICS_PRIMARY_LAYER_ID: &str = "primary";
 
+/// Shape every `pane.audio.stream` body has: 48 kHz, stereo, interleaved
+/// little-endian f32, delivered as whole 20 ms frames.
+///
+/// Fixed rather than negotiated: the encoder resamples to 48 kHz whatever it
+/// is given, so any other rate would only add a conversion nobody asked for,
+/// and a producer can convert far more cheaply than the server can re-frame.
+pub(crate) const PANE_AUDIO_SAMPLE_RATE_HZ: u32 = 48_000;
+pub(crate) const PANE_AUDIO_CHANNELS: u8 = 2;
+pub(crate) const PANE_AUDIO_FORMAT: &str = "f32le";
+/// Bytes in one frame: 960 samples per channel × 2 channels × 4 bytes.
+pub(crate) const PANE_AUDIO_FRAME_BYTES: usize = 960 * 2 * 4;
+
+fn default_pane_audio_sample_rate() -> u32 {
+    PANE_AUDIO_SAMPLE_RATE_HZ
+}
+
+fn default_pane_audio_channels() -> u8 {
+    PANE_AUDIO_CHANNELS
+}
+
+fn default_pane_audio_format() -> String {
+    PANE_AUDIO_FORMAT.to_owned()
+}
+
 use super::agents::AgentSessionInfo;
 use super::common::{AgentStatus, PaneAgentState, ReadFormat, ReadSource, SplitDirection};
 
@@ -362,6 +386,51 @@ pub struct PaneGraphicsStreamParams {
     #[serde(skip)]
     #[schemars(skip)]
     pub owner: String,
+}
+
+/// Opens a `pane.audio.stream`. Every field but `pane_id` defaults to the one
+/// shape the server takes; a producer that names another is refused before
+/// the stream opens.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PaneAudioStreamParams {
+    pub pane_id: String,
+    #[serde(default = "default_pane_audio_sample_rate")]
+    pub sample_rate_hz: u32,
+    #[serde(default = "default_pane_audio_channels")]
+    pub channels: u8,
+    #[serde(default = "default_pane_audio_format")]
+    pub format: String,
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub owner: String,
+}
+
+/// One whole frame of an open audio stream. Internal to the streaming socket.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PaneAudioChunkParams {
+    pub pane_id: String,
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub owner: String,
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub pcm: Vec<u8>,
+}
+
+/// Ends an audio stream. Internal to the streaming socket.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PaneAudioStreamCloseParams {
+    pub pane_id: String,
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub owner: String,
+    /// True when the producer broke off rather than finished.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub failed: bool,
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub detail: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

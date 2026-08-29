@@ -51,15 +51,16 @@ struct FrameHeader {
     placement: crate::api::schema::PaneGraphicsPlacementParams,
 }
 
+/// Shared with the audio stream reader, which reuses the body deadlines.
 #[derive(Clone, Copy)]
-struct ReadTimeouts {
-    header_idle: Duration,
-    header_total: Duration,
-    body_idle: Duration,
-    body_total: Duration,
+pub(super) struct ReadTimeouts {
+    pub(super) header_idle: Duration,
+    pub(super) header_total: Duration,
+    pub(super) body_idle: Duration,
+    pub(super) body_total: Duration,
 }
 
-const READ_TIMEOUTS: ReadTimeouts = ReadTimeouts {
+pub(super) const READ_TIMEOUTS: ReadTimeouts = ReadTimeouts {
     header_idle: STREAM_FRAME_HEADER_IDLE_TIMEOUT,
     header_total: STREAM_FRAME_HEADER_TIMEOUT,
     body_idle: STREAM_FRAME_BODY_IDLE_TIMEOUT,
@@ -399,7 +400,7 @@ fn serve_frames(
     Ok(())
 }
 
-fn stream_is_running(running: &AtomicBool, stream_active: &AtomicBool) -> bool {
+pub(super) fn stream_is_running(running: &AtomicBool, stream_active: &AtomicBool) -> bool {
     running.load(Ordering::Relaxed) && stream_active.load(Ordering::Acquire)
 }
 
@@ -490,7 +491,7 @@ fn read_line(
     })
 }
 
-fn read_exact(
+pub(super) fn read_exact(
     stream: &mut LocalStream,
     len: usize,
     running: &Arc<AtomicBool>,

@@ -22,7 +22,9 @@ use crate::ipc::{
     socket_file_identity, LocalStream, LocalStreamRead, SocketFileIdentity,
 };
 
+mod pane_audio_stream;
 mod pane_graphics_stream;
+pub(crate) use pane_audio_stream::cancel_inactive_streams as cancel_inactive_pane_audio_streams;
 pub(crate) use pane_graphics_stream::cancel_inactive_streams as cancel_inactive_pane_graphics_streams;
 
 const SOCKET_PERMISSION_MODE: u32 = 0o600;
@@ -206,6 +208,22 @@ fn handle_connection_with_stop(
         Method::PaneGraphicsStream(params) => {
             let result =
                 pane_graphics_stream::serve(stream, request_id.clone(), params, api_tx, running);
+            match &result {
+                Ok(()) => crate::logging::api_request_completed(
+                    &request_id,
+                    method,
+                    "stream_closed",
+                    changes_ui,
+                ),
+                Err(err) => {
+                    crate::logging::api_request_failed(&request_id, method, &err.to_string())
+                }
+            }
+            result
+        }
+        Method::PaneAudioStream(params) => {
+            let result =
+                pane_audio_stream::serve(stream, request_id.clone(), params, api_tx, running);
             match &result {
                 Ok(()) => crate::logging::api_request_completed(
                     &request_id,
@@ -457,6 +475,10 @@ fn api_method_name(method: &Method) -> &'static str {
         Method::PaneGraphicsStreamDirect(_) => "pane.graphics.stream.direct",
         Method::PaneGraphicsStreamOpen(_) => "pane.graphics.stream.open",
         Method::PaneGraphicsStreamClose(_) => "pane.graphics.stream.close",
+        Method::PaneAudioStream(_) => "pane.audio.stream",
+        Method::PaneAudioStreamOpen(_) => "pane.audio.stream.open",
+        Method::PaneAudioStreamChunk(_) => "pane.audio.stream.chunk",
+        Method::PaneAudioStreamClose(_) => "pane.audio.stream.close",
         Method::PaneReportAgent(_) => "pane.report_agent",
         Method::PaneReportAgentSession(_) => "pane.report_agent_session",
         Method::PaneReportMetadata(_) => "pane.report_metadata",
