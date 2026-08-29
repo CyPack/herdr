@@ -677,9 +677,7 @@ fn encode_terminal_graphics_update_legacy(
         let Some((clipped, format_code)) = clipped_placement(placement) else {
             continue;
         };
-        let host_id = placement
-            .host_image_id
-            .unwrap_or_else(|| host_image_id(placement.pane_id, &placement.placement));
+        let host_id = host_image_id(placement.pane_id, &placement.placement);
         let placement_id = host_placement_id(&placement.source_key, &placement.placement);
         let image_signature = image_signature(placement, format_code);
         let placement_signature =
@@ -690,20 +688,15 @@ fn encode_terminal_graphics_update_legacy(
         match cache.images.get(&host_id).copied() {
             Some(existing) if existing == image_signature => {}
             Some(_) => {
-                // An assigned identity is refreshed in place: kitty replaces
-                // the image when the same id is retransmitted, and a delete
-                // here blanks the live picture between frames.
-                if placement.host_image_id.is_none() {
-                    encode_delete_image(bytes, host_id);
-                    cache.placements.retain(|(image_id, id), _| {
-                        if *image_id == host_id {
-                            current_placements.remove(&(*image_id, *id));
-                            false
-                        } else {
-                            true
-                        }
-                    });
-                }
+                encode_delete_image(bytes, host_id);
+                cache.placements.retain(|(image_id, id), _| {
+                    if *image_id == host_id {
+                        current_placements.remove(&(*image_id, *id));
+                        false
+                    } else {
+                        true
+                    }
+                });
                 if !encode_upload_image(bytes, placement, format_code, host_id) {
                     continue;
                 }
@@ -996,8 +989,7 @@ fn encode_placement_update(
     let mut displayed = false;
     if !image_current {
         if cache.images.contains_key(&host_id)
-            && (placement.host_image_id.is_some()
-                || matches!(placement.source_key, HostSourceKey::PaneLayer { .. }))
+            && matches!(placement.source_key, HostSourceKey::PaneLayer { .. })
         {
             if !encode_transmit_and_display(
                 &mut bytes,
@@ -1354,11 +1346,11 @@ fn collect_popup_pane_placements(
         }
         let format_code = kitty_format_code(descriptor.format);
         let signature = image_signature_from_descriptor(descriptor, format_code);
-        let host_id = stream_host_image_id(popup.pane_id, descriptor.image_id);
+        let host_id = host_image_id_for_signature(popup.pane_id, signature);
         uploaded_images.get(&host_id).copied() != Some(signature)
     }) {
         placements.push(HostPlacement {
-            host_image_id: Some(stream_host_image_id(popup.pane_id, placement.image_id)),
+            host_image_id: None,
             pane_id: popup.pane_id,
             area: inner,
             cell_size,
@@ -1442,7 +1434,7 @@ fn collect_visible_placements(
         for placement in runtime.kitty_image_placements_with_data_filter(|descriptor| {
             let format_code = kitty_format_code(descriptor.format);
             let signature = image_signature_from_descriptor(descriptor, format_code);
-            let host_id = stream_host_image_id(info.id, descriptor.image_id);
+            let host_id = host_image_id_for_signature(info.id, signature);
             uploaded_images.get(&host_id).copied() != Some(signature)
         }) {
             let scrollback_offset = runtime
@@ -1451,7 +1443,7 @@ fn collect_visible_placements(
                 .unwrap_or(0);
             placements.push(HostPlacement {
                 pane_id: info.id,
-                host_image_id: Some(stream_host_image_id(info.id, placement.image_id)),
+                host_image_id: None,
                 area: info.inner_rect,
                 cell_size,
                 source_key: HostSourceKey::Terminal {
@@ -1590,20 +1582,6 @@ fn host_image_id_for_signature(pane_id: PaneId, signature: ImageSignature) -> u3
     let mut hasher = DefaultHasher::new();
     pane_id.raw().hash(&mut hasher);
     signature.hash(&mut hasher);
-    HOST_IMAGE_ID_BASE + ((hasher.finish() as u32) % 900_000)
-}
-
-fn stream_host_image_id(pane_id: PaneId, guest_image_id: u32) -> u32 {
-    // TP-GFX-STABLE-01: identity follows the SOURCE, not the content. A
-    // streaming pane repaints one guest image id with new pixels every frame;
-    // content-hashing that into a fresh host id per frame made every lost
-    // delete a permanently stranded placement. One (pane, guest image) pair
-    // keeps one host image id for its whole life, and a content change is a
-    // retransmit of that same id.
-    let mut hasher = DefaultHasher::new();
-    "stream.stable".hash(&mut hasher);
-    pane_id.raw().hash(&mut hasher);
-    guest_image_id.hash(&mut hasher);
     HOST_IMAGE_ID_BASE + ((hasher.finish() as u32) % 900_000)
 }
 
@@ -3753,52 +3731,6 @@ mod tests {
     }
 
     // H49-4 (V4.TN-3): a source that leaves a shared image and comes back.
-    // TP-GFX-STABLE-01
-    #[test]
-    fn a_streaming_retransmit_never_deletes_the_image_on_screen() {
-        // The stable-identity fix made every new frame a retransmit of the
-        // SAME host image id — but the encoder's refresh path deleted the
-        // image before uploading the replacement, so the live picture blinked
-        // off for the gap between delete and display on every single frame
-        // (the 2026-08-29 16:2x live report: the pane "opens and closes"
-        // continuously). Kitty replaces an image in place when the same id is
-        // retransmitted; a delete must never travel between frames of a live
-        // streaming source.
-        fn frame(fingerprint: u64) -> HostPlacement {
-            let mut frame = test_placement(3, 3);
-            frame.placement.image_id = 9;
-            frame.placement.placement_id = 2;
-            frame.placement.data_fingerprint = fingerprint;
-            frame.host_image_id = Some(510_000);
-            frame.source_key = HostSourceKey::Terminal {
-                pane_id: frame.pane_id,
-                image_id: frame.placement.image_id,
-            };
-            frame
-        }
-
-        let mut cache = HostGraphicsCache::default();
-        let live = HashSet::new();
-
-        let bytes = drain_graphics_updates(&mut cache, &[frame(1)], &live);
-        let first = String::from_utf8_lossy(&bytes);
-        assert!(first.contains("i=510000"), "first frame uploads: {first}");
-
-        let bytes = drain_graphics_updates(&mut cache, &[frame(2)], &live);
-        let update = String::from_utf8_lossy(&bytes);
-        assert!(
-            !update.contains("a=d,d=I,i=510000"),
-            "a retransmit must replace the image in place, never delete it \
-             from the screen first: {update}"
-        );
-        assert!(
-            update.contains("i=510000"),
-            "the new content still travels: {update}"
-        );
-        assert_eq!(cache.images.len(), 1, "one image, refreshed in place");
-        assert_eq!(cache.placements.len(), 1, "the placement survives");
-    }
-
     #[test]
     fn a_source_returning_to_a_shared_image_displays_its_placement_again() {
         // Two sources share one content-hashed image. One moves to new
