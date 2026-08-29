@@ -1955,17 +1955,6 @@ async fn the_live_render_plan_with_a_second_display_never_strands_a_placement() 
     }
 }
 
-fn drop_pending_messages(rx: &std::sync::mpsc::Receiver<Vec<u8>>) -> usize {
-    // A graphics message that reaches the wire but never reaches the terminal:
-    // taken off the channel and thrown away without touching the simulated
-    // kitty, while the server has already committed it to the ledger.
-    let mut dropped = 0;
-    while rx.try_recv().is_ok() {
-        dropped += 1;
-    }
-    dropped
-}
-
 // TP-GFX-LEDGER-02
 #[tokio::test]
 async fn a_lost_graphics_message_still_leaves_one_placement_on_the_terminal() {
