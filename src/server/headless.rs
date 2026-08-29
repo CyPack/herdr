@@ -3573,6 +3573,7 @@ impl HeadlessServer {
                 stream_id,
                 chunks,
             } => {
+                tracing::debug!(client_id, stream_id, chunks, "client media credit");
                 self.app
                     .pane_audio
                     .set_client_credit(stream_id, client_id, chunks);

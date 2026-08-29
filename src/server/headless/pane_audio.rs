@@ -151,6 +151,9 @@ impl HeadlessServer {
                 self.app.pane_audio.forget_client(client_id);
                 continue;
             };
+            if seq == 0 {
+                tracing::debug!(stream_id, client_id, "first audio chunk offered");
+            }
             let delivery = match writer.media.try_send(framed.clone()) {
                 Ok(()) => Delivery::Sent,
                 Err(TrySendError::Full(_)) => Delivery::Full,
@@ -172,6 +175,16 @@ impl HeadlessServer {
         detail: String,
         clients: Vec<u64>,
     ) {
+        if let Some(session) = self.app.pane_audio.session_for_stream(stream_id) {
+            tracing::info!(
+                stream_id,
+                ?reason,
+                counters = %format!("{:?}", session.counters()),
+                subscribers = clients.len(),
+                "audio stream closing"
+            );
+        }
+
         let message = ServerMessage::MediaClose {
             stream_id,
             reason,
