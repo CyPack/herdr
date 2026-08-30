@@ -499,15 +499,23 @@ pub(crate) fn encode_local_pane_graphics(
         app.mode == Mode::Terminal
     };
     let visible = mode_ok && cell_size.is_known();
+    if reseat_placements {
+        // The caller's text blit overdraws the placements: file the re-seat
+        // request up front so the incremental and the legacy road read the
+        // same pending-replay bookkeeping — exactly what the unconditional
+        // in-path request used to do, now asked for per cause instead of per
+        // frame. TP-GFX-REPLAY-01
+        cache.request_placement_replay();
+    }
     if graphics.slots.is_empty() {
         // TP-GFX-RESIZE-01 reseat half: a caller that just re-blitted every
         // text cell (a full frame) wiped the pictures off the screen with the
-        // text and asks for a re-seat through `reseat_placements`. A pending
-        // replay request in the incremental bookkeeping (which
-        // clear_pane_sources resets) is honored too, so it is read first and
-        // either forces the legacy path to re-display unchanged placements.
-        // A text-refresh-only frame asks for neither. TP-GFX-REPLAY-01
-        let replay_placements = cache.replay_placements || reseat_placements;
+        // text. Its re-seat request — filed above per cause, or already
+        // pending in the incremental bookkeeping that clear_pane_sources
+        // resets — is read first and later forces the legacy path to
+        // re-display unchanged placements. A text-refresh-only frame files
+        // no request. TP-GFX-REPLAY-01
+        let replay_placements = cache.replay_placements;
         let mut bytes = cache.clear_pane_sources();
         if !visible {
             bytes.extend(cache.clear_bytes());
@@ -595,14 +603,10 @@ pub(crate) fn encode_local_pane_graphics(
     };
     cache.update_view(visible.then(|| active_view_key(app)).flatten());
     // A full re-blit overwrites Kitty placements with text, so that frame
-    // must display cached images again even when their data and geometry are
-    // unchanged — but only when the caller says its text blit overdraws them.
-    // A text-refresh-only frame blits just the changed status cells, leaves
-    // every picture seated, and must not spend placement bytes per tick.
-    // TP-GFX-REPLAY-01
-    if reseat_placements {
-        cache.request_placement_replay();
-    }
+    // must display cached images again even when nothing about them changed.
+    // The re-seat request was filed at the top of this function, per cause:
+    // a text-refresh-only frame blits just the changed status cells, leaves
+    // every picture seated, and files none. TP-GFX-REPLAY-01
     encode_graphics_update_incremental(cache, &placements, &live_pane_sources, transaction_budget)
 }
 
@@ -2820,7 +2824,7 @@ mod tests {
             app.view.tab_surface(),
             cells,
             None,
-            true,
+            false,
             &mut cache,
         );
         let first_text = String::from_utf8_lossy(&first_bytes.bytes);
@@ -2850,7 +2854,7 @@ mod tests {
                 app.view.tab_surface(),
                 cells,
                 None,
-                true,
+                false,
                 &mut cache,
             )
             .bytes
@@ -2883,7 +2887,7 @@ mod tests {
             app.view.tab_surface(),
             cells,
             None,
-            true,
+            false,
             &mut cache,
         );
         let replacement = String::from_utf8_lossy(&replacement.bytes);
@@ -2899,7 +2903,7 @@ mod tests {
             app.view.tab_surface(),
             cells,
             None,
-            true,
+            false,
             &mut cache,
         );
         let cleanup = String::from_utf8_lossy(&cleanup.bytes);
@@ -3456,7 +3460,7 @@ mod tests {
             app.view.tab_surface(),
             cells,
             None,
-            true,
+            false,
             &mut cache,
         );
         assert!(
