@@ -5125,6 +5125,16 @@ impl HeadlessServer {
             let Some(client) = self.clients.get_mut(&client_id) else {
                 continue;
             };
+            // What this link can carry inside a quarter second: the measured
+            // drain rate turns the fixed graphics ceiling into a per-client
+            // one. Unmeasured (local, fresh) keeps the full ceiling —
+            // fail-open by design (TP-GFX-BUDGET-02).
+            let client_graphics_max = client
+                .writer
+                .as_ref()
+                .map_or(MAX_GRAPHICS_FRAME_SIZE, |writer| {
+                    writer.rate.effective_graphics_max()
+                });
             // App frames arrive with their graphics already encoded (inside
             // the viewer window, above). Everything else carries none and
             // clears its cache exactly as before.
@@ -5189,7 +5199,7 @@ impl HeadlessServer {
                         &ServerMessage::Graphics {
                             bytes: pane_graphics::frame_pane_graphics(graphics),
                         },
-                        MAX_GRAPHICS_FRAME_SIZE,
+                        client_graphics_max,
                     ) {
                         Ok(serialized) => match writer.render.try_send(serialized) {
                             Ok(()) => {
@@ -5226,7 +5236,7 @@ impl HeadlessServer {
                 }
             };
             let max = if has_graphics {
-                MAX_GRAPHICS_FRAME_SIZE
+                client_graphics_max
             } else {
                 crate::protocol::MAX_FRAME_SIZE
             };
