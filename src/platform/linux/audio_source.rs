@@ -55,6 +55,10 @@ pub(crate) struct RawStream {
     pub(crate) pid: Option<u32>,
     pub(crate) pid_trust: Option<PidTrust>,
     pub(crate) app_name: Option<String>,
+    /// What `pw-record --target` wants. The graph's object id and this serial
+    /// are different numbers, and targeting with the wrong one captures the
+    /// wrong stream — quietly, because both are valid ids for something.
+    pub(crate) object_serial: Option<u32>,
 }
 
 const AUDIO_OUTPUT_CLASS: &str = "Stream/Output/Audio";
@@ -103,6 +107,7 @@ pub(crate) fn parse_output_streams(dump: &str) -> Result<Vec<RawStream>, serde_j
             pid,
             pid_trust,
             app_name,
+            object_serial: None,
         });
     }
     Ok(streams)
@@ -189,6 +194,7 @@ mod tests {
        "info": {"props": {"pipewire.sec.pid": 5150, "application.name": "Shell"}}},
       {"id": 200, "type": "PipeWire:Interface:Node",
        "info": {"props": {"media.class": "Stream/Output/Audio", "client.id": 118,
+                          "object.serial": 2374,
                           "application.name": "Browser", "media.name": "playback"}}},
       {"id": 201, "type": "PipeWire:Interface:Node",
        "info": {"props": {"media.class": "Stream/Output/Audio", "client.id": 70,
@@ -252,6 +258,17 @@ mod tests {
     fn the_producer_name_survives_the_read() {
         let streams = parse_output_streams(DUMP).expect("dump parses");
         assert_eq!(stream(&streams, 200).app_name.as_deref(), Some("Browser"));
+    }
+
+    /// PW-9 — the capture target is the stream's serial, not the graph's
+    /// object id: `pw-record --target` reads the serial, and the two numbers
+    /// differ, so carrying only the object id would aim the recorder at
+    /// whatever else happens to hold that number.
+    #[test]
+    fn the_capture_target_is_the_streams_serial() {
+        let streams = parse_output_streams(DUMP).expect("dump parses");
+        assert_eq!(stream(&streams, 200).object_serial, Some(2374));
+        assert_eq!(stream(&streams, 203).object_serial, None);
     }
 
     /// PW-6 — an unreadable graph is an error to report, never a panic in a
