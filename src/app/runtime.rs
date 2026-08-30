@@ -1345,14 +1345,21 @@ mod tests {
             Duration::from_millis(500)
         );
 
+        // The pace is proven on the reading counter, not on the tick's return
+        // value: since TP-RES-27 the return says "worth a frame", and two real
+        // readings that round to the same displayed percent are one frame on
+        // purpose — but they are still two readings, on the configured beat.
         let start = Instant::now();
         assert!(app.tick_resource_sample(start), "the first reading is owed");
-        assert!(
-            !app.tick_resource_sample(start + Duration::from_millis(499)),
+        assert_eq!(app.resource_samples_taken, 1);
+        app.tick_resource_sample(start + Duration::from_millis(499));
+        assert_eq!(
+            app.resource_samples_taken, 1,
             "a reading was taken before the configured interval had passed"
         );
-        assert!(
-            app.tick_resource_sample(start + Duration::from_millis(500)),
+        app.tick_resource_sample(start + Duration::from_millis(500));
+        assert_eq!(
+            app.resource_samples_taken, 2,
             "no reading was taken once the configured interval had passed"
         );
     }
