@@ -220,6 +220,10 @@ pub struct App {
     pub(crate) last_resource_sample_at: Option<Instant>,
     /// The previous CPU reading, kept because a percentage is a difference.
     pub(crate) previous_cpu_times: Option<crate::resource::CpuTimes>,
+    /// What the bar last had the chance to show, at display precision — the
+    /// comparison that decides whether a fresh sample deserves a frame.
+    /// TP-RES-27
+    pub(crate) previous_resource_display: Option<crate::resource::DisplaySignature>,
     /// The last cumulative network byte count, for the difference that makes a
     /// rate. `None` until the first reading, exactly like the CPU times above.
     pub(crate) previous_net_total: Option<u64>,
@@ -1436,6 +1440,7 @@ impl App {
             next_animation_tick: None,
             last_resource_sample_at: None,
             previous_cpu_times: None,
+            previous_resource_display: None,
             previous_net_total: None,
             resource_samples_taken: 0,
             next_auto_update_check: version_check_enabled

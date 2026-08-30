@@ -2101,6 +2101,27 @@ impl SectionWidget {
         }
     }
 
+    /// Whether every sample this widget's metric takes is a visible change.
+    ///
+    /// A sparkline draws its history, and the history grows by one entry per
+    /// reading — so for it, two readings that round to the same label are
+    /// still two different pictures. The numeric widgets show one value and
+    /// only care when that value's displayed form moves. Exhaustive with no
+    /// `_` arm, like its neighbours: a history-drawing widget added later
+    /// must not inherit a `false` nobody wrote. TP-RES-27
+    pub(crate) const fn redraws_every_sample(&self) -> bool {
+        match self {
+            Self::Sparkline { .. } => true,
+            Self::None
+            | Self::Resource { .. }
+            | Self::Meter { .. }
+            | Self::Label { .. }
+            | Self::Icon { .. }
+            | Self::Art { .. }
+            | Self::Clock { .. } => false,
+        }
+    }
+
     /// Which machine counter this widget draws, if it draws one.
     ///
     /// Exhaustive with no `_` arm, like its neighbour: a live widget added
@@ -2341,6 +2362,16 @@ impl ShellBarChrome {
             .into_iter()
             .flat_map(|bar| bar.entries.iter())
             .any(|chrome| chrome.widget.reads_the_machine())
+    }
+
+    /// Whether any visible section turns every reading into a visible change
+    /// (today: a sparkline). Same shape as the gate above, and delegated to
+    /// the widget for the same reason. TP-RES-27
+    pub(crate) fn any_widget_redraws_every_sample(&self) -> bool {
+        [&self.top, &self.bottom, &self.left, &self.right]
+            .into_iter()
+            .flat_map(|bar| bar.entries.iter())
+            .any(|chrome| chrome.widget.redraws_every_sample())
     }
 
     /// The fastest pace any section needs to be redrawn at, or `None` when
