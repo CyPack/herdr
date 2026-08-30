@@ -79,7 +79,10 @@ pub(crate) enum MatchHow {
 pub(crate) enum SourceMatch {
     /// Nothing this pane owns is making sound. The ordinary case, not an error.
     None,
-    One { node_id: u32, how: MatchHow },
+    One {
+        node_id: u32,
+        how: MatchHow,
+    },
     /// More than one stream fits and no rule separates them. Deliberately not
     /// a guess: sending another program's sound to a remote listener is worse
     /// than sending none, and a guess leaves no trace of why it was wrong.
@@ -97,8 +100,67 @@ pub(crate) fn match_pane_source(
     candidates: &[SourceCandidate],
     pane: &PaneProcesses,
 ) -> SourceMatch {
-    let _ = (candidates, pane);
+    let rules = [
+        (MatchHow::Ancestry, by_ancestry(candidates, pane)),
+        (MatchHow::Marker, by_marker(candidates)),
+        (MatchHow::Name, by_name(candidates, pane)),
+    ];
+    for (how, hits) in rules {
+        match hits.len() {
+            0 => continue,
+            1 => {
+                return SourceMatch::One {
+                    node_id: hits[0],
+                    how,
+                }
+            }
+            _ => return SourceMatch::Ambiguous(hits),
+        }
+    }
     SourceMatch::None
+}
+
+/// The producer, or something it descends from, is a process of this pane.
+fn by_ancestry(candidates: &[SourceCandidate], pane: &PaneProcesses) -> Vec<u32> {
+    candidates
+        .iter()
+        .filter(|candidate| {
+            candidate.pid.is_some_and(|pid| pane.pids.contains(&pid))
+                || candidate
+                    .ancestors
+                    .iter()
+                    .any(|ancestor| pane.pids.contains(ancestor))
+        })
+        .map(|candidate| candidate.node_id)
+        .collect()
+}
+
+/// Someone in the chain carries the pane's environment marker. Weaker than
+/// ancestry because a marker survives being inherited by a process the pane no
+/// longer owns, while a parent link cannot be inherited by mistake.
+fn by_marker(candidates: &[SourceCandidate]) -> Vec<u32> {
+    candidates
+        .iter()
+        .filter(|candidate| candidate.carries_pane_marker)
+        .map(|candidate| candidate.node_id)
+        .collect()
+}
+
+/// The producer names itself after one of the pane's own processes. Matched
+/// exactly, not case-insensitively: this is the weakest rule, so it is also
+/// the one where a false positive costs the most, and no measurement yet
+/// justifies widening it.
+fn by_name(candidates: &[SourceCandidate], pane: &PaneProcesses) -> Vec<u32> {
+    candidates
+        .iter()
+        .filter(|candidate| {
+            candidate
+                .app_name
+                .as_deref()
+                .is_some_and(|name| pane.names.contains(name))
+        })
+        .map(|candidate| candidate.node_id)
+        .collect()
 }
 
 #[cfg(test)]
