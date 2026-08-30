@@ -152,7 +152,26 @@ So the moment a defect is understood, before the fix is written:
 5. **Find the sibling that gets it right.** It gives the fix its shape, and the question "why are
    these two different?" traces how the defect spread.
 
-The sweep ends when the class has been **enumerated**, not when the first instance is fixed. Every
+The sweep ends when the class has been **enumerated**, not when the first instance is fixed.
+
+**The sweep, run on this defect (2026-08-30):**
+
+| where | shape | verdict |
+|---|---|---|
+| `headless.rs` — 5 tests via `drain_messages` | bare `try_recv` on the forwarder-fed channel | ⛔ the class; all five share it |
+| `headless.rs:6274/6307/6324/6513` | `recv_timeout(100 ms)` | ✅ the sibling that got it right |
+| `pane_audio_stream.rs:611,843` | `try_recv().is_err()` **after `join()`** | ✅ safe — the join is the proof |
+| `pane_graphics_stream.rs:1240` | `try_recv().is_err()` after `join()` | ✅ safe |
+| `api/server.rs:628` | `try_recv().is_err()` after `sleep(300 ms)` | ⚠ the sleep *is* the test's meaning here, but under load it can only pass — a false green, not a false red |
+
+The rule that fell out of the sweep, which none of the five failing tests states:
+
+> **A negative assert on a channel is sound only when the producer has been joined, or otherwise
+> proven finished. A sleep is not a proof — it is a bet that gets safer, and more useless, the
+> more loaded the machine is.**
+
+A false red costs a turn and announces itself. A false green costs a behaviour and says nothing.
+ Every
 further instance is either fixed in the same commit or written down by name. Silence is how the
 second half of a class survives into the next session.
 
