@@ -7278,12 +7278,106 @@ mod tests {
         (server, control_rx, client_rx, pane_id)
     }
 
-    fn drain_messages(rx: &std::sync::mpsc::Receiver<Vec<u8>>) -> Vec<ServerMessage> {
+    /// The test `ClientWriter` forwards every lane through a spawned drain
+    /// thread (`ClientWriter::test_channel`), so a message handed to the
+    /// writer is only *eventually* visible on these receivers. Wire asserts
+    /// must wait for the forwarder — the `next_window_title` convention — or
+    /// they lose that race on a saturated machine: a 5ms delay injected into
+    /// the forwarder fails a bare `try_recv` drain on every single run.
+    fn collect_wire_messages(
+        receivers: [&std::sync::mpsc::Receiver<Vec<u8>>; 2],
+        window: Duration,
+        done: impl Fn(&[ServerMessage]) -> bool,
+    ) -> Vec<ServerMessage> {
+        let deadline = Instant::now() + window;
         let mut out = Vec::new();
-        while let Ok(bytes) = rx.try_recv() {
-            out.push(read_server_message(bytes));
+        loop {
+            for rx in receivers {
+                while let Ok(bytes) = rx.try_recv() {
+                    out.push(read_server_message(bytes));
+                }
+            }
+            if done(&out) || Instant::now() >= deadline {
+                return out;
+            }
+            std::thread::sleep(Duration::from_millis(2));
         }
-        out
+    }
+
+    /// A delete-all reaches the wire on either lane within the deadline.
+    fn delete_all_arrives(
+        control_rx: &std::sync::mpsc::Receiver<Vec<u8>>,
+        render_rx: &std::sync::mpsc::Receiver<Vec<u8>>,
+    ) -> bool {
+        any_delete_all(&collect_wire_messages(
+            [control_rx, render_rx],
+            Duration::from_secs(5),
+            any_delete_all,
+        ))
+    }
+
+    /// Exact quiescence for an absence assert: a sentinel sent down the
+    /// control lane after the work under test must come out the far end
+    /// before silence is judged. The forwarder is a single thread and a lane
+    /// is FIFO, so the sentinel's arrival proves every control message
+    /// enqueued before it was delivered — no sleep, no bet. These absence
+    /// tests trigger no render, so the control lane is the only road a
+    /// delete could take; the render receiver is still scanned for
+    /// completeness, and a sentinel that never returns fails loudly instead
+    /// of passing quietly.
+    fn no_delete_all_arrives(
+        writer: &ClientWriter,
+        control_rx: &std::sync::mpsc::Receiver<Vec<u8>>,
+        render_rx: &std::sync::mpsc::Receiver<Vec<u8>>,
+    ) -> bool {
+        const SENTINEL: &str = "__drain_sentinel__";
+        let framed = HeadlessServer::frame_server_message(&ServerMessage::WindowTitle {
+            title: Some(SENTINEL.to_owned()),
+        })
+        .expect("frame the drain sentinel");
+        let _ = writer.control.send(framed);
+        let is_sentinel = |message: &ServerMessage| matches!(message, ServerMessage::WindowTitle { title: Some(t) } if t == SENTINEL);
+        let messages = collect_wire_messages(
+            [control_rx, render_rx],
+            Duration::from_secs(5),
+            |messages| messages.iter().any(is_sentinel),
+        );
+        assert!(
+            messages.iter().any(is_sentinel),
+            "the drain sentinel must come back — is the test writer's forwarder dead?"
+        );
+        !any_delete_all(&messages)
+    }
+
+    fn wire_graphics_bytes(messages: &[ServerMessage]) -> Vec<u8> {
+        messages
+            .iter()
+            .flat_map(|message| match message {
+                ServerMessage::Frame(frame) => frame.graphics.clone(),
+                ServerMessage::Graphics { bytes } => bytes.clone(),
+                _ => Vec::new(),
+            })
+            .collect()
+    }
+
+    /// Graphics bytes from both lanes, collected until one of `patterns`
+    /// appears or the deadline passes.
+    fn graphics_bytes_arrive(
+        control_rx: &std::sync::mpsc::Receiver<Vec<u8>>,
+        render_rx: &std::sync::mpsc::Receiver<Vec<u8>>,
+        patterns: &[&[u8]],
+    ) -> Vec<u8> {
+        let messages = collect_wire_messages(
+            [control_rx, render_rx],
+            Duration::from_secs(5),
+            |messages| {
+                let bytes = wire_graphics_bytes(messages);
+                patterns
+                    .iter()
+                    .any(|pattern| bytes.windows(pattern.len()).any(|w| w == *pattern))
+            },
+        );
+        wire_graphics_bytes(&messages)
     }
 
     fn any_delete_all(messages: &[ServerMessage]) -> bool {
@@ -7323,8 +7417,7 @@ mod tests {
             "the slate is wiped with the geometry that placed it"
         );
         assert!(
-            any_delete_all(&drain_messages(&control_rx))
-                || any_delete_all(&drain_messages(&client_rx)),
+            delete_all_arrives(&control_rx, &client_rx),
             "the delete reaches the terminal, not only the ledger"
         );
     }
@@ -7353,10 +7446,7 @@ mod tests {
         }));
 
         assert!(server.clients.get(&1).unwrap().graphics_cache.is_empty());
-        assert!(
-            any_delete_all(&drain_messages(&control_rx))
-                || any_delete_all(&drain_messages(&client_rx))
-        );
+        assert!(delete_all_arrives(&control_rx, &client_rx));
     }
 
     // TP-GFX-RESIZE-01: a resize that changes nothing moves no bytes — the
@@ -7386,9 +7476,15 @@ mod tests {
             !server.clients.get(&1).unwrap().graphics_cache.is_empty(),
             "an unchanged geometry keeps its slate"
         );
+        let writer = server
+            .clients
+            .get(&1)
+            .unwrap()
+            .writer
+            .clone()
+            .expect("test client writer");
         assert!(
-            !any_delete_all(&drain_messages(&control_rx))
-                || any_delete_all(&drain_messages(&client_rx)),
+            no_delete_all_arrives(&writer, &control_rx, &client_rx),
             "no change, no bytes"
         );
     }
@@ -7422,9 +7518,15 @@ mod tests {
             !server.clients.get(&1).unwrap().graphics_cache.is_empty(),
             "the stream entry keeps its seat"
         );
+        let writer = server
+            .clients
+            .get(&1)
+            .unwrap()
+            .writer
+            .clone()
+            .expect("test client writer");
         assert!(
-            !any_delete_all(&drain_messages(&control_rx))
-                && !any_delete_all(&drain_messages(&client_rx)),
+            no_delete_all_arrives(&writer, &control_rx, &client_rx),
             "no delete travels for a slate the replay road owns"
         );
     }
@@ -7444,15 +7546,11 @@ mod tests {
         };
 
         server.render_and_stream();
-        let first: Vec<u8> = drain_messages(&control_rx)
-            .into_iter()
-            .chain(drain_messages(&client_rx))
-            .flat_map(|message| match message {
-                ServerMessage::Frame(frame) => frame.graphics,
-                ServerMessage::Graphics { bytes } => bytes,
-                _ => Vec::new(),
-            })
-            .collect();
+        let first = graphics_bytes_arrive(
+            &control_rx,
+            &client_rx,
+            &[b"a=T,".as_slice(), b"a=t,".as_slice()],
+        );
         assert!(
             first.windows(4).any(|w| w == b"a=T,") || first.windows(4).any(|w| w == b"a=t,"),
             "the first full render carries the PTY's picture"
@@ -7460,15 +7558,11 @@ mod tests {
 
         server.app.full_redraw_pending = true;
         server.render_and_stream();
-        let second: Vec<u8> = drain_messages(&control_rx)
-            .into_iter()
-            .chain(drain_messages(&client_rx))
-            .flat_map(|message| match message {
-                ServerMessage::Frame(frame) => frame.graphics,
-                ServerMessage::Graphics { bytes } => bytes,
-                _ => Vec::new(),
-            })
-            .collect();
+        let second = graphics_bytes_arrive(
+            &control_rx,
+            &client_rx,
+            &[b"a=p,".as_slice(), b"a=T,".as_slice(), b"a=t,".as_slice()],
+        );
         assert!(
             second.windows(4).any(|w| w == b"a=p,")
                 || second.windows(4).any(|w| w == b"a=T,")
