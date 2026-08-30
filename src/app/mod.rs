@@ -37,6 +37,7 @@ mod ids;
 mod image_preview_worker;
 mod input;
 pub(crate) mod pane_audio;
+pub(crate) mod pane_audio_source;
 pub(crate) mod pane_graphics;
 
 /// One unclaimed pointer press, queued by the input layer and drained into a
