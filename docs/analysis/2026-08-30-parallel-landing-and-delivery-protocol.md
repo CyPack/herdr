@@ -162,7 +162,7 @@ The sweep ends when the class has been **enumerated**, not when the first instan
 | `headless.rs:6274/6307/6324/6513` | `recv_timeout(100 ms)` | ✅ the sibling that got it right |
 | `pane_audio_stream.rs:611,843` | `try_recv().is_err()` **after `join()`** | ✅ safe — the join is the proof |
 | `pane_graphics_stream.rs:1240` | `try_recv().is_err()` after `join()` | ✅ safe |
-| `api/server.rs:628` | `try_recv().is_err()` after `sleep(300 ms)` | ⚠ the sleep *is* the test's meaning here, but under load it can only pass — a false green, not a false red |
+| `api/server.rs:628` | `try_recv().is_err()` after `sleep(300 ms)` | ✅ sound — see below; the sweep's own suspicion did not survive reading the test |
 
 The rule that fell out of the sweep, which none of the five failing tests states:
 
@@ -177,6 +177,20 @@ does exactly that: the test sends its own marker down the same lane, and a singl
 in-lane FIFO ordering means everything queued before the marker has been delivered by the time the
 marker comes back. If it never comes back the test fails loudly instead of passing quietly — which
 is the whole point, because it converts a false green into a false red.
+
+The sweep's one remaining suspicion was then read properly and dismissed, which is worth as much
+as the confirmations. `windows_delayed_partial_initial_request_returns_pong` asserts twice, after a
+sleep, that a connection handler has *not* returned — the shape that usually hides a false green.
+It does not hide one here: the channel carries exactly one message, sent when the handler returns,
+and the test ends by writing the newline and **reading the pong back**. That final read is a
+positive proof that the connection stayed alive for the whole test. The sleeps are opportunistic
+early checks; the load-bearing assertion is the one at the end.
+
+The general form is worth keeping, because it is what step 4 of the sweep is for:
+
+> **A negative assert can be carried by a positive assert that comes after it.** Look at what the
+> test does *next* before calling a sleep a bet: if a later step could only succeed when the
+> negative property held throughout, the property is proven, and the sleep is only impatience.
 
 So the ladder, strongest first:
 
