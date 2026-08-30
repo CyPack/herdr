@@ -636,6 +636,7 @@ fn pane_command() -> Command {
                         .arg(option("url", "URL"))
                         .arg(split_direction_option())
                         .arg(option("ratio", "FLOAT"))
+                        .arg(option("agent", "A"))
                         .arg(path_option("cwd", "PATH"))
                         .arg(env_option())
                         .arg(flag("focus"))
@@ -1391,6 +1392,7 @@ mod tests {
         let cmd = super::command();
         let web_open = command_path(&cmd, &["pane", "web", "open"]);
         assert!(has_option(web_open, "url"));
+        assert!(has_option(web_open, "agent"));
         assert!(has_option(web_open, "direction"));
         assert_eq!(option_values(web_open, "direction"), ["right", "down"]);
     }
