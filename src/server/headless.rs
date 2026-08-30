@@ -64,6 +64,7 @@ use crate::server::socket_paths::{
 use crate::server::terminal_attach::paste_payload_for_runtime;
 
 mod pane_audio;
+mod pane_audio_capture;
 mod pane_graphics;
 
 use crate::protocol::MAX_GRAPHICS_FRAME_SIZE;
