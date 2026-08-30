@@ -537,6 +537,10 @@ impl HeadlessServer {
                 self.app.state.view.tab_surface(),
                 cell_size,
                 Some(crate::kitty_graphics::HEADLESS_GRAPHICS_TRANSACTION_BUDGET),
+                // The graphics-only retained path keeps its historical
+                // re-seat; its replay economy belongs to the delta-wiring
+                // work, not to TP-GFX-REPLAY-01.
+                true,
                 &mut next_graphics_cache,
             );
             crate::render_prof::duration_since("retained_graphics.graphics_encode", encode_started);

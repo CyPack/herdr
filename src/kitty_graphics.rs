@@ -431,6 +431,8 @@ pub(crate) fn paint_local_pane_graphics(
             app.view.tab_surface(),
             cell_size,
             None,
+            // The monolithic paint path always re-blits over the pictures.
+            true,
             &mut cache,
         );
         drop(cache);
@@ -451,6 +453,8 @@ pub(crate) fn paint_local_pane_graphics(
             app.view.tab_surface(),
             cell_size,
             None,
+            // The monolithic paint path always re-blits over the pictures.
+            true,
             &mut cache,
         );
         if !encoded.bytes.is_empty() {
@@ -468,6 +472,12 @@ pub(crate) struct EncodedGraphics {
     pub(crate) incomplete: bool,
 }
 
+/// `reseat_placements`: whether this frame's text blit overdraws the
+/// placements. A full re-blit (resize, divider release, a repaint) must
+/// re-seat cached pictures; a frame whose only change is status text keeps
+/// them seated — the client blits only the changed cells, no picture is
+/// overdrawn, and a re-seat per tick is graphics bytes on the wire every
+/// second, reading as the picture blinking. TP-GFX-REPLAY-01
 pub(crate) fn encode_local_pane_graphics(
     app: &AppState,
     graphics: &crate::app::pane_graphics::Runtime,
@@ -475,6 +485,7 @@ pub(crate) fn encode_local_pane_graphics(
     surface: crate::ui::TabSurfaceView<'_>,
     cell_size: HostCellSize,
     transaction_budget: Option<usize>,
+    reseat_placements: bool,
     cache: &mut HostGraphicsCache,
 ) -> EncodedGraphics {
     // Two surfaces, two rules (fork). Pane graphics belong to a terminal
@@ -491,10 +502,12 @@ pub(crate) fn encode_local_pane_graphics(
     if graphics.slots.is_empty() {
         // TP-GFX-RESIZE-01 reseat half: a caller that just re-blitted every
         // text cell (a full frame) wiped the pictures off the screen with the
-        // text. Its pending replay request lives in the incremental
-        // bookkeeping that clear_pane_sources resets, so it is read first and
-        // later forces the legacy path to re-display unchanged placements.
-        let replay_placements = cache.replay_placements;
+        // text and asks for a re-seat through `reseat_placements`. A pending
+        // replay request in the incremental bookkeeping (which
+        // clear_pane_sources resets) is honored too, so it is read first and
+        // either forces the legacy path to re-display unchanged placements.
+        // A text-refresh-only frame asks for neither. TP-GFX-REPLAY-01
+        let replay_placements = cache.replay_placements || reseat_placements;
         let mut bytes = cache.clear_pane_sources();
         if !visible {
             bytes.extend(cache.clear_bytes());
@@ -581,9 +594,15 @@ pub(crate) fn encode_local_pane_graphics(
         Vec::new()
     };
     cache.update_view(visible.then(|| active_view_key(app)).flatten());
-    // The host text blit overwrites Kitty placements, so every rendered frame must
-    // display cached images again even when their data and geometry are unchanged.
-    cache.request_placement_replay();
+    // A full re-blit overwrites Kitty placements with text, so that frame
+    // must display cached images again even when their data and geometry are
+    // unchanged — but only when the caller says its text blit overdraws them.
+    // A text-refresh-only frame blits just the changed status cells, leaves
+    // every picture seated, and must not spend placement bytes per tick.
+    // TP-GFX-REPLAY-01
+    if reseat_placements {
+        cache.request_placement_replay();
+    }
     encode_graphics_update_incremental(cache, &placements, &live_pane_sources, transaction_budget)
 }
 
@@ -2801,6 +2820,7 @@ mod tests {
             app.view.tab_surface(),
             cells,
             None,
+            true,
             &mut cache,
         );
         let first_text = String::from_utf8_lossy(&first_bytes.bytes);
@@ -2830,6 +2850,7 @@ mod tests {
                 app.view.tab_surface(),
                 cells,
                 None,
+                true,
                 &mut cache,
             )
             .bytes
@@ -2862,6 +2883,7 @@ mod tests {
             app.view.tab_surface(),
             cells,
             None,
+            true,
             &mut cache,
         );
         let replacement = String::from_utf8_lossy(&replacement.bytes);
@@ -2877,6 +2899,7 @@ mod tests {
             app.view.tab_surface(),
             cells,
             None,
+            true,
             &mut cache,
         );
         let cleanup = String::from_utf8_lossy(&cleanup.bytes);
@@ -3433,6 +3456,7 @@ mod tests {
             app.view.tab_surface(),
             cells,
             None,
+            true,
             &mut cache,
         );
         assert!(
