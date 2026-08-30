@@ -154,6 +154,76 @@ fn prop_str<'a>(props: Option<&'a Value>, key: &str) -> Option<&'a str> {
     props?.get(key)?.as_str()
 }
 
+/// One frame of the audio protocol: 960 samples, two channels, little-endian
+/// f32. The number is not ours to choose — the server refuses anything else.
+pub(crate) const SOURCE_FRAME_BYTES: usize = 960 * 2 * 4;
+
+#[derive(Debug)]
+pub(crate) enum SourceError {
+    /// The recorder could not be started at all.
+    Unavailable(String),
+    /// It was running and stopped.
+    Closed(String),
+}
+
+impl std::fmt::Display for SourceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unavailable(detail) => write!(f, "audio source unavailable: {detail}"),
+            Self::Closed(detail) => write!(f, "audio source closed: {detail}"),
+        }
+    }
+}
+
+/// Cuts an arbitrary byte stream into whole frames, keeping the remainder.
+///
+/// The recorder promises nothing about block sizes, and the protocol refuses a
+/// partial frame by contract: a frame quietly padded or truncated drifts the
+/// clock by that much on *every* frame — inaudible once, obvious after a
+/// minute, and impossible to trace back afterwards.
+pub(crate) struct Reframer {
+    frame_bytes: usize,
+    buffer: Vec<u8>,
+}
+
+impl Reframer {
+    pub(crate) fn new() -> Self {
+        Self::with_frame_bytes(SOURCE_FRAME_BYTES)
+    }
+
+    /// The seam a test uses to work in small numbers instead of 7680 at a time.
+    pub(crate) fn with_frame_bytes(frame_bytes: usize) -> Self {
+        Self {
+            frame_bytes: frame_bytes.max(1),
+            buffer: Vec::with_capacity(frame_bytes.max(1) * 2),
+        }
+    }
+
+    pub(crate) fn push(&mut self, chunk: &[u8]) {
+        let _ = chunk;
+    }
+
+    pub(crate) fn next_frame(&mut self) -> Option<Vec<u8>> {
+        None
+    }
+
+    /// Bytes held back because they do not yet make a whole frame.
+    pub(crate) fn pending(&self) -> usize {
+        self.buffer.len()
+    }
+}
+
+/// The recorder's argument list, built where it can be read in a test rather
+/// than assembled inside a spawn nobody can see.
+///
+/// `--target` takes the stream's **serial**, not the graph object id: both are
+/// valid ids for something, so aiming with the wrong one records the wrong
+/// stream and reports no error at all.
+pub(crate) fn capture_args(object_serial: u32) -> Vec<String> {
+    let _ = object_serial;
+    Vec::new()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -192,6 +262,61 @@ mod tests {
             .iter()
             .find(|stream| stream.node_id == node_id)
             .unwrap_or_else(|| panic!("node {node_id} missing from {streams:?}"))
+    }
+
+    /// RFR-1 — a partial tail is never handed on. The protocol refuses it, and
+    /// padding it would move the clock on every frame thereafter.
+    #[test]
+    fn a_partial_tail_is_held_back() {
+        let mut reframer = Reframer::with_frame_bytes(4);
+        reframer.push(&[1, 2, 3]);
+        assert_eq!(reframer.next_frame(), None);
+        assert_eq!(reframer.pending(), 3);
+    }
+
+    /// RFR-2 — the boundary case: a chunk that ends exactly on a frame edge
+    /// leaves nothing behind. Off-by-one here drifts silently.
+    #[test]
+    fn a_chunk_ending_on_the_boundary_leaves_nothing() {
+        let mut reframer = Reframer::with_frame_bytes(4);
+        reframer.push(&[1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(reframer.next_frame(), Some(vec![1, 2, 3, 4]));
+        assert_eq!(reframer.next_frame(), Some(vec![5, 6, 7, 8]));
+        assert_eq!(reframer.next_frame(), None);
+        assert_eq!(reframer.pending(), 0);
+    }
+
+    /// RFR-3 — a recorder that trickles bytes still produces whole frames.
+    #[test]
+    fn trickled_bytes_accumulate_into_a_frame() {
+        let mut reframer = Reframer::with_frame_bytes(4);
+        for byte in [9_u8, 8, 7] {
+            reframer.push(&[byte]);
+            assert_eq!(reframer.next_frame(), None);
+        }
+        reframer.push(&[6]);
+        assert_eq!(reframer.next_frame(), Some(vec![9, 8, 7, 6]));
+    }
+
+    /// RFR-4 — the shipped frame size is the protocol's, not a local choice.
+    #[test]
+    fn the_default_frame_is_the_protocol_frame() {
+        assert_eq!(SOURCE_FRAME_BYTES, 7680);
+        assert_eq!(Reframer::new().pending(), 0);
+    }
+
+    /// SRC-ARGS — the measured working invocation, pinned where it can be read.
+    /// The serial is what `pw-record --target` wants; the graph object id is a
+    /// different number and aiming with it records someone else's stream.
+    #[test]
+    fn the_recorder_is_aimed_with_the_streams_serial() {
+        let args = capture_args(2374);
+        let joined = args.join(" ");
+        assert!(joined.contains("--target 2374"), "{joined}");
+        assert!(joined.contains("--rate 48000"), "{joined}");
+        assert!(joined.contains("--channels 2"), "{joined}");
+        assert!(joined.contains("--format f32"), "{joined}");
+        assert_eq!(args.last().map(String::as_str), Some("-"), "{joined}");
     }
 
     /// PW-1 — the measured failure: a bridged client's verified pid belongs to
