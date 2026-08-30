@@ -192,6 +192,16 @@ fn retained_render_plan(input: RetainedRenderInput) -> RetainedRenderPlan {
     }
 }
 
+/// Whether a full render re-seats cached kitty placements: every real full
+/// cause does (resize, divider release, internal/server/API events — their
+/// text blit overdraws the pictures), while a frame whose sole cause is a
+/// scheduled text refresh keeps them seated — nothing under a picture moved,
+/// and a re-seat per tick is graphics bytes on the wire reading as the
+/// picture blinking. TP-GFX-REPLAY-01
+fn full_render_reseat_policy(needs_full_render: bool, text_refresh_only: bool) -> bool {
+    needs_full_render || !text_refresh_only
+}
+
 fn record_render_impact(source: &'static str, impact: RenderImpact) {
     let event = match (source, impact) {
         ("api_requests", RenderImpact::Graphics) => "graphics_render_cause.api_requests",
@@ -372,6 +382,18 @@ pub struct HeadlessServer {
     shutting_down: bool,
     /// Flag set while exporting live PTYs to a replacement server.
     handoff_in_progress: bool,
+    /// Set by the scheduled-tasks pass when only status text changed inside
+    /// an unchanged layout (the resource sample, the clock). The loop drains
+    /// it into a frame that must not re-seat kitty placements: re-seating
+    /// every tick puts graphics bytes on the wire once a second and reads as
+    /// the picture blinking. TP-GFX-REPLAY-01
+    scheduled_text_refresh_pending: bool,
+    /// Whether the next full render asks the encoder to re-seat cached kitty
+    /// placements. Defaults to true — resize, divider release and every
+    /// other full cause keep their re-seat — and `render_and_stream` re-arms
+    /// it on entry; the loop lowers it only for a frame whose sole cause is
+    /// a scheduled text refresh. TP-GFX-REPLAY-01
+    full_render_reseats_placements: bool,
     /// Imported panes get one app-safe resize nudge after the first client attaches.
     #[cfg(unix)]
     pending_handoff_repaint_nudge: bool,
@@ -571,6 +593,8 @@ impl HeadlessServer {
             effective_size: headless_size,
             shutting_down: false,
             handoff_in_progress: false,
+            scheduled_text_refresh_pending: false,
+            full_render_reseats_placements: true,
             #[cfg(unix)]
             pending_handoff_repaint_nudge: false,
             should_quit,
@@ -604,6 +628,10 @@ impl HeadlessServer {
         let mut needs_render = true;
         let mut needs_full_render = true;
         let mut needs_graphics_render = false;
+        // A frame whose only cause is refreshed status text (the resource
+        // sample, the clock): it composes in full but keeps kitty placements
+        // seated. Any real full cause in the same turn wins. TP-GFX-REPLAY-01
+        let mut needs_text_refresh_render = false;
 
         loop {
             crate::render_prof::event("loop.tick");
@@ -723,6 +751,17 @@ impl HeadlessServer {
                     needs_graphics_render = false;
                     crate::render_prof::event("full_render_cause.scheduled_tasks");
                 }
+                // Status text changed inside an unchanged layout. The frame
+                // still composes in full, but nothing under a picture moved
+                // and the semantic client blits only the changed cells, so
+                // re-seating placements here is graphics bytes on the wire
+                // every tick — measured live as the picture blinking once a
+                // second. TP-GFX-REPLAY-01
+                if std::mem::take(&mut self.scheduled_text_refresh_pending) {
+                    needs_render = true;
+                    needs_text_refresh_render = true;
+                    crate::render_prof::event("text_refresh_cause.scheduled_tasks");
+                }
 
                 if self.handle_deferred_requests_headless() {
                     needs_render = true;
@@ -771,7 +810,7 @@ impl HeadlessServer {
                 && (render_cadence_due
                     || (self.app.can_present_now(now)
                         && self.has_pending_presentation_work(
-                            needs_full_render,
+                            needs_full_render || needs_text_refresh_render,
                             needs_graphics_render,
                         )))
             {
@@ -799,7 +838,11 @@ impl HeadlessServer {
                 if needs_full_render && !outer_title_synced {
                     self.sync_window_title();
                 }
-                if !needs_full_render && !needs_graphics_render && !pty_dirty {
+                if !needs_full_render
+                    && !needs_text_refresh_render
+                    && !needs_graphics_render
+                    && !pty_dirty
+                {
                     // A synchronized-output OSC title can be the only pending work.
                     // Its deferred PTY repaint has its own signal; do not manufacture
                     // a full UI render for this client-local side effect.
@@ -808,6 +851,8 @@ impl HeadlessServer {
                 }
                 if needs_full_render {
                     crate::render_prof::event("retained_gate.needs_full_render");
+                } else if needs_text_refresh_render {
+                    crate::render_prof::event("retained_gate.text_refresh");
                 } else if !pty_dirty {
                     crate::render_prof::event("retained_gate.not_pty_dirty");
                 }
@@ -821,7 +866,7 @@ impl HeadlessServer {
                 };
                 let mut deferred_graphics = false;
                 let render_plan = retained_render_plan(RetainedRenderInput {
-                    needs_full_render,
+                    needs_full_render: needs_full_render || needs_text_refresh_render,
                     needs_graphics_render,
                     pty,
                 });
@@ -848,6 +893,8 @@ impl HeadlessServer {
                     continue;
                 }
                 if !rendered_retained {
+                    self.full_render_reseats_placements =
+                        full_render_reseat_policy(needs_full_render, needs_text_refresh_render);
                     crate::render_prof::event("full_render.invoke");
                     self.render_and_stream();
                 }
@@ -856,6 +903,7 @@ impl HeadlessServer {
                 needs_render = false;
                 needs_full_render = false;
                 needs_graphics_render = false;
+                needs_text_refresh_render = false;
                 continue;
             }
 
@@ -4707,6 +4755,10 @@ impl HeadlessServer {
                 self.app.state.view.tab_surface(),
                 *cell_size,
                 Some(crate::kitty_graphics::HEADLESS_GRAPHICS_TRANSACTION_BUDGET),
+                // The retained fast path keeps its historical re-seat: its
+                // replay economy is owned by the delta-wiring work, not by
+                // TP-GFX-REPLAY-01.
+                true,
                 &mut cache,
             );
             self.app.state.restore_viewer(previous_viewer);
@@ -4886,6 +4938,9 @@ impl HeadlessServer {
     }
 
     fn render_and_stream(&mut self) {
+        // Consumed per call and re-armed: callers outside the loop (tests,
+        // deferred paths) keep the default re-seat. TP-GFX-REPLAY-01
+        let reseat_placements = std::mem::replace(&mut self.full_render_reseats_placements, true);
         let full_started = crate::render_prof::timer();
         let render_targets = render_targets(&self.clients, self.foreground_client_id);
         let negotiated_tab_sizes = self.negotiated_tab_sizes();
@@ -5033,13 +5088,16 @@ impl HeadlessServer {
                                     &mut next_graphics_cache,
                                 );
                             }
-                            // A full frame re-blits every text cell and
-                            // wipes the kitty placements with them; ask the
-                            // encoder to re-seat cached pictures even when
-                            // nothing about them changed (TP-GFX-RESIZE-01
-                            // reseat half — the divider-release repaint rides
-                            // this road).
-                            next_graphics_cache.request_placement_replay();
+                            // Whether this frame re-seats cached pictures:
+                            // every real full cause does — its text blit
+                            // overdraws the placements (TP-GFX-RESIZE-01
+                            // reseat half; the divider-release repaint rides
+                            // this road) — while a text-refresh-only frame
+                            // keeps them seated: the semantic client blits
+                            // only the changed status cells, and a re-seat
+                            // per tick is graphics bytes on the wire reading
+                            // as the picture blinking. TP-GFX-REPLAY-01
+                            let reseat = reseat_placements || client.graphics_surface_reset_pending;
                             let graphics_started = crate::render_prof::timer();
                             let encoded = crate::kitty_graphics::encode_local_pane_graphics(
                                 &self.app.state,
@@ -5048,6 +5106,7 @@ impl HeadlessServer {
                                 self.app.state.view.tab_surface(),
                                 cell_size,
                                 Some(crate::kitty_graphics::HEADLESS_GRAPHICS_TRANSACTION_BUDGET),
+                                reseat,
                                 &mut next_graphics_cache,
                             );
                             frame.graphics.extend(encoded.bytes);
@@ -5551,14 +5610,19 @@ impl HeadlessServer {
         // showing `--` forever, because the code that read the machine was
         // never executed by the process that drew it.
         // TP-RES-11: the sampler runs in the loop that actually renders.
-        changed |= track("sched.resource_sample", self.app.tick_resource_sample(now));
+        // The sampler and the clock repaint status text inside an unchanged
+        // layout, so they signal through the text-refresh channel instead of
+        // the full-impact return: the frame they ask for must not re-seat
+        // kitty placements (TP-GFX-REPLAY-01).
+        self.scheduled_text_refresh_pending |=
+            track("sched.resource_sample", self.app.tick_resource_sample(now));
         // And the clock, for exactly the same reason and caught by exactly the
         // same guard: this was added to the monolithic loop alone, every clock
         // test stayed green, and the parity check named `tick_clock` as a call
         // this loop was missing. A clock that ticks only where nothing draws is
         // a clock that never moves.
         // TP-CLOCK-12: the clock ticks in the loop that actually renders.
-        changed |= track("sched.clock", self.app.tick_clock());
+        self.scheduled_text_refresh_pending |= track("sched.clock", self.app.tick_clock());
 
         if self.has_app_client() {
             self.app.start_git_status_refresh_if_due(now);
@@ -6281,6 +6345,8 @@ mod tests {
             effective_size: headless_size,
             shutting_down: false,
             handoff_in_progress: false,
+            scheduled_text_refresh_pending: false,
+            full_render_reseats_placements: true,
             #[cfg(unix)]
             pending_handoff_repaint_nudge: false,
             should_quit,
@@ -7622,6 +7688,132 @@ mod tests {
                 || second.windows(4).any(|w| w == b"a=T,")
                 || second.windows(4).any(|w| w == b"a=t,"),
             "a later full render re-seats the picture instead of leaving the pane blank"
+        );
+    }
+
+    // TP-GFX-REPLAY-01: the re-seat decision — every real full cause
+    // re-seats (and a real cause in the same turn as a text refresh wins);
+    // only a frame whose sole cause is a scheduled text refresh keeps the
+    // placements seated.
+    #[test]
+    fn full_render_reseat_policy_lets_only_a_text_refresh_skip() {
+        assert!(full_render_reseat_policy(true, false));
+        assert!(full_render_reseat_policy(true, true));
+        assert!(!full_render_reseat_policy(false, true));
+        assert!(full_render_reseat_policy(false, false));
+    }
+
+    // TP-GFX-REPLAY-01: the sampler and the clock signal through the
+    // text-refresh channel, not the full-impact return — the frame they ask
+    // for must not re-seat placements, while every other scheduled member
+    // still claims the full-impact return.
+    #[test]
+    fn scheduled_status_text_signals_text_refresh_not_full() {
+        let mut server = test_headless_server();
+        // A bar-less config: `clock_tick()` is None, so a lingering reading
+        // is dropped — the clock's cheapest visible change.
+        server.app.state.clock_now = Some(time::OffsetDateTime::now_utc());
+        let full = server.handle_scheduled_tasks_headless(Instant::now(), false);
+        assert!(!full, "status text must not claim the full-impact return");
+        assert!(
+            server.scheduled_text_refresh_pending,
+            "status text signals through the text-refresh channel"
+        );
+
+        // A full-impact member still claims the return: an expired toast.
+        server.scheduled_text_refresh_pending = false;
+        let now = Instant::now();
+        server.app.toast_deadline = Some(now);
+        assert!(
+            server.handle_scheduled_tasks_headless(now + Duration::from_millis(1), false),
+            "a full-impact member keeps the full-impact return"
+        );
+    }
+
+    // TP-GFX-REPLAY-01: a frame whose only cause is refreshed status text
+    // keeps the picture seated — zero graphics bytes on the wire — while
+    // still delivering the changed cells (a frame that renders nothing
+    // cannot pass), and the seat itself survives for the next real full
+    // render to re-seat.
+    #[tokio::test]
+    async fn a_text_refresh_only_frame_moves_no_graphics_bytes() {
+        let (mut server, control_rx, client_rx, pane_id) =
+            resize_test_server(b"\x1b_Ga=T,f=32,t=d,i=7,s=1,v=1,q=2;/wAA/w==\x1b\\");
+        server.app.state.kitty_graphics_enabled = true;
+        server.clients.get_mut(&1).unwrap().cell_size = crate::kitty_graphics::HostCellSize {
+            width_px: 10,
+            height_px: 20,
+        };
+
+        server.render_and_stream();
+        let first = graphics_bytes_arrive(
+            &control_rx,
+            &client_rx,
+            &[b"a=T,".as_slice(), b"a=t,".as_slice()],
+        );
+        assert!(
+            first.windows(4).any(|w| w == b"a=T,") || first.windows(4).any(|w| w == b"a=t,"),
+            "the baseline full render carries the PTY's picture"
+        );
+
+        // The same picture plus one changed text cell: the status-text shape.
+        server.app.state.workspaces[0].insert_test_runtime(
+            pane_id,
+            crate::terminal::TerminalRuntime::test_with_screen_bytes(
+                80,
+                24,
+                b"\x1b_Ga=T,f=32,t=d,i=7,s=1,v=1,q=2;/wAA/w==\x1b\\Z",
+            ),
+        );
+
+        server.full_render_reseats_placements = false;
+        server.render_and_stream();
+        let messages = collect_wire_messages(
+            [&control_rx, &client_rx],
+            Duration::from_secs(5),
+            |m| {
+                m.iter().any(|msg| {
+                    matches!(msg, ServerMessage::Frame(f) if f.cells.iter().any(|c| c.symbol == "Z"))
+                })
+            },
+        );
+        assert!(
+            messages.iter().any(|msg| {
+                matches!(msg, ServerMessage::Frame(f) if f.cells.iter().any(|c| c.symbol == "Z"))
+            }),
+            "the changed status cell must reach the wire — a frame that renders nothing may not pass"
+        );
+        let graphics = wire_graphics_bytes(&messages);
+        for pattern in [
+            b"a=T,".as_slice(),
+            b"a=t,".as_slice(),
+            b"a=p,".as_slice(),
+            b"a=d".as_slice(),
+        ] {
+            assert!(
+                !graphics.windows(pattern.len()).any(|w| w == pattern),
+                "a text-refresh-only frame must move no graphics bytes (found {:?})",
+                String::from_utf8_lossy(pattern)
+            );
+        }
+        // Quiescence for the absence half, and no delete swept the seat away.
+        let writer = server.clients.get(&1).unwrap().writer.clone().unwrap();
+        assert!(no_delete_all_arrives(&writer, &control_rx, &client_rx));
+
+        // The exemption is per frame, not a lost capability: a later real
+        // full render still re-seats the picture.
+        server.app.full_redraw_pending = true;
+        server.render_and_stream();
+        let reseated = graphics_bytes_arrive(
+            &control_rx,
+            &client_rx,
+            &[b"a=p,".as_slice(), b"a=T,".as_slice(), b"a=t,".as_slice()],
+        );
+        assert!(
+            reseated.windows(4).any(|w| w == b"a=p,")
+                || reseated.windows(4).any(|w| w == b"a=T,")
+                || reseated.windows(4).any(|w| w == b"a=t,"),
+            "a later full render re-seats the picture — the exemption must not outlive its frame"
         );
     }
 
