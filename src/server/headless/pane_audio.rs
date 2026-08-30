@@ -8,11 +8,56 @@
 //! go on the media lane, last in priority and bounded, and a lane that is
 //! full is a chunk dropped at the source, not a delay.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::mpsc::TrySendError;
+use std::time::Instant;
 
-use super::{HeadlessServer, RenderImpact};
+use super::{pane_audio_capture, HeadlessServer, RenderImpact};
+use pane_audio_capture::CaptureEvent;
+
+/// The name this server's own capture holds its streams under.
+///
+/// Distinct from any external producer's owner string, so the cancel sweep and
+/// the ownership checks can tell a capture this server started from one a
+/// program on the socket started.
+const CAPTURE_OWNER: &str = "pane-capture";
+
+/// The chain of a producing pid, nearest first, `init` left out.
+fn ancestry_of(pid: u32) -> Vec<u32> {
+    let mut chain = Vec::new();
+    let mut current = pid;
+    // Bounded: a cycle in /proc would otherwise hang the server loop, and a
+    // depth this large has never been a real process tree.
+    for _ in 0..64 {
+        let Some(parent) = crate::platform::process_parent(current) else {
+            break;
+        };
+        chain.push(parent);
+        current = parent;
+    }
+    chain
+}
+
+/// Whether the producer or anything above it carries this pane's marker.
+fn marker_in_chain(pid: Option<u32>, ancestors: &[u32], public_id: &str) -> bool {
+    let Some(pid) = pid else {
+        return false;
+    };
+    std::iter::once(&pid)
+        .chain(ancestors.iter())
+        .any(|candidate| {
+            crate::platform::process_environ_has(*candidate, PANE_MARKER_ENV, public_id)
+        })
+}
+
+/// The variable a linked web pane sets on its launcher.
+const PANE_MARKER_ENV: &str = "HERDR_WEB_LINKED_AGENT";
 use crate::api;
 use crate::app::pane_audio::{Delivery, Outbound, TARGET_LATENCY_US};
+use crate::app::pane_audio_source::{
+    match_pane_source, plan, PaneProcesses, PaneSourceState, SourceAction, SourceCandidate,
+};
+use crate::layout::PaneId;
 use crate::media::{CHANNELS, SAMPLE_RATE_HZ};
 use crate::protocol::{capability, codec, MediaCloseReason, MediaParams, ServerMessage};
 
@@ -44,6 +89,232 @@ impl HeadlessServer {
         if self.app.pane_audio.retain_live_panes(&self.app.state) {
             self.flush_pane_audio_outbound();
         }
+        self.tick_pane_audio_capture();
+    }
+
+    /// Runs the capture only while somebody could hear it.
+    ///
+    /// The gate is first and it is absolute: with no client that negotiated an
+    /// audio sink, the supervisor is torn down rather than idled. An idle
+    /// supervisor still holds a watcher process and a thread, and a cost that
+    /// nobody asked for is invisible until it is measured — which is exactly
+    /// the failure the resource doctrine exists to prevent.
+    fn tick_pane_audio_capture(&mut self) {
+        let (capable, _declined) = self.audio_capable_clients();
+        if capable.is_empty() {
+            if let Some(mut capture) = self.pane_audio_capture.take() {
+                capture.stop_all();
+            }
+            return;
+        }
+        let capture = self
+            .pane_audio_capture
+            .get_or_insert_with(pane_audio_capture::CaptureSupervisor::new);
+        // A platform with no watcher has nothing to watch; the error says so
+        // once and the next tick asks again for free.
+        if capture.watch().is_err() {
+            return;
+        }
+        // The graph is re-read only after it has settled. Reading it per event
+        // would cost a process launch for every volume slider tick.
+        if capture.graph_settled(Instant::now()) {
+            self.resync_pane_audio_sources(capable.len());
+        }
+        self.deliver_captured_pane_audio();
+    }
+
+    /// Re-reads the audio graph and makes the captures match what it says.
+    ///
+    /// The whole picture is recomputed rather than patched per event, which is
+    /// what makes a missed signal cost a late decision instead of a wrong one.
+    fn resync_pane_audio_sources(&mut self, listeners: usize) {
+        let Some(Ok(streams)) = crate::platform::read_output_streams() else {
+            return;
+        };
+        // Aiming needs the serial, the rules speak in node ids, and the two are
+        // different numbers for the same stream.
+        let serials: BTreeMap<u32, u32> = streams
+            .iter()
+            .filter_map(|stream| Some((stream.node_id, stream.object_serial?)))
+            .collect();
+        // Each producing pid's ancestry is walked once, not once per pane.
+        let mut chains: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
+        for stream in &streams {
+            if let Some(pid) = stream.pid {
+                chains.entry(pid).or_insert_with(|| ancestry_of(pid));
+            }
+        }
+
+        let mut states: Vec<PaneSourceState> = Vec::new();
+        for ws_idx in 0..self.app.state.workspaces.len() {
+            for pane in self.app.state.pane_ids_for_workspace(ws_idx) {
+                let Some(public_id) = self.app.public_pane_id(ws_idx, pane) else {
+                    continue;
+                };
+                let processes = self.pane_processes(ws_idx, pane);
+                if processes.pids.is_empty() {
+                    continue;
+                }
+                let candidates: Vec<SourceCandidate> = streams
+                    .iter()
+                    .map(|stream| {
+                        let ancestors = stream
+                            .pid
+                            .and_then(|pid| chains.get(&pid))
+                            .cloned()
+                            .unwrap_or_default();
+                        SourceCandidate {
+                            node_id: stream.node_id,
+                            pid: stream.pid,
+                            carries_pane_marker: marker_in_chain(
+                                stream.pid, &ancestors, &public_id,
+                            ),
+                            ancestors,
+                            app_name: stream.app_name.clone(),
+                        }
+                    })
+                    .collect();
+                states.push(PaneSourceState {
+                    pane_id: public_id,
+                    matched: match_pane_source(&candidates, &processes),
+                });
+            }
+        }
+
+        let Some(capture) = self.pane_audio_capture.as_mut() else {
+            return;
+        };
+        let open: BTreeSet<String> = capture.captured_panes();
+        for action in plan(&states, &open, listeners) {
+            match action {
+                SourceAction::Close { pane_id, reason } => {
+                    capture.stop(&pane_id);
+                    tracing::debug!(pane_id, ?reason, "pane audio capture stopped");
+                }
+                SourceAction::Open { pane_id, node_id } => {
+                    let Some(serial) = serials.get(&node_id) else {
+                        // A stream the graph named but could not aim at. Saying
+                        // so is better than recording someone else's sound.
+                        tracing::debug!(pane_id, node_id, "stream has no capture serial");
+                        continue;
+                    };
+                    match capture.start(&pane_id, *serial) {
+                        Ok(()) => {
+                            tracing::debug!(pane_id, node_id, serial, "pane audio capture started")
+                        }
+                        Err(err) => {
+                            tracing::debug!(pane_id, %err, "pane audio capture unavailable")
+                        }
+                    }
+                }
+            }
+        }
+        // One line that answers "why is there no sound" without a rebuild:
+        // whether anything is being watched, how many panes are captured, and
+        // whether frames are being thrown away because the loop is behind.
+        tracing::debug!(
+            watching = capture.is_watching(),
+            captured = capture.active_panes(),
+            dropped = capture.dropped_frames(),
+            streams = streams.len(),
+            listeners,
+            "pane audio capture state"
+        );
+    }
+
+    /// Hands what the capture threads produced to the app, in the one order
+    /// that works: the open carries the first frame, every frame after it is
+    /// offered, and a source that ended closes its stream.
+    fn deliver_captured_pane_audio(&mut self) {
+        let Some(capture) = self.pane_audio_capture.as_mut() else {
+            return;
+        };
+        let events = capture.drain();
+        if events.is_empty() {
+            return;
+        }
+        let now_us = crate::media::now_us();
+        for event in events {
+            match event {
+                CaptureEvent::Opened { pane_id, frame } => {
+                    let Some(pane) = self.pane_for_public_id(&pane_id) else {
+                        continue;
+                    };
+                    if self
+                        .app
+                        .pane_audio
+                        .open(pane, &pane_id, CAPTURE_OWNER, now_us)
+                        .is_err()
+                    {
+                        continue;
+                    }
+                    self.offer_captured_frame(pane, &frame, now_us);
+                }
+                CaptureEvent::Frame { pane_id, frame } => {
+                    let Some(pane) = self.pane_for_public_id(&pane_id) else {
+                        continue;
+                    };
+                    self.offer_captured_frame(pane, &frame, now_us);
+                }
+                CaptureEvent::Ended { pane_id } => {
+                    let Some(pane) = self.pane_for_public_id(&pane_id) else {
+                        continue;
+                    };
+                    self.app.pane_audio.close(
+                        pane,
+                        CAPTURE_OWNER,
+                        MediaCloseReason::Ended,
+                        "capture ended".to_owned(),
+                    );
+                }
+            }
+        }
+        self.flush_pane_audio_outbound();
+    }
+
+    /// Turns one captured frame into samples and offers it.
+    ///
+    /// A frame of the wrong length is refused here rather than padded: padding
+    /// shifts the clock by the difference on every frame that follows.
+    fn offer_captured_frame(&mut self, pane: PaneId, frame: &[u8], now_us: u64) {
+        let Ok(pcm) = crate::app::pane_audio::pcm_from_f32le(frame) else {
+            return;
+        };
+        let _ = self.app.pane_audio.offer(pane, CAPTURE_OWNER, &pcm, now_us);
+    }
+
+    /// The pane behind a public id, or `None` if it has since gone.
+    fn pane_for_public_id(&self, public_id: &str) -> Option<PaneId> {
+        for ws_idx in 0..self.app.state.workspaces.len() {
+            for pane in self.app.state.pane_ids_for_workspace(ws_idx) {
+                if self.app.public_pane_id(ws_idx, pane).as_deref() == Some(public_id) {
+                    return Some(pane);
+                }
+            }
+        }
+        None
+    }
+
+    /// The processes a pane owns: its shell and whatever is in the foreground.
+    fn pane_processes(&self, ws_idx: usize, pane: PaneId) -> PaneProcesses {
+        let mut pids = BTreeSet::new();
+        let mut names = BTreeSet::new();
+        if let Some(runtime) =
+            self.app
+                .state
+                .runtime_for_pane_in_workspace(&self.app.terminal_runtimes, ws_idx, pane)
+        {
+            if let Some(shell) = runtime.child_pid() {
+                pids.insert(shell);
+                if let Some(job) = crate::detect::foreground_job(shell) {
+                    for process in job.processes {
+                        pids.insert(process.pid);
+                        names.insert(process.name);
+                    }
+                }
+            }
+        }
+        PaneProcesses { pids, names }
     }
 
     pub(super) fn flush_pane_audio_outbound(&mut self) {

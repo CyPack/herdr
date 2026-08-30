@@ -339,17 +339,15 @@ pub(crate) fn native_audio_sink(
     None
 }
 
-// Staged: the capture supervisor is the only caller and it lands next. Kept
-// here rather than written later so the seam is reviewed on its own, with its
-// own tests, instead of arriving inside a larger change.
-//
-// REMOVAL CONDITION: drop every `allow` in this block the moment the supervisor
-// calls `start_graph_watcher`, `capture_stream` and `read_output_streams` — a
-// dead item here after that is a real leak, not a staged one.
 /// Why a capture source could not be had, or stopped being had.
 ///
 /// Platform-neutral on purpose: the supervisor that reads it is cross-platform
 /// and must compile where nothing can be captured at all.
+// The variants are constructed only where a platform can capture, so on a
+// target that cannot they are dead by construction rather than by neglect —
+// and the cross-target lint is the only thing that sees it. `just lint` runs
+// for the host and stays green; `just check` runs `windows-lint` and does not.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) enum AudioSourceError {
     /// The source could not be started at all.
@@ -371,7 +369,6 @@ impl std::fmt::Display for AudioSourceError {
 ///
 /// `Send`, because the only way to read a blocking source without freezing the
 /// server loop is to read it on a thread of its own.
-#[allow(dead_code)]
 pub(crate) trait FrameSource: Send {
     /// The next whole frame, or `None` once the source has ended.
     fn next_frame(&mut self) -> Result<Option<Vec<u8>>, AudioSourceError>;
@@ -380,7 +377,6 @@ pub(crate) trait FrameSource: Send {
 }
 
 /// Anything that says the audio graph moved, and nothing about how.
-#[allow(dead_code)]
 pub(crate) trait GraphSignals: Send {
     /// Blocks until the graph moves. `false` means the watcher itself ended.
     fn next_signal(&mut self) -> Result<bool, AudioSourceError>;
@@ -389,7 +385,6 @@ pub(crate) trait GraphSignals: Send {
 }
 
 /// Starts this platform's graph watcher, or `None` where there is none.
-#[allow(dead_code)]
 #[cfg(target_os = "linux")]
 pub(crate) fn start_graph_watcher() -> Option<Result<Box<dyn GraphSignals>, AudioSourceError>> {
     Some(
@@ -398,14 +393,12 @@ pub(crate) fn start_graph_watcher() -> Option<Result<Box<dyn GraphSignals>, Audi
     )
 }
 
-#[allow(dead_code)]
 #[cfg(not(target_os = "linux"))]
 pub(crate) fn start_graph_watcher() -> Option<Result<Box<dyn GraphSignals>, AudioSourceError>> {
     None
 }
 
 /// Aims this platform's recorder at one stream, or `None` where there is none.
-#[allow(dead_code)]
 #[cfg(target_os = "linux")]
 pub(crate) fn capture_stream(
     object_serial: u32,
@@ -416,7 +409,6 @@ pub(crate) fn capture_stream(
     )
 }
 
-#[allow(dead_code)]
 #[cfg(not(target_os = "linux"))]
 pub(crate) fn capture_stream(
     _object_serial: u32,
@@ -429,13 +421,11 @@ pub(crate) fn capture_stream(
 /// Running the reader and parsing what it printed are separate on purpose: the
 /// parsing half is tested from fixtures on every platform, and only this half
 /// needs a live sound server.
-#[allow(dead_code)]
 #[cfg(target_os = "linux")]
 pub(crate) fn read_output_streams() -> Option<Result<Vec<AudioOutputStream>, AudioSourceError>> {
     Some(linux::audio_source::read_output_streams())
 }
 
-#[allow(dead_code)]
 #[cfg(not(target_os = "linux"))]
 pub(crate) fn read_output_streams() -> Option<Result<Vec<AudioOutputStream>, AudioSourceError>> {
     None

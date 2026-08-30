@@ -26,16 +26,7 @@
 //!
 //! TP-MEDIA-SUPERVISE-01.
 
-// Staged: the tick that calls this lands next. Everything here is exercised by
-// its own tests already — what is missing is only the caller in the server
-// loop, and landing the two together would put a threading design and a loop
-// change in one reviewable unit.
-//
-// REMOVAL CONDITION: delete this attribute the moment `tick_pane_audio` builds
-// a `CaptureSupervisor`. A dead item here after that is a real leak.
-#![allow(dead_code)]
-
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, TryRecvError, TrySendError};
 use std::sync::Arc;
@@ -322,6 +313,13 @@ impl CaptureSupervisor {
 
     pub(crate) fn active_panes(&self) -> usize {
         self.panes.len()
+    }
+
+    /// The panes being captured right now, which is what the plan compares
+    /// against. Owned rather than borrowed so the caller can keep planning
+    /// while it starts and stops.
+    pub(crate) fn captured_panes(&self) -> BTreeSet<String> {
+        self.panes.keys().cloned().collect()
     }
 }
 

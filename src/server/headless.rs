@@ -335,6 +335,13 @@ pub struct HeadlessServer {
     /// ran; `None` before the first pass. Rate-limits the pass to
     /// `HEADLESS_HOUSEKEEPING_MIN_INTERVAL`. TP-SRV-HK-01
     last_housekeeping_pass: Option<Instant>,
+    /// Captures pane sound while somebody can hear it.
+    ///
+    /// `None` until the first listener asks for audio, and back to `None` when
+    /// the last one leaves: a server nobody is listening to holds no threads,
+    /// no recorder and no watcher, which is the only honest reading of "costs
+    /// nothing while idle".
+    pane_audio_capture: Option<pane_audio_capture::CaptureSupervisor>,
     /// Which client the shared `view` currently describes, and at what size.
     ///
     /// Hit geometry has to belong to the client whose pointer event is being
@@ -575,6 +582,7 @@ impl HeadlessServer {
             next_client_id: 1,
             foreground_client_id: None,
             last_housekeeping_pass: None,
+            pane_audio_capture: None,
             view_owner: None,
             #[cfg(test)]
             view_recomputes_for_input: 0,
@@ -6327,6 +6335,7 @@ mod tests {
             next_client_id: 1,
             foreground_client_id: None,
             last_housekeeping_pass: None,
+            pane_audio_capture: None,
             view_owner: None,
             #[cfg(test)]
             view_recomputes_for_input: 0,
