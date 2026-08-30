@@ -23,6 +23,8 @@
 //! safe here because the only thing done with a pid afterwards is an ancestry
 //! walk through `/proc`: a lie would have to name a process that already sits
 //! inside the pane's own tree, which is not a lie worth telling.
+//!
+//! TP-MEDIA-GRAPH-01.
 
 // Unused until the supervisor that watches the graph lands: the reader is
 // built and pinned first so the driver has something already tested to call.

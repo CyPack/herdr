@@ -25,6 +25,8 @@
 //! Nothing in this module reads `/proc` or names an audio platform: the
 //! platform layer gathers the facts, this decides. That split is what lets the
 //! decision be tested against a topology nobody has to reproduce.
+//!
+//! TP-MEDIA-OWNER-01.
 
 // Unused until the supervisor that consults it lands: the rules are built and
 // pinned first so the driver has something already tested to call, the same
