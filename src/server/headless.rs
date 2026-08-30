@@ -7294,11 +7294,15 @@ mod tests {
         })
     }
 
-    // TP-GFX-RESIZE-01: a resize breaks every placement's geometry — the
-    // client's graphics slate is wiped (a=d reaches the terminal) so the next
-    // paint rebuilds clean instead of leaving ghosts at the old coordinates.
+    // TP-GFX-RESIZE-01 rev: a resize breaks every placement's geometry, but
+    // the pictures themselves are still right — their identities are stable
+    // and their pixels unchanged. The ledger drops the placements so the next
+    // paint re-places them at the new grid; NOTHING rides the wire here.
+    // Deleting the images here was the visible gap the divider drag showed
+    // live: the delete lands instantly, the re-upload arrives milliseconds
+    // later, and the pane blinks blank in between.
     #[tokio::test]
-    async fn a_client_resize_sweeps_the_stale_graphics_off_the_terminal() {
+    async fn a_resize_invalidates_placements_and_keeps_the_uploads() {
         let (mut server, control_rx, client_rx, _pane_id) = resize_test_server(b"aaaa");
         server.app.state.kitty_graphics_enabled = true;
         {
@@ -7318,21 +7322,27 @@ mod tests {
             cell_height_px: 20,
         }));
 
+        let cache = &server.clients.get(&1).unwrap().graphics_cache;
         assert!(
-            server.clients.get(&1).unwrap().graphics_cache.is_empty(),
-            "the slate is wiped with the geometry that placed it"
+            cache.test_placement_keys().is_empty(),
+            "the placements drop with the geometry that made them"
         );
         assert!(
-            any_delete_all(&drain_messages(&control_rx))
-                || any_delete_all(&drain_messages(&client_rx)),
-            "the delete reaches the terminal, not only the ledger"
+            cache.test_image_count() > 0,
+            "the uploads survive — nothing needs retransmitting"
+        );
+        assert!(
+            !any_delete_all(&drain_messages(&control_rx))
+                && !any_delete_all(&drain_messages(&client_rx)),
+            "nothing rides the wire on a resize"
         );
     }
 
-    // TP-GFX-RESIZE-01: a cell-size change (retina to external display)
-    // invalidates every pixel computation the placements were made with.
+    // TP-GFX-RESIZE-01 rev: a cell-size change (retina to external display)
+    // invalidates every pixel computation the placements were made with — the
+    // uploads still survive it.
     #[tokio::test]
-    async fn a_cell_size_change_sweeps_the_graphics_too() {
+    async fn a_cell_size_change_invalidates_placements_too() {
         let (mut server, control_rx, client_rx, _pane_id) = resize_test_server(b"aaaa");
         server.app.state.kitty_graphics_enabled = true;
         {
@@ -7352,10 +7362,12 @@ mod tests {
             cell_height_px: 32,
         }));
 
-        assert!(server.clients.get(&1).unwrap().graphics_cache.is_empty());
+        let cache = &server.clients.get(&1).unwrap().graphics_cache;
+        assert!(cache.test_placement_keys().is_empty());
+        assert!(cache.test_image_count() > 0);
         assert!(
-            any_delete_all(&drain_messages(&control_rx))
-                || any_delete_all(&drain_messages(&client_rx))
+            !any_delete_all(&drain_messages(&control_rx))
+                && !any_delete_all(&drain_messages(&client_rx))
         );
     }
 
@@ -7426,6 +7438,58 @@ mod tests {
             !any_delete_all(&drain_messages(&control_rx))
                 && !any_delete_all(&drain_messages(&client_rx)),
             "no delete travels for a slate the replay road owns"
+        );
+    }
+
+    // TP-GFX-RESIZE-01 rev: after a resize the next full render re-places the
+    // surviving upload with a=p alone — no a=T retransmit, no a=d — so the
+    // picture moves to the new grid without ever leaving the screen.
+    #[tokio::test]
+    async fn a_render_after_a_resize_re_places_without_re_uploading() {
+        let (mut server, control_rx, client_rx, _pane_id) =
+            resize_test_server(b"\x1b_Ga=T,f=32,t=d,i=7,s=1,v=1,q=2;/wAA/w==\x1b\\");
+        server.app.state.kitty_graphics_enabled = true;
+        server.clients.get_mut(&1).unwrap().cell_size = crate::kitty_graphics::HostCellSize {
+            width_px: 10,
+            height_px: 20,
+        };
+
+        server.render_and_stream();
+        drain_messages(&control_rx);
+        drain_messages(&client_rx);
+
+        server.handle_server_event(ServerEvent::ClientResize {
+            client_id: 1,
+            cols: 100,
+            rows: 30,
+            cell_width_px: 10,
+            cell_height_px: 20,
+        });
+        drain_messages(&control_rx);
+        drain_messages(&client_rx);
+
+        server.app.full_redraw_pending = true;
+        server.render_and_stream();
+        let out: Vec<u8> = drain_messages(&control_rx)
+            .into_iter()
+            .chain(drain_messages(&client_rx))
+            .flat_map(|message| match message {
+                ServerMessage::Frame(frame) => frame.graphics,
+                ServerMessage::Graphics { bytes } => bytes,
+                _ => Vec::new(),
+            })
+            .collect();
+        assert!(
+            out.windows(4).any(|w| w == b"a=p,"),
+            "the surviving upload is re-placed at the new grid"
+        );
+        assert!(
+            !out.windows(4).any(|w| w == b"a=T,") && !out.windows(4).any(|w| w == b"a=t,"),
+            "nothing is re-uploaded — the pixels never left the terminal"
+        );
+        assert!(
+            !out.windows(3).any(|w| w == b"a=d"),
+            "nothing is deleted on the way"
         );
     }
 
