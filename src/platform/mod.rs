@@ -339,6 +339,108 @@ pub(crate) fn native_audio_sink(
     None
 }
 
+// Staged: the capture supervisor is the only caller and it lands next. Kept
+// here rather than written later so the seam is reviewed on its own, with its
+// own tests, instead of arriving inside a larger change.
+//
+// REMOVAL CONDITION: drop every `allow` in this block the moment the supervisor
+// calls `start_graph_watcher`, `capture_stream` and `read_output_streams` — a
+// dead item here after that is a real leak, not a staged one.
+/// Why a capture source could not be had, or stopped being had.
+///
+/// Platform-neutral on purpose: the supervisor that reads it is cross-platform
+/// and must compile where nothing can be captured at all.
+#[derive(Debug)]
+pub(crate) enum AudioSourceError {
+    /// The source could not be started at all.
+    Unavailable(String),
+    /// It was running and stopped.
+    Closed(String),
+}
+
+impl std::fmt::Display for AudioSourceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unavailable(detail) => write!(f, "audio source unavailable: {detail}"),
+            Self::Closed(detail) => write!(f, "audio source closed: {detail}"),
+        }
+    }
+}
+
+/// Anything that hands over whole protocol frames until it ends.
+///
+/// `Send`, because the only way to read a blocking source without freezing the
+/// server loop is to read it on a thread of its own.
+#[allow(dead_code)]
+pub(crate) trait FrameSource: Send {
+    /// The next whole frame, or `None` once the source has ended.
+    fn next_frame(&mut self) -> Result<Option<Vec<u8>>, AudioSourceError>;
+    /// Stops it. Idempotent.
+    fn close(&mut self) -> Result<(), AudioSourceError>;
+}
+
+/// Anything that says the audio graph moved, and nothing about how.
+#[allow(dead_code)]
+pub(crate) trait GraphSignals: Send {
+    /// Blocks until the graph moves. `false` means the watcher itself ended.
+    fn next_signal(&mut self) -> Result<bool, AudioSourceError>;
+    /// Stops it. Idempotent.
+    fn close(&mut self) -> Result<(), AudioSourceError>;
+}
+
+/// Starts this platform's graph watcher, or `None` where there is none.
+#[allow(dead_code)]
+#[cfg(target_os = "linux")]
+pub(crate) fn start_graph_watcher() -> Option<Result<Box<dyn GraphSignals>, AudioSourceError>> {
+    Some(
+        linux::audio_source::GraphWatcher::start()
+            .map(|watcher| Box::new(watcher) as Box<dyn GraphSignals>),
+    )
+}
+
+#[allow(dead_code)]
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn start_graph_watcher() -> Option<Result<Box<dyn GraphSignals>, AudioSourceError>> {
+    None
+}
+
+/// Aims this platform's recorder at one stream, or `None` where there is none.
+#[allow(dead_code)]
+#[cfg(target_os = "linux")]
+pub(crate) fn capture_stream(
+    object_serial: u32,
+) -> Option<Result<Box<dyn FrameSource>, AudioSourceError>> {
+    Some(
+        linux::audio_source::ExternalSource::capture(object_serial)
+            .map(|source| Box::new(source) as Box<dyn FrameSource>),
+    )
+}
+
+#[allow(dead_code)]
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn capture_stream(
+    _object_serial: u32,
+) -> Option<Result<Box<dyn FrameSource>, AudioSourceError>> {
+    None
+}
+
+/// Reads this platform's audio graph, or `None` where there is none.
+///
+/// Running the reader and parsing what it printed are separate on purpose: the
+/// parsing half is tested from fixtures on every platform, and only this half
+/// needs a live sound server.
+#[allow(dead_code)]
+#[cfg(target_os = "linux")]
+pub(crate) fn read_output_streams() -> Option<Result<Vec<AudioOutputStream>, AudioSourceError>> {
+    Some(linux::audio_source::read_output_streams())
+}
+
+#[allow(dead_code)]
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn read_output_streams() -> Option<Result<Vec<AudioOutputStream>, AudioSourceError>> {
+    None
+}
+
 // Staged: the graph reader fills these in and the supervisor's rules read
 // them, but the driver that connects the two has not landed yet.
 //

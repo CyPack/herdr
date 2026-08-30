@@ -168,22 +168,12 @@ fn prop_str<'a>(props: Option<&'a Value>, key: &str) -> Option<&'a str> {
 /// side stays consistent with its own copy.
 pub(crate) const SOURCE_FRAME_BYTES: usize = FRAME_SAMPLES * CHANNELS as usize * 4;
 
-#[derive(Debug)]
-pub(crate) enum SourceError {
-    /// The recorder could not be started at all.
-    Unavailable(String),
-    /// It was running and stopped.
-    Closed(String),
-}
-
-impl std::fmt::Display for SourceError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Unavailable(detail) => write!(f, "audio source unavailable: {detail}"),
-            Self::Closed(detail) => write!(f, "audio source closed: {detail}"),
-        }
-    }
-}
+/// The platform-neutral error, under the name this module has always used.
+///
+/// It moved up rather than being duplicated: the supervisor that handles these
+/// errors compiles on platforms this module does not, and two enums with the
+/// same variants would be one truth in two places again.
+pub(crate) use crate::platform::AudioSourceError as SourceError;
 
 /// Cuts an arbitrary byte stream into whole frames, keeping the remainder.
 ///
@@ -529,6 +519,49 @@ impl GraphWatcher {
     }
 }
 
+/// The program that prints the graph.
+pub(crate) const GRAPH_READER: &str = "pw-dump";
+
+/// Runs the graph reader and parses what it printed.
+///
+/// Split from `parse_output_streams` so the half that needs a live sound server
+/// is the only half that needs one: every rule about what the graph *means* is
+/// tested from fixtures, on machines that can capture nothing.
+pub(crate) fn read_output_streams() -> Result<Vec<AudioOutputStream>, SourceError> {
+    let output = Command::new(GRAPH_READER)
+        .output()
+        .map_err(|err| SourceError::Unavailable(format!("{GRAPH_READER}: {err}")))?;
+    if !output.status.success() {
+        return Err(SourceError::Unavailable(format!(
+            "{GRAPH_READER} exited with {}",
+            output.status
+        )));
+    }
+    let text = String::from_utf8(output.stdout)
+        .map_err(|err| SourceError::Closed(format!("{GRAPH_READER}: {err}")))?;
+    parse_output_streams(&text).map_err(|err| SourceError::Closed(format!("{GRAPH_READER}: {err}")))
+}
+
+impl crate::platform::FrameSource for ExternalSource {
+    fn next_frame(&mut self) -> Result<Option<Vec<u8>>, SourceError> {
+        ExternalSource::next_frame(self)
+    }
+
+    fn close(&mut self) -> Result<(), SourceError> {
+        ExternalSource::close(self)
+    }
+}
+
+impl crate::platform::GraphSignals for GraphWatcher {
+    fn next_signal(&mut self) -> Result<bool, SourceError> {
+        GraphWatcher::next_signal(self)
+    }
+
+    fn close(&mut self) -> Result<(), SourceError> {
+        GraphWatcher::close(self)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -855,6 +888,45 @@ mod tests {
                 watcher.close().expect("close");
             }
             Err(err) => assert!(matches!(err, SourceError::Unavailable(_)), "{err}"),
+        }
+    }
+
+    // ── A4d-1 · platform seam (SEAM-1..SEAM-3) ────────────────────────────
+
+    #[test]
+    fn the_seam_hands_back_a_source_on_this_platform() {
+        // A seam that returned None here would make the feature compile,
+        // pass every test, and produce silence.
+        let handed = crate::platform::capture_stream(1);
+        assert!(handed.is_some(), "linux must offer a capture source");
+        if let Some(Ok(mut source)) = handed {
+            source.close().expect("close");
+        }
+    }
+
+    #[test]
+    fn the_seam_hands_back_a_watcher_on_this_platform() {
+        let handed = crate::platform::start_graph_watcher();
+        assert!(handed.is_some(), "linux must offer a graph watcher");
+        if let Some(Ok(mut watcher)) = handed {
+            watcher.close().expect("close");
+        }
+    }
+
+    #[test]
+    fn reading_the_graph_without_the_reader_is_an_error_not_a_panic() {
+        // Either the machine has pw-dump and answers, or it does not and says
+        // so. Both are results; neither is a crash in the server loop.
+        match read_output_streams() {
+            Ok(streams) => {
+                for stream in &streams {
+                    assert!(stream.node_id > 0, "a graph node needs an id");
+                }
+            }
+            Err(err) => assert!(
+                matches!(err, SourceError::Unavailable(_) | SourceError::Closed(_)),
+                "{err}"
+            ),
         }
     }
 }
