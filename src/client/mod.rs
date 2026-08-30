@@ -2018,7 +2018,7 @@ async fn run_client_loop(
                     if state.kitty_graphics_enabled {
                         record_received_kitty_graphics(&bytes);
                         let mut stdout = io::stdout();
-                        let _ = stdout.write_all(&bytes);
+                        let _ = write_standalone_graphics(&mut stdout, &bytes);
                         let _ = stdout.flush();
                     }
                 }
@@ -2791,6 +2791,20 @@ fn forward_clipboard(data: &str) {
 // ---------------------------------------------------------------------------
 // Frame output
 // ---------------------------------------------------------------------------
+
+// TP-GFX-SYNC-01: the frame road shields its graphics inside the frame's
+// synchronized-update block, but a standalone graphics message has no frame
+// to ride — it gets its own ?2026 shell so the outer terminal presents the
+// delete/retransmit pair atomically instead of mid-transaction (the periodic
+// blink a still pane showed while its source kept streaming).
+fn write_standalone_graphics(mut writer: impl io::Write, bytes: &[u8]) -> io::Result<()> {
+    if bytes.is_empty() {
+        return Ok(());
+    }
+    writer.write_all(b"\x1b[?2026h")?;
+    writer.write_all(bytes)?;
+    writer.write_all(b"\x1b[?2026l")
+}
 
 fn write_encoded_frame_with_graphics(
     mut writer: impl io::Write,
@@ -3589,6 +3603,25 @@ mod tests {
             output,
             b"\x1b[?2026htext\x1b7graphics\x1b8\x1b[?2026lcursor"
         );
+    }
+
+    // TP-GFX-SYNC-01: a standalone graphics update rides inside its own
+    // synchronized-update block. The frame road already protects its
+    // graphics; without the same shield here the retained/graphics-only road
+    // presents a mid-transaction state — measured live as a periodic blink
+    // on an otherwise still pane.
+    #[test]
+    fn standalone_graphics_bytes_ride_inside_their_own_synchronized_update() {
+        let mut output = Vec::new();
+        write_standalone_graphics(&mut output, b"\x1b7graphics\x1b8").unwrap();
+        assert_eq!(output, b"\x1b[?2026h\x1b7graphics\x1b8\x1b[?2026l");
+    }
+
+    #[test]
+    fn empty_standalone_graphics_write_nothing() {
+        let mut output = Vec::new();
+        write_standalone_graphics(&mut output, b"").unwrap();
+        assert!(output.is_empty(), "no bytes, no sync shell");
     }
 
     #[test]
