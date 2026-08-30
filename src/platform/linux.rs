@@ -1,3 +1,7 @@
+// Capturing a pane's sound is platform work, so the graph reading lives here
+// and the protocol never hears the word PipeWire.
+pub(crate) mod audio_source;
+
 use std::{
     collections::{HashSet, VecDeque},
     io::Write,
