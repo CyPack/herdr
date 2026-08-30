@@ -5433,29 +5433,32 @@ impl HeadlessServer {
         }
         // Each display browses its own directory, so the file workers run
         // once per display, inside that display's view. TP-SUR-FM-02
-        changed |= track(
-            "sched.display_fm_group",
-            self.app.for_each_display(|app| {
-                let mut changed = false;
-                // Three consumers compete for one context-action field, and the
-                // order between them is the precedence: send-to-agent, then a
-                // plugin, then the ordinary actions. All three resolve against
-                // the raising display's browser, so all three belong in its view.
-                changed |= app.sync_file_manager_agent_handoff();
-                changed |= app.sync_file_manager_plugin_action();
-                changed |= app.sync_agent_reference_picker();
-                changed |= app.sync_file_manager_requests();
-                changed |= app.sync_file_manager_io_results();
-                changed |= app.sync_file_manager_location_request();
-                changed |= app.sync_file_manager_watcher_at(now);
-                changed |= app.sync_file_preview_worker();
-                // The monolithic loop pairs these two (`src/app/mod.rs`): text and
-                // image previews are both bounded workers and neither advances
-                // without being driven.
-                changed |= app.sync_image_preview_worker();
-                changed
-            }),
-        );
+        // The per-display group is not wrapped in `track` on purpose: the
+        // parity guard slices this closure out of the source by its literal
+        // `});` closer, and a wrapper that reshapes the closer would hand the
+        // guard the rest of the function as "inside the loop". The group's
+        // telemetry lands after the call instead.
+        let display_changed = self.app.for_each_display(|app| {
+            let mut changed = false;
+            // Three consumers compete for one context-action field, and the
+            // order between them is the precedence: send-to-agent, then a
+            // plugin, then the ordinary actions. All three resolve against
+            // the raising display's browser, so all three belong in its view.
+            changed |= app.sync_file_manager_agent_handoff();
+            changed |= app.sync_file_manager_plugin_action();
+            changed |= app.sync_agent_reference_picker();
+            changed |= app.sync_file_manager_requests();
+            changed |= app.sync_file_manager_io_results();
+            changed |= app.sync_file_manager_location_request();
+            changed |= app.sync_file_manager_watcher_at(now);
+            changed |= app.sync_file_preview_worker();
+            // The monolithic loop pairs these two (`src/app/mod.rs`): text and
+            // image previews are both bounded workers and neither advances
+            // without being driven.
+            changed |= app.sync_image_preview_worker();
+            changed
+        });
+        changed |= track("sched.display_fm_group", display_changed);
         self.app.sync_headless_animation_timer(now);
         changed |= track(
             "sched.refresh_projects",
