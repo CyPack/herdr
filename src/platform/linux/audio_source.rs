@@ -24,6 +24,14 @@
 //! walk through `/proc`: a lie would have to name a process that already sits
 //! inside the pane's own tree, which is not a lie worth telling.
 
+// Unused until the supervisor that watches the graph lands: the reader is
+// built and pinned first so the driver has something already tested to call.
+//
+// REMOVAL CONDITION: delete this attribute the moment `parse_output_streams`
+// is called from the pane-audio supervisor — after that, a dead item here is a
+// real leak, not a staged one.
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 
 use serde_json::Value;
@@ -51,8 +59,96 @@ const AUDIO_OUTPUT_CLASS: &str = "Stream/Output/Audio";
 
 /// Reads a `pw-dump` document into the output streams it describes.
 pub(crate) fn parse_output_streams(dump: &str) -> Result<Vec<RawStream>, serde_json::Error> {
-    let _ = dump;
-    Ok(Vec::new())
+    let objects: Vec<Value> = serde_json::from_str(dump)?;
+
+    // Clients first: a node points at the client that opened it, and the
+    // owner's identity lives there rather than on the node.
+    let mut clients: HashMap<u32, &Value> = HashMap::new();
+    let mut fronted: HashMap<u32, usize> = HashMap::new();
+    for object in &objects {
+        if !is_interface(object, "Client") {
+            continue;
+        }
+        let (Some(id), Some(props)) = (object_id(object), object_props(object)) else {
+            continue;
+        };
+        clients.insert(id, props);
+        if let Some(pid) = prop_u32(Some(props), "pipewire.sec.pid") {
+            *fronted.entry(pid).or_default() += 1;
+        }
+    }
+
+    let mut streams = Vec::new();
+    for object in &objects {
+        if !is_interface(object, "Node") {
+            continue;
+        }
+        let (Some(node_id), Some(props)) = (object_id(object), object_props(object)) else {
+            continue;
+        };
+        if prop_str(Some(props), "media.class") != Some(AUDIO_OUTPUT_CLASS) {
+            continue;
+        }
+        let client = prop_u32(Some(props), "client.id")
+            .and_then(|client_id| clients.get(&client_id).copied());
+        let (pid, pid_trust) = resolve_owner(props, client, &fronted);
+        let app_name = prop_str(Some(props), "application.name")
+            .or_else(|| prop_str(Some(props), "node.name"))
+            .or_else(|| prop_str(client, "application.name"))
+            .map(str::to_owned);
+        streams.push(RawStream {
+            node_id,
+            pid,
+            pid_trust,
+            app_name,
+        });
+    }
+    Ok(streams)
+}
+
+/// Names the process behind a stream, preferring what the kernel saw over what
+/// the program says — except where the kernel saw a multiplexer.
+fn resolve_owner(
+    node: &Value,
+    client: Option<&Value>,
+    fronted: &HashMap<u32, usize>,
+) -> (Option<u32>, Option<PidTrust>) {
+    for props in [Some(node), client].into_iter().flatten() {
+        if let Some(pid) = prop_u32(Some(props), "pipewire.sec.pid") {
+            if !is_multiplexer(pid, fronted) {
+                return (Some(pid), Some(PidTrust::Verified));
+            }
+        }
+    }
+    for props in [Some(node), client].into_iter().flatten() {
+        if let Some(pid) = prop_u32(Some(props), "application.process.id") {
+            return (Some(pid), Some(PidTrust::SelfReported));
+        }
+    }
+    (None, None)
+}
+
+/// A pid that fronts more than one client is forwarding other programs' sound,
+/// so it names the bridge rather than the producer. Read from the graph, not
+/// from a list of process names, because the list would be wrong on the first
+/// desktop that bridges through something else.
+fn is_multiplexer(pid: u32, fronted: &HashMap<u32, usize>) -> bool {
+    fronted.get(&pid).is_some_and(|clients| *clients > 1)
+}
+
+fn is_interface(object: &Value, suffix: &str) -> bool {
+    object
+        .get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|kind| kind.ends_with(suffix))
+}
+
+fn object_id(object: &Value) -> Option<u32> {
+    prop_u32(Some(object), "id")
+}
+
+fn object_props(object: &Value) -> Option<&Value> {
+    object.get("info")?.get("props")
 }
 
 /// Props survive several PipeWire versions in which the same key is a number
