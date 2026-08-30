@@ -454,6 +454,81 @@ impl ExternalSource {
     }
 }
 
+/// The program that reports graph changes.
+pub(crate) const WATCHER: &str = "pw-mon";
+
+/// Watches the graph and says only that it moved.
+///
+/// The output is never parsed. `pw-mon` has no machine-readable mode and its
+/// text is a version's habit rather than a contract, so a parser here would
+/// turn a PipeWire upgrade into silence — the failure this whole feature exists
+/// to stop. What is needed from it is one bit, "something changed", and one bit
+/// survives any reformatting. The graph itself is then read with `pw-dump`,
+/// which does have a contract.
+///
+/// The read blocks, which is what makes it cheap: a watcher that polled would
+/// cost something on an idle desktop, and an idle desktop is the case that has
+/// to cost nothing.
+///
+/// TP-MEDIA-WATCH-02.
+pub(crate) struct GraphWatcher {
+    stream: ChildStream,
+    scratch: Vec<u8>,
+}
+
+impl std::fmt::Debug for GraphWatcher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GraphWatcher")
+            .field("program", &self.stream.program())
+            .field("open", &self.stream.is_open())
+            .finish()
+    }
+}
+
+impl GraphWatcher {
+    /// Starts the shipped watcher.
+    pub(crate) fn start() -> Result<Self, SourceError> {
+        Self::spawn(WATCHER, &[] as &[&str])
+    }
+
+    /// The selection seam, so a test can watch something it controls instead of
+    /// a program whose presence depends on the machine.
+    pub(crate) fn spawn<S: AsRef<std::ffi::OsStr>>(
+        program: &str,
+        args: &[S],
+    ) -> Result<Self, SourceError> {
+        Ok(Self {
+            stream: ChildStream::spawn(program, args)?,
+            // Small on purpose: the bytes are thrown away, and a big buffer
+            // would only mean holding more of what is not read.
+            scratch: vec![0u8; 4096],
+        })
+    }
+
+    /// Blocks until the graph moves. `false` means the watcher itself ended.
+    ///
+    /// Whatever arrived is discarded without being looked at. Two changes that
+    /// land in one read are one signal, which is correct: the debouncer would
+    /// have collapsed them anyway.
+    pub(crate) fn next_signal(&mut self) -> Result<bool, SourceError> {
+        Ok(self.stream.read_into(&mut self.scratch)?.is_some())
+    }
+
+    /// Stops the watcher. Idempotent.
+    pub(crate) fn close(&mut self) -> Result<(), SourceError> {
+        self.stream.close()
+    }
+
+    /// Whether the watcher has already been reaped.
+    pub(crate) fn exited(&mut self) -> bool {
+        self.stream.exited()
+    }
+
+    pub(crate) fn program(&self) -> &str {
+        self.stream.program()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -726,6 +801,58 @@ mod tests {
             Ok(mut source) => {
                 assert_eq!(source.program(), RECORDER);
                 source.close().expect("close");
+            }
+            Err(err) => assert!(matches!(err, SourceError::Unavailable(_)), "{err}"),
+        }
+    }
+
+    // ── A4c · GraphWatcher (WCH-1, WCH-5, WCH-6) ──────────────────────────
+    //
+    // WCH-2..WCH-4 live with the `Debouncer` in `app::pane_audio_source`: the
+    // timing rule is pure and belongs where it can be tested without a process.
+
+    #[test]
+    fn output_in_an_unknown_shape_is_still_a_signal() {
+        // The point of not parsing: whatever pw-mon prints, in whatever version's
+        // format, means the same one thing here.
+        let mut watcher = GraphWatcher::spawn(
+            "printf",
+            // printf turns these escapes into real bytes, so the pipe carries
+            // something no parser would accept — which is the point.
+            &[r"}}not json at all{{ ÿþ binary too".to_string()],
+        )
+        .expect("printf starts");
+        assert!(watcher.next_signal().expect("read"));
+    }
+
+    #[test]
+    fn a_watcher_that_ends_stops_signalling() {
+        let mut watcher = GraphWatcher::spawn("true", &[] as &[&str]).expect("true starts");
+        assert!(!watcher
+            .next_signal()
+            .expect("end of stream is not an error"));
+    }
+
+    #[test]
+    fn closing_leaves_no_watcher_behind() {
+        let mut watcher = GraphWatcher::spawn("sleep", &["30"]).expect("sleep starts");
+        watcher.close().expect("close");
+        assert!(watcher.exited(), "the watcher outlived its close");
+    }
+
+    #[test]
+    fn a_watcher_that_cannot_start_is_unavailable_rather_than_a_panic() {
+        let err =
+            GraphWatcher::spawn("herdr-no-such-watcher", &["-"]).expect_err("no such program");
+        assert!(matches!(err, SourceError::Unavailable(_)), "{err}");
+    }
+
+    #[test]
+    fn starting_the_watcher_needs_the_program_but_never_panics() {
+        match GraphWatcher::start() {
+            Ok(mut watcher) => {
+                assert_eq!(watcher.program(), WATCHER);
+                watcher.close().expect("close");
             }
             Err(err) => assert!(matches!(err, SourceError::Unavailable(_)), "{err}"),
         }
