@@ -690,8 +690,126 @@ fn usage_text(label: &str, usage: Option<Usage>) -> String {
     }
 }
 
+/// One sample reduced to the precision anything on screen can show.
+///
+/// The sampler reads floats and byte counts; the bar renders whole percents,
+/// megabytes and two-figure rates. Two samples that agree at this precision
+/// look identical on every surface, so they must not cost a frame. The quantum
+/// errs fine on purpose: an extra frame is cheap, a gauge frozen by a
+/// too-coarse comparison is a wrong display. TP-RES-27
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct DisplaySignature {
+    cpu_pct: Option<u8>,
+    mem_mb: Option<(u64, u64)>,
+    swap_mb: Option<(u64, u64)>,
+    disk_mb: Option<(u64, u64)>,
+    battery_pct: Option<u8>,
+    net_rate: Option<u64>,
+    temp_c: Option<i16>,
+}
+
+fn usage_mb(usage: Usage) -> (u64, u64) {
+    const MB: u64 = 1024 * 1024;
+    (usage.used / MB, usage.total / MB)
+}
+
+/// Round to two significant figures: a rate has no ceiling, so a fixed unit
+/// would either flap at every kilobyte or hide whole megabytes.
+fn two_figures(value: u64) -> u64 {
+    if value < 100 {
+        return value;
+    }
+    let mut scale = 1u64;
+    let mut head = value;
+    while head >= 100 {
+        head /= 10;
+        scale = scale.saturating_mul(10);
+    }
+    // Round the third figure instead of truncating it, so 194 and 196 land
+    // apart rather than both on 190.
+    ((value + scale / 2) / scale).saturating_mul(scale)
+}
+
+pub(crate) fn display_signature(sample: &ResourceSample) -> DisplaySignature {
+    DisplaySignature {
+        cpu_pct: sample.cpu.map(|cpu| cpu.round().clamp(0.0, 255.0) as u8),
+        mem_mb: sample.mem.map(usage_mb),
+        swap_mb: sample.swap.map(usage_mb),
+        disk_mb: sample.disk.map(usage_mb),
+        battery_pct: sample
+            .battery
+            .map(|charge| charge.round().clamp(0.0, 255.0) as u8),
+        net_rate: sample.net.map(|rate| two_figures(rate.max(0.0) as u64)),
+        temp_c: sample
+            .temp
+            .map(|temp| temp.round().clamp(-999.0, 999.0) as i16),
+    }
+}
+
+/// Whether this sample deserves a frame. TP-RES-27: a reading that lands on
+/// the numbers already shown is not a change; a visible sparkline makes every
+/// sample a change, because its history — which grows unconditionally — is
+/// itself the picture.
+pub(crate) fn display_changed(
+    previous: &mut Option<DisplaySignature>,
+    sample: &ResourceSample,
+    sparkline_visible: bool,
+) -> bool {
+    let signature = display_signature(sample);
+    let changed = sparkline_visible || previous.is_none_or(|last| last != signature);
+    *previous = Some(signature);
+    changed
+}
+
 #[cfg(test)]
 mod tests {
+    // TP-RES-27: two readings that agree at display precision are one
+    // picture — the second must not cost a frame.
+    #[test]
+    fn a_reading_on_the_same_shown_numbers_is_not_a_change() {
+        let mut previous = None;
+        let mut sample = super::ResourceSample {
+            cpu: Some(36.2),
+            ..Default::default()
+        };
+        assert!(
+            super::display_changed(&mut previous, &sample, false),
+            "the first reading has nothing on screen to agree with"
+        );
+        sample.cpu = Some(36.4); // still shows 36
+        assert!(!super::display_changed(&mut previous, &sample, false));
+        sample.cpu = Some(37.6); // shows 38
+        assert!(super::display_changed(&mut previous, &sample, false));
+    }
+
+    // TP-RES-27: a sparkline's history is the picture itself, so for it an
+    // identical reading is still a new column.
+    #[test]
+    fn a_visible_sparkline_makes_every_reading_a_change() {
+        let mut previous = None;
+        let sample = super::ResourceSample {
+            cpu: Some(36.2),
+            ..Default::default()
+        };
+        assert!(super::display_changed(&mut previous, &sample, true));
+        assert!(
+            super::display_changed(&mut previous, &sample, true),
+            "an identical reading still scrolls a history"
+        );
+    }
+
+    // TP-RES-27: a rate has no ceiling, so it compares at two significant
+    // figures — fixed units would either flap at every kilobyte or hide
+    // whole megabytes.
+    #[test]
+    fn rates_compare_at_two_significant_figures() {
+        assert_eq!(super::two_figures(99), 99);
+        assert_eq!(super::two_figures(194), 190);
+        assert_eq!(super::two_figures(196), 200);
+        assert_eq!(super::two_figures(203_000), 200_000);
+        assert_eq!(super::two_figures(207_000), 210_000);
+    }
+
     // C1: the display family's shared contract, property-style — fills are
     // monotone in value, exact at both ends, sane at width 1, and NaN or a
     // negative sample clamps to empty instead of panicking or overdrawing.

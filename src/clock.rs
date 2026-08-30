@@ -194,6 +194,34 @@ impl ClockFormat {
         Duration::from_secs(if shows_seconds { 1 } else { 60 })
     }
 
+    /// Whether two readings show different faces at this resolution.
+    ///
+    /// The comparison must match what `render` can print: a minute clock's
+    /// face is identical across the fifty-nine seconds inside a minute, and
+    /// calling each of those a change hands the whole surface a frame per
+    /// second for a string that did not move — the exact cost `resolution`
+    /// exists to avoid. A missing reading on either side is a change, because
+    /// a face appearing or vanishing is one. TP-CLOCK-13
+    pub(crate) fn faces_differ(
+        previous: Option<OffsetDateTime>,
+        current: Option<OffsetDateTime>,
+        resolution: Duration,
+    ) -> bool {
+        let shows_seconds = resolution < Duration::from_secs(60);
+        let face = |at: OffsetDateTime| {
+            (
+                at.hour(),
+                at.minute(),
+                if shows_seconds {
+                    Some(at.second())
+                } else {
+                    None
+                },
+            )
+        };
+        previous.map(face) != current.map(face)
+    }
+
     pub(crate) fn render(&self, at: OffsetDateTime) -> String {
         let mut out = String::new();
         for piece in &self.pieces {
@@ -243,6 +271,50 @@ pub(crate) fn local_now() -> Option<OffsetDateTime> {
 mod tests {
     use super::*;
     use time::{Date, Month, PrimitiveDateTime, Time, UtcOffset};
+
+    // TP-CLOCK-13: a minute clock's face is one string across a minute — a
+    // new second inside it is not a change, and a seconds clock still sees it.
+    #[test]
+    fn a_minute_face_ignores_a_new_second() {
+        let earlier = anchor();
+        let later = earlier
+            .replace_second(earlier.second() + 1)
+            .expect("valid second");
+        assert!(!ClockFormat::faces_differ(
+            Some(earlier),
+            Some(later),
+            Duration::from_secs(60)
+        ));
+        assert!(
+            ClockFormat::faces_differ(Some(earlier), Some(later), Duration::from_secs(1)),
+            "a seconds clock still sees the new second"
+        );
+    }
+
+    // TP-CLOCK-13: the minute moving is what a minute face calls a change.
+    #[test]
+    fn a_minute_face_changes_when_the_minute_does() {
+        let earlier = anchor();
+        let later = earlier
+            .replace_minute(earlier.minute() + 1)
+            .expect("valid minute");
+        assert!(ClockFormat::faces_differ(
+            Some(earlier),
+            Some(later),
+            Duration::from_secs(60)
+        ));
+    }
+
+    // TP-CLOCK-13: a face appearing or vanishing is a change at any pace.
+    #[test]
+    fn a_face_appearing_or_vanishing_is_a_change() {
+        let now = anchor();
+        for resolution in [Duration::from_secs(1), Duration::from_secs(60)] {
+            assert!(ClockFormat::faces_differ(None, Some(now), resolution));
+            assert!(ClockFormat::faces_differ(Some(now), None, resolution));
+            assert!(!ClockFormat::faces_differ(None, None, resolution));
+        }
+    }
 
     /// 2026-08-17 13:05:09 — a Monday, in the afternoon, so `%I`/`%p` and the
     /// two-digit padding of every other field are all exercised by one moment.

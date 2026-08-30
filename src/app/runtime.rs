@@ -826,18 +826,18 @@ impl App {
     /// woke early for some other reason.
     // TP-CLOCK-09: the loop reads the clock, the renderer never does.
     pub(crate) fn tick_clock(&mut self) -> bool {
-        if self.state.shell_bar_chrome.clock_tick().is_none() {
+        let Some(tick) = self.state.shell_bar_chrome.clock_tick() else {
             // A bar that lost its clock must not keep a stale reading around to
             // draw if one comes back.
             return self.state.clock_now.take().is_some();
-        }
+        };
         let previous = self.state.clock_now;
         self.state.clock_now = crate::clock::local_now();
-        previous.map(|at| (at.hour(), at.minute(), at.second()))
-            != self
-                .state
-                .clock_now
-                .map(|at| (at.hour(), at.minute(), at.second()))
+        // Compared at the pace the fastest visible clock can show, not at
+        // seconds unconditionally: a `%H:%M` bar's face is the same string
+        // for fifty-nine ticks out of sixty, and each of those used to cost
+        // the whole surface a frame. TP-CLOCK-13
+        crate::clock::ClockFormat::faces_differ(previous, self.state.clock_now, tick)
     }
 
     /// Reads the machine, if a reading is due.
@@ -923,7 +923,18 @@ impl App {
         // TP-SPARK-07: the loop feeds the history, once per reading.
         let sample = self.state.resources;
         self.state.resource_history.push(&sample);
-        true
+        // The push above is unconditional on purpose: the sparkline's history
+        // is the picture itself, and it must not grow holes just because two
+        // readings round to the same label. Only the *signal* below may say
+        // "nothing new to draw" — a reading that lands on the numbers already
+        // shown is not worth a frame. TP-RES-27
+        crate::resource::display_changed(
+            &mut self.previous_resource_display,
+            &sample,
+            self.state
+                .shell_bar_chrome
+                .any_widget_redraws_every_sample(),
+        )
     }
 }
 
@@ -983,6 +994,46 @@ mod tests {
         app.state.shell_bar_chrome =
             crate::ui::shell::ShellBarChrome::themed_by_default(&config, true);
         app
+    }
+
+    // TP-RES-27: the record grows on every tick, whatever the signal says —
+    // the sparkline's history is the picture itself, and the "same numbers,
+    // no frame" comparison must never be allowed to swallow a reading. The
+    // side effect and the signal are two different things on purpose.
+    #[test]
+    fn every_tick_records_a_sample_whatever_the_signal_says() {
+        let mut app = app_with_only_widget("resource");
+        let now = Instant::now();
+        assert!(
+            app.tick_resource_sample(now),
+            "the first reading has nothing on screen to agree with"
+        );
+        let before = app
+            .state
+            .resource_history
+            .series(crate::resource::ResourceMetric::Cpu)
+            .len();
+        let _signal = app.tick_resource_sample(now + app.resource_sample_interval());
+        assert_eq!(
+            app.state
+                .resource_history
+                .series(crate::resource::ResourceMetric::Cpu)
+                .len(),
+            before + 1,
+            "the record must grow even when the reading was not worth a frame"
+        );
+    }
+
+    // TP-RES-27: a bar holding a sparkline redraws on every reading.
+    #[test]
+    fn a_sparkline_bar_draws_every_reading() {
+        let mut app = app_with_only_widget("sparkline");
+        let now = Instant::now();
+        assert!(app.tick_resource_sample(now));
+        assert!(
+            app.tick_resource_sample(now + app.resource_sample_interval()),
+            "identical readings still scroll a history"
+        );
     }
 
     /// A live widget standing on its own is enough to make the loop sample.
@@ -1294,14 +1345,21 @@ mod tests {
             Duration::from_millis(500)
         );
 
+        // The pace is proven on the reading counter, not on the tick's return
+        // value: since TP-RES-27 the return says "worth a frame", and two real
+        // readings that round to the same displayed percent are one frame on
+        // purpose — but they are still two readings, on the configured beat.
         let start = Instant::now();
         assert!(app.tick_resource_sample(start), "the first reading is owed");
-        assert!(
-            !app.tick_resource_sample(start + Duration::from_millis(499)),
+        assert_eq!(app.resource_samples_taken, 1);
+        app.tick_resource_sample(start + Duration::from_millis(499));
+        assert_eq!(
+            app.resource_samples_taken, 1,
             "a reading was taken before the configured interval had passed"
         );
-        assert!(
-            app.tick_resource_sample(start + Duration::from_millis(500)),
+        app.tick_resource_sample(start + Duration::from_millis(500));
+        assert_eq!(
+            app.resource_samples_taken, 2,
             "no reading was taken once the configured interval had passed"
         );
     }
