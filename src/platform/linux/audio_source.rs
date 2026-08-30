@@ -276,22 +276,28 @@ pub(crate) const RECORDER: &str = "pw-record";
 impl std::fmt::Debug for ExternalSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ExternalSource")
-            .field("program", &self.program)
-            .field("open", &self.stdout.is_some())
+            .field("program", &self.stream.program())
+            .field("open", &self.stream.is_open())
             .finish()
     }
 }
 
-pub(crate) struct ExternalSource {
+/// A child process read as a stream of bytes and stopped by killing it.
+///
+/// Extracted because two things need it now — the recorder and the graph
+/// watcher — and the part that would have been copied is exactly the part that
+/// leaves a live process behind when it is copied wrong. One implementation,
+/// one set of tests, one place to be right.
+///
+/// TP-MEDIA-RECORDER-01.
+pub(crate) struct ChildStream {
     child: Child,
     stdout: Option<ChildStdout>,
     program: String,
-    reframer: Reframer,
-    scratch: Vec<u8>,
 }
 
-impl ExternalSource {
-    /// Starts `program`, expecting whole f32 samples on its stdout.
+impl ChildStream {
+    /// Starts `program` with its stdout on a pipe and its stderr discarded.
     pub(crate) fn spawn<S: AsRef<std::ffi::OsStr>>(
         program: &str,
         args: &[S],
@@ -300,7 +306,7 @@ impl ExternalSource {
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            // The recorder narrates to stderr on every graph change; kept off
+            // These programs narrate to stderr on every graph change; kept off
             // the terminal because this runs under a live session.
             .stderr(Stdio::null())
             .spawn()
@@ -313,6 +319,95 @@ impl ExternalSource {
             child,
             stdout: Some(stdout),
             program: program.to_string(),
+        })
+    }
+
+    /// Reads whatever is ready into `buf`. `None` means the stream has ended.
+    ///
+    /// The caller owns the buffer so this hands back a count rather than a
+    /// borrow: a borrow would forbid the recorder from pushing those bytes into
+    /// its own reframer while still holding it.
+    pub(crate) fn read_into(&mut self, buf: &mut [u8]) -> Result<Option<usize>, SourceError> {
+        let Some(stdout) = self.stdout.as_mut() else {
+            return Ok(None);
+        };
+        let read = stdout
+            .read(buf)
+            .map_err(|err| SourceError::Closed(format!("{}: {err}", self.program)))?;
+        if read == 0 {
+            self.stdout = None;
+            return Ok(None);
+        }
+        Ok(Some(read))
+    }
+
+    /// Stops the process. Idempotent, because `Drop` calls it too.
+    pub(crate) fn close(&mut self) -> Result<(), SourceError> {
+        // Order matters. Dropping the pipe first means the child's next write
+        // fails, which is the only signal it would ever get on its own — and a
+        // producer with nothing to say never makes that write, so the kill is
+        // what actually ends it. The wait is not optional: a killed child that
+        // is never reaped is a zombie, and a pane whose video is opened and
+        // closed through an afternoon would leave a row of them.
+        //
+        // The kill-then-wait shape is `sound::terminate_and_reap`'s, including
+        // the part that looks redundant and is not: a kill can fail because the
+        // child is already gone, which is fine, or because it is still there
+        // and could not be signalled, which is not — and waiting on the second
+        // case blocks the caller forever. `try_wait` tells the two apart.
+        self.stdout = None;
+        if let Err(kill_err) = self.child.kill() {
+            match self.child.try_wait() {
+                Ok(Some(_)) => {}
+                _ => {
+                    return Err(SourceError::Closed(format!(
+                        "{}: could not be stopped: {kill_err}",
+                        self.program
+                    )));
+                }
+            }
+        }
+        self.child
+            .wait()
+            .map(|_| ())
+            .map_err(|err| SourceError::Closed(format!("{}: {err}", self.program)))
+    }
+
+    /// Whether the process has already been reaped.
+    pub(crate) fn exited(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(Some(_)))
+    }
+
+    /// Whether the pipe is still readable.
+    pub(crate) fn is_open(&self) -> bool {
+        self.stdout.is_some()
+    }
+
+    pub(crate) fn program(&self) -> &str {
+        &self.program
+    }
+}
+
+impl Drop for ChildStream {
+    fn drop(&mut self) {
+        let _ = self.close();
+    }
+}
+
+pub(crate) struct ExternalSource {
+    stream: ChildStream,
+    reframer: Reframer,
+    scratch: Vec<u8>,
+}
+
+impl ExternalSource {
+    /// Starts `program`, expecting whole f32 samples on its stdout.
+    pub(crate) fn spawn<S: AsRef<std::ffi::OsStr>>(
+        program: &str,
+        args: &[S],
+    ) -> Result<Self, SourceError> {
+        Ok(Self {
+            stream: ChildStream::spawn(program, args)?,
             reframer: Reframer::new(),
             scratch: vec![0u8; SOURCE_FRAME_BYTES],
         })
@@ -334,68 +429,28 @@ impl ExternalSource {
             if let Some(frame) = self.reframer.next_frame() {
                 return Ok(Some(frame));
             }
-            let Some(stdout) = self.stdout.as_mut() else {
-                return Ok(None);
-            };
-            let read = stdout
-                .read(&mut self.scratch)
-                .map_err(|err| SourceError::Closed(format!("{}: {err}", self.program)))?;
-            if read == 0 {
+            let Some(read) = self.stream.read_into(&mut self.scratch)? else {
                 // End of stream. Whatever is still held back cannot make a
                 // whole frame, and a partial frame is not ours to send: the
                 // protocol refuses it and padding it would shift the clock.
-                self.stdout = None;
                 return Ok(None);
-            }
+            };
             self.reframer.push(&self.scratch[..read]);
         }
     }
 
-    /// Stops the recorder. Idempotent, because `Drop` calls it too.
+    /// Stops the recorder. Idempotent, because the stream's `Drop` closes it.
     pub(crate) fn close(&mut self) -> Result<(), SourceError> {
-        // Order matters. Dropping the pipe first means the recorder's next
-        // write fails, which is the only signal it would ever get on its own —
-        // and on a silent stream that write never comes, so the kill is what
-        // actually ends it. The wait is not optional: a killed child that is
-        // never reaped is a zombie, and a pane whose video is opened and closed
-        // through an afternoon would leave a row of them.
-        self.stdout = None;
-        // The kill-then-wait shape is `sound::terminate_and_reap`'s, including
-        // the part that looks redundant and is not: a kill can fail because the
-        // child is already gone, which is fine, or because it is still there
-        // and could not be signalled, which is not — and waiting on the second
-        // case blocks the caller forever. `try_wait` is what tells the two
-        // apart.
-        if let Err(kill_err) = self.child.kill() {
-            match self.child.try_wait() {
-                Ok(Some(_)) => {}
-                _ => {
-                    return Err(SourceError::Closed(format!(
-                        "{}: could not be stopped: {kill_err}",
-                        self.program
-                    )));
-                }
-            }
-        }
-        self.child
-            .wait()
-            .map(|_| ())
-            .map_err(|err| SourceError::Closed(format!("{}: {err}", self.program)))
+        self.stream.close()
     }
 
     /// Whether the recorder has already been reaped.
     pub(crate) fn exited(&mut self) -> bool {
-        matches!(self.child.try_wait(), Ok(Some(_)))
+        self.stream.exited()
     }
 
     pub(crate) fn program(&self) -> &str {
-        &self.program
-    }
-}
-
-impl Drop for ExternalSource {
-    fn drop(&mut self) {
-        let _ = self.close();
+        self.stream.program()
     }
 }
 
