@@ -200,11 +200,14 @@ impl Reframer {
     }
 
     pub(crate) fn push(&mut self, chunk: &[u8]) {
-        let _ = chunk;
+        self.buffer.extend_from_slice(chunk);
     }
 
     pub(crate) fn next_frame(&mut self) -> Option<Vec<u8>> {
-        None
+        if self.buffer.len() < self.frame_bytes {
+            return None;
+        }
+        Some(self.buffer.drain(..self.frame_bytes).collect())
     }
 
     /// Bytes held back because they do not yet make a whole frame.
@@ -220,8 +223,22 @@ impl Reframer {
 /// valid ids for something, so aiming with the wrong one records the wrong
 /// stream and reports no error at all.
 pub(crate) fn capture_args(object_serial: u32) -> Vec<String> {
-    let _ = object_serial;
-    Vec::new()
+    [
+        "--target",
+        &object_serial.to_string(),
+        "--rate",
+        "48000",
+        "--channels",
+        "2",
+        "--format",
+        "f32",
+        // stdout, so the frames arrive on a pipe rather than in a file nobody
+        // asked for.
+        "-",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect()
 }
 
 #[cfg(test)]
