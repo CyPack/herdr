@@ -211,8 +211,39 @@ pub(crate) fn plan(
     open: &BTreeSet<String>,
     listeners: usize,
 ) -> Vec<SourceAction> {
-    let _ = (panes, open, listeners);
-    Vec::new()
+    let mut actions = Vec::new();
+    for pane_id in open {
+        let reason = if listeners == 0 {
+            CloseReason::NoListener
+        } else {
+            match panes.iter().find(|pane| &pane.pane_id == pane_id) {
+                None => CloseReason::PaneGone,
+                Some(pane) if pane.matched == SourceMatch::None => CloseReason::SourceEnded,
+                // A pane that is already being captured keeps what it has,
+                // whether the rules still name one stream or now name two.
+                Some(_) => continue,
+            }
+        };
+        actions.push(SourceAction::Close {
+            pane_id: pane_id.clone(),
+            reason,
+        });
+    }
+    if listeners == 0 {
+        return actions;
+    }
+    for pane in panes {
+        if open.contains(&pane.pane_id) {
+            continue;
+        }
+        if let SourceMatch::One { node_id, .. } = pane.matched {
+            actions.push(SourceAction::Open {
+                pane_id: pane.pane_id.clone(),
+                node_id,
+            });
+        }
+    }
+    actions
 }
 
 #[cfg(test)]
