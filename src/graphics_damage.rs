@@ -15,6 +15,16 @@
 //! re-derived for RGBA pixel buffers with our own constants.
 //! PRD: `.local/prd/graphics-damage-delta-prd.md` · TP-GFX-DELTA-01.
 
+// Unused until the wiring lands: the differ, the emitter and the drift policy
+// are built and pinned first, so the send path has something already tested to
+// call rather than growing its own copy under deadline. The same reason the
+// media lane was built before the encoder (`client_transport.rs`).
+//
+// REMOVAL CONDITION: delete this attribute the moment `emit_patch_escapes` is
+// called from the graphics send path — after that, a dead item here is a real
+// leak, not a staged one.
+#![allow(dead_code)]
+
 /// Tile edge in pixels. Small enough that a cursor blink dirties one tile,
 /// large enough that the dirty-tile bitmap for a 4K frame stays a few KB.
 pub(crate) const DAMAGE_TILE_PX: u32 = 32;
