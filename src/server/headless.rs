@@ -1849,6 +1849,27 @@ impl HeadlessServer {
         }
     }
 
+    /// TP-GFX-RESIZE-01: the resize sweep. Unlike the detach cleanup this
+    /// must not replace the queue — the pane-layer frames waiting there
+    /// still describe a picture the replay road will re-seat — so the
+    /// deletes ride the control lane as an ordinary message.
+    fn send_client_terminal_graphics_sweep(&mut self, client_id: u64) {
+        let Some(client) = self.clients.get_mut(&client_id) else {
+            return;
+        };
+        let bytes = client.graphics_cache.clear_terminal_native_bytes();
+        if bytes.is_empty() {
+            return;
+        }
+        let Some(writer) = client.writer.as_ref() else {
+            return;
+        };
+        let Ok(serialized) = Self::frame_server_message(&ServerMessage::Graphics { bytes }) else {
+            return;
+        };
+        let _ = writer.control.send(serialized);
+    }
+
     fn send_client_graphics_cleanup(&mut self, client_id: u64) {
         let (writer, bytes) = match self.clients.get_mut(&client_id) {
             Some(client) => {
@@ -2208,11 +2229,7 @@ impl HeadlessServer {
                     update.agent_label.as_deref(),
                 )
             {
-                self.send_notify_to_foreground_client(
-                    protocol::NotifyKind::Sound,
-                    sound_notify_message(sound),
-                    None,
-                );
+                self.send_notify_sound_to_app_clients(sound_notify_message(sound));
             }
         }
 
@@ -2257,11 +2274,7 @@ impl HeadlessServer {
         delivery: &crate::app::state::AgentNotificationDelivery,
     ) {
         if let Some(sound) = delivery.sound {
-            self.send_notify_to_foreground_client(
-                protocol::NotifyKind::Sound,
-                sound_notify_message(sound),
-                None,
-            );
+            self.send_notify_sound_to_app_clients(sound_notify_message(sound));
         }
 
         if should_forward_toast_to_clients(self.app.state.toast_config.delivery) {
@@ -2273,6 +2286,30 @@ impl HeadlessServer {
                     non_empty_body(&toast.context),
                 );
             }
+        }
+    }
+
+    /// TP-NOTIFY-SOUND-01: a sound is per listener, not per foreground. Every
+    /// app client with a writer hears it — the second display across the
+    /// room stayed silent for the whole of 2026-08-29 because sounds only
+    /// ever went to the foreground client while its own player sat ready.
+    fn send_notify_sound_to_app_clients(&mut self, message: impl Into<String>) {
+        let message = message.into();
+        let targets: Vec<u64> = self
+            .clients
+            .iter()
+            .filter(|(_, client)| client.is_full_app_client() && client.writer.is_some())
+            .map(|(client_id, _)| *client_id)
+            .collect();
+        for client_id in targets {
+            self.send_to_client(
+                client_id,
+                ServerMessage::Notify {
+                    kind: protocol::NotifyKind::Sound,
+                    message: message.clone(),
+                    body: None,
+                },
+            );
         }
     }
 
@@ -2500,11 +2537,7 @@ impl HeadlessServer {
         let Some(sound) = sound.to_sound() else {
             return;
         };
-        self.send_notify_to_foreground_client(
-            protocol::NotifyKind::Sound,
-            sound_notify_message(sound),
-            None,
-        );
+        self.send_notify_sound_to_app_clients(sound_notify_message(sound));
     }
 
     /// Handles a single internal event with forwarding logic for clipboard,
@@ -2597,11 +2630,7 @@ impl HeadlessServer {
                             next_agent_label.as_deref(),
                         )
                     {
-                        self.send_notify_to_foreground_client(
-                            protocol::NotifyKind::Sound,
-                            sound_notify_message(sound),
-                            None,
-                        );
+                        self.send_notify_sound_to_app_clients(sound_notify_message(sound));
                     }
                 }
 
@@ -2695,11 +2724,7 @@ impl HeadlessServer {
                             next_agent_label.as_deref(),
                         )
                     {
-                        self.send_notify_to_foreground_client(
-                            protocol::NotifyKind::Sound,
-                            sound_notify_message(sound),
-                            None,
-                        );
+                        self.send_notify_sound_to_app_clients(sound_notify_message(sound));
                     }
                 }
 
@@ -3548,15 +3573,27 @@ impl HeadlessServer {
                     render_state.request_repaint();
                     return true;
                 }
+                let mut geometry_changed = false;
                 if let Some(client) = self.clients.get_mut(&client_id) {
-                    client.terminal_size = (cols, rows);
                     let observed = crate::kitty_graphics::HostCellSize {
                         width_px: cell_width_px,
                         height_px: cell_height_px,
                     };
+                    geometry_changed = client.terminal_size != (cols, rows)
+                        || (observed.is_known() && observed != client.cell_size);
+                    client.terminal_size = (cols, rows);
                     if observed.is_known() {
                         client.cell_size = observed;
                     }
+                }
+                if geometry_changed {
+                    // TP-GFX-RESIZE-01: the terminal-native pictures were
+                    // placed with the old geometry and no repaint can
+                    // rebuild them — sweep those; the pane-layer stream
+                    // stays, its road replays placements without a
+                    // retransmit. A resize that changes nothing moves no
+                    // bytes.
+                    self.send_client_terminal_graphics_sweep(client_id);
                 }
                 self.promote_client_to_foreground(client_id);
                 self.resize_shared_runtime_to_effective_size();
@@ -4272,11 +4309,7 @@ impl HeadlessServer {
                     )
                 {
                     debug!(sound = ?sound, "forwarding sound notification from API request");
-                    self.send_notify_to_foreground_client(
-                        protocol::NotifyKind::Sound,
-                        sound_notify_message(sound),
-                        None,
-                    );
+                    self.send_notify_sound_to_app_clients(sound_notify_message(sound));
                 }
             }
         }
@@ -4591,23 +4624,8 @@ impl HeadlessServer {
         if client.deferred_render() != DeferredRender::None {
             retained_fallback!("render_pending");
         }
-        if self.app.state.kitty_graphics_enabled && !client.graphics_cache.is_empty() {
-            retained_fallback!("graphics_cache_active");
-        }
         if client.graphics_surface_reset_pending {
             retained_fallback!("graphics_surface_reset");
-        }
-        if self.app.state.kitty_graphics_enabled
-            && cell_size.is_known()
-            && crate::kitty_graphics::has_visible_pane_graphics(
-                &self.app.state,
-                &self.app.pane_graphics,
-                &self.app.terminal_runtimes,
-                self.app.state.view.tab_surface(),
-                *cell_size,
-            )
-        {
-            retained_fallback!("visible_kitty_graphics");
         }
         let Some(mut frame) = client.render_state.last_frame().cloned() else {
             retained_fallback!("no_last_frame");
@@ -4665,7 +4683,42 @@ impl HeadlessServer {
         );
         let cursor_changed = frame.cursor != previous_cursor;
 
-        if !touched && !cursor_changed {
+        // TP-GFX-RETAINED-01: the fast path CARRIES the graphics update
+        // instead of stepping aside. Refusing to run whenever a graphics
+        // cache existed turned every frame of a video pane into a
+        // full-screen render — measured live at 15/15 full renders per
+        // second, render p95 134 ms, the server pinned at 150% CPU and the
+        // picture blinking as each pass re-blitted text over the placements.
+        let mut next_graphics_cache = None;
+        if self.app.state.kitty_graphics_enabled && cell_size.is_known() {
+            let Some(client) = self.clients.get(client_id) else {
+                retained_fallback!("client_missing");
+            };
+            if client.graphics_surface_reset_pending {
+                retained_fallback!("graphics_surface_reset");
+            }
+            let mut cache = client.graphics_cache.clone();
+            let previous_viewer = self.app.state.enter_viewer(Some(*client_id));
+            let encoded = crate::kitty_graphics::encode_local_pane_graphics(
+                &self.app.state,
+                &self.app.pane_graphics,
+                &self.app.terminal_runtimes,
+                self.app.state.view.tab_surface(),
+                *cell_size,
+                Some(crate::kitty_graphics::HEADLESS_GRAPHICS_TRANSACTION_BUDGET),
+                &mut cache,
+            );
+            self.app.state.restore_viewer(previous_viewer);
+            if encoded.incomplete {
+                // An upload over the transaction budget continues on the full
+                // path, which owns the incomplete-loop bookkeeping.
+                retained_fallback!("graphics_incomplete");
+            }
+            frame.graphics.extend(encoded.bytes);
+            next_graphics_cache = Some(cache);
+        }
+
+        if !touched && !cursor_changed && frame.graphics.is_empty() {
             retained_success!("clean_no_cursor_change");
         }
 
@@ -4675,6 +4728,11 @@ impl HeadlessServer {
             self.remove_client_and_resize_if_needed(broken_client);
         }
         if sent {
+            if let (Some(cache), Some(client)) =
+                (next_graphics_cache, self.clients.get_mut(client_id))
+            {
+                client.graphics_cache = cache;
+            }
             retained_success!("sent");
         }
         retained_fallback!("send_failed");
@@ -4974,6 +5032,13 @@ impl HeadlessServer {
                                     &mut next_graphics_cache,
                                 );
                             }
+                            // A full frame re-blits every text cell and
+                            // wipes the kitty placements with them; ask the
+                            // encoder to re-seat cached pictures even when
+                            // nothing about them changed (TP-GFX-RESIZE-01
+                            // reseat half — the divider-release repaint rides
+                            // this road).
+                            next_graphics_cache.request_placement_replay();
                             let graphics_started = crate::render_prof::timer();
                             let encoded = crate::kitty_graphics::encode_local_pane_graphics(
                                 &self.app.state,
@@ -7168,6 +7233,248 @@ mod tests {
         server.resize_shared_runtime_to_effective_size();
 
         (server, drain, pane_id)
+    }
+
+    /// `retained_test_server`, plus the control-lane receiver — the resize
+    /// sweep travels as a cleanup on the control lane, and a test that only
+    /// listens to the render lane calls a working sweep silent.
+    fn resize_test_server(
+        initial_screen: &[u8],
+    ) -> (
+        HeadlessServer,
+        std::sync::mpsc::Receiver<Vec<u8>>,
+        std::sync::mpsc::Receiver<Vec<u8>>,
+        crate::layout::PaneId,
+    ) {
+        let mut server = test_headless_server();
+        let mut workspace = crate::workspace::Workspace::test_new("test");
+        let pane_id = workspace.focused_pane_id().expect("focused pane");
+        workspace.insert_test_runtime(
+            pane_id,
+            crate::terminal::TerminalRuntime::test_with_screen_bytes(80, 24, initial_screen),
+        );
+        server.app.state.workspaces = vec![workspace];
+        server.app.state.active = Some(0);
+        server.app.state.selected = 0;
+        server.app.state.mode = crate::app::Mode::Terminal;
+
+        let (client_tx, control_rx, client_rx) = test_client_writer();
+        server.clients.insert(
+            1,
+            ClientConnection::new(
+                (80, 24),
+                crate::kitty_graphics::HostCellSize::default(),
+                crate::terminal_theme::TerminalTheme::default(),
+                None,
+                1,
+                RenderEncoding::SemanticFrame,
+                Some(client_tx),
+            ),
+        );
+        server.foreground_client_id = Some(1);
+        server.sync_foreground_client_state();
+        server.resize_shared_runtime_to_effective_size();
+
+        (server, control_rx, client_rx, pane_id)
+    }
+
+    fn drain_messages(rx: &std::sync::mpsc::Receiver<Vec<u8>>) -> Vec<ServerMessage> {
+        let mut out = Vec::new();
+        while let Ok(bytes) = rx.try_recv() {
+            out.push(read_server_message(bytes));
+        }
+        out
+    }
+
+    fn any_delete_all(messages: &[ServerMessage]) -> bool {
+        messages.iter().any(|message| match message {
+            ServerMessage::Graphics { bytes } => bytes.windows(3).any(|w| w == b"a=d"),
+            ServerMessage::Frame(frame) => frame.graphics.windows(3).any(|w| w == b"a=d"),
+            _ => false,
+        })
+    }
+
+    // TP-GFX-RESIZE-01: a resize breaks every placement's geometry — the
+    // client's graphics slate is wiped (a=d reaches the terminal) so the next
+    // paint rebuilds clean instead of leaving ghosts at the old coordinates.
+    #[tokio::test]
+    async fn a_client_resize_sweeps_the_stale_graphics_off_the_terminal() {
+        let (mut server, control_rx, client_rx, _pane_id) = resize_test_server(b"aaaa");
+        server.app.state.kitty_graphics_enabled = true;
+        {
+            let client = server.clients.get_mut(&1).unwrap();
+            client.cell_size = crate::kitty_graphics::HostCellSize {
+                width_px: 10,
+                height_px: 20,
+            };
+            client.graphics_cache.test_mark_non_empty();
+        }
+
+        assert!(server.handle_server_event(ServerEvent::ClientResize {
+            client_id: 1,
+            cols: 100,
+            rows: 30,
+            cell_width_px: 10,
+            cell_height_px: 20,
+        }));
+
+        assert!(
+            server.clients.get(&1).unwrap().graphics_cache.is_empty(),
+            "the slate is wiped with the geometry that placed it"
+        );
+        assert!(
+            any_delete_all(&drain_messages(&control_rx))
+                || any_delete_all(&drain_messages(&client_rx)),
+            "the delete reaches the terminal, not only the ledger"
+        );
+    }
+
+    // TP-GFX-RESIZE-01: a cell-size change (retina to external display)
+    // invalidates every pixel computation the placements were made with.
+    #[tokio::test]
+    async fn a_cell_size_change_sweeps_the_graphics_too() {
+        let (mut server, control_rx, client_rx, _pane_id) = resize_test_server(b"aaaa");
+        server.app.state.kitty_graphics_enabled = true;
+        {
+            let client = server.clients.get_mut(&1).unwrap();
+            client.cell_size = crate::kitty_graphics::HostCellSize {
+                width_px: 10,
+                height_px: 20,
+            };
+            client.graphics_cache.test_mark_non_empty();
+        }
+
+        assert!(server.handle_server_event(ServerEvent::ClientResize {
+            client_id: 1,
+            cols: 80,
+            rows: 24,
+            cell_width_px: 16,
+            cell_height_px: 32,
+        }));
+
+        assert!(server.clients.get(&1).unwrap().graphics_cache.is_empty());
+        assert!(
+            any_delete_all(&drain_messages(&control_rx))
+                || any_delete_all(&drain_messages(&client_rx))
+        );
+    }
+
+    // TP-GFX-RESIZE-01: a resize that changes nothing moves no bytes — the
+    // slate stays, the wire stays quiet (bytes follow change, not events).
+    #[tokio::test]
+    async fn a_no_op_resize_leaves_the_graphics_alone() {
+        let (mut server, control_rx, client_rx, _pane_id) = resize_test_server(b"aaaa");
+        server.app.state.kitty_graphics_enabled = true;
+        {
+            let client = server.clients.get_mut(&1).unwrap();
+            client.cell_size = crate::kitty_graphics::HostCellSize {
+                width_px: 10,
+                height_px: 20,
+            };
+            client.graphics_cache.test_mark_non_empty();
+        }
+
+        server.handle_server_event(ServerEvent::ClientResize {
+            client_id: 1,
+            cols: 80,
+            rows: 24,
+            cell_width_px: 10,
+            cell_height_px: 20,
+        });
+
+        assert!(
+            !server.clients.get(&1).unwrap().graphics_cache.is_empty(),
+            "an unchanged geometry keeps its slate"
+        );
+        assert!(
+            !any_delete_all(&drain_messages(&control_rx))
+                || any_delete_all(&drain_messages(&client_rx)),
+            "no change, no bytes"
+        );
+    }
+
+    // TP-GFX-RESIZE-01: the sweep is a scalpel — the pane-layer stream's
+    // entries survive a resize untouched, because that road replays its
+    // placements without retransmitting and a delete here would force the
+    // full upload the road exists to avoid.
+    #[tokio::test]
+    async fn a_resize_leaves_the_pane_layer_stream_alone() {
+        let (mut server, control_rx, client_rx, _pane_id) = resize_test_server(b"aaaa");
+        server.app.state.kitty_graphics_enabled = true;
+        {
+            let client = server.clients.get_mut(&1).unwrap();
+            client.cell_size = crate::kitty_graphics::HostCellSize {
+                width_px: 10,
+                height_px: 20,
+            };
+            client.graphics_cache.test_mark_pane_layer_entry();
+        }
+
+        server.handle_server_event(ServerEvent::ClientResize {
+            client_id: 1,
+            cols: 100,
+            rows: 30,
+            cell_width_px: 10,
+            cell_height_px: 20,
+        });
+
+        assert!(
+            !server.clients.get(&1).unwrap().graphics_cache.is_empty(),
+            "the stream entry keeps its seat"
+        );
+        assert!(
+            !any_delete_all(&drain_messages(&control_rx))
+                && !any_delete_all(&drain_messages(&client_rx)),
+            "no delete travels for a slate the replay road owns"
+        );
+    }
+
+    // TP-GFX-RESIZE-01: a full redraw re-seats the terminal-native picture
+    // a PTY painted (the browser pane) from the terminal's own state — the
+    // road the divider-release repaint rides so the pane does not sit blank
+    // until a tab switch forces the same full render.
+    #[tokio::test]
+    async fn a_full_redraw_reseats_the_terminal_native_picture() {
+        let (mut server, control_rx, client_rx, _pane_id) =
+            resize_test_server(b"\x1b_Ga=T,f=32,t=d,i=7,s=1,v=1,q=2;/wAA/w==\x1b\\");
+        server.app.state.kitty_graphics_enabled = true;
+        server.clients.get_mut(&1).unwrap().cell_size = crate::kitty_graphics::HostCellSize {
+            width_px: 10,
+            height_px: 20,
+        };
+
+        server.render_and_stream();
+        let first: Vec<u8> = drain_messages(&control_rx)
+            .into_iter()
+            .chain(drain_messages(&client_rx))
+            .flat_map(|message| match message {
+                ServerMessage::Frame(frame) => frame.graphics,
+                ServerMessage::Graphics { bytes } => bytes,
+                _ => Vec::new(),
+            })
+            .collect();
+        assert!(
+            first.windows(4).any(|w| w == b"a=T,") || first.windows(4).any(|w| w == b"a=t,"),
+            "the first full render carries the PTY's picture"
+        );
+
+        server.app.full_redraw_pending = true;
+        server.render_and_stream();
+        let second: Vec<u8> = drain_messages(&control_rx)
+            .into_iter()
+            .chain(drain_messages(&client_rx))
+            .flat_map(|message| match message {
+                ServerMessage::Frame(frame) => frame.graphics,
+                ServerMessage::Graphics { bytes } => bytes,
+                _ => Vec::new(),
+            })
+            .collect();
+        assert!(
+            second.windows(4).any(|w| w == b"a=p,")
+                || second.windows(4).any(|w| w == b"a=T,")
+                || second.windows(4).any(|w| w == b"a=t,"),
+            "a later full render re-seats the picture instead of leaving the pane blank"
+        );
     }
 
     fn hidden_pty_visibility_test_server(
@@ -13969,38 +14276,6 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
                 .expect("retained frame with kitty enabled"),
         );
         assert!(retained.cells.iter().any(|cell| cell.symbol == "Z"));
-    }
-
-    #[tokio::test]
-    async fn retained_pty_update_declines_when_graphics_cache_has_content() {
-        let (mut server, client_rx, pane_id) = retained_test_server(b"aaaa");
-        server.app.state.kitty_graphics_enabled = true;
-        let client = server.clients.get_mut(&1).unwrap();
-        client.cell_size = crate::kitty_graphics::HostCellSize {
-            width_px: 10,
-            height_px: 20,
-        };
-
-        server.render_and_stream();
-        let _ = client_rx
-            .recv_timeout(Duration::from_millis(100))
-            .expect("initial frame");
-        server
-            .clients
-            .get_mut(&1)
-            .unwrap()
-            .graphics_cache
-            .test_mark_non_empty();
-
-        let runtime = server
-            .app
-            .state
-            .runtime_for_pane_in_workspace(&server.app.terminal_runtimes, 0, pane_id)
-            .expect("runtime");
-        runtime.test_process_pty_bytes(b"\rZ");
-
-        assert!(!server.render_retained_pty_update_and_stream());
-        assert!(client_rx.recv_timeout(Duration::from_millis(50)).is_err());
     }
 
     #[tokio::test]

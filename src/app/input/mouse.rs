@@ -76,6 +76,12 @@ pub(super) enum MouseAction {
         path: Vec<bool>,
         ratio: f32,
     },
+    /// The divider was let go: ask for one clean full paint. The drag's
+    /// preview frames wiped the terminal-native pictures with the
+    /// interaction mode, and only a full render seats them again —
+    /// without this the browser pane sits blank until the next tab
+    /// switch happens to force one.
+    SplitDividerReleased,
     RenameModal(ModalAction),
     ConfirmCloseAccept,
     ContextMenu {
@@ -1030,7 +1036,14 @@ impl AppState {
                         })
                         .cloned()
                     {
-                        self.toggle_full_chat_drawer(hit.ws_idx);
+                        // TP-DRAW-16: under a closed preview this row OPENS
+                        // the drawer; under an open drawer it deepens or
+                        // folds it, exactly as before.
+                        if self.chat_drawer_collapsed(hit.ws_idx) {
+                            self.toggle_chat_drawer(hit.ws_idx);
+                        } else {
+                            self.toggle_full_chat_drawer(hit.ws_idx);
+                        }
                         return None;
                     }
                     // A chat row resumes its session. Checked before the
@@ -1582,6 +1595,11 @@ impl AppState {
                         target: DragTarget::SidebarDivider,
                     }) => {
                         self.commit_sidebar_resize();
+                    }
+                    Some(DragState {
+                        target: DragTarget::PaneSplit { .. },
+                    }) => {
+                        return Some(MouseAction::SplitDividerReleased);
                     }
                     Some(_) => {}
                     None => return self.chrome_press_action(workspace_press, tab_press),
@@ -5650,8 +5668,9 @@ mod tests {
             is_linked_worktree: false,
         });
         main.identity_cwd = std::env::temp_dir();
-        // A second member so both header rows are born (a single-member
-        // bucket folds into its row — recorded behavior, TP-NODE-05).
+        // A second member so both header rows are born (this is an
+        // unparented repo group; TP-NODE-05's revision covers parented
+        // buckets only).
         let mut child = crate::workspace::Workspace::test_new("issue");
         child.worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
             key: "repo-key".into(),
