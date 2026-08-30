@@ -826,18 +826,18 @@ impl App {
     /// woke early for some other reason.
     // TP-CLOCK-09: the loop reads the clock, the renderer never does.
     pub(crate) fn tick_clock(&mut self) -> bool {
-        if self.state.shell_bar_chrome.clock_tick().is_none() {
+        let Some(tick) = self.state.shell_bar_chrome.clock_tick() else {
             // A bar that lost its clock must not keep a stale reading around to
             // draw if one comes back.
             return self.state.clock_now.take().is_some();
-        }
+        };
         let previous = self.state.clock_now;
         self.state.clock_now = crate::clock::local_now();
-        previous.map(|at| (at.hour(), at.minute(), at.second()))
-            != self
-                .state
-                .clock_now
-                .map(|at| (at.hour(), at.minute(), at.second()))
+        // Compared at the pace the fastest visible clock can show, not at
+        // seconds unconditionally: a `%H:%M` bar's face is the same string
+        // for fifty-nine ticks out of sixty, and each of those used to cost
+        // the whole surface a frame. TP-CLOCK-13
+        crate::clock::ClockFormat::faces_differ(previous, self.state.clock_now, tick)
     }
 
     /// Reads the machine, if a reading is due.
