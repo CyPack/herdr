@@ -171,6 +171,21 @@ The rule that fell out of the sweep, which none of the five failing tests states
 > more loaded the machine is.**
 
 A false red costs a turn and announces itself. A false green costs a behaviour and says nothing.
+
+**When you cannot join the producer, flush it with a sentinel.** The fix that closed this defect
+does exactly that: the test sends its own marker down the same lane, and a single forwarder with
+in-lane FIFO ordering means everything queued before the marker has been delivered by the time the
+marker comes back. If it never comes back the test fails loudly instead of passing quietly — which
+is the whole point, because it converts a false green into a false red.
+
+So the ladder, strongest first:
+
+| technique | proof | use when |
+|---|---|---|
+| `join()` the producer | the thread has exited; nothing more can arrive | the producer is a thread you own |
+| **sentinel flush** | FIFO on one lane: your marker arrived, so everything before it did | you cannot join, but you share a lane |
+| bounded wait (`recv_timeout`) | positive asserts only — a late arrival still fails | you expect something to arrive |
+| `sleep` then assert-absent | none | last resort, and the comment must say it is a bet |
  Every
 further instance is either fixed in the same commit or written down by name. Silence is how the
 second half of a class survives into the next session.
