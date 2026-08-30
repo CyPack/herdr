@@ -38,33 +38,14 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 
-/// How much the pid can be trusted, which is worth carrying because the two
-/// answers come from different places and deserve different log lines.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PidTrust {
-    /// The kernel told PipeWire who connected.
-    Verified,
-    /// The program told PipeWire who it is.
-    SelfReported,
-}
-
-/// One capturable output stream, as the graph describes it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RawStream {
-    pub(crate) node_id: u32,
-    pub(crate) pid: Option<u32>,
-    pub(crate) pid_trust: Option<PidTrust>,
-    pub(crate) app_name: Option<String>,
-    /// What `pw-record --target` wants. The graph's object id and this serial
-    /// are different numbers, and targeting with the wrong one captures the
-    /// wrong stream — quietly, because both are valid ids for something.
-    pub(crate) object_serial: Option<u32>,
-}
+use crate::platform::{AudioOutputStream, PidTrust};
 
 const AUDIO_OUTPUT_CLASS: &str = "Stream/Output/Audio";
 
 /// Reads a `pw-dump` document into the output streams it describes.
-pub(crate) fn parse_output_streams(dump: &str) -> Result<Vec<RawStream>, serde_json::Error> {
+pub(crate) fn parse_output_streams(
+    dump: &str,
+) -> Result<Vec<AudioOutputStream>, serde_json::Error> {
     let objects: Vec<Value> = serde_json::from_str(dump)?;
 
     // Clients first: a node points at the client that opened it, and the
@@ -102,7 +83,7 @@ pub(crate) fn parse_output_streams(dump: &str) -> Result<Vec<RawStream>, serde_j
             .or_else(|| prop_str(Some(props), "node.name"))
             .or_else(|| prop_str(client, "application.name"))
             .map(str::to_owned);
-        streams.push(RawStream {
+        streams.push(AudioOutputStream {
             node_id,
             pid,
             pid_trust,
@@ -206,7 +187,7 @@ mod tests {
        "info": {"props": {"media.class": "Stream/Output/Audio", "node.name": "orphan"}}}
     ]"#;
 
-    fn stream(streams: &[RawStream], node_id: u32) -> &RawStream {
+    fn stream(streams: &[AudioOutputStream], node_id: u32) -> &AudioOutputStream {
         streams
             .iter()
             .find(|stream| stream.node_id == node_id)

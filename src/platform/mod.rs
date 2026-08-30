@@ -339,6 +339,101 @@ pub(crate) fn native_audio_sink(
     None
 }
 
+// Staged: the graph reader fills these in and the supervisor's rules read
+// them, but the driver that connects the two has not landed yet.
+//
+// REMOVAL CONDITION: drop both attributes once the pane-audio supervisor
+// consumes an `AudioOutputStream` outside tests.
+#[allow(dead_code)]
+/// How much the pid can be trusted, which is worth carrying because the two
+/// answers come from different places and deserve different log lines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PidTrust {
+    /// The kernel told PipeWire who connected.
+    Verified,
+    /// The program told PipeWire who it is.
+    SelfReported,
+}
+
+#[allow(dead_code)]
+/// One capturable audio output stream, as this platform's audio graph
+/// describes it. Plain data with no `cfg`: the rules that read it are
+/// cross-platform and testable on machines that can capture nothing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AudioOutputStream {
+    pub(crate) node_id: u32,
+    pub(crate) pid: Option<u32>,
+    pub(crate) pid_trust: Option<PidTrust>,
+    pub(crate) app_name: Option<String>,
+    /// What `pw-record --target` wants. The graph's object id and this serial
+    /// are different numbers, and targeting with the wrong one captures the
+    /// wrong stream — quietly, because both are valid ids for something.
+    pub(crate) object_serial: Option<u32>,
+}
+
+// Staged with the types above: the supervisor's rules read these, the driver
+// that calls them has not landed yet.
+//
+// REMOVAL CONDITION: drop the four attributes below once the pane-audio
+// supervisor walks a process chain outside tests.
+/// The parent of `pid`, or `None` at the top of the tree.
+///
+/// `init` is never returned: every process descends from it, so treating it as
+/// an ancestor would make every stream look like it belonged to every pane.
+#[allow(dead_code)]
+#[cfg(unix)]
+pub(crate) fn process_parent(pid: u32) -> Option<u32> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    parent_pid_from_stat(&stat)
+}
+
+#[allow(dead_code)]
+#[cfg(not(unix))]
+pub(crate) fn process_parent(_pid: u32) -> Option<u32> {
+    None
+}
+
+/// Parses the parent out of a `/proc/<pid>/stat` line.
+///
+/// Split from the read on purpose, the way the CPU counters are: the parsing
+/// is the part that can be wrong, and it is tested with fixtures on every
+/// platform, including the ones with no `/proc` at all.
+#[allow(dead_code)]
+fn parent_pid_from_stat(stat: &str) -> Option<u32> {
+    // "pid (comm) state ppid ..." — comm may hold spaces and parens, so the
+    // fields are counted from the last ')'.
+    let rest = stat.get(stat.rfind(')')? + 2..)?;
+    let ppid: u32 = rest.split_whitespace().nth(1)?.parse().ok()?;
+    (ppid > 1).then_some(ppid)
+}
+
+/// Whether `pid`'s environment carries `key=value`.
+#[allow(dead_code)]
+#[cfg(unix)]
+pub(crate) fn process_environ_has(pid: u32, key: &str, value: &str) -> bool {
+    let Ok(environ) = std::fs::read(format!("/proc/{pid}/environ")) else {
+        return false;
+    };
+    environ_has(&environ, key, value)
+}
+
+#[allow(dead_code)]
+#[cfg(not(unix))]
+pub(crate) fn process_environ_has(_pid: u32, _key: &str, _value: &str) -> bool {
+    false
+}
+
+/// The pure half of the environment check: a NUL-separated block, matched
+/// whole rather than by substring so `HERDR_WEB_SESSIONX` cannot pass for
+/// `HERDR_WEB_SESSION`.
+#[allow(dead_code)]
+fn environ_has(environ: &[u8], key: &str, value: &str) -> bool {
+    let wanted = format!("{key}={value}");
+    environ
+        .split(|&byte| byte == 0)
+        .any(|record| record == wanted.as_bytes())
+}
+
 /// Whether a native output device exists, without opening it. Read at the
 /// handshake, where opening a device for a stream nobody has sent would be
 /// both slow and presumptuous.
@@ -591,6 +686,65 @@ mod tests {
 
         assert!(take_terminal_resize_signal());
         assert!(!take_terminal_resize_signal());
+    }
+
+    /// PP-1 — the ordinary line.
+    #[test]
+    fn the_parent_is_read_from_a_stat_line() {
+        assert_eq!(
+            parent_pid_from_stat("4242 (electron) S 4200 4242 4200 0 -1 0"),
+            Some(4200)
+        );
+    }
+
+    /// PP-2 — a command name may hold spaces and parens, which is exactly why
+    /// the fields are counted from the last ')' and not split from the front.
+    #[test]
+    fn a_command_name_with_spaces_and_parens_does_not_shift_the_fields() {
+        assert_eq!(
+            parent_pid_from_stat("7 (Web Content (main)) S 3 7 3 0 -1 0"),
+            Some(3)
+        );
+    }
+
+    /// PP-3 — init is not an ancestor worth having: every process descends
+    /// from it, so returning it would make every stream look like every
+    /// pane's.
+    #[test]
+    fn init_is_not_reported_as_a_parent() {
+        assert_eq!(
+            parent_pid_from_stat("900 (pipewire) S 1 900 1 0 -1 0"),
+            None
+        );
+    }
+
+    /// PP-4 — an unreadable line is no parent, never a panic in a server loop.
+    #[test]
+    fn an_unparseable_stat_line_has_no_parent() {
+        assert_eq!(parent_pid_from_stat("garbage"), None);
+        assert_eq!(parent_pid_from_stat(""), None);
+    }
+
+    /// EN-1 — the marker is matched whole.
+    #[test]
+    fn an_environment_marker_is_found() {
+        let environ = b"PATH=/usr/bin\0HERDR_WEB_SESSION=abc\0HOME=/home\0";
+        assert!(environ_has(environ, "HERDR_WEB_SESSION", "abc"));
+    }
+
+    /// EN-2 — a longer name that merely starts the same must not pass, and
+    /// neither must a value that merely starts the same.
+    #[test]
+    fn a_near_miss_environment_marker_does_not_pass() {
+        let environ = b"HERDR_WEB_SESSIONX=abc\0HERDR_WEB_SESSION=abcdef\0";
+        assert!(!environ_has(environ, "HERDR_WEB_SESSION", "abc"));
+    }
+
+    /// EN-3 — an absent marker is absent, and an unreadable one is too.
+    #[test]
+    fn a_missing_environment_marker_is_absent() {
+        assert!(!environ_has(b"HOME=/home\0", "HERDR_WEB_SESSION", "abc"));
+        assert!(!environ_has(b"", "HERDR_WEB_SESSION", "abc"));
     }
 
     #[test]
