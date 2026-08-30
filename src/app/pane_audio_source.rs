@@ -165,6 +165,56 @@ fn by_name(candidates: &[SourceCandidate], pane: &PaneProcesses) -> Vec<u32> {
         .collect()
 }
 
+/// A pane as the supervisor sees it at one moment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PaneSourceState {
+    pub(crate) pane_id: String,
+    pub(crate) matched: SourceMatch,
+}
+
+/// Why a capture is being stopped. Carried because "the video ended" and "the
+/// last listener left" look identical from the outside and need different
+/// lines in the log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CloseReason {
+    /// No connected client can play audio any more.
+    NoListener,
+    /// The pane itself is gone.
+    PaneGone,
+    /// The pane lives, but nothing it owns is making sound.
+    SourceEnded,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SourceAction {
+    Open {
+        pane_id: String,
+        node_id: u32,
+    },
+    Close {
+        pane_id: String,
+        reason: CloseReason,
+    },
+}
+
+/// Decides what to start and what to stop, from the whole picture rather than
+/// from the event that woke it.
+///
+/// Recomputing the plan means a missed event costs a late decision, never a
+/// wrong one — the alternative, mutating state per event, is where a capture
+/// survives the pane that owned it.
+///
+/// Closes come before opens so a machine that is at its limit gives up a
+/// capture before asking for another.
+pub(crate) fn plan(
+    panes: &[PaneSourceState],
+    open: &BTreeSet<String>,
+    listeners: usize,
+) -> Vec<SourceAction> {
+    let _ = (panes, open, listeners);
+    Vec::new()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -184,6 +234,121 @@ mod tests {
             carries_pane_marker: false,
             app_name: None,
         }
+    }
+
+    fn pane_state(pane_id: &str, matched: SourceMatch) -> PaneSourceState {
+        PaneSourceState {
+            pane_id: pane_id.to_string(),
+            matched,
+        }
+    }
+
+    fn matched_one(node_id: u32) -> SourceMatch {
+        SourceMatch::One {
+            node_id,
+            how: MatchHow::Ancestry,
+        }
+    }
+
+    fn open_set(pane_ids: &[&str]) -> BTreeSet<String> {
+        pane_ids.iter().map(|id| (*id).to_string()).collect()
+    }
+
+    fn opened(pane_id: &str, node_id: u32) -> SourceAction {
+        SourceAction::Open {
+            pane_id: pane_id.to_string(),
+            node_id,
+        }
+    }
+
+    fn closed(pane_id: &str, reason: CloseReason) -> SourceAction {
+        SourceAction::Close {
+            pane_id: pane_id.to_string(),
+            reason,
+        }
+    }
+
+    /// SV-1 — nobody can hear it, so nothing is started. The whole feature
+    /// costs zero while no client has an audio sink.
+    #[test]
+    fn without_a_listener_nothing_is_started() {
+        let panes = [pane_state("w1:p1", matched_one(7))];
+        assert_eq!(plan(&panes, &open_set(&[]), 0), Vec::new());
+    }
+
+    /// SV-2 — the ordinary case.
+    #[test]
+    fn a_matched_pane_with_a_listener_is_opened() {
+        let panes = [pane_state("w1:p1", matched_one(7))];
+        assert_eq!(plan(&panes, &open_set(&[]), 1), vec![opened("w1:p1", 7)]);
+    }
+
+    /// SV-3 — the last listener leaving stops the capture. A recorder left
+    /// running for nobody is both wasted work and a microphone-shaped
+    /// surprise on someone's machine.
+    #[test]
+    fn the_last_listener_leaving_closes_what_is_open() {
+        let panes = [pane_state("w1:p1", matched_one(7))];
+        assert_eq!(
+            plan(&panes, &open_set(&["w1:p1"]), 0),
+            vec![closed("w1:p1", CloseReason::NoListener)]
+        );
+    }
+
+    /// SV-4 — a capture must never outlive the pane that owned it.
+    #[test]
+    fn a_vanished_pane_closes_its_capture() {
+        assert_eq!(
+            plan(&[], &open_set(&["w1:p1"]), 1),
+            vec![closed("w1:p1", CloseReason::PaneGone)]
+        );
+    }
+
+    /// SV-5 — the video ended. Closing here is what makes the next video
+    /// openable: a channel held open for a silent pane spends bandwidth and
+    /// hides the moment sound returns.
+    #[test]
+    fn a_pane_that_fell_silent_closes_its_capture() {
+        let panes = [pane_state("w1:p1", SourceMatch::None)];
+        assert_eq!(
+            plan(&panes, &open_set(&["w1:p1"]), 1),
+            vec![closed("w1:p1", CloseReason::SourceEnded)]
+        );
+    }
+
+    /// SV-6 — an already-open pane is not opened again. The session layer
+    /// would refuse the second open as a conflict; producing it at all would
+    /// turn a healthy state into an error line every tick.
+    #[test]
+    fn an_open_pane_is_not_opened_twice() {
+        let panes = [pane_state("w1:p1", matched_one(7))];
+        assert_eq!(plan(&panes, &open_set(&["w1:p1"]), 1), Vec::new());
+    }
+
+    /// SV-7 — a second stream appearing under a pane that is already being
+    /// captured changes nothing: the capture already names one node, and
+    /// cutting the sound mid-video to re-decide would be a worse answer than
+    /// keeping the one that is playing.
+    #[test]
+    fn an_open_pane_that_turns_ambiguous_keeps_playing() {
+        let panes = [pane_state("w1:p1", SourceMatch::Ambiguous(vec![7, 8]))];
+        assert_eq!(plan(&panes, &open_set(&["w1:p1"]), 1), Vec::new());
+    }
+
+    /// SV-8 — a machine at its limit gives one up before asking for another.
+    #[test]
+    fn closes_are_planned_before_opens() {
+        let panes = [
+            pane_state("w1:p1", SourceMatch::None),
+            pane_state("w1:p2", matched_one(9)),
+        ];
+        assert_eq!(
+            plan(&panes, &open_set(&["w1:p1"]), 1),
+            vec![
+                closed("w1:p1", CloseReason::SourceEnded),
+                opened("w1:p2", 9),
+            ]
+        );
     }
 
     /// ID-1 — the live topology: helper <- daemon <- launcher, and the
