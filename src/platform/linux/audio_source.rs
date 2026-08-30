@@ -35,6 +35,8 @@
 #![allow(dead_code)]
 
 use std::collections::HashMap;
+use std::io::Read;
+use std::process::{Child, ChildStdout, Command, Stdio};
 
 use serde_json::Value;
 
@@ -241,6 +243,101 @@ pub(crate) fn capture_args(object_serial: u32) -> Vec<String> {
     .collect()
 }
 
+/// The program that records one stream off the graph.
+///
+/// Named here rather than inline so a test can say which program it means and
+/// so the one place that has to exist on the machine is visible in the source.
+pub(crate) const RECORDER: &str = "pw-record";
+
+/// One recorder process, read as whole protocol frames.
+///
+/// The mirror of `media::sink::ExternalSink`, and deliberately *not* its exact
+/// reflection at close: a player is told to stop by dropping its stdin,
+/// because killing it would cut off audio it has already buffered. A recorder
+/// has nothing buffered to lose and will not notice a closed pipe until its
+/// next write — which on a silent stream may never come. So the source kills,
+/// and then waits, because a kill without a wait leaves a zombie and a video
+/// opened twice an hour would leave a row of them.
+// Hand-written: `Child` is Debug, but what identifies a source is which
+// recorder it is and whether it is still readable, not the handle's innards.
+impl std::fmt::Debug for ExternalSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExternalSource")
+            .field("program", &self.program)
+            .field("open", &self.stdout.is_some())
+            .finish()
+    }
+}
+
+pub(crate) struct ExternalSource {
+    child: Child,
+    stdout: Option<ChildStdout>,
+    program: String,
+    reframer: Reframer,
+    scratch: Vec<u8>,
+}
+
+impl ExternalSource {
+    /// Starts `program`, expecting whole f32 samples on its stdout.
+    pub(crate) fn spawn<S: AsRef<std::ffi::OsStr>>(
+        program: &str,
+        args: &[S],
+    ) -> Result<Self, SourceError> {
+        let mut child = Command::new(program)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            // The recorder narrates to stderr on every graph change; kept off
+            // the terminal because this runs under a live session.
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|err| SourceError::Unavailable(format!("{program}: {err}")))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| SourceError::Unavailable(format!("{program}: no stdout")))?;
+        Ok(Self {
+            child,
+            stdout: Some(stdout),
+            program: program.to_string(),
+            reframer: Reframer::new(),
+            scratch: vec![0u8; SOURCE_FRAME_BYTES],
+        })
+    }
+
+    /// Aims the shipped recorder at one stream.
+    pub(crate) fn capture(object_serial: u32) -> Result<Self, SourceError> {
+        Self::spawn(RECORDER, &capture_args(object_serial))
+    }
+
+    /// The next whole frame, or `None` once the recorder has ended.
+    pub(crate) fn next_frame(&mut self) -> Result<Option<Vec<u8>>, SourceError> {
+        let _ = &self.scratch;
+        Ok(None)
+    }
+
+    /// Stops the recorder. Idempotent, because `Drop` calls it too.
+    pub(crate) fn close(&mut self) -> Result<(), SourceError> {
+        self.stdout = None;
+        Ok(())
+    }
+
+    /// Whether the recorder has already been reaped.
+    pub(crate) fn exited(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(Some(_)))
+    }
+
+    pub(crate) fn program(&self) -> &str {
+        &self.program
+    }
+}
+
+impl Drop for ExternalSource {
+    fn drop(&mut self) {
+        let _ = self.close();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -422,5 +519,83 @@ mod tests {
         ]"#;
         let streams = parse_output_streams(dump).expect("dump parses");
         assert_eq!(stream(&streams, 6).pid, Some(77));
+    }
+
+    // ── A4a · ExternalSource (SRC-1..SRC-8) ───────────────────────────────
+    //
+    // Every process spawned below is a POSIX utility, so the same assertions
+    // run unchanged on a build box with no sound server at all. A test that
+    // needed `pw-record` would be a test about the machine.
+
+    /// A source that emits exactly `bytes` zero bytes and then ends.
+    fn one_shot(bytes: usize) -> ExternalSource {
+        ExternalSource::spawn(
+            "head",
+            &["-c".to_string(), bytes.to_string(), "/dev/zero".to_string()],
+        )
+        .expect("head starts")
+    }
+
+    #[test]
+    fn a_recorder_that_cannot_start_is_unavailable_rather_than_a_panic() {
+        let err =
+            ExternalSource::spawn("herdr-no-such-recorder", &["-"]).expect_err("no such program");
+        assert!(matches!(err, SourceError::Unavailable(_)), "{err}");
+    }
+
+    #[test]
+    fn a_recorder_that_ends_without_bytes_reads_as_end_of_stream() {
+        let mut source = ExternalSource::spawn("true", &[] as &[&str]).expect("true starts");
+        assert!(source
+            .next_frame()
+            .expect("end of stream is not an error")
+            .is_none());
+    }
+
+    #[test]
+    fn closing_leaves_no_recorder_behind() {
+        let mut source = ExternalSource::spawn("sleep", &["30"]).expect("sleep starts");
+        source.close().expect("close");
+        assert!(source.exited(), "the recorder outlived its close");
+    }
+
+    #[test]
+    fn closing_twice_is_not_an_error() {
+        let mut source = ExternalSource::spawn("sleep", &["30"]).expect("sleep starts");
+        source.close().expect("first close");
+        source.close().expect("second close");
+    }
+
+    #[test]
+    fn one_whole_frame_arrives_and_then_the_stream_ends() {
+        let mut source = one_shot(SOURCE_FRAME_BYTES);
+        let frame = source.next_frame().expect("read").expect("a whole frame");
+        assert_eq!(frame.len(), SOURCE_FRAME_BYTES);
+        assert!(source.next_frame().expect("read").is_none());
+    }
+
+    #[test]
+    fn a_partial_frame_is_never_handed_on() {
+        let mut source = one_shot(100);
+        assert!(source.next_frame().expect("read").is_none());
+    }
+
+    #[test]
+    fn frames_keep_coming_until_the_recorder_ends() {
+        let mut source = one_shot(SOURCE_FRAME_BYTES * 2);
+        assert!(source.next_frame().expect("read").is_some());
+        assert!(source.next_frame().expect("read").is_some());
+        assert!(source.next_frame().expect("read").is_none());
+    }
+
+    #[test]
+    fn aiming_the_capture_needs_the_recorder_but_never_panics() {
+        match ExternalSource::capture(2374) {
+            Ok(mut source) => {
+                assert_eq!(source.program(), RECORDER);
+                source.close().expect("close");
+            }
+            Err(err) => assert!(matches!(err, SourceError::Unavailable(_)), "{err}"),
+        }
     }
 }
