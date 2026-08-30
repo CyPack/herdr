@@ -251,6 +251,8 @@ pub(crate) const RECORDER: &str = "pw-record";
 
 /// One recorder process, read as whole protocol frames.
 ///
+/// TP-MEDIA-RECORDER-01.
+///
 /// The mirror of `media::sink::ExternalSink`, and deliberately *not* its exact
 /// reflection at close: a player is told to stop by dropping its stdin,
 /// because killing it would cut off audio it has already buffered. A recorder
@@ -311,15 +313,63 @@ impl ExternalSource {
     }
 
     /// The next whole frame, or `None` once the recorder has ended.
+    ///
+    /// Blocks, on purpose. The recorder produces in real time — one frame every
+    /// twenty milliseconds — so a caller that could not wait would be spinning
+    /// through the other nineteen. The supervisor reads it on a thread of its
+    /// own, which is where `ExternalSink` sits too.
     pub(crate) fn next_frame(&mut self) -> Result<Option<Vec<u8>>, SourceError> {
-        let _ = &self.scratch;
-        Ok(None)
+        loop {
+            if let Some(frame) = self.reframer.next_frame() {
+                return Ok(Some(frame));
+            }
+            let Some(stdout) = self.stdout.as_mut() else {
+                return Ok(None);
+            };
+            let read = stdout
+                .read(&mut self.scratch)
+                .map_err(|err| SourceError::Closed(format!("{}: {err}", self.program)))?;
+            if read == 0 {
+                // End of stream. Whatever is still held back cannot make a
+                // whole frame, and a partial frame is not ours to send: the
+                // protocol refuses it and padding it would shift the clock.
+                self.stdout = None;
+                return Ok(None);
+            }
+            self.reframer.push(&self.scratch[..read]);
+        }
     }
 
     /// Stops the recorder. Idempotent, because `Drop` calls it too.
     pub(crate) fn close(&mut self) -> Result<(), SourceError> {
+        // Order matters. Dropping the pipe first means the recorder's next
+        // write fails, which is the only signal it would ever get on its own —
+        // and on a silent stream that write never comes, so the kill is what
+        // actually ends it. The wait is not optional: a killed child that is
+        // never reaped is a zombie, and a pane whose video is opened and closed
+        // through an afternoon would leave a row of them.
         self.stdout = None;
-        Ok(())
+        // The kill-then-wait shape is `sound::terminate_and_reap`'s, including
+        // the part that looks redundant and is not: a kill can fail because the
+        // child is already gone, which is fine, or because it is still there
+        // and could not be signalled, which is not — and waiting on the second
+        // case blocks the caller forever. `try_wait` is what tells the two
+        // apart.
+        if let Err(kill_err) = self.child.kill() {
+            match self.child.try_wait() {
+                Ok(Some(_)) => {}
+                _ => {
+                    return Err(SourceError::Closed(format!(
+                        "{}: could not be stopped: {kill_err}",
+                        self.program
+                    )));
+                }
+            }
+        }
+        self.child
+            .wait()
+            .map(|_| ())
+            .map_err(|err| SourceError::Closed(format!("{}: {err}", self.program)))
     }
 
     /// Whether the recorder has already been reaped.
