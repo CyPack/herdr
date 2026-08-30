@@ -85,6 +85,22 @@ pub(crate) struct CaptureSupervisor {
     panes: BTreeMap<String, PaneCapture>,
     debouncer: Debouncer,
     dropped: Arc<AtomicU64>,
+    /// The last state that was reported, so a repeat is not reported again.
+    last_report: Option<CaptureReport>,
+}
+
+/// The shape of the capture, as a log line would tell it.
+///
+/// `dropping` is a flag rather than the count on purpose: the count climbs on
+/// every dropped frame, and keying the report on it would turn a busy loop into
+/// a busy log. The exact number still travels in the message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CaptureReport {
+    pub(crate) watching: bool,
+    pub(crate) captured: usize,
+    pub(crate) dropping: bool,
+    pub(crate) streams: usize,
+    pub(crate) listeners: usize,
 }
 
 impl std::fmt::Debug for CaptureSupervisor {
@@ -115,6 +131,7 @@ impl CaptureSupervisor {
             panes: BTreeMap::new(),
             debouncer: Debouncer::new(GRAPH_QUIET),
             dropped: Arc::new(AtomicU64::new(0)),
+            last_report: None,
         }
     }
 
@@ -313,6 +330,21 @@ impl CaptureSupervisor {
 
     pub(crate) fn active_panes(&self) -> usize {
         self.panes.len()
+    }
+
+    /// Whether this state is news.
+    ///
+    /// The server logs at info by default, so a line that only exists at debug
+    /// is a line nobody reading a live log will ever see — and the whole point
+    /// of this one is to answer "why is there no sound" without a rebuild. A
+    /// state repeated every quarter second would be noise, so it is reported
+    /// when it changes and only then.
+    pub(crate) fn report_changed(&mut self, report: CaptureReport) -> bool {
+        if self.last_report == Some(report) {
+            return false;
+        }
+        self.last_report = Some(report);
+        true
     }
 
     /// The panes being captured right now, which is what the plan compares
@@ -646,5 +678,34 @@ mod tests {
         let err = supervisor.watch().expect_err("no watcher here");
         assert!(matches!(err, AudioSourceError::Unavailable(_)), "{err}");
         assert_eq!(supervisor.active_panes(), 0);
+    }
+
+    #[test]
+    fn a_state_is_reported_when_it_changes_and_not_when_it_repeats() {
+        // The server logs at info; a line only emitted at debug is a line the
+        // person reading a live log never sees. So this one is emitted on
+        // change — and a repeat has to be silent, or it is noise instead.
+        let mut supervisor = CaptureSupervisor::with_sources(
+            counting_capture(0, Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0))),
+            no_watcher(),
+        );
+        let quiet = CaptureReport {
+            watching: true,
+            captured: 0,
+            dropping: false,
+            streams: 3,
+            listeners: 1,
+        };
+        assert!(supervisor.report_changed(quiet), "the first state is news");
+        assert!(!supervisor.report_changed(quiet), "a repeat is not");
+        let capturing = CaptureReport {
+            captured: 1,
+            ..quiet
+        };
+        assert!(
+            supervisor.report_changed(capturing),
+            "a change is news again"
+        );
+        assert!(!supervisor.report_changed(capturing));
     }
 }

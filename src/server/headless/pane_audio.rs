@@ -100,16 +100,34 @@ impl HeadlessServer {
     /// nobody asked for is invisible until it is measured — which is exactly
     /// the failure the resource doctrine exists to prevent.
     fn tick_pane_audio_capture(&mut self) {
-        let (capable, _declined) = self.audio_capable_clients();
+        let (capable, declined) = self.audio_capable_clients();
         if capable.is_empty() {
             if let Some(mut capture) = self.pane_audio_capture.take() {
                 capture.stop_all();
+                tracing::info!(
+                    declined,
+                    "pane audio capture stopped: no client can play audio"
+                );
             }
             return;
         }
-        let capture = self
-            .pane_audio_capture
-            .get_or_insert_with(pane_audio_capture::CaptureSupervisor::new);
+        // Both edges are logged at info, and that is what makes the *absence*
+        // of a line evidence too: if the gate ever opened, this line exists, so
+        // a log without it says the clients never announced an audio sink —
+        // which is the likeliest reason for silence and the one a diagnostic
+        // printed behind this gate could never report.
+        let capture = match self.pane_audio_capture {
+            Some(ref mut capture) => capture,
+            None => {
+                tracing::info!(
+                    listeners = capable.len(),
+                    declined,
+                    "pane audio capture starting"
+                );
+                self.pane_audio_capture
+                    .insert(pane_audio_capture::CaptureSupervisor::new())
+            }
+        };
         // A platform with no watcher has nothing to watch; the error says so
         // once and the next tick asks again for free.
         if capture.watch().is_err() {
@@ -212,14 +230,29 @@ impl HeadlessServer {
         // One line that answers "why is there no sound" without a rebuild:
         // whether anything is being watched, how many panes are captured, and
         // whether frames are being thrown away because the loop is behind.
-        tracing::debug!(
-            watching = capture.is_watching(),
-            captured = capture.active_panes(),
-            dropped = capture.dropped_frames(),
-            streams = streams.len(),
+        //
+        // At info, because the server's default filter is `herdr=info` and a
+        // diagnostic nobody can see is not a diagnostic — but only when the
+        // state changes, because the same line every quarter second would be
+        // noise and would get filtered back out by whoever reads it.
+        let dropped = capture.dropped_frames();
+        let report = pane_audio_capture::CaptureReport {
+            watching: capture.is_watching(),
+            captured: capture.active_panes(),
+            dropping: dropped > 0,
+            streams: streams.len(),
             listeners,
-            "pane audio capture state"
-        );
+        };
+        if capture.report_changed(report) {
+            tracing::info!(
+                watching = report.watching,
+                captured = report.captured,
+                dropped,
+                streams = report.streams,
+                listeners,
+                "pane audio capture state"
+            );
+        }
     }
 
     /// Hands what the capture threads produced to the app, in the one order
