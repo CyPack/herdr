@@ -73,6 +73,7 @@ mod events;
 // render (A2) and the navigation input handler (A3).
 mod fm;
 mod ghostty;
+mod graphics_damage;
 mod handoff_runtime;
 mod icon;
 mod input;

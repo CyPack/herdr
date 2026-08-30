@@ -2573,3 +2573,129 @@ async fn every_client_converges_to_the_final_pane_geometry_after_rapid_resizes()
         );
     }
 }
+
+// -- Adaptive graphics budget (TP-GFX-BUDGET-02) ----------------------------
+//
+// The measured drain rate turns the fixed 32 MB graphics ceiling into one the
+// link can carry inside a quarter second. Over budget must mean *degrade* —
+// the existing oversized machinery — never *queue*: at the measured
+// 26.9 Mbit/s uplink a single 32 MB frame occupied the wire for ~10 seconds
+// while every keystroke waited behind it.
+
+/// Incompressible filler: zlib(1) flattens constant bytes ~200x, which would
+/// sneak a "big" layer under any budget. A xorshift stream stays big.
+fn incompressible(len: usize) -> Vec<u8> {
+    let mut state = 0x9e37_79b9_7f4a_7c15u64;
+    let mut data = Vec::with_capacity(len);
+    while data.len() < len {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        data.extend_from_slice(&state.to_le_bytes());
+    }
+    data.truncate(len);
+    data
+}
+
+/// Marks client 1's link as pathologically slow: one qualifying write of
+/// 64 KB over 10 s → the effective ceiling clamps to the floor (256 KB).
+fn poison_client_rate_slow(server: &HeadlessServer) {
+    server.clients[&1]
+        .writer
+        .as_ref()
+        .expect("test client writer")
+        .rate
+        .record(64 * 1024, Duration::from_secs(10));
+}
+
+/// Site A (retained path): a frame the link cannot carry degrades to the
+/// cell fallback and queues nothing — the wire stays free for control.
+#[tokio::test]
+async fn an_over_budget_retained_frame_degrades_to_fallback_not_queue() {
+    let (mut server, client_rx, pane_id) = retained_test_server(b"over budget retained");
+    let baseline = enable_graphics_and_render(&mut server, &client_rx);
+    assert!(baseline.graphics.len() < 256 * 1024, "baseline stays small");
+
+    poison_client_rate_slow(&server);
+    // ~600 KB of incompressible PNG payload → encoded escape > 256 KB floor.
+    set_graphics_layer(&mut server, pane_id, incompressible(600 * 1024));
+
+    let outcome = server.render_retained_graphics_update_and_stream();
+    assert_eq!(
+        outcome,
+        pane_graphics::RetainedGraphicsOutcome::Fallback,
+        "an over-budget frame must degrade, not send"
+    );
+    assert!(
+        client_rx.try_recv().is_err(),
+        "nothing may be queued for a frame the link cannot carry"
+    );
+}
+
+/// The regression shield for site A: under the same slow link a frame that
+/// fits the floor budget flows exactly as today.
+#[tokio::test]
+async fn a_within_budget_retained_frame_is_untouched() {
+    let (mut server, client_rx, pane_id) = retained_test_server(b"within budget retained");
+    let _ = enable_graphics_and_render(&mut server, &client_rx);
+
+    poison_client_rate_slow(&server);
+    // ~10 KB incompressible → encoded well under the 256 KB floor.
+    set_graphics_layer(&mut server, pane_id, incompressible(10 * 1024));
+
+    let outcome = server.render_retained_graphics_update_and_stream();
+    assert_eq!(
+        outcome,
+        pane_graphics::RetainedGraphicsOutcome::Sent,
+        "a frame inside the budget must flow"
+    );
+    let sent = client_rx
+        .recv_timeout(Duration::from_millis(200))
+        .expect("the within-budget graphics frame");
+    match protocol::read_message(
+        &mut std::io::Cursor::new(sent),
+        crate::protocol::MAX_GRAPHICS_FRAME_SIZE,
+    )
+    .expect("decode")
+    {
+        ServerMessage::Graphics { bytes } => assert!(!bytes.is_empty()),
+        other => panic!("expected graphics, got {other:?}"),
+    }
+}
+
+/// Site C (full frame): over budget strips the graphics, still delivers the
+/// text, refuses the cache commit and re-arms the delete-all barrier —
+/// exactly the TP-GFX-RESET-01 oversized contract, now rate-driven.
+#[tokio::test]
+async fn an_over_budget_full_frame_strips_graphics_and_rearms_the_barrier() {
+    let (mut server, client_rx, pane_id) = retained_test_server(b"aaaa");
+    let _ = enable_graphics_and_render(&mut server, &client_rx);
+
+    poison_client_rate_slow(&server);
+    set_graphics_layer(&mut server, pane_id, incompressible(600 * 1024));
+    let runtime = server
+        .app
+        .state
+        .runtime_for_pane_in_workspace(&server.app.terminal_runtimes, 0, pane_id)
+        .expect("runtime");
+    runtime.test_process_pty_bytes(b"\rZ");
+
+    server.render_and_stream();
+    let frame = read_server_frame(
+        client_rx
+            .recv_timeout(Duration::from_millis(200))
+            .expect("text-only frame"),
+    );
+    assert!(
+        frame.graphics.is_empty(),
+        "graphics beyond the link budget must be stripped from the frame"
+    );
+    assert!(
+        frame_text(&frame).contains('Z'),
+        "the text must still be delivered"
+    );
+    assert!(
+        server.clients[&1].graphics_surface_reset_pending,
+        "a stripped payload must re-arm the delete-all barrier (TP-GFX-RESET-01)"
+    );
+}
