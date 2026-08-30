@@ -5376,6 +5376,18 @@ impl HeadlessServer {
     fn handle_scheduled_tasks_headless(&mut self, now: Instant, geometry_dirty: bool) -> bool {
         let mut changed = false;
 
+        // Per-member telemetry: when the profiler is armed, every member that
+        // reports a change is named, so a scheduled-tasks full-render pulse
+        // can be attributed in one measurement instead of a guessing tour —
+        // the aggregate cause label proved a member was asking for frames
+        // once a second and could not say which. Free when profiling is off.
+        fn track(name: &'static str, changed: bool) -> bool {
+            if changed {
+                crate::render_prof::event(name);
+            }
+            changed
+        }
+
         // Same set, same order as the monolithic loop (`App::handle_scheduled_
         // tasks`); the parity test compares the two by name. These are the
         // consumers of queued user intents — context-menu actions, agent
@@ -5384,12 +5396,27 @@ impl HeadlessServer {
         // nothing, which is exactly how the missing file-operation sync was
         // found: "Send with Tailscale" queued its intent and no one ever read
         // it.
-        changed |= self.app.sync_file_operation_worker();
-        changed |= self.app.sync_file_manager_agent_handoff_send();
-        changed |= self.app.sync_agent_attachment_delivery();
-        changed |= self.app.sync_pane_dormancy_sweep(now);
+        changed |= track(
+            "sched.file_operation_worker",
+            self.app.sync_file_operation_worker(),
+        );
+        changed |= track(
+            "sched.fm_agent_handoff_send",
+            self.app.sync_file_manager_agent_handoff_send(),
+        );
+        changed |= track(
+            "sched.agent_attachment_delivery",
+            self.app.sync_agent_attachment_delivery(),
+        );
+        changed |= track(
+            "sched.pane_dormancy_sweep",
+            self.app.sync_pane_dormancy_sweep(now),
+        );
         self.app.sync_dormant_history_removals();
-        changed |= self.app.wake_dormant_panes_on_watched_tabs();
+        changed |= track(
+            "sched.wake_dormant_on_watched",
+            self.app.wake_dormant_panes_on_watched_tabs(),
+        );
         // An idle server retires itself: no client, no running child, and a
         // grace period on the clock. Retired panes' scrollback goes to disk
         // first, and the loop's exit path saves the session that points at
@@ -5406,29 +5433,38 @@ impl HeadlessServer {
         }
         // Each display browses its own directory, so the file workers run
         // once per display, inside that display's view. TP-SUR-FM-02
-        changed |= self.app.for_each_display(|app| {
-            let mut changed = false;
-            // Three consumers compete for one context-action field, and the
-            // order between them is the precedence: send-to-agent, then a
-            // plugin, then the ordinary actions. All three resolve against
-            // the raising display's browser, so all three belong in its view.
-            changed |= app.sync_file_manager_agent_handoff();
-            changed |= app.sync_file_manager_plugin_action();
-            changed |= app.sync_agent_reference_picker();
-            changed |= app.sync_file_manager_requests();
-            changed |= app.sync_file_manager_io_results();
-            changed |= app.sync_file_manager_location_request();
-            changed |= app.sync_file_manager_watcher_at(now);
-            changed |= app.sync_file_preview_worker();
-            // The monolithic loop pairs these two (`src/app/mod.rs`): text and
-            // image previews are both bounded workers and neither advances
-            // without being driven.
-            changed |= app.sync_image_preview_worker();
-            changed
-        });
+        changed |= track(
+            "sched.display_fm_group",
+            self.app.for_each_display(|app| {
+                let mut changed = false;
+                // Three consumers compete for one context-action field, and the
+                // order between them is the precedence: send-to-agent, then a
+                // plugin, then the ordinary actions. All three resolve against
+                // the raising display's browser, so all three belong in its view.
+                changed |= app.sync_file_manager_agent_handoff();
+                changed |= app.sync_file_manager_plugin_action();
+                changed |= app.sync_agent_reference_picker();
+                changed |= app.sync_file_manager_requests();
+                changed |= app.sync_file_manager_io_results();
+                changed |= app.sync_file_manager_location_request();
+                changed |= app.sync_file_manager_watcher_at(now);
+                changed |= app.sync_file_preview_worker();
+                // The monolithic loop pairs these two (`src/app/mod.rs`): text and
+                // image previews are both bounded workers and neither advances
+                // without being driven.
+                changed |= app.sync_image_preview_worker();
+                changed
+            }),
+        );
         self.app.sync_headless_animation_timer(now);
-        changed |= self.app.refresh_projects_if_due(now);
-        changed |= self.app.refresh_tab_branches_if_due(now);
+        changed |= track(
+            "sched.refresh_projects",
+            self.app.refresh_projects_if_due(now),
+        );
+        changed |= track(
+            "sched.refresh_tab_branches",
+            self.app.refresh_tab_branches_if_due(now),
+        );
         // No presentation surface reads preview_bindings yet, so a refresh
         // must not dirty the frame (flip to `changed |=` once a marker renders).
         let _ = self.app.refresh_preview_bindings_if_due(now);
@@ -5443,6 +5479,7 @@ impl HeadlessServer {
         {
             self.app.config_diagnostic_deadline = None;
             self.app.state.config_diagnostic = None;
+            crate::render_prof::event("sched.config_diagnostic_clear");
             changed = true;
         }
 
@@ -5453,6 +5490,7 @@ impl HeadlessServer {
         {
             self.app.toast_deadline = None;
             self.app.state.toast = None;
+            crate::render_prof::event("sched.toast_clear");
             changed = true;
         }
 
@@ -5471,6 +5509,7 @@ impl HeadlessServer {
                 for delivery in &deliveries {
                     self.forward_agent_notification_delivery(delivery);
                 }
+                crate::render_prof::event("sched.agent_notification");
                 changed = true;
             }
         }
@@ -5482,6 +5521,7 @@ impl HeadlessServer {
         {
             self.app.copy_feedback_deadline = None;
             self.app.state.copy_feedback = None;
+            crate::render_prof::event("sched.copy_feedback_clear");
             changed = true;
         }
 
@@ -5491,10 +5531,14 @@ impl HeadlessServer {
             .is_some_and(|deadline| now >= deadline)
         {
             self.app.tick_selection_autoscroll(now);
+            crate::render_prof::event("sched.selection_autoscroll");
             changed = true;
         }
 
-        changed |= self.app.clear_due_selection_highlight(now);
+        changed |= track(
+            "sched.selection_highlight_clear",
+            self.app.clear_due_selection_highlight(now),
+        );
 
         // This is the loop that actually runs under a live herdr: the server
         // owns the state the screen is drawn from, and `App::handle_scheduled_
@@ -5503,14 +5547,14 @@ impl HeadlessServer {
         // showing `--` forever, because the code that read the machine was
         // never executed by the process that drew it.
         // TP-RES-11: the sampler runs in the loop that actually renders.
-        changed |= self.app.tick_resource_sample(now);
+        changed |= track("sched.resource_sample", self.app.tick_resource_sample(now));
         // And the clock, for exactly the same reason and caught by exactly the
         // same guard: this was added to the monolithic loop alone, every clock
         // test stayed green, and the parity check named `tick_clock` as a call
         // this loop was missing. A clock that ticks only where nothing draws is
         // a clock that never moves.
         // TP-CLOCK-12: the clock ticks in the loop that actually renders.
-        changed |= self.app.tick_clock();
+        changed |= track("sched.clock", self.app.tick_clock());
 
         if self.has_app_client() {
             self.app.start_git_status_refresh_if_due(now);
@@ -5546,18 +5590,24 @@ impl HeadlessServer {
             .filter(|deadline| now >= *deadline)
         {
             self.app.expire_metadata_at(deadline, now);
+            crate::render_prof::event("sched.agent_metadata_expiry");
             changed = true;
         }
 
-        changed |= self.app.handle_tab_bar_status_tasks(now);
+        changed |= track(
+            "sched.tab_bar_status",
+            self.app.handle_tab_bar_status_tasks(now),
+        );
 
         if geometry_dirty {
             self.app.pending_agent_resume_deadline = None;
         } else {
             self.app.sync_pending_agent_resume_deadline(now);
-            changed |= self
-                .app
-                .start_pending_agent_resumes(self.app.pending_agent_resume_due(now));
+            changed |= track(
+                "sched.pending_agent_resumes",
+                self.app
+                    .start_pending_agent_resumes(self.app.pending_agent_resume_due(now)),
+            );
         }
         changed
     }
