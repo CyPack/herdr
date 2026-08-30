@@ -442,7 +442,7 @@ mod tests {
                 payload.len() <= PATCH_MAX_RAW_BYTES,
                 "escape başına ham sınır"
             );
-            assert!(keys.get("m").is_none(), "a=f ile m= birlikte YASAK");
+            assert!(!keys.contains_key("m"), "a=f ile m= birlikte YASAK");
             let (bx, by) = (
                 keys["x"].parse::<u32>().unwrap(),
                 keys["y"].parse::<u32>().unwrap(),
