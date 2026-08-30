@@ -339,6 +339,56 @@ pub(crate) fn native_audio_sink(
     None
 }
 
+/// The user session's runtime directory, when this platform has one and it is
+/// really there.
+///
+/// Everything that talks to the sound server finds its socket through this
+/// path, so a process that does not have it is deaf — and silently, because
+/// the audio libraries fall back to a null device rather than failing. The
+/// directory is checked rather than assumed: pointing a pane at a path that
+/// does not exist would trade one silent failure for another.
+#[cfg(target_os = "linux")]
+pub(crate) fn session_runtime_dir() -> Option<std::path::PathBuf> {
+    // SAFETY: geteuid takes no arguments and has no preconditions.
+    let uid = unsafe { libc::geteuid() };
+    let dir = std::path::PathBuf::from(format!("/run/user/{uid}"));
+    dir.is_dir().then_some(dir)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn session_runtime_dir() -> Option<std::path::PathBuf> {
+    None
+}
+
+/// The runtime directory a child process should be told about, or `None` when
+/// it will inherit a usable one.
+///
+/// One rule, one place. Two callers need it — the pane spawn and the audio
+/// tools this server runs itself — and both would otherwise write out "an
+/// inherited value wins, an empty one is not a value" in their own words,
+/// which is how the two drift apart without either looking wrong.
+pub(crate) fn session_runtime_dir_for_child(
+    inherited: Option<&std::ffi::OsStr>,
+) -> Option<std::path::PathBuf> {
+    child_runtime_dir(inherited, session_runtime_dir())
+}
+
+/// The rule itself, with both readings handed in.
+///
+/// Pure so it can be tested on a machine that has no session runtime directory
+/// at all — which is every build box this repository runs its tests on.
+pub(crate) fn child_runtime_dir(
+    inherited: Option<&std::ffi::OsStr>,
+    session: Option<std::path::PathBuf>,
+) -> Option<std::path::PathBuf> {
+    // An empty value is set and useless at once: treating it as configured
+    // leaves the child deaf while looking configured.
+    if inherited.is_some_and(|value| !value.is_empty()) {
+        return None;
+    }
+    session
+}
+
 /// Why a capture source could not be had, or stopped being had.
 ///
 /// Platform-neutral on purpose: the supervisor that reads it is cross-platform

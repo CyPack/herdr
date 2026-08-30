@@ -87,6 +87,10 @@ pub(crate) struct CaptureSupervisor {
     dropped: Arc<AtomicU64>,
     /// The last state that was reported, so a repeat is not reported again.
     last_report: Option<CaptureReport>,
+    /// Set when a watcher ended as soon as it started, so the next tick does
+    /// not spawn another one every quarter second on a machine where it cannot
+    /// work at all.
+    watch_unavailable: bool,
 }
 
 /// The shape of the capture, as a log line would tell it.
@@ -132,6 +136,7 @@ impl CaptureSupervisor {
             debouncer: Debouncer::new(GRAPH_QUIET),
             dropped: Arc::new(AtomicU64::new(0)),
             last_report: None,
+            watch_unavailable: false,
         }
     }
 
@@ -222,6 +227,11 @@ impl CaptureSupervisor {
         if self.watcher.is_some() {
             return Ok(());
         }
+        if self.watch_unavailable {
+            return Err(AudioSourceError::Unavailable(
+                "the graph watcher ended as soon as it started".to_owned(),
+            ));
+        }
         let mut watcher = match (self.watcher_factory)() {
             Some(watcher) => watcher?,
             None => {
@@ -259,6 +269,7 @@ impl CaptureSupervisor {
 
     /// Stops the graph watcher.
     pub(crate) fn unwatch(&mut self) {
+        self.watch_unavailable = false;
         if let Some(watcher) = self.watcher.take() {
             watcher.stop.store(true, Ordering::Release);
             drop(watcher.signals);
@@ -273,14 +284,29 @@ impl CaptureSupervisor {
     /// Whether the graph has moved and then settled, which is the only moment
     /// worth re-reading it. Never blocks.
     pub(crate) fn graph_settled(&mut self, now: Instant) -> bool {
+        let mut ended = false;
         if let Some(watcher) = self.watcher.as_ref() {
             loop {
                 match watcher.signals.try_recv() {
                     Ok(()) => self.debouncer.signal(now),
                     Err(TryRecvError::Empty) => break,
-                    Err(TryRecvError::Disconnected) => break,
+                    // The watcher ended on its own. Almost always this means it
+                    // could not reach the sound server at all — it starts,
+                    // fails to connect, and exits, which from here looks
+                    // exactly like a watcher that is working and quiet.
+                    Err(TryRecvError::Disconnected) => {
+                        ended = true;
+                        break;
+                    }
                 }
             }
+        }
+        if ended {
+            self.unwatch();
+            self.watch_unavailable = true;
+            tracing::info!(
+                "pane audio graph watcher ended immediately: the sound server could not be reached"
+            );
         }
         self.debouncer.take_due(now)
     }
@@ -668,6 +694,38 @@ mod tests {
         assert!(!supervisor.graph_settled(base + Duration::from_secs(10)));
         supervisor.unwatch();
         assert!(!supervisor.is_watching());
+    }
+
+    #[test]
+    fn a_watcher_that_ends_at_once_is_not_counted_as_watching() {
+        // WCH-7. Measured live: without XDG_RUNTIME_DIR the watcher starts,
+        // prints "can't connect", and exits — which from in here looks exactly
+        // like a watcher that is working and quiet. Reporting "watching" for
+        // something that stopped is how a dead feature keeps looking healthy,
+        // and retrying it every tick would spawn a process a second for
+        // nothing.
+        let base = Instant::now();
+        let mut supervisor = CaptureSupervisor::with_sources(
+            counting_capture(0, Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0))),
+            Box::new(|| {
+                Some(Ok(
+                    Box::new(ScriptedWatcher { remaining: 0 }) as Box<dyn GraphSignals>
+                ))
+            }),
+        );
+        supervisor.watch().expect("the watcher starts");
+        until(|| {
+            supervisor.graph_settled(base);
+            !supervisor.is_watching()
+        });
+        // And it is not started again on the next tick.
+        let err = supervisor
+            .watch()
+            .expect_err("a dead watcher is not retried");
+        assert!(matches!(err, AudioSourceError::Unavailable(_)), "{err}");
+        // A listener leaving clears it, so a later one gets a fresh try.
+        supervisor.stop_all();
+        assert!(supervisor.watch().is_ok(), "a new listener tries again");
     }
 
     #[test]

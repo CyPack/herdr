@@ -71,6 +71,33 @@ pub(crate) fn aggregate_input_state_reads() -> usize {
     AGGREGATE_INPUT_STATE_READS.get()
 }
 
+/// The variable every pane child needs to find the user's session services,
+/// most visibly the sound server.
+///
+/// TP-PANE-SESSION-01.
+const SESSION_RUNTIME_ENV: &str = "XDG_RUNTIME_DIR";
+
+/// Puts the session runtime directory back when the server lost it.
+///
+/// The server runs as a daemon and its environment is not the user's login
+/// environment: measured on the live machine it carried 39 variables where the
+/// client carried 77, and `XDG_RUNTIME_DIR` was among the missing. Panes
+/// inherit that environment, so every browser started in a pane was unable to
+/// reach PipeWire — its audio service started, found no socket, and played
+/// into a null device. Nothing logged an error at any layer.
+fn apply_session_runtime_env(cmd: &mut CommandBuilder) {
+    // What the *child* will see, not what this process has. A builder starts
+    // from the current environment but a caller may have cleared or replaced
+    // it, and the only environment that decides whether a pane can make a
+    // sound is the one the pane is actually given.
+    let inherited = cmd
+        .get_env(SESSION_RUNTIME_ENV)
+        .map(std::ffi::OsStr::to_owned);
+    if let Some(dir) = crate::platform::session_runtime_dir_for_child(inherited.as_deref()) {
+        cmd.env(SESSION_RUNTIME_ENV, dir);
+    }
+}
+
 fn apply_pane_terminal_env(cmd: &mut CommandBuilder) {
     // Each pane is rendered by herdr's own terminal layer, not the outer terminal
     // that launched the app. Advertising the inherited TERM leaks the host terminal
@@ -78,6 +105,10 @@ fn apply_pane_terminal_env(cmd: &mut CommandBuilder) {
     // when the remote side lacks matching terminfo entries.
     cmd.env("TERM", PANE_TERM);
     cmd.env("COLORTERM", PANE_COLORTERM);
+    // Every pane spawn passes through here, which is why the session fix lives
+    // here too: an ordinary shell needs it as much as a browser does, and the
+    // launch-env path does not reach every pane.
+    apply_session_runtime_env(cmd);
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -4703,5 +4734,115 @@ mod tests {
                 observed_at: _,
             } if delivered_pane == pane_id
         ));
+    }
+
+    // ── F1 · session runtime directory (ENV-1..ENV-4) ─────────────────────
+    //
+    // The rule is tested pure, so these say the same thing on a build box with
+    // no /run/user at all — which is where they run.
+
+    #[test]
+    fn a_pane_is_told_the_runtime_directory_the_server_lost() {
+        // ENV-1. The measured failure: the server carried 39 variables where
+        // the client carried 77, and this was among the missing.
+        let session = std::path::PathBuf::from("/run/user/1000");
+        assert_eq!(
+            crate::platform::child_runtime_dir(None, Some(session.clone())),
+            Some(session)
+        );
+    }
+
+    #[test]
+    fn an_inherited_runtime_directory_is_never_overridden() {
+        // ENV-2. The user's own value wins; guessing over it would be a second
+        // silent failure aimed at whoever configured it deliberately.
+        let inherited = std::ffi::OsString::from("/run/user/1000");
+        assert_eq!(
+            crate::platform::child_runtime_dir(
+                Some(inherited.as_os_str()),
+                Some(std::path::PathBuf::from("/run/user/9999"))
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn an_empty_runtime_directory_is_not_a_value() {
+        // ENV-2b. An empty variable is set and useless at once: treating it as
+        // configured keeps the pane deaf while it looks configured.
+        let empty = std::ffi::OsString::from("");
+        let session = std::path::PathBuf::from("/run/user/1000");
+        assert_eq!(
+            crate::platform::child_runtime_dir(Some(empty.as_os_str()), Some(session.clone())),
+            Some(session)
+        );
+    }
+
+    #[test]
+    fn a_runtime_directory_that_does_not_exist_is_not_offered() {
+        // ENV-3. The platform half returns None when the path is not there,
+        // and nothing invents one: pointing a pane at a missing directory
+        // trades one silent failure for another.
+        assert_eq!(crate::platform::child_runtime_dir(None, None), None);
+    }
+
+    #[test]
+    fn the_launch_environment_still_wins_over_the_session_default() {
+        // ENV-4. Ordering is the contract: the terminal env is applied first
+        // and the caller's launch env second, so an explicit value overrides.
+        let mut cmd = CommandBuilder::new("true");
+        apply_pane_terminal_env(&mut cmd);
+        apply_pane_launch_env(
+            &mut cmd,
+            &PaneLaunchEnv::from_extra(vec![(
+                SESSION_RUNTIME_ENV.to_owned(),
+                "/tmp/explicit".to_owned(),
+            )]),
+        );
+        assert_eq!(
+            cmd.get_env(SESSION_RUNTIME_ENV),
+            Some(std::ffi::OsStr::new("/tmp/explicit"))
+        );
+    }
+
+    #[test]
+    fn a_pane_ends_up_with_a_runtime_directory_whenever_one_exists() {
+        // The property, not the mechanism: after the one function every pane
+        // spawn passes through, a pane has a runtime directory if this machine
+        // has one at all — inherited or supplied. Removing the call fails this
+        // exactly where it matters, on a host whose server lost the variable
+        // while /run/user is still there, which is the measured case.
+        //
+        // Written this way because `CommandBuilder` starts from the current
+        // environment: `get_env` cannot tell a value we set from one that was
+        // already there, so asserting "we set it" would assert about the test
+        // machine instead of about the code.
+        let mut cmd = CommandBuilder::new("true");
+        // Cleared first, because a builder starts from the current environment
+        // and `get_env` cannot tell a value we set from one that was already
+        // there. Without this the assertion would hold on a machine that
+        // exports the variable even if the call were deleted — measured: that
+        // mutation survived until the clear was added.
+        cmd.env_clear();
+        apply_pane_terminal_env(&mut cmd);
+        assert_eq!(
+            cmd.get_env(SESSION_RUNTIME_ENV)
+                .map(std::path::PathBuf::from),
+            crate::platform::session_runtime_dir(),
+            "a pane must be told where the session runtime directory is"
+        );
+    }
+
+    #[test]
+    fn the_terminal_identity_is_still_applied() {
+        // The session fix rides inside apply_pane_terminal_env; this pins that
+        // it did not displace what that function already promised.
+        let mut cmd = CommandBuilder::new("true");
+        apply_pane_terminal_env(&mut cmd);
+        assert_eq!(cmd.get_env("TERM"), Some(std::ffi::OsStr::new(PANE_TERM)));
+        assert_eq!(
+            cmd.get_env("COLORTERM"),
+            Some(std::ffi::OsStr::new(PANE_COLORTERM))
+        );
     }
 }

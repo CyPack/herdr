@@ -292,7 +292,19 @@ impl ChildStream {
         program: &str,
         args: &[S],
     ) -> Result<Self, SourceError> {
-        let mut child = Command::new(program)
+        let mut command = Command::new(program);
+        // The server is a daemon and its environment is not the user's login
+        // environment: measured live, it had lost XDG_RUNTIME_DIR entirely.
+        // Every one of these programs finds the sound server through that path
+        // and answers "can't connect" without it — which arrives here as a
+        // process that starts, says nothing on stdout, and ends, i.e. as
+        // silence with no error anywhere.
+        if let Some(dir) = crate::platform::session_runtime_dir_for_child(
+            std::env::var_os("XDG_RUNTIME_DIR").as_deref(),
+        ) {
+            command.env("XDG_RUNTIME_DIR", dir);
+        }
+        let mut child = command
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
