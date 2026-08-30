@@ -53,6 +53,99 @@ fn server_capabilities() -> CapabilitySet {
 const MIN_CLIENT_COLS: u16 = 1;
 const MIN_CLIENT_ROWS: u16 = 1;
 
+/// Writes below this size vanish into the kernel socket buffer; their
+/// timings say nothing about the link and must not move the measured rate.
+const RATE_SAMPLE_MIN_BYTES: usize = 64 * 1024;
+
+/// One graphics message may occupy the wire for at most ~a quarter second:
+/// the budget is the measured drain rate divided by this.
+const GRAPHICS_BUDGET_WIRE_OCCUPANCY_DIV: u64 = 4;
+
+/// The budget never falls below this, so one pathological sample cannot
+/// black out graphics entirely.
+const GRAPHICS_BUDGET_FLOOR: usize = 256 * 1024;
+
+/// EWMA weight of the newest sample: converges in a handful of writes
+/// without over-reacting to a single outlier.
+const DRAIN_RATE_EWMA_ALPHA: f64 = 0.3;
+
+/// Measures how fast a client's socket actually drains.
+///
+/// The writer thread records every write at or above
+/// [`RATE_SAMPLE_MIN_BYTES`]; the render path reads the result through
+/// [`DrainRateMeter::effective_graphics_max`] to turn the fixed
+/// `MAX_GRAPHICS_FRAME_SIZE` ceiling into one the link can carry inside a
+/// quarter second. Unmeasured stays fail-open: a link that has never shown
+/// a large write keeps the full protocol ceiling, so local clients and
+/// fresh connections lose nothing. PRD: `.local/prd/graphics-budget-prd.md`.
+///
+/// Single-writer by construction — only the client writer thread records —
+/// so the read-modify-write below needs no compare-and-swap.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct DrainRateMeter {
+    bytes_per_sec: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl DrainRateMeter {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// Records one completed socket write. Small writes are ignored (see
+    /// [`RATE_SAMPLE_MIN_BYTES`]).
+    pub(crate) fn record(&self, bytes: usize, elapsed: Duration) {
+        if bytes < RATE_SAMPLE_MIN_BYTES {
+            return;
+        }
+        // A sub-microsecond write on a fast pipe still yields a finite,
+        // huge sample — which fail-opens toward the protocol ceiling.
+        let secs = elapsed.as_secs_f64().max(1e-6);
+        let sample = bytes as f64 / secs;
+        let previous = self
+            .bytes_per_sec
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let next = if previous == 0 {
+            sample
+        } else {
+            previous as f64 * (1.0 - DRAIN_RATE_EWMA_ALPHA) + sample * DRAIN_RATE_EWMA_ALPHA
+        };
+        // Never store 0 for a real measurement: 0 is the "unmeasured"
+        // sentinel and a measured link must not fail back open.
+        let stored = (next as u64).max(1);
+        self.bytes_per_sec
+            .store(stored, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The measured drain rate, or `None` while nothing qualifying was seen.
+    pub(crate) fn bytes_per_sec(&self) -> Option<u64> {
+        match self
+            .bytes_per_sec
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            0 => None,
+            rate => Some(rate),
+        }
+    }
+
+    /// The largest graphics frame this link should be handed right now.
+    ///
+    /// Fail-open (PRD K1): with no measurement the full protocol ceiling
+    /// stands, so local clients and fresh connections lose nothing. A
+    /// measured link gets a quarter second of its own drain rate, clamped
+    /// so one pathological sample cannot black out graphics (K4) and a
+    /// fast pipe keeps today's exact ceiling.
+    pub(crate) fn effective_graphics_max(&self) -> usize {
+        let Some(rate) = self.bytes_per_sec() else {
+            return crate::protocol::MAX_GRAPHICS_FRAME_SIZE;
+        };
+        let budget = (rate / GRAPHICS_BUDGET_WIRE_OCCUPANCY_DIV) as usize;
+        budget.clamp(
+            GRAPHICS_BUDGET_FLOOR,
+            crate::protocol::MAX_GRAPHICS_FRAME_SIZE,
+        )
+    }
+}
+
 /// How long to wait for a client handshake before closing the connection.
 /// Set to 4 seconds (rather than 5) to guarantee the connection is closed
 /// within the 5-second deadline, even with OS timer slack, thread scheduling,
@@ -81,6 +174,10 @@ pub(crate) struct ClientWriter {
     /// able to break it.
     #[allow(dead_code)]
     pub(crate) media: ClientMediaWriter,
+    /// Measured drain rate of this client's socket, recorded by the writer
+    /// thread and read by the render path to size graphics frames the link
+    /// can carry inside a quarter second (TP-GFX-BUDGET-01).
+    pub(crate) rate: DrainRateMeter,
 }
 
 impl ClientWriter {
@@ -113,6 +210,7 @@ impl ClientWriter {
             control: control_writer,
             render: render_writer,
             media: media_writer,
+            rate: DrainRateMeter::new(),
         };
         std::thread::spawn(move || {
             while let Some(item) = drain.recv() {
@@ -151,6 +249,7 @@ impl ClientWriter {
             control: ClientControlWriter::queue(queue.clone()),
             render: ClientRenderWriter::queue(queue.clone()),
             media: ClientMediaWriter::queue(queue.clone()),
+            rate: DrainRateMeter::new(),
         };
         (writer, TestQueueDrain { queue })
     }
@@ -895,13 +994,21 @@ fn handle_client_handshake_offering(
         control: ClientControlWriter::queue(writer_queue.clone()),
         render: ClientRenderWriter::queue(writer_queue.clone()),
         media: ClientMediaWriter::queue(writer_queue.clone()),
+        rate: DrainRateMeter::new(),
     };
 
     // Spawn a writer thread that forwards messages from the channels to the stream.
     let write_stream = stream.try_clone()?;
     let writer_event_tx = server_event_tx.clone();
+    let writer_rate = writer.rate.clone();
     std::thread::spawn(move || {
-        client_writer_loop(write_stream, client_id, writer_queue, writer_event_tx);
+        client_writer_loop(
+            write_stream,
+            client_id,
+            writer_queue,
+            writer_rate,
+            writer_event_tx,
+        );
     });
 
     if should_quit.load(Ordering::Acquire) {
@@ -962,21 +1069,22 @@ fn client_writer_loop(
     mut stream: LocalStream,
     client_id: u64,
     writer_queue: Arc<ClientWriterQueue>,
+    rate: DrainRateMeter,
     server_event_tx: mpsc::Sender<ServerEvent>,
 ) {
     while let Some(item) = writer_queue.recv() {
         let written = match item {
-            ClientWriteItem::Control(data) => write_framed_bytes(&mut stream, &data),
+            ClientWriteItem::Control(data) => measured_write(&mut stream, &data, &rate),
             ClientWriteItem::Render(data) => {
                 let _ =
                     server_event_tx.blocking_send(ServerEvent::ClientWriterDrained { client_id });
-                write_framed_bytes(&mut stream, &data)
+                measured_write(&mut stream, &data, &rate)
             }
             // No drained event: that signal means "the render slot is free
             // again", and the media lane does not have one. Sending it here
             // would make the server offer a repaint every time a 20 ms audio
             // chunk went out.
-            ClientWriteItem::Media(data) => write_framed_bytes(&mut stream, &data),
+            ClientWriteItem::Media(data) => measured_write(&mut stream, &data, &rate),
         };
         if !written {
             let _ = server_event_tx.blocking_send(ServerEvent::ClientDisconnected { client_id });
@@ -985,6 +1093,19 @@ fn client_writer_loop(
     }
     writer_queue.close_writer();
     debug!("client writer thread exiting");
+}
+
+/// One socket write, timed for the drain-rate meter. The meter itself
+/// ignores writes below [`RATE_SAMPLE_MIN_BYTES`], so control chatter never
+/// moves the measurement — timing here costs two `Instant::now` calls
+/// against a syscall.
+fn measured_write(stream: &mut LocalStream, data: &[u8], rate: &DrainRateMeter) -> bool {
+    let started = std::time::Instant::now();
+    let written = write_framed_bytes(stream, data);
+    if written {
+        rate.record(data.len(), started.elapsed());
+    }
+    written
 }
 
 fn write_framed_bytes(stream: &mut LocalStream, data: &[u8]) -> bool {
@@ -1300,6 +1421,99 @@ fn client_read_loop_answering_clock(
 mod tests {
     use super::*;
     use crate::app::test_wait::LoadAwareDeadline;
+
+    // -- DrainRateMeter (TP-GFX-BUDGET-01) --------------------------------
+
+    /// The budget's correctness rests on the rate math: feed a steady
+    /// synthetic throughput and the meter must land on it.
+    #[test]
+    fn ewma_rate_converges_toward_observed_throughput() {
+        let meter = DrainRateMeter::new();
+        // 1 MB every 100 ms = 10 MB/s.
+        for _ in 0..6 {
+            meter.record(1_000_000, Duration::from_millis(100));
+        }
+        let rate = meter.bytes_per_sec().expect("measured after large writes");
+        assert!(
+            (9_000_000..=11_000_000).contains(&rate),
+            "expected ~10 MB/s, got {rate}"
+        );
+        // The link slows to 2 MB/s: the meter must follow, not stick.
+        for _ in 0..12 {
+            meter.record(1_000_000, Duration::from_millis(500));
+        }
+        let rate = meter.bytes_per_sec().expect("still measured");
+        assert!(
+            (1_800_000..=2_400_000).contains(&rate),
+            "expected ~2 MB/s after the shift, got {rate}"
+        );
+    }
+
+    /// Sub-64 KB writes are absorbed by the kernel socket buffer, so their
+    /// timings lie about the link; they must not move the measurement.
+    #[test]
+    fn small_writes_do_not_move_the_rate() {
+        let meter = DrainRateMeter::new();
+        meter.record(1_000_000, Duration::from_millis(100));
+        let seeded = meter.bytes_per_sec().expect("seeded by the large write");
+        meter.record(1_024, Duration::from_nanos(1));
+        meter.record(RATE_SAMPLE_MIN_BYTES - 1, Duration::from_nanos(1));
+        assert_eq!(
+            meter.bytes_per_sec(),
+            Some(seeded),
+            "a small write moved the measured rate"
+        );
+    }
+
+    /// Fail-open (PRD K1): degrading on no evidence is forbidden — a fresh
+    /// or local link keeps the full protocol ceiling.
+    #[test]
+    fn unmeasured_link_gets_the_full_ceiling() {
+        let meter = DrainRateMeter::new();
+        assert_eq!(meter.bytes_per_sec(), None);
+        assert_eq!(
+            meter.effective_graphics_max(),
+            crate::protocol::MAX_GRAPHICS_FRAME_SIZE
+        );
+    }
+
+    /// One pathological sample must not black out graphics (PRD K4).
+    #[test]
+    fn budget_never_falls_below_the_floor() {
+        let meter = DrainRateMeter::new();
+        // 64 KB over 10 s ≈ 6.5 KB/s → a quarter second carries ~1.6 KB.
+        meter.record(RATE_SAMPLE_MIN_BYTES, Duration::from_secs(10));
+        assert_eq!(meter.effective_graphics_max(), GRAPHICS_BUDGET_FLOOR);
+    }
+
+    /// The upper clamp: a fast local pipe keeps today's exact ceiling.
+    #[test]
+    fn a_fast_link_is_capped_at_the_protocol_ceiling() {
+        let meter = DrainRateMeter::new();
+        // 100 MB in 10 ms = 10 GB/s.
+        meter.record(100_000_000, Duration::from_millis(10));
+        assert_eq!(
+            meter.effective_graphics_max(),
+            crate::protocol::MAX_GRAPHICS_FRAME_SIZE
+        );
+    }
+
+    /// The measured home uplink (26.9 Mbit/s ≈ 3.36 MB/s) is the case this
+    /// feature exists for: the budget must be a quarter second of it, not
+    /// the 32 MB that occupied the wire for ~10 seconds.
+    #[test]
+    fn budget_tracks_a_measured_link() {
+        let meter = DrainRateMeter::new();
+        for _ in 0..8 {
+            meter.record(336_000, Duration::from_millis(100));
+        }
+        let max = meter.effective_graphics_max();
+        assert!(
+            (700_000..=1_000_000).contains(&max),
+            "expected ~840 KB for a 3.36 MB/s link, got {max}"
+        );
+    }
+
     use crate::protocol::capability;
     use interprocess::local_socket::traits::Listener as _;
     use std::path::PathBuf;
@@ -1372,6 +1586,7 @@ mod tests {
                 control: ClientControlWriter::queue(queue.clone()),
                 render: ClientRenderWriter::queue(queue.clone()),
                 media: ClientMediaWriter::queue(queue.clone()),
+                rate: DrainRateMeter::new(),
             },
             queue,
         )
@@ -1441,7 +1656,13 @@ mod tests {
 
         let (server_event_tx, mut server_event_rx) = mpsc::channel(4);
         let handle = std::thread::spawn(move || {
-            client_writer_loop(server_stream, 9, queue, server_event_tx);
+            client_writer_loop(
+                server_stream,
+                9,
+                queue,
+                DrainRateMeter::new(),
+                server_event_tx,
+            );
         });
 
         match protocol::read_message(&mut client_stream, MAX_FRAME_SIZE).expect("read control") {
@@ -1674,7 +1895,13 @@ mod tests {
         let (server_event_tx, _server_event_rx) = mpsc::channel(4);
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            client_writer_loop(server_stream, 11, queue, server_event_tx);
+            client_writer_loop(
+                server_stream,
+                11,
+                queue,
+                DrainRateMeter::new(),
+                server_event_tx,
+            );
             let _ = done_tx.send(());
         });
 
@@ -1693,7 +1920,13 @@ mod tests {
         let (server_event_tx, _server_event_rx) = mpsc::channel(4);
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            client_writer_loop(server_stream, 12, queue, server_event_tx);
+            client_writer_loop(
+                server_stream,
+                12,
+                queue,
+                DrainRateMeter::new(),
+                server_event_tx,
+            );
             let _ = done_tx.send(());
         });
 
@@ -1731,7 +1964,13 @@ mod tests {
         let (server_event_tx, _server_event_rx) = mpsc::channel(4);
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            client_writer_loop(server_stream, 13, queue, server_event_tx);
+            client_writer_loop(
+                server_stream,
+                13,
+                queue,
+                DrainRateMeter::new(),
+                server_event_tx,
+            );
             let _ = done_tx.send(());
         });
 

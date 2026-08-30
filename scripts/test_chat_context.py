@@ -79,15 +79,15 @@ class ExtractFactsTest(unittest.TestCase):
     def test_cwd_runs_are_extracted_in_order(self):
         # T-A1: three cwd runs, correct order — the foundation of segmentation.
         entries = (
-            [_entry(cwd="/home/u", text=f"a{i}") for i in range(3)]
-            + [_entry(cwd="/home/u/projects/alpha", text=f"b{i}") for i in range(4)]
-            + [_entry(cwd="/home/u", text=f"c{i}") for i in range(2)]
+            [_entry(cwd="/home/user", text=f"a{i}") for i in range(3)]
+            + [_entry(cwd="/home/user/projects/alpha", text=f"b{i}") for i in range(4)]
+            + [_entry(cwd="/home/user", text=f"c{i}") for i in range(2)]
         )
         facts = self._facts(entries)
         runs = [(r["dir"], r["weight"]) for r in facts["cwd_runs"]]
         self.assertEqual(
             runs,
-            [("/home/u", 3), ("/home/u/projects/alpha", 4), ("/home/u", 2)],
+            [("/home/user", 3), ("/home/user/projects/alpha", 4), ("/home/user", 2)],
         )
 
     def test_title_prefers_custom_then_ai_then_first_user(self):
@@ -154,9 +154,9 @@ class WorklogTest(unittest.TestCase):
         entries = [
             _entry(
                 typ="assistant",
-                cwd="/home/u",
+                cwd="/home/user",
                 content=_tool_use(
-                    'git -C /home/u/projects/alpha commit -m "feat(scan): add scanner"'
+                    'git -C /home/user/projects/alpha commit -m "feat(scan): add scanner"'
                 ),
             ),
             _tool_result("tu-1", "[feat/scanner 1a2b3c4] feat(scan): add scanner"),
@@ -164,7 +164,7 @@ class WorklogTest(unittest.TestCase):
         commits = self._facts(entries)["commits"]
         self.assertEqual(len(commits), 1)
         c = commits[0]
-        self.assertEqual(c["repo"], "/home/u/projects/alpha")
+        self.assertEqual(c["repo"], "/home/user/projects/alpha")
         self.assertEqual(c["type"], "feat")
         self.assertEqual(c["scope"], "scan")
         self.assertEqual(c["subject"], "add scanner")
@@ -186,19 +186,19 @@ class WorklogTest(unittest.TestCase):
         entries = [
             _entry(
                 typ="assistant",
-                cwd="/home/u/projects/alpha",
+                cwd="/home/user/projects/alpha",
                 content=_tool_use('git commit -m "feat(a): one"', "tu-1"),
             ),
             _tool_result("tu-1", "[feat/a 1111111] feat(a): one"),
             _entry(
                 typ="assistant",
-                cwd="/home/u/projects/alpha",
+                cwd="/home/user/projects/alpha",
                 content=_tool_use('git commit -m "fix(b): two"', "tu-2"),
             ),
             _tool_result("tu-2", "[fix/b 2222222] fix(b): two"),
             _entry(
                 typ="assistant",
-                cwd="/home/u/projects/alpha",
+                cwd="/home/user/projects/alpha",
                 content=_tool_use("git push origin feat/a", "tu-3"),
             ),
             _tool_result("tu-3", "To github.com:me/alpha.git\n   aaa..bbb  feat/a -> feat/a"),
@@ -222,7 +222,7 @@ class CacheTest(unittest.TestCase):
 
     def test_unchanged_file_is_not_reparsed(self):
         with tempfile.TemporaryDirectory() as td:
-            proj = Path(td) / "projects" / "-home-u"
+            proj = Path(td) / "projects" / "-home-user"
             f = proj / "s1.jsonl"
             _write_jsonl(f, [_entry(text="hello world")])
             db = Path(td) / "state.db"
@@ -240,7 +240,7 @@ class CacheTest(unittest.TestCase):
 
     def test_deleted_file_leaves_no_stale_row(self):
         with tempfile.TemporaryDirectory() as td:
-            proj = Path(td) / "projects" / "-home-u"
+            proj = Path(td) / "projects" / "-home-user"
             f = proj / "s1.jsonl"
             _write_jsonl(f, [_entry()])
             db = Path(td) / "state.db"
@@ -477,7 +477,7 @@ class PlanTest(unittest.TestCase):
         entries = [
             _entry(
                 typ="assistant",
-                cwd="/home/u/projects/alpha",
+                cwd="/home/user/projects/alpha",
                 content=_tool_use("git commit -F /tmp/msg.txt", "tu-9"),
             ),
             _tool_result("tu-9", "[feat/x 9f8e7d6] feat(seat): land the plan"),

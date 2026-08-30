@@ -723,6 +723,12 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
                     }
                 }
             }
+            // TP-DRAW-16 is a DESKTOP surface: the phone keeps TP-MOB-67's
+            // own fold, so a closed drawer's preview rows are dropped here —
+            // rows are what this viewport is short of, and the fold above
+            // re-adds the active branch's five on its own terms.
+            crate::ui::sidebar::WorkspaceListEntry::Chat { ws_idx, .. }
+                if crate::ui::sidebar::workspace_chat_drawer_collapsed(app, ws_idx) => {}
             crate::ui::sidebar::WorkspaceListEntry::Chat { ws_idx, chat_idx } => {
                 rows.push(DrawerRow {
                     height: entry_h,
@@ -766,6 +772,8 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
                     },
                 });
             }
+            crate::ui::sidebar::WorkspaceListEntry::MoreChats { ws_idx, .. }
+                if crate::ui::sidebar::workspace_chat_drawer_collapsed(app, ws_idx) => {}
             crate::ui::sidebar::WorkspaceListEntry::MoreChats { ws_idx, .. } => {
                 let hidden = crate::ui::sidebar::workspace_chat_rows_for(app, ws_idx)
                     .len()
