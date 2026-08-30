@@ -107,7 +107,7 @@ pub(crate) fn parse_output_streams(dump: &str) -> Result<Vec<RawStream>, serde_j
             pid,
             pid_trust,
             app_name,
-            object_serial: None,
+            object_serial: prop_u32(Some(props), "object.serial"),
         });
     }
     Ok(streams)
