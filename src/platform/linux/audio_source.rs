@@ -40,6 +40,8 @@ use std::process::{Child, ChildStdout, Command, Stdio};
 
 use serde_json::Value;
 
+use crate::media::{CHANNELS, FRAME_SAMPLES, SAMPLE_RATE_HZ};
+
 use crate::platform::{AudioOutputStream, PidTrust};
 
 const AUDIO_OUTPUT_CLASS: &str = "Stream/Output/Audio";
@@ -156,9 +158,15 @@ fn prop_str<'a>(props: Option<&'a Value>, key: &str) -> Option<&'a str> {
     props?.get(key)?.as_str()
 }
 
-/// One frame of the audio protocol: 960 samples, two channels, little-endian
-/// f32. The number is not ours to choose — the server refuses anything else.
-pub(crate) const SOURCE_FRAME_BYTES: usize = 960 * 2 * 4;
+/// One frame of the audio protocol, in bytes.
+///
+/// Derived, never written out. The same number lives in `app::pane_audio` as
+/// `FRAME_BYTES`, and `pcm_from_f32le` refuses a body of any other length — so
+/// a literal here would be a second definition of one truth. Change the frame
+/// length and a literal keeps recording at the old size: every frame is then
+/// refused, the listener hears nothing, and no test turns red, because each
+/// side stays consistent with its own copy.
+pub(crate) const SOURCE_FRAME_BYTES: usize = FRAME_SAMPLES * CHANNELS as usize * 4;
 
 #[derive(Debug)]
 pub(crate) enum SourceError {
@@ -225,13 +233,16 @@ impl Reframer {
 /// valid ids for something, so aiming with the wrong one records the wrong
 /// stream and reports no error at all.
 pub(crate) fn capture_args(object_serial: u32) -> Vec<String> {
+    // The rate and the channel count are the protocol's, not the recorder's:
+    // a recorder aimed with different numbers produces frames the server will
+    // refuse, and it reports no error while doing it.
     [
         "--target",
         &object_serial.to_string(),
         "--rate",
-        "48000",
+        &SAMPLE_RATE_HZ.to_string(),
         "--channels",
-        "2",
+        &CHANNELS.to_string(),
         "--format",
         "f32",
         // stdout, so the frames arrive on a pipe rather than in a file nobody
@@ -472,6 +483,22 @@ mod tests {
     /// SRC-ARGS — the measured working invocation, pinned where it can be read.
     /// The serial is what `pw-record --target` wants; the graph object id is a
     /// different number and aiming with it records someone else's stream.
+    #[test]
+    fn the_frame_and_the_recorder_speak_the_protocols_numbers() {
+        // One truth, one definition. This is green today because the numbers
+        // happen to agree; it exists to turn red on the day one of them moves
+        // and the other does not — the failure that would otherwise be silence.
+        assert_eq!(SOURCE_FRAME_BYTES, crate::app::pane_audio::FRAME_BYTES);
+        let args = capture_args(1);
+        let rate = args.iter().position(|a| a == "--rate").expect("--rate");
+        let channels = args
+            .iter()
+            .position(|a| a == "--channels")
+            .expect("--channels");
+        assert_eq!(args[rate + 1], SAMPLE_RATE_HZ.to_string());
+        assert_eq!(args[channels + 1], CHANNELS.to_string());
+    }
+
     #[test]
     fn the_recorder_is_aimed_with_the_streams_serial() {
         let args = capture_args(2374);
