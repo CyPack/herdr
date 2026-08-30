@@ -35,8 +35,12 @@
 #![allow(dead_code)]
 
 use std::collections::HashMap;
+use std::io::Read;
+use std::process::{Child, ChildStdout, Command, Stdio};
 
 use serde_json::Value;
+
+use crate::media::{CHANNELS, FRAME_SAMPLES, SAMPLE_RATE_HZ};
 
 use crate::platform::{AudioOutputStream, PidTrust};
 
@@ -154,6 +158,377 @@ fn prop_str<'a>(props: Option<&'a Value>, key: &str) -> Option<&'a str> {
     props?.get(key)?.as_str()
 }
 
+/// One frame of the audio protocol, in bytes.
+///
+/// Derived, never written out. The same number lives in `app::pane_audio` as
+/// `FRAME_BYTES`, and `pcm_from_f32le` refuses a body of any other length — so
+/// a literal here would be a second definition of one truth. Change the frame
+/// length and a literal keeps recording at the old size: every frame is then
+/// refused, the listener hears nothing, and no test turns red, because each
+/// side stays consistent with its own copy.
+pub(crate) const SOURCE_FRAME_BYTES: usize = FRAME_SAMPLES * CHANNELS as usize * 4;
+
+#[derive(Debug)]
+pub(crate) enum SourceError {
+    /// The recorder could not be started at all.
+    Unavailable(String),
+    /// It was running and stopped.
+    Closed(String),
+}
+
+impl std::fmt::Display for SourceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unavailable(detail) => write!(f, "audio source unavailable: {detail}"),
+            Self::Closed(detail) => write!(f, "audio source closed: {detail}"),
+        }
+    }
+}
+
+/// Cuts an arbitrary byte stream into whole frames, keeping the remainder.
+///
+/// The recorder promises nothing about block sizes, and the protocol refuses a
+/// partial frame by contract: a frame quietly padded or truncated drifts the
+/// clock by that much on *every* frame — inaudible once, obvious after a
+/// minute, and impossible to trace back afterwards.
+pub(crate) struct Reframer {
+    frame_bytes: usize,
+    buffer: Vec<u8>,
+}
+
+impl Reframer {
+    pub(crate) fn new() -> Self {
+        Self::with_frame_bytes(SOURCE_FRAME_BYTES)
+    }
+
+    /// The seam a test uses to work in small numbers instead of 7680 at a time.
+    pub(crate) fn with_frame_bytes(frame_bytes: usize) -> Self {
+        Self {
+            frame_bytes: frame_bytes.max(1),
+            buffer: Vec::with_capacity(frame_bytes.max(1) * 2),
+        }
+    }
+
+    pub(crate) fn push(&mut self, chunk: &[u8]) {
+        self.buffer.extend_from_slice(chunk);
+    }
+
+    pub(crate) fn next_frame(&mut self) -> Option<Vec<u8>> {
+        if self.buffer.len() < self.frame_bytes {
+            return None;
+        }
+        Some(self.buffer.drain(..self.frame_bytes).collect())
+    }
+
+    /// Bytes held back because they do not yet make a whole frame.
+    pub(crate) fn pending(&self) -> usize {
+        self.buffer.len()
+    }
+}
+
+/// The recorder's argument list, built where it can be read in a test rather
+/// than assembled inside a spawn nobody can see.
+///
+/// `--target` takes the stream's **serial**, not the graph object id: both are
+/// valid ids for something, so aiming with the wrong one records the wrong
+/// stream and reports no error at all.
+pub(crate) fn capture_args(object_serial: u32) -> Vec<String> {
+    // The rate and the channel count are the protocol's, not the recorder's:
+    // a recorder aimed with different numbers produces frames the server will
+    // refuse, and it reports no error while doing it.
+    [
+        "--target",
+        &object_serial.to_string(),
+        "--rate",
+        &SAMPLE_RATE_HZ.to_string(),
+        "--channels",
+        &CHANNELS.to_string(),
+        "--format",
+        "f32",
+        // stdout, so the frames arrive on a pipe rather than in a file nobody
+        // asked for.
+        "-",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect()
+}
+
+/// The program that records one stream off the graph.
+///
+/// Named here rather than inline so a test can say which program it means and
+/// so the one place that has to exist on the machine is visible in the source.
+pub(crate) const RECORDER: &str = "pw-record";
+
+/// One recorder process, read as whole protocol frames.
+///
+/// TP-MEDIA-RECORDER-01.
+///
+/// The mirror of `media::sink::ExternalSink`, and deliberately *not* its exact
+/// reflection at close: a player is told to stop by dropping its stdin,
+/// because killing it would cut off audio it has already buffered. A recorder
+/// has nothing buffered to lose and will not notice a closed pipe until its
+/// next write — which on a silent stream may never come. So the source kills,
+/// and then waits, because a kill without a wait leaves a zombie and a video
+/// opened twice an hour would leave a row of them.
+// Hand-written: `Child` is Debug, but what identifies a source is which
+// recorder it is and whether it is still readable, not the handle's innards.
+impl std::fmt::Debug for ExternalSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExternalSource")
+            .field("program", &self.stream.program())
+            .field("open", &self.stream.is_open())
+            .finish()
+    }
+}
+
+/// A child process read as a stream of bytes and stopped by killing it.
+///
+/// Extracted because two things need it now — the recorder and the graph
+/// watcher — and the part that would have been copied is exactly the part that
+/// leaves a live process behind when it is copied wrong. One implementation,
+/// one set of tests, one place to be right.
+///
+/// TP-MEDIA-RECORDER-01.
+pub(crate) struct ChildStream {
+    child: Child,
+    stdout: Option<ChildStdout>,
+    program: String,
+}
+
+impl ChildStream {
+    /// Starts `program` with its stdout on a pipe and its stderr discarded.
+    pub(crate) fn spawn<S: AsRef<std::ffi::OsStr>>(
+        program: &str,
+        args: &[S],
+    ) -> Result<Self, SourceError> {
+        let mut child = Command::new(program)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            // These programs narrate to stderr on every graph change; kept off
+            // the terminal because this runs under a live session.
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|err| SourceError::Unavailable(format!("{program}: {err}")))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| SourceError::Unavailable(format!("{program}: no stdout")))?;
+        Ok(Self {
+            child,
+            stdout: Some(stdout),
+            program: program.to_string(),
+        })
+    }
+
+    /// Reads whatever is ready into `buf`. `None` means the stream has ended.
+    ///
+    /// The caller owns the buffer so this hands back a count rather than a
+    /// borrow: a borrow would forbid the recorder from pushing those bytes into
+    /// its own reframer while still holding it.
+    pub(crate) fn read_into(&mut self, buf: &mut [u8]) -> Result<Option<usize>, SourceError> {
+        let Some(stdout) = self.stdout.as_mut() else {
+            return Ok(None);
+        };
+        let read = stdout
+            .read(buf)
+            .map_err(|err| SourceError::Closed(format!("{}: {err}", self.program)))?;
+        if read == 0 {
+            self.stdout = None;
+            return Ok(None);
+        }
+        Ok(Some(read))
+    }
+
+    /// Stops the process. Idempotent, because `Drop` calls it too.
+    pub(crate) fn close(&mut self) -> Result<(), SourceError> {
+        // Order matters. Dropping the pipe first means the child's next write
+        // fails, which is the only signal it would ever get on its own — and a
+        // producer with nothing to say never makes that write, so the kill is
+        // what actually ends it. The wait is not optional: a killed child that
+        // is never reaped is a zombie, and a pane whose video is opened and
+        // closed through an afternoon would leave a row of them.
+        //
+        // The kill-then-wait shape is `sound::terminate_and_reap`'s, including
+        // the part that looks redundant and is not: a kill can fail because the
+        // child is already gone, which is fine, or because it is still there
+        // and could not be signalled, which is not — and waiting on the second
+        // case blocks the caller forever. `try_wait` tells the two apart.
+        self.stdout = None;
+        if let Err(kill_err) = self.child.kill() {
+            match self.child.try_wait() {
+                Ok(Some(_)) => {}
+                _ => {
+                    return Err(SourceError::Closed(format!(
+                        "{}: could not be stopped: {kill_err}",
+                        self.program
+                    )));
+                }
+            }
+        }
+        self.child
+            .wait()
+            .map(|_| ())
+            .map_err(|err| SourceError::Closed(format!("{}: {err}", self.program)))
+    }
+
+    /// Whether the process has already been reaped.
+    pub(crate) fn exited(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(Some(_)))
+    }
+
+    /// Whether the pipe is still readable.
+    pub(crate) fn is_open(&self) -> bool {
+        self.stdout.is_some()
+    }
+
+    pub(crate) fn program(&self) -> &str {
+        &self.program
+    }
+}
+
+impl Drop for ChildStream {
+    fn drop(&mut self) {
+        let _ = self.close();
+    }
+}
+
+pub(crate) struct ExternalSource {
+    stream: ChildStream,
+    reframer: Reframer,
+    scratch: Vec<u8>,
+}
+
+impl ExternalSource {
+    /// Starts `program`, expecting whole f32 samples on its stdout.
+    pub(crate) fn spawn<S: AsRef<std::ffi::OsStr>>(
+        program: &str,
+        args: &[S],
+    ) -> Result<Self, SourceError> {
+        Ok(Self {
+            stream: ChildStream::spawn(program, args)?,
+            reframer: Reframer::new(),
+            scratch: vec![0u8; SOURCE_FRAME_BYTES],
+        })
+    }
+
+    /// Aims the shipped recorder at one stream.
+    pub(crate) fn capture(object_serial: u32) -> Result<Self, SourceError> {
+        Self::spawn(RECORDER, &capture_args(object_serial))
+    }
+
+    /// The next whole frame, or `None` once the recorder has ended.
+    ///
+    /// Blocks, on purpose. The recorder produces in real time — one frame every
+    /// twenty milliseconds — so a caller that could not wait would be spinning
+    /// through the other nineteen. The supervisor reads it on a thread of its
+    /// own, which is where `ExternalSink` sits too.
+    pub(crate) fn next_frame(&mut self) -> Result<Option<Vec<u8>>, SourceError> {
+        loop {
+            if let Some(frame) = self.reframer.next_frame() {
+                return Ok(Some(frame));
+            }
+            let Some(read) = self.stream.read_into(&mut self.scratch)? else {
+                // End of stream. Whatever is still held back cannot make a
+                // whole frame, and a partial frame is not ours to send: the
+                // protocol refuses it and padding it would shift the clock.
+                return Ok(None);
+            };
+            self.reframer.push(&self.scratch[..read]);
+        }
+    }
+
+    /// Stops the recorder. Idempotent, because the stream's `Drop` closes it.
+    pub(crate) fn close(&mut self) -> Result<(), SourceError> {
+        self.stream.close()
+    }
+
+    /// Whether the recorder has already been reaped.
+    pub(crate) fn exited(&mut self) -> bool {
+        self.stream.exited()
+    }
+
+    pub(crate) fn program(&self) -> &str {
+        self.stream.program()
+    }
+}
+
+/// The program that reports graph changes.
+pub(crate) const WATCHER: &str = "pw-mon";
+
+/// Watches the graph and says only that it moved.
+///
+/// The output is never parsed. `pw-mon` has no machine-readable mode and its
+/// text is a version's habit rather than a contract, so a parser here would
+/// turn a PipeWire upgrade into silence — the failure this whole feature exists
+/// to stop. What is needed from it is one bit, "something changed", and one bit
+/// survives any reformatting. The graph itself is then read with `pw-dump`,
+/// which does have a contract.
+///
+/// The read blocks, which is what makes it cheap: a watcher that polled would
+/// cost something on an idle desktop, and an idle desktop is the case that has
+/// to cost nothing.
+///
+/// TP-MEDIA-WATCH-02.
+pub(crate) struct GraphWatcher {
+    stream: ChildStream,
+    scratch: Vec<u8>,
+}
+
+impl std::fmt::Debug for GraphWatcher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GraphWatcher")
+            .field("program", &self.stream.program())
+            .field("open", &self.stream.is_open())
+            .finish()
+    }
+}
+
+impl GraphWatcher {
+    /// Starts the shipped watcher.
+    pub(crate) fn start() -> Result<Self, SourceError> {
+        Self::spawn(WATCHER, &[] as &[&str])
+    }
+
+    /// The selection seam, so a test can watch something it controls instead of
+    /// a program whose presence depends on the machine.
+    pub(crate) fn spawn<S: AsRef<std::ffi::OsStr>>(
+        program: &str,
+        args: &[S],
+    ) -> Result<Self, SourceError> {
+        Ok(Self {
+            stream: ChildStream::spawn(program, args)?,
+            // Small on purpose: the bytes are thrown away, and a big buffer
+            // would only mean holding more of what is not read.
+            scratch: vec![0u8; 4096],
+        })
+    }
+
+    /// Blocks until the graph moves. `false` means the watcher itself ended.
+    ///
+    /// Whatever arrived is discarded without being looked at. Two changes that
+    /// land in one read are one signal, which is correct: the debouncer would
+    /// have collapsed them anyway.
+    pub(crate) fn next_signal(&mut self) -> Result<bool, SourceError> {
+        Ok(self.stream.read_into(&mut self.scratch)?.is_some())
+    }
+
+    /// Stops the watcher. Idempotent.
+    pub(crate) fn close(&mut self) -> Result<(), SourceError> {
+        self.stream.close()
+    }
+
+    /// Whether the watcher has already been reaped.
+    pub(crate) fn exited(&mut self) -> bool {
+        self.stream.exited()
+    }
+
+    pub(crate) fn program(&self) -> &str {
+        self.stream.program()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -192,6 +567,77 @@ mod tests {
             .iter()
             .find(|stream| stream.node_id == node_id)
             .unwrap_or_else(|| panic!("node {node_id} missing from {streams:?}"))
+    }
+
+    /// RFR-1 — a partial tail is never handed on. The protocol refuses it, and
+    /// padding it would move the clock on every frame thereafter.
+    #[test]
+    fn a_partial_tail_is_held_back() {
+        let mut reframer = Reframer::with_frame_bytes(4);
+        reframer.push(&[1, 2, 3]);
+        assert_eq!(reframer.next_frame(), None);
+        assert_eq!(reframer.pending(), 3);
+    }
+
+    /// RFR-2 — the boundary case: a chunk that ends exactly on a frame edge
+    /// leaves nothing behind. Off-by-one here drifts silently.
+    #[test]
+    fn a_chunk_ending_on_the_boundary_leaves_nothing() {
+        let mut reframer = Reframer::with_frame_bytes(4);
+        reframer.push(&[1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(reframer.next_frame(), Some(vec![1, 2, 3, 4]));
+        assert_eq!(reframer.next_frame(), Some(vec![5, 6, 7, 8]));
+        assert_eq!(reframer.next_frame(), None);
+        assert_eq!(reframer.pending(), 0);
+    }
+
+    /// RFR-3 — a recorder that trickles bytes still produces whole frames.
+    #[test]
+    fn trickled_bytes_accumulate_into_a_frame() {
+        let mut reframer = Reframer::with_frame_bytes(4);
+        for byte in [9_u8, 8, 7] {
+            reframer.push(&[byte]);
+            assert_eq!(reframer.next_frame(), None);
+        }
+        reframer.push(&[6]);
+        assert_eq!(reframer.next_frame(), Some(vec![9, 8, 7, 6]));
+    }
+
+    /// RFR-4 — the shipped frame size is the protocol's, not a local choice.
+    #[test]
+    fn the_default_frame_is_the_protocol_frame() {
+        assert_eq!(SOURCE_FRAME_BYTES, 7680);
+        assert_eq!(Reframer::new().pending(), 0);
+    }
+
+    /// SRC-ARGS — the measured working invocation, pinned where it can be read.
+    /// The serial is what `pw-record --target` wants; the graph object id is a
+    /// different number and aiming with it records someone else's stream.
+    #[test]
+    fn the_frame_and_the_recorder_speak_the_protocols_numbers() {
+        // One truth, one definition. This is green today because the numbers
+        // happen to agree; it exists to turn red on the day one of them moves
+        // and the other does not — the failure that would otherwise be silence.
+        assert_eq!(SOURCE_FRAME_BYTES, crate::app::pane_audio::FRAME_BYTES);
+        let args = capture_args(1);
+        let rate = args.iter().position(|a| a == "--rate").expect("--rate");
+        let channels = args
+            .iter()
+            .position(|a| a == "--channels")
+            .expect("--channels");
+        assert_eq!(args[rate + 1], SAMPLE_RATE_HZ.to_string());
+        assert_eq!(args[channels + 1], CHANNELS.to_string());
+    }
+
+    #[test]
+    fn the_recorder_is_aimed_with_the_streams_serial() {
+        let args = capture_args(2374);
+        let joined = args.join(" ");
+        assert!(joined.contains("--target 2374"), "{joined}");
+        assert!(joined.contains("--rate 48000"), "{joined}");
+        assert!(joined.contains("--channels 2"), "{joined}");
+        assert!(joined.contains("--format f32"), "{joined}");
+        assert_eq!(args.last().map(String::as_str), Some("-"), "{joined}");
     }
 
     /// PW-1 — the measured failure: a bridged client's verified pid belongs to
@@ -280,5 +726,135 @@ mod tests {
         ]"#;
         let streams = parse_output_streams(dump).expect("dump parses");
         assert_eq!(stream(&streams, 6).pid, Some(77));
+    }
+
+    // ── A4a · ExternalSource (SRC-1..SRC-8) ───────────────────────────────
+    //
+    // Every process spawned below is a POSIX utility, so the same assertions
+    // run unchanged on a build box with no sound server at all. A test that
+    // needed `pw-record` would be a test about the machine.
+
+    /// A source that emits exactly `bytes` zero bytes and then ends.
+    fn one_shot(bytes: usize) -> ExternalSource {
+        ExternalSource::spawn(
+            "head",
+            &["-c".to_string(), bytes.to_string(), "/dev/zero".to_string()],
+        )
+        .expect("head starts")
+    }
+
+    #[test]
+    fn a_recorder_that_cannot_start_is_unavailable_rather_than_a_panic() {
+        let err =
+            ExternalSource::spawn("herdr-no-such-recorder", &["-"]).expect_err("no such program");
+        assert!(matches!(err, SourceError::Unavailable(_)), "{err}");
+    }
+
+    #[test]
+    fn a_recorder_that_ends_without_bytes_reads_as_end_of_stream() {
+        let mut source = ExternalSource::spawn("true", &[] as &[&str]).expect("true starts");
+        assert!(source
+            .next_frame()
+            .expect("end of stream is not an error")
+            .is_none());
+    }
+
+    #[test]
+    fn closing_leaves_no_recorder_behind() {
+        let mut source = ExternalSource::spawn("sleep", &["30"]).expect("sleep starts");
+        source.close().expect("close");
+        assert!(source.exited(), "the recorder outlived its close");
+    }
+
+    #[test]
+    fn closing_twice_is_not_an_error() {
+        let mut source = ExternalSource::spawn("sleep", &["30"]).expect("sleep starts");
+        source.close().expect("first close");
+        source.close().expect("second close");
+    }
+
+    #[test]
+    fn one_whole_frame_arrives_and_then_the_stream_ends() {
+        let mut source = one_shot(SOURCE_FRAME_BYTES);
+        let frame = source.next_frame().expect("read").expect("a whole frame");
+        assert_eq!(frame.len(), SOURCE_FRAME_BYTES);
+        assert!(source.next_frame().expect("read").is_none());
+    }
+
+    #[test]
+    fn a_partial_frame_is_never_handed_on() {
+        let mut source = one_shot(100);
+        assert!(source.next_frame().expect("read").is_none());
+    }
+
+    #[test]
+    fn frames_keep_coming_until_the_recorder_ends() {
+        let mut source = one_shot(SOURCE_FRAME_BYTES * 2);
+        assert!(source.next_frame().expect("read").is_some());
+        assert!(source.next_frame().expect("read").is_some());
+        assert!(source.next_frame().expect("read").is_none());
+    }
+
+    #[test]
+    fn aiming_the_capture_needs_the_recorder_but_never_panics() {
+        match ExternalSource::capture(2374) {
+            Ok(mut source) => {
+                assert_eq!(source.program(), RECORDER);
+                source.close().expect("close");
+            }
+            Err(err) => assert!(matches!(err, SourceError::Unavailable(_)), "{err}"),
+        }
+    }
+
+    // ── A4c · GraphWatcher (WCH-1, WCH-5, WCH-6) ──────────────────────────
+    //
+    // WCH-2..WCH-4 live with the `Debouncer` in `app::pane_audio_source`: the
+    // timing rule is pure and belongs where it can be tested without a process.
+
+    #[test]
+    fn output_in_an_unknown_shape_is_still_a_signal() {
+        // The point of not parsing: whatever pw-mon prints, in whatever version's
+        // format, means the same one thing here.
+        let mut watcher = GraphWatcher::spawn(
+            "printf",
+            // printf turns these escapes into real bytes, so the pipe carries
+            // something no parser would accept — which is the point.
+            &[r"}}not json at all{{ ÿþ binary too".to_string()],
+        )
+        .expect("printf starts");
+        assert!(watcher.next_signal().expect("read"));
+    }
+
+    #[test]
+    fn a_watcher_that_ends_stops_signalling() {
+        let mut watcher = GraphWatcher::spawn("true", &[] as &[&str]).expect("true starts");
+        assert!(!watcher
+            .next_signal()
+            .expect("end of stream is not an error"));
+    }
+
+    #[test]
+    fn closing_leaves_no_watcher_behind() {
+        let mut watcher = GraphWatcher::spawn("sleep", &["30"]).expect("sleep starts");
+        watcher.close().expect("close");
+        assert!(watcher.exited(), "the watcher outlived its close");
+    }
+
+    #[test]
+    fn a_watcher_that_cannot_start_is_unavailable_rather_than_a_panic() {
+        let err =
+            GraphWatcher::spawn("herdr-no-such-watcher", &["-"]).expect_err("no such program");
+        assert!(matches!(err, SourceError::Unavailable(_)), "{err}");
+    }
+
+    #[test]
+    fn starting_the_watcher_needs_the_program_but_never_panics() {
+        match GraphWatcher::start() {
+            Ok(mut watcher) => {
+                assert_eq!(watcher.program(), WATCHER);
+                watcher.close().expect("close");
+            }
+            Err(err) => assert!(matches!(err, SourceError::Unavailable(_)), "{err}"),
+        }
     }
 }

@@ -38,6 +38,7 @@
 #![allow(dead_code)]
 
 use std::collections::BTreeSet;
+use std::time::{Duration, Instant};
 
 /// One capturable output stream, already enriched by the platform layer with
 /// the facts the match needs.
@@ -244,6 +245,69 @@ pub(crate) fn plan(
         }
     }
     actions
+}
+
+/// How long the graph must be quiet before it is worth re-reading.
+///
+/// A parameter change on one node produces a burst of events — a volume slider
+/// dragged across a second is dozens — and each one would otherwise cost a full
+/// graph read. Waiting for quiet turns the burst into one read. The number is
+/// small enough that a listener does not hear the delay and large enough that a
+/// burst collapses.
+pub(crate) const GRAPH_QUIET: Duration = Duration::from_millis(250);
+
+/// Turns a burst of "something changed" into one "go and look".
+///
+/// TP-MEDIA-WATCH-01.
+///
+/// Pure on purpose: time is handed in rather than read, so the tests run in
+/// microseconds and say the same thing on a loaded machine as on an idle one.
+/// A debouncer that slept would be tested with a sleep, and a test that sleeps
+/// is a test that is flaky under load — which is exactly when the real one
+/// matters.
+pub(crate) struct Debouncer {
+    quiet_for: Duration,
+    /// Set by the first event of a burst, cleared when the burst is spent.
+    armed_at: Option<Instant>,
+    /// Moved forward by every event, so quiet is measured from the LAST one.
+    last_event: Option<Instant>,
+}
+
+impl Debouncer {
+    pub(crate) fn new(quiet_for: Duration) -> Self {
+        Self {
+            quiet_for,
+            armed_at: None,
+            last_event: None,
+        }
+    }
+
+    /// One event arrived. Cheap, and never decides anything by itself.
+    pub(crate) fn signal(&mut self, now: Instant) {
+        if self.armed_at.is_none() {
+            self.armed_at = Some(now);
+        }
+        self.last_event = Some(now);
+    }
+
+    /// Whether the burst has gone quiet. Consumes it: a burst fires once.
+    pub(crate) fn take_due(&mut self, now: Instant) -> bool {
+        let last = match self.last_event {
+            Some(last) => last,
+            None => return false,
+        };
+        if now.duration_since(last) < self.quiet_for {
+            return false;
+        }
+        self.armed_at = None;
+        self.last_event = None;
+        true
+    }
+
+    /// Whether anything is waiting. Lets the caller sleep instead of spinning.
+    pub(crate) fn is_armed(&self) -> bool {
+        self.last_event.is_some()
+    }
 }
 
 #[cfg(test)]
@@ -495,5 +559,59 @@ mod tests {
                 how: MatchHow::Ancestry
             }
         );
+    }
+
+    // ── A4c · Debouncer (WCH-2..WCH-4) ────────────────────────────────────
+    //
+    // Time is injected, so these say the same thing on a saturated machine as
+    // on an idle one. A sleeping test would be flaky exactly when the debouncer
+    // matters most.
+
+    fn at(base: Instant, ms: u64) -> Instant {
+        base + Duration::from_millis(ms)
+    }
+
+    #[test]
+    fn a_burst_of_events_asks_for_one_look() {
+        let base = Instant::now();
+        let mut debouncer = Debouncer::new(GRAPH_QUIET);
+        for step in 0..10 {
+            debouncer.signal(at(base, step * 20));
+        }
+        // Still inside the burst: nothing is due yet.
+        assert!(!debouncer.take_due(at(base, 200)));
+        // 250 ms after the LAST event, not the first.
+        assert!(debouncer.take_due(at(base, 180 + 250)));
+        // And the burst is spent: one look, not ten.
+        assert!(!debouncer.take_due(at(base, 5_000)));
+    }
+
+    #[test]
+    fn quiet_is_measured_from_the_last_event_not_the_first() {
+        let base = Instant::now();
+        let mut debouncer = Debouncer::new(GRAPH_QUIET);
+        debouncer.signal(at(base, 0));
+        debouncer.signal(at(base, 240));
+        // 250 ms have passed since the first event but not since the last.
+        assert!(!debouncer.take_due(at(base, 260)));
+        assert!(debouncer.take_due(at(base, 495)));
+    }
+
+    #[test]
+    fn a_new_event_after_quiet_asks_again() {
+        let base = Instant::now();
+        let mut debouncer = Debouncer::new(GRAPH_QUIET);
+        debouncer.signal(at(base, 0));
+        assert!(debouncer.take_due(at(base, 300)));
+        debouncer.signal(at(base, 1_000));
+        assert!(debouncer.take_due(at(base, 1_300)));
+    }
+
+    #[test]
+    fn silence_never_asks_for_a_look() {
+        let base = Instant::now();
+        let mut debouncer = Debouncer::new(GRAPH_QUIET);
+        assert!(!debouncer.is_armed());
+        assert!(!debouncer.take_due(at(base, 10_000)));
     }
 }
